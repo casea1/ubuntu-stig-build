@@ -45,9 +45,12 @@ stig_skip_tags:
   # Add specific control tags here as you triage the first scan's findings.
 
 # ---- Safety valve ----------------------------------------------------------
-# The Lockdown role can pause on risky changes. Keep interactive for first
-# runs; set true only for unattended/automated imaging once validated.
-ubtu24stig_fullauto: false
+# Verified against role 1.3.0: there is NO `ubtu24stig_fullauto` var and the
+# role has no interactive pause. The real control is disruption_high — when
+# false, the role SKIPS its most breaking controls (gates 8 task files). Keep
+# it false until a clean validated pass, then flip true to apply the
+# high-impact controls too. (The VM snapshot is the real rollback safety net.)
+ubtu24stig_disruption_high: false
 
 # =============================================================================
 # SCAP SCAN
