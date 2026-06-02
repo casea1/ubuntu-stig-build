@@ -78,3 +78,18 @@
         name: code
         update_cache: true
         state: present
+
+# --- PowerShell (LTS) -------------------------------------------------------
+# Required by the PowerStrux auditing tool. Pinned .deb from the official
+# GitHub release (no third-party apt repo). Installs /usr/bin/pwsh; not added
+# to /etc/shells, so it is not a valid login shell.
+- name: Download pinned PowerShell {{ powershell_version }} .deb
+  ansible.builtin.get_url:
+    url: "https://github.com/PowerShell/PowerShell/releases/download/v{{ powershell_version }}/powershell_{{ powershell_version }}-1.deb_amd64.deb"
+    dest: "/tmp/powershell_{{ powershell_version }}.deb"
+    mode: "0644"
+
+- name: Install PowerShell from the .deb (apt resolves dependencies)
+  ansible.builtin.apt:
+    deb: "/tmp/powershell_{{ powershell_version }}.deb"
+    state: present
