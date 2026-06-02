@@ -11,13 +11,13 @@
     name: UBUNTU24-STIG
     apply:
       tags: always
-  vars:
-    ubtu24stig_cat1: "{{ ubtu24stig_cat1 }}"
-    ubtu24stig_cat2: "{{ ubtu24stig_cat2 }}"
-    ubtu24stig_cat3: "{{ ubtu24stig_cat3 }}"
-    # GUI flag: the role's real variable is `ubtu24stig_gui` (verified against
-    # the 1.3.0 tag; there is no `ubtu24stig_desktop_gui`). group_vars/all.yml
-    # sets ubtu24stig_gui: true so the role preserves GDM / the graphical target.
+  # The role reads its toggles — ubtu24stig_cat1/2/3, ubtu24stig_gui,
+  # ubtu24stig_disruption_high — directly from group_vars/all.yml (global
+  # scope). Do NOT re-pass them here: a line like
+  #   ubtu24stig_cat1: "{{ ubtu24stig_cat1 }}"
+  # is self-referential and triggers "recursive loop detected in template
+  # string". Verified on 1.3.0: cat toggles default true (group_vars sets cat3
+  # false) and ubtu24stig_gui auto-detects GNOME, forced true to keep GDM.
 
 # ---------------------------------------------------------------------------
 # DESKTOP-SPECIFIC FIXUPS
