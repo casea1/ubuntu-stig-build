@@ -1,0 +1,12 @@
+---
+# Installed automatically by ansible-pull if you add --purge / a galaxy step,
+# or manually with:  ansible-galaxy install -r requirements.yml
+#
+# We pin to a git ref rather than floating on devel so your image builds are
+# reproducible. Update the version deliberately, re-test, then re-pin.
+
+roles:
+  - name: UBUNTU24-STIG
+    src: https://github.com/ansible-lockdown/UBUNTU24-STIG.git
+    scm: git
+    version: main          # <-- pin to a tagged release once you pick one

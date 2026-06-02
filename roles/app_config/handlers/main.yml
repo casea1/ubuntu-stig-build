@@ -1,0 +1,5 @@
+---
+- name: restart freshclam
+  ansible.builtin.systemd:
+    name: clamav-freshclam
+    state: restarted

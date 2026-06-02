@@ -1,0 +1,80 @@
+---
+# Installs the baseline toolset. Runs BEFORE hardening so that umask/mount
+# restrictions don't interfere with package and pip operations.
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install core packages
+  ansible.builtin.apt:
+    name:
+      - clamav
+      - clamav-daemon
+      - clamav-freshclam
+      - wireshark           # pulls tshark/dumpcap; install prompts handled below
+      - tshark
+      - python3
+      - python3-pip
+      - python3-venv
+      - putty               # PuTTY GUI app
+      - putty-tools         # plink / pscp / psftp CLI
+      - openssh-client
+      - git
+      - libopenscap8        # OpenSCAP scanner (CLI: oscap)
+    state: present
+
+# --- Wireshark non-interactive install --------------------------------------
+# The wireshark package asks (via debconf) whether non-root users may capture.
+# Preseed the answer so ansible-pull never hangs on the prompt.
+- name: Preseed wireshark-common (allow non-root capture, group-gated)
+  ansible.builtin.debconf:
+    name: wireshark-common
+    question: wireshark-common/install-setuid
+    value: "true"
+    vtype: boolean
+
+- name: Reconfigure wireshark-common to apply preseed
+  ansible.builtin.command: dpkg-reconfigure -f noninteractive wireshark-common
+  changed_when: false
+
+# --- Editor (conditional) ---------------------------------------------------
+- name: Install vim
+  ansible.builtin.apt:
+    name: vim
+    state: present
+  when: editor_choice == "vim"
+
+- name: Install neovim
+  ansible.builtin.apt:
+    name: neovim
+    state: present
+  when: editor_choice == "neovim"
+
+- name: Add Microsoft VS Code apt key and repo
+  when: editor_choice == "vscode"
+  block:
+    - name: Ensure keyrings dir exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Download Microsoft GPG key
+      ansible.builtin.get_url:
+        url: https://packages.microsoft.com/keys/microsoft.asc
+        dest: /etc/apt/keyrings/microsoft.asc
+        mode: "0644"
+
+    - name: Add VS Code repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/microsoft.asc] https://packages.microsoft.com/repos/code stable main"
+        filename: vscode
+        state: present
+
+    - name: Install VS Code
+      ansible.builtin.apt:
+        name: code
+        update_cache: true
+        state: present

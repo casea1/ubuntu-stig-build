@@ -1,0 +1,93 @@
+---
+# Post-install configuration that the package install alone doesn't do, and
+# that STIG cares about: ClamAV actually running + updating, and Wireshark
+# capture restricted to an authorized group.
+
+# --- Wireshark: restrict capture to authorized users ------------------------
+- name: Ensure wireshark group exists
+  ansible.builtin.group:
+    name: wireshark
+    state: present
+
+- name: Add authorized users to wireshark group
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: wireshark
+    append: true
+  loop: "{{ wireshark_users }}"
+
+- name: Lock down dumpcap to root:wireshark, no world access
+  ansible.builtin.file:
+    path: /usr/bin/dumpcap
+    owner: root
+    group: wireshark
+    mode: "0750"
+
+# --- ClamAV: freshclam definition updates -----------------------------------
+- name: Configure freshclam update frequency
+  ansible.builtin.lineinfile:
+    path: /etc/clamav/freshclam.conf
+    regexp: '^Checks '
+    line: "Checks {{ clamav_freshclam_checks_per_day }}"
+    state: present
+  notify: restart freshclam
+  when: clamav_freshclam_enabled
+
+- name: Enable and start freshclam
+  ansible.builtin.systemd:
+    name: clamav-freshclam
+    enabled: true
+    state: started
+  when: clamav_freshclam_enabled
+
+# --- ClamAV: daemon ---------------------------------------------------------
+# First-run freshclam must populate definitions or clamd won't start. Pull
+# definitions now (we still have internet during imaging).
+- name: Prime virus definitions (one-time, requires internet)
+  ansible.builtin.command: freshclam
+  register: freshclam_run
+  changed_when: "'Downloading' in freshclam_run.stdout"
+  failed_when: false        # don't fail the build if already up to date / locked
+  when: clamav_run_daemon
+
+- name: Enable and start clamav-daemon
+  ansible.builtin.systemd:
+    name: clamav-daemon
+    enabled: true
+    state: started
+  when: clamav_run_daemon
+
+# --- Scheduled full scan (weekly) -------------------------------------------
+- name: Deploy weekly clamav scan timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/clamav-scan.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Weekly ClamAV full filesystem scan
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/bin/clamscan -r -i / --exclude-dir=^/sys --exclude-dir=^/proc --log=/var/log/clamav/weekly-scan.log
+  when: clamav_run_daemon
+
+- name: Deploy weekly clamav scan timer unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/clamav-scan.timer
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Run ClamAV full scan weekly
+      [Timer]
+      OnCalendar=weekly
+      Persistent=true
+      [Install]
+      WantedBy=timers.target
+  when: clamav_run_daemon
+
+- name: Enable weekly scan timer
+  ansible.builtin.systemd:
+    name: clamav-scan.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: clamav_run_daemon

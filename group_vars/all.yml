@@ -1,0 +1,59 @@
+---
+# =============================================================================
+# Central configuration for the Ubuntu 24.04 Desktop STIG build.
+# Edit this file to control what gets installed and how aggressively the box
+# is hardened. Everything else reads from here.
+# =============================================================================
+
+# ---- Users who need to run packet captures (Wireshark) ---------------------
+# STIG restricts raw packet capture to authorized users. These users get added
+# to the 'wireshark' group instead of running dumpcap as root.
+wireshark_users:
+  - austin        # <-- change to the real local account(s)
+
+# ---- Editor of choice ------------------------------------------------------
+# vscode pulls from Microsoft's apt repo (needs internet at build time).
+# Set to "vim" or "neovim" if you want to stay fully in-distro.
+editor_choice: vscode        # options: vscode | vim | neovim
+
+# ---- ClamAV ----------------------------------------------------------------
+clamav_run_daemon: true       # enable clamav-daemon (on-access/scheduled scans)
+clamav_freshclam_enabled: true
+# How often freshclam checks for definition updates per day (cron/systemd).
+clamav_freshclam_checks_per_day: 12
+
+# =============================================================================
+# STIG HARDENING TOGGLES (passed through to ansible-lockdown/UBUNTU24-STIG)
+# =============================================================================
+# CAT I = high severity, CAT II = medium, CAT III = low.
+# Default: apply CAT I + II, leave CAT III off until you've validated it
+# doesn't break your desktop workflow. Flip cat3 on once you're confident.
+ubtu24stig_cat1: true
+ubtu24stig_cat2: true
+ubtu24stig_cat3: false
+
+# The Lockdown role assumes SERVER. We're on GNOME Desktop, so tell it a GUI
+# is present and DON'T let it disable/remove the graphical target or GDM.
+ubtu24stig_gui: true
+
+# ---- Controls we deliberately skip on Desktop ------------------------------
+# These are the usual server-vs-desktop collisions. Each one you skip MUST be
+# documented as an exception/POA&M for your auditor. Tags map to STIG IDs;
+# adjust to match the role's tag names for the release you pin.
+stig_skip_tags:
+  - DISA-STIG-UBTU-24-???      # placeholder: remove GUI / multi-user.target default
+  # Add specific control tags here as you triage the first scan's findings.
+
+# ---- Safety valve ----------------------------------------------------------
+# The Lockdown role can pause on risky changes. Keep interactive for first
+# runs; set true only for unattended/automated imaging once validated.
+ubtu24stig_fullauto: false
+
+# =============================================================================
+# SCAP SCAN
+# =============================================================================
+# Where to drop the compliance report. Collect this BEFORE air-gapping.
+scap_report_dir: /var/log/stig-scan
+# Profile id inside the SSG datastream. Verify against the installed
+# ssg content version (see scap_scan role notes).
+scap_profile: xccdf_org.ssgproject.content_profile_stig

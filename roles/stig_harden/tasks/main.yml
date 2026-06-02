@@ -1,0 +1,55 @@
+---
+# Imports the ansible-lockdown/UBUNTU24-STIG remediation role.
+# Install it first (build-time, online):
+#   sudo ansible-galaxy install -r requirements.yml
+#
+# The role is SERVER-oriented; the vars below (set in group_vars/all.yml) tell
+# it a GUI is present and which categories to apply. CAT III is off by default.
+
+- name: Apply DISA Ubuntu 24.04 STIG (CAT I/II via Ansible Lockdown)
+  ansible.builtin.include_role:
+    name: UBUNTU24-STIG
+    apply:
+      tags: always
+  vars:
+    ubtu24stig_cat1: "{{ ubtu24stig_cat1 }}"
+    ubtu24stig_cat2: "{{ ubtu24stig_cat2 }}"
+    ubtu24stig_cat3: "{{ ubtu24stig_cat3 }}"
+    # Tell the role a desktop GUI is in use so it doesn't strip GDM / the
+    # graphical target. Exact var name can differ by role release — verify
+    # against defaults/main.yml of the version you pin and adjust if needed.
+    ubtu24stig_desktop_gui: "{{ ubtu24stig_gui }}"
+
+# ---------------------------------------------------------------------------
+# DESKTOP-SPECIFIC FIXUPS
+# The Server STIG has no notion of GDM. These cover the graphical-login
+# controls (banner, idle lock) that the server role may not set for GNOME.
+# ---------------------------------------------------------------------------
+
+- name: Ensure dconf GDM banner directory exists
+  ansible.builtin.file:
+    path: /etc/dconf/db/gdm.d
+    state: directory
+    mode: "0755"
+
+- name: Set DoD login banner for GDM (graphical login)
+  ansible.builtin.copy:
+    dest: /etc/dconf/db/gdm.d/01-banner-message
+    mode: "0644"
+    content: |
+      [org/gnome/login-screen]
+      banner-message-enable=true
+      banner-message-text='You are accessing a U.S. Government (USG) Information System (IS) that is provided for USG-authorized use only. By using this IS (which includes any device attached to this IS), you consent to the following conditions...'
+  notify: dconf update
+
+- name: Enforce screen lock on idle (GNOME) for STIG idle-timeout control
+  ansible.builtin.copy:
+    dest: /etc/dconf/db/local.d/00-screensaver
+    mode: "0644"
+    content: |
+      [org/gnome/desktop/session]
+      idle-delay=uint32 900
+      [org/gnome/desktop/screensaver]
+      lock-enabled=true
+      lock-delay=uint32 0
+  notify: dconf update

@@ -1,0 +1,17 @@
+---
+# ansible-pull entrypoint. ansible-pull runs local.yml by default.
+# Run order is deliberate: install + configure apps FIRST, harden SECOND,
+# scan LAST. Hardening (umask, noexec /tmp, PAM) can break installs/pip if
+# applied first, and we want internet available for the SCAP content download
+# before the box goes air-gapped.
+
+- name: Build and harden Ubuntu 24.04 Desktop (DoD STIG)
+  hosts: localhost
+  connection: local
+  become: true
+
+  roles:
+    - role: base_packages    # clamav, wireshark, python, editor, putty (GUI + tools)
+    - role: app_config       # clamav daemon/freshclam, wireshark group, etc.
+    - role: stig_harden      # Ansible Lockdown Ubuntu 24.04 STIG role + desktop fixups
+    - role: scap_scan        # OpenSCAP eval -> HTML/ARF report (run while online)

@@ -1,0 +1,17 @@
+# Ansible Galaxy roles pulled at build time (installed via requirements.yml)
+roles/UBUNTU24-STIG/
+
+# OpenSCAP scan artifacts (generated on target, not source)
+*.arf.xml
+stig-report-*.html
+stig-viewer-*.xml
+/var/log/stig-scan/
+
+# Ansible runtime noise
+*.retry
+.ansible/
+
+# Editor / OS cruft
+.vscode/
+.DS_Store
+*.swp

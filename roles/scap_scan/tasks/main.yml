@@ -1,0 +1,63 @@
+---
+# Runs an OpenSCAP evaluation against the DISA STIG profile and saves both an
+# HTML report (human-readable) and a STIG-Viewer-importable result file.
+# RUN THIS WHILE THE BOX STILL HAS INTERNET — the SSG content package and any
+# remote OVAL resources must be available. After this, the box can go air-gapped.
+
+- name: Ensure the SSG content package is installed
+  ansible.builtin.apt:
+    name: ssg-debderived     # provides Ubuntu datastreams; fallback handled below
+    state: present
+  register: ssg_pkg
+  failed_when: false
+
+# Package naming for SSG on Ubuntu has shifted across releases
+# (ssg-debian / ssg-debderived / ssg-base). If the above didn't land the
+# datastream, fall back to grabbing the content directly.
+- name: Locate the Ubuntu 24.04 STIG datastream
+  ansible.builtin.find:
+    paths: /usr/share/xml/scap/ssg/content/
+    patterns: "ssg-ubuntu24*-ds*.xml"
+  register: ssg_ds
+
+- name: Fail clearly if no datastream is present
+  ansible.builtin.fail:
+    msg: >
+      No Ubuntu 24.04 SSG datastream found in /usr/share/xml/scap/ssg/content/.
+      Install the SCAP Security Guide content (apt package, or download the
+       complianceascode/content release) while online before air-gapping.
+  when: ssg_ds.matched == 0
+
+- name: Set datastream path fact
+  ansible.builtin.set_fact:
+    scap_datastream: "{{ ssg_ds.files | map(attribute='path') | sort | last }}"
+
+- name: Create report directory
+  ansible.builtin.file:
+    path: "{{ scap_report_dir }}"
+    state: directory
+    mode: "0750"
+
+- name: Run OpenSCAP STIG evaluation
+  # oscap returns 0 = all pass, 2 = some rules failed. Both are "scan ran OK";
+  # only treat other codes as a real error.
+  ansible.builtin.command:
+    cmd: >
+      oscap xccdf eval
+      --profile {{ scap_profile }}
+      --fetch-remote-resources
+      --results-arf {{ scap_report_dir }}/stig-arf-{{ ansible_date_time.date }}.xml
+      --report {{ scap_report_dir }}/stig-report-{{ ansible_date_time.date }}.html
+      --stig-viewer {{ scap_report_dir }}/stig-viewer-{{ ansible_date_time.date }}.xml
+      {{ scap_datastream }}
+  register: oscap_run
+  failed_when: oscap_run.rc not in [0, 2]
+  changed_when: false
+
+- name: Report where the results landed
+  ansible.builtin.debug:
+    msg: >
+      SCAP scan complete (rc={{ oscap_run.rc }}).
+      HTML report:     {{ scap_report_dir }}/stig-report-{{ ansible_date_time.date }}.html
+      STIG Viewer XML: {{ scap_report_dir }}/stig-viewer-{{ ansible_date_time.date }}.xml
+      Collect these before air-gapping the machine.
