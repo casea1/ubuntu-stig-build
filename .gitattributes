@@ -1,0 +1,8 @@
+# Normalize line endings in the repo to LF on commit.
+* text=auto
+
+# These run on Linux (bootstrap.sh is curl|bash'd; YAML is consumed by Ansible).
+# Force LF even in working copies so a Windows checkout can't introduce CRLF.
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
