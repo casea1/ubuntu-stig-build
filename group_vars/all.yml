@@ -54,6 +54,15 @@ ubtu24stig_fullauto: false
 # =============================================================================
 # Where to drop the compliance report. Collect this BEFORE air-gapping.
 scap_report_dir: /var/log/stig-scan
-# Profile id inside the SSG datastream. Verify against the installed
-# ssg content version (see scap_scan role notes).
+# Profile id inside the SSG datastream. Verified present in the pinned SSG
+# release below (products/ubuntu2404 ships stig.profile).
 scap_profile: xccdf_org.ssgproject.content_profile_stig
+
+# ---- SSG content source -----------------------------------------------------
+# The distro package (ssg-debderived) ships datastreams only through Ubuntu
+# 22.04, so the scan fetches the Ubuntu 24.04 datastream from an official SCAP
+# Security Guide release instead. Pinned for reproducible images — bump
+# deliberately and re-test (note the GitHub tag is v-prefixed: v{{ ssg_content_version }}).
+scap_content_dir: /usr/share/xml/scap/ssg/content
+ssg_content_version: "0.1.81"
+ssg_release_base: "https://github.com/ComplianceAsCode/content/releases/download"

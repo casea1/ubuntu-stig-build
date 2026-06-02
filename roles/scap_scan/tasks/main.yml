@@ -1,31 +1,66 @@
 ---
 # Runs an OpenSCAP evaluation against the DISA STIG profile and saves both an
 # HTML report (human-readable) and a STIG-Viewer-importable result file.
-# RUN THIS WHILE THE BOX STILL HAS INTERNET — the SSG content package and any
-# remote OVAL resources must be available. After this, the box can go air-gapped.
+# RUN THIS WHILE THE BOX STILL HAS INTERNET — the SSG content and any remote
+# OVAL resources must be available. After this, the box can go air-gapped.
 
-- name: Ensure the SSG content package is installed
+# The distro package (ssg-debderived) currently ships datastreams only through
+# Ubuntu 22.04, so we can't rely on it for 24.04. Install it anyway (cheap,
+# pulls oscap-friendly content for other releases), then fetch the 24.04
+# datastream from a pinned SCAP Security Guide release below.
+- name: Install the distro SSG content package (best-effort)
   ansible.builtin.apt:
-    name: ssg-debderived     # provides Ubuntu datastreams; fallback handled below
+    name: ssg-debderived
     state: present
   register: ssg_pkg
   failed_when: false
 
-# Package naming for SSG on Ubuntu has shifted across releases
-# (ssg-debian / ssg-debderived / ssg-base). If the above didn't land the
-# datastream, fall back to grabbing the content directly.
+- name: Check whether an Ubuntu 24.04 datastream is already present
+  ansible.builtin.find:
+    paths: "{{ scap_content_dir }}"
+    patterns: "ssg-ubuntu24*-ds*.xml"
+  register: ssg_ds_existing
+
+# Only download the (~175 MB) SSG release bundle if apt didn't already provide a
+# 24.04 datastream. Idempotent: 'creates' skips re-extraction on re-runs.
+- name: Fetch the Ubuntu 24.04 datastream from a SCAP Security Guide release
+  when: ssg_ds_existing.matched == 0
+  block:
+    - name: Ensure the SSG content directory exists
+      ansible.builtin.file:
+        path: "{{ scap_content_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Download SCAP Security Guide {{ ssg_content_version }} bundle (sha512-verified)
+      ansible.builtin.get_url:
+        url: "{{ ssg_release_base }}/v{{ ssg_content_version }}/scap-security-guide-{{ ssg_content_version }}.tar.gz"
+        dest: "/tmp/scap-security-guide-{{ ssg_content_version }}.tar.gz"
+        checksum: "sha512:{{ ssg_release_base }}/v{{ ssg_content_version }}/scap-security-guide-{{ ssg_content_version }}.tar.gz.sha512"
+        mode: "0644"
+
+    - name: Extract only the Ubuntu 24.04 datastream into the content dir
+      ansible.builtin.command:
+        cmd: >
+          tar -xzf /tmp/scap-security-guide-{{ ssg_content_version }}.tar.gz
+          --wildcards --strip-components=1
+          -C {{ scap_content_dir }}
+          '*/ssg-ubuntu2404-ds.xml'
+        creates: "{{ scap_content_dir }}/ssg-ubuntu2404-ds.xml"
+
 - name: Locate the Ubuntu 24.04 STIG datastream
   ansible.builtin.find:
-    paths: /usr/share/xml/scap/ssg/content/
+    paths: "{{ scap_content_dir }}"
     patterns: "ssg-ubuntu24*-ds*.xml"
   register: ssg_ds
 
 - name: Fail clearly if no datastream is present
   ansible.builtin.fail:
     msg: >
-      No Ubuntu 24.04 SSG datastream found in /usr/share/xml/scap/ssg/content/.
-      Install the SCAP Security Guide content (apt package, or download the
-       complianceascode/content release) while online before air-gapping.
+      No Ubuntu 24.04 SSG datastream found in {{ scap_content_dir }}.
+      The SSG {{ ssg_content_version }} download/extract step produced nothing —
+      check internet access at build time and that the release still ships
+      ssg-ubuntu2404-ds.xml.
   when: ssg_ds.matched == 0
 
 - name: Set datastream path fact
@@ -39,7 +74,7 @@
     mode: "0750"
 
 - name: Run OpenSCAP STIG evaluation
-  # oscap returns 0 = all pass, 2 = some rules failed. Both are "scan ran OK";
+  # oscap returns 0 = all pass, 2 = some rules failed. Both mean "scan ran OK";
   # only treat other codes as a real error.
   ansible.builtin.command:
     cmd: >
