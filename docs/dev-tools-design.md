@@ -114,7 +114,7 @@ configured directly.
 | 16 | Pylance | `ms-python.vscode-pylance` |
 | 17 | Python | `ms-python.python` |
 | 18 | Python Debugger | `ms-python.debugpy` |
-| 19 | Reveal | `evilz.vscode-reveal` *(reveal.js — confirm)* |
+| 19 | Reveal | `evilz.vscode-reveal` *(reveal.js presentations — confirmed)* |
 | 20 | SARIF Viewer | `MS-SarifVSCode.sarif-viewer` |
 | 21 | UMLet | `TheUMLetTeam.umlet` |
 | 22 | Vim | `vscodevim.vim` |
@@ -156,9 +156,9 @@ Microsoft VS Code repo.
 - `id austin_case_adm` includes `docker`.
 - Full pipeline still reaches `scap_scan` and produces a report.
 
-## Assumptions to confirm
+## Assumptions (confirmed 2026-06-02)
 
-1. **Reveal = `evilz.vscode-reveal`** (reveal.js presentations). If you meant a different
-   "Reveal" extension, say so.
-2. Extensions install for `austin_case_adm` + `/etc/skel`. If developers use other
-   existing accounts, those need a one-time copy (or re-run with their usernames).
+1. **Reveal = `evilz.vscode-reveal`** (reveal.js presentations) — confirmed.
+2. **Single account** (`austin_case_adm`) for now; no other accounts created at this time.
+   Extensions install for that account; `/etc/skel` seeding is kept as harmless
+   future-proofing so any later account inherits them automatically.
