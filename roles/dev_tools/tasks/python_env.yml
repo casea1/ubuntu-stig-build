@@ -1,0 +1,40 @@
+---
+- name: Create the shared engineering virtualenv
+  ansible.builtin.command:
+    cmd: python3.12 -m venv {{ eng_venv_path }}
+    creates: "{{ eng_venv_path }}/bin/python"
+
+- name: Upgrade pip/setuptools/wheel in the venv
+  ansible.builtin.pip:
+    name:
+      - pip
+      - setuptools
+      - wheel
+    state: latest
+    virtualenv: "{{ eng_venv_path }}"
+
+- name: Install engineering Python libraries into the venv
+  ansible.builtin.pip:
+    requirements: "{{ role_path }}/files/eng-requirements.txt"
+    virtualenv: "{{ eng_venv_path }}"
+
+- name: Ensure the venv directory is traversable by all users
+  ansible.builtin.file:
+    path: "{{ eng_venv_path }}"
+    state: directory
+    mode: "0755"
+
+- name: Register a system-wide Jupyter kernel for the venv
+  ansible.builtin.command:
+    cmd: >
+      {{ eng_venv_path }}/bin/python -m ipykernel install
+      --prefix /usr/local --name eng --display-name "Eng (Python 3.12)"
+    creates: /usr/local/share/jupyter/kernels/eng/kernel.json
+
+- name: Expose the venv via an 'eng' command for all users
+  ansible.builtin.copy:
+    dest: /etc/profile.d/eng.sh
+    mode: "0644"
+    content: |
+      # Activate the shared engineering Python environment:  run `eng`
+      alias eng='source {{ eng_venv_path }}/bin/activate'

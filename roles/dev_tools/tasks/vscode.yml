@@ -1,0 +1,57 @@
+---
+# VS Code extensions are per-user. Install for the primary user, then seed
+# /etc/skel so any future account inherits them + the venv interpreter default.
+
+- name: Ensure the primary user's VS Code config dir exists
+  become: true
+  become_user: "{{ dev_tools_user }}"
+  ansible.builtin.file:
+    path: "/home/{{ dev_tools_user }}/.config/Code/User"
+    state: directory
+    mode: "0700"
+
+- name: Install VS Code extensions for {{ dev_tools_user }}
+  become: true
+  become_user: "{{ dev_tools_user }}"
+  environment:
+    HOME: "/home/{{ dev_tools_user }}"
+  ansible.builtin.command:
+    cmd: code --install-extension {{ item }} --force
+  loop: "{{ vscode_extensions }}"
+  changed_when: false      # code exits 0 whether it installs or is already present
+
+- name: Set the venv as the VS Code default interpreter (primary user)
+  become: true
+  become_user: "{{ dev_tools_user }}"
+  ansible.builtin.copy:
+    dest: "/home/{{ dev_tools_user }}/.config/Code/User/settings.json"
+    mode: "0644"
+    content: |
+      {
+        "python.defaultInterpreterPath": "{{ eng_venv_path }}/bin/python"
+      }
+
+- name: Ensure /etc/skel VS Code dirs exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /etc/skel/.vscode
+    - /etc/skel/.config/Code/User
+
+- name: Seed installed extensions into /etc/skel for future accounts
+  ansible.builtin.copy:
+    src: "/home/{{ dev_tools_user }}/.vscode/extensions/"
+    dest: /etc/skel/.vscode/extensions/
+    remote_src: true
+    mode: preserve
+
+- name: Seed the default interpreter setting into /etc/skel
+  ansible.builtin.copy:
+    dest: /etc/skel/.config/Code/User/settings.json
+    mode: "0644"
+    content: |
+      {
+        "python.defaultInterpreterPath": "{{ eng_venv_path }}/bin/python"
+      }

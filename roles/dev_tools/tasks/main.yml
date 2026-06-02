@@ -1,0 +1,13 @@
+---
+# Developer tooling. Runs AFTER app_config and BEFORE stig_harden — it needs
+# internet and must finish before hardening locks down /tmp / PAM / network.
+
+- name: Install developer toolchains (compilers, SDKs, Docker)
+  ansible.builtin.import_tasks: toolchains.yml
+
+- name: Provision the shared Python environment (/opt/eng-venv)
+  ansible.builtin.import_tasks: python_env.yml
+
+- name: Install and wire VS Code extensions
+  ansible.builtin.import_tasks: vscode.yml
+  when: editor_choice == "vscode"

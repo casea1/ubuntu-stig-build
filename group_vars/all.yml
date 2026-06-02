@@ -69,3 +69,14 @@ scap_profile: xccdf_org.ssgproject.content_profile_stig
 scap_content_dir: /usr/share/xml/scap/ssg/content
 ssg_content_version: "0.1.81"
 ssg_release_base: "https://github.com/ComplianceAsCode/content/releases/download"
+
+# =============================================================================
+# DEVELOPER TOOLING (dev_tools role; full package/extension lists live in
+# roles/dev_tools/defaults/main.yml)
+# =============================================================================
+dev_tools_user: austin_case_adm        # owns VS Code extensions + docker group
+eng_venv_path: /opt/eng-venv           # shared Python environment ("eng" command)
+dotnet_sdk_package: dotnet-sdk-8.0      # .NET SDK from the Ubuntu archive (LTS)
+
+# PowerShell LTS — installed in base_packages as a pinned .deb (PowerStrux backend).
+powershell_version: "7.4.16"

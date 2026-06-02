@@ -1,0 +1,50 @@
+---
+# Package + extension lists for the dev_tools role. User-facing toggles
+# (user, venv path, versions) live in group_vars/all.yml.
+
+dev_toolchain_packages:
+  - build-essential        # gcc, g++, make
+  - gdb
+  - cmake
+  - doxygen
+  - graphviz
+  - default-jre            # UMLet is a Java app
+  - gnat                   # Ada compiler (GNAT)
+  - gprbuild
+  - python3.12-venv
+  - python3-dev
+  - libffi-dev
+  - libssl-dev
+  - libxml2-dev
+  - libxslt1-dev
+  - acl                    # lets root->user become_user hand off temp files
+  - "{{ dotnet_sdk_package }}"
+  - docker.io
+
+vscode_extensions:
+  - ms-dotnettools.vscode-dotnet-runtime    # .NET Install Tool
+  - AdaCore.ada                             # Ada & SPARK
+  - ms-dotnettools.csharp                   # C#
+  - ms-dotnettools.csdevkit                 # C# Dev Kit
+  - ms-vscode.cpptools                      # C/C++
+  - twxs.cmake                              # CMake
+  - ms-vscode.cmake-tools                   # CMake Tools
+  - ms-vscode-remote.remote-containers      # Dev Containers
+  - ms-azuretools.vscode-docker             # Docker
+  - cschlosser.doxdocgen                    # Doxygen
+  - mhutchie.git-graph                      # Git Graph
+  - donjayamanne.githistory                 # Git History
+  - eamodio.gitlens                         # GitLens
+  - ms-vscode.makefile-tools                # Makefile Tools
+  - esbenp.prettier-vscode                  # Prettier
+  - ms-python.vscode-pylance                # Pylance
+  - ms-python.python                        # Python
+  - ms-python.debugpy                       # Python Debugger
+  - evilz.vscode-reveal                     # Reveal (reveal.js)
+  - MS-SarifVSCode.sarif-viewer             # SARIF Viewer
+  - TheUMLetTeam.umlet                      # UMLet
+  - vscodevim.vim                           # Vim
+  - ms-vscode-remote.remote-wsl             # WSL (no-op on Linux)
+  - ms-vscode-remote.remote-ssh             # Remote - SSH
+  - ms-vscode.remote-explorer               # Remote Explorer
+  - ms-vscode-remote.remote-ssh-edit        # Remote - SSH: Editing Configuration Files
