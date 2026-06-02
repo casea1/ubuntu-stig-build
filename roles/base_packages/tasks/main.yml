@@ -22,7 +22,7 @@
       - putty-tools         # plink / pscp / psftp CLI
       - openssh-client
       - git
-      - libopenscap8        # OpenSCAP scanner (CLI: oscap)
+      - openscap-scanner    # OpenSCAP scanner (CLI: oscap) — 24.04 pkg name (was libopenscap8)
     state: present
 
 # --- Wireshark non-interactive install --------------------------------------
