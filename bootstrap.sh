@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # First-boot bootstrap for imaging an Ubuntu 24.04 Desktop STIG box.
 # Run once, while the machine has internet:
-#   curl -fsSL https://raw.githubusercontent.com/caseaustin12/ubuntu-stig-build/main/bootstrap.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo bash
 #
 # Edit REPO_URL before baking into your image.
 
 set -euo pipefail
 
-REPO_URL="https://github.com/caseaustin12/ubuntu-stig-build.git"
+REPO_URL="https://github.com/casea1/ubuntu-stig-build.git"
 BRANCH="main"
 
 if [[ $EUID -ne 0 ]]; then
@@ -21,7 +21,7 @@ apt-get install -y ansible git
 
 echo "[*] Installing the UBUNTU24-STIG role from requirements.yml..."
 TMP_REQ="$(mktemp)"
-curl -fsSL "https://raw.githubusercontent.com/caseaustin12/ubuntu-stig-build/${BRANCH}/requirements.yml" -o "$TMP_REQ"
+curl -fsSL "https://raw.githubusercontent.com/casea1/ubuntu-stig-build/${BRANCH}/requirements.yml" -o "$TMP_REQ"
 ansible-galaxy install -r "$TMP_REQ"
 rm -f "$TMP_REQ"
 

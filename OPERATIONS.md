@@ -32,9 +32,9 @@ Push this repo to a **public** GitHub/GitLab repo.
 ```bash
 sudo apt update && sudo apt install -y ansible git
 # Install the Lockdown role from requirements.yml:
-sudo ansible-galaxy install -r <(curl -fsSL https://raw.githubusercontent.com/caseaustin12/ubuntu-stig-build/main/requirements.yml)
+sudo ansible-galaxy install -r <(curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/requirements.yml)
 # Then pull + run:
-sudo ansible-pull -U https://github.com/caseaustin12/ubuntu-stig-build.git -i localhost,
+sudo ansible-pull -U https://github.com/casea1/ubuntu-stig-build.git -i localhost,
 ```
 
 Or just run `bootstrap.sh` (below), which does all of that.
