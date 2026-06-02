@@ -9,7 +9,7 @@
 # STIG restricts raw packet capture to authorized users. These users get added
 # to the 'wireshark' group instead of running dumpcap as root.
 wireshark_users:
-  - austin        # <-- change to the real local account(s)
+  - austin_case_adm        # real local admin account on the imaged box
 
 # ---- Editor of choice ------------------------------------------------------
 # vscode pulls from Microsoft's apt repo (needs internet at build time).
