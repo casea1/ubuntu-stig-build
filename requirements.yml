@@ -9,4 +9,4 @@ roles:
   - name: UBUNTU24-STIG
     src: https://github.com/ansible-lockdown/UBUNTU24-STIG.git
     scm: git
-    version: main          # <-- pin to a tagged release once you pick one
+    version: 1.3.0         # pinned 2026-06-02 (latest tagged release; re-test before bumping)

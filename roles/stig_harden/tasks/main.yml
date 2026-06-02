@@ -15,10 +15,9 @@
     ubtu24stig_cat1: "{{ ubtu24stig_cat1 }}"
     ubtu24stig_cat2: "{{ ubtu24stig_cat2 }}"
     ubtu24stig_cat3: "{{ ubtu24stig_cat3 }}"
-    # Tell the role a desktop GUI is in use so it doesn't strip GDM / the
-    # graphical target. Exact var name can differ by role release — verify
-    # against defaults/main.yml of the version you pin and adjust if needed.
-    ubtu24stig_desktop_gui: "{{ ubtu24stig_gui }}"
+    # GUI flag: the role's real variable is `ubtu24stig_gui` (verified against
+    # the 1.3.0 tag; there is no `ubtu24stig_desktop_gui`). group_vars/all.yml
+    # sets ubtu24stig_gui: true so the role preserves GDM / the graphical target.
 
 # ---------------------------------------------------------------------------
 # DESKTOP-SPECIFIC FIXUPS
