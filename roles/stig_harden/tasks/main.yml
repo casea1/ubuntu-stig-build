@@ -51,4 +51,26 @@
       [org/gnome/desktop/screensaver]
       lock-enabled=true
       lock-delay=uint32 0
+      picture-uri=''
+      [org/gnome/settings-daemon/plugins/media-keys]
+      logout=['']
+  notify: dconf update
+
+# These two keys are normally set by role controls UBTU-24-200043 (picture-uri)
+# and UBTU-24-300025 (media-keys logout), but those have a trailing-'=' typo in
+# the option name that corrupts dconf. We disable them (group_vars) and set +
+# lock the correct values here instead.
+- name: Ensure the dconf locks directory exists
+  ansible.builtin.file:
+    path: /etc/dconf/db/local.d/locks
+    state: directory
+    mode: "0755"
+
+- name: Lock the desktop dconf keys we set in place of the buggy role controls
+  ansible.builtin.copy:
+    dest: /etc/dconf/db/local.d/locks/00-stig-desktop-lock
+    mode: "0644"
+    content: |
+      /org/gnome/desktop/screensaver/picture-uri
+      /org/gnome/settings-daemon/plugins/media-keys/logout
   notify: dconf update
