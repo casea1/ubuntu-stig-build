@@ -20,7 +20,7 @@ apt-get update
 apt-get install -y ansible git curl
 
 echo "[*] Installing the UBUNTU24-STIG role from requirements.yml..."
-TMP_REQ="$(mktemp)"
+TMP_REQ="$(mktemp --suffix=.yml)"   # ansible-galaxy requires a .yml/.yaml extension
 curl -fsSL "https://raw.githubusercontent.com/casea1/ubuntu-stig-build/${BRANCH}/requirements.yml" -o "$TMP_REQ"
 ansible-galaxy install -r "$TMP_REQ"
 rm -f "$TMP_REQ"
