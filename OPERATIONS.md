@@ -30,11 +30,15 @@ Push this repo to a **public** GitHub/GitLab repo.
 ## Running it on the Dell (during imaging, online)
 
 ```bash
-sudo apt update && sudo apt install -y ansible git
-# Install the Lockdown role from requirements.yml:
-sudo ansible-galaxy install -r <(curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/requirements.yml)
-# Then pull + run:
-sudo ansible-pull -U https://github.com/casea1/ubuntu-stig-build.git -i localhost,
+sudo apt update && sudo apt install -y ansible git curl
+# Install the pinned Lockdown role from requirements.yml:
+curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/requirements.yml -o /tmp/requirements.yml
+sudo ansible-galaxy install -r /tmp/requirements.yml
+# Run DETACHED as a systemd unit -- hardening restarts GDM mid-run, which would
+# kill a foreground job launched from the GUI session. systemd-run survives it:
+sudo systemd-run --unit=stig-build --collect \
+  ansible-pull -U https://github.com/casea1/ubuntu-stig-build.git -C main -i localhost, local.yml
+# Watch:  journalctl -u stig-build -f      Result: systemctl status stig-build
 ```
 
 Or just run `bootstrap.sh` (below), which does all of that.
