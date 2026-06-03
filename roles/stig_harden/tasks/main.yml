@@ -38,7 +38,7 @@
     content: |
       [org/gnome/login-screen]
       banner-message-enable=true
-      banner-message-text='You are accessing a U.S. Government (USG) Information System (IS) that is provided for USG-authorized use only. By using this IS (which includes any device attached to this IS), you consent to the following conditions...'
+      banner-message-text='{{ dod_gui_banner }}'
   notify: dconf update
 
 - name: Enforce screen lock on idle (GNOME) for STIG idle-timeout control

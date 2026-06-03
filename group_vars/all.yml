@@ -36,6 +36,18 @@ ubtu24stig_cat3: false
 # is present and DON'T let it disable/remove the graphical target or GDM.
 ubtu24stig_gui: true
 
+# ---- GDM login banner: work around an upstream role bug ---------------------
+# Role control UBTU-24-200650 sets banner-message-text via
+#   "{{ ubtu24stig_logon_banner | join('\n') }}"
+# but ubtu24stig_logon_banner is a STRING, so join() iterates its characters and
+# writes the banner one-char-per-line into /etc/gdm3/greeter.dconf-defaults,
+# corrupting it -> GDM's generate-config fails -> gdm.service won't start (the
+# box looks like it hangs at the boot splash). Verified on role 1.3.0.
+# Fix: disable that control and set the banner ourselves (stig_harden role,
+# /etc/dconf/db/gdm.d/01-banner-message) using the full standard DoD text below.
+ubtu24stig_200650: false
+dod_gui_banner: "You are accessing a U.S. Government (USG) Information System (IS) that is provided for USG-authorized use only. By using this IS (which includes any device attached to this IS), you consent to the following conditions: -The USG routinely intercepts and monitors communications on this IS for purposes including, but not limited to, penetration testing, COMSEC monitoring, network operations and defense, personnel misconduct (PM), law enforcement (LE), and counterintelligence (CI) investigations. -At any time, the USG may inspect and seize data stored on this IS. -Communications using, or data stored on, this IS are not private, are subject to routine monitoring, interception, and search, and may be disclosed or used for any USG-authorized purpose. -This IS includes security measures (e.g., authentication and access controls) to protect USG interests--not for your personal benefit or privacy. -Notwithstanding the above, using this IS does not constitute consent to PM, LE or CI investigative searching or monitoring of the content of privileged communications, or work product, related to personal representation or services by attorneys, psychotherapists, or clergy, and their assistants. Such communications and work product are private and confidential. See User Agreement for details."
+
 # ---- Controls we deliberately skip on Desktop ------------------------------
 # These are the usual server-vs-desktop collisions. Each one you skip MUST be
 # documented as an exception/POA&M for your auditor. Tags map to STIG IDs;
