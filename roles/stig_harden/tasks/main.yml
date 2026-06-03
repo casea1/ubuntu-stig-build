@@ -25,21 +25,21 @@
 # controls (banner, idle lock) that the server role may not set for GNOME.
 # ---------------------------------------------------------------------------
 
-- name: Ensure dconf GDM banner directory exists
-  ansible.builtin.file:
-    path: /etc/dconf/db/gdm.d
-    state: directory
-    mode: "0755"
-
-- name: Set DoD login banner for GDM (graphical login)
-  ansible.builtin.copy:
-    dest: /etc/dconf/db/gdm.d/01-banner-message
-    mode: "0644"
-    content: |
-      [org/gnome/login-screen]
-      banner-message-enable=true
-      banner-message-text='{{ dod_gui_banner }}'
-  notify: dconf update
+- name: Set the GDM login-screen DoD banner (Ubuntu's greeter.dconf-defaults)
+  # The role's UBTU-24-200650 banner-text control is disabled (buggy join).
+  # Ubuntu's GDM reads the banner from /etc/gdm3/greeter.dconf-defaults, which
+  # gdm's generate-config bakes into the gdm dconf db at startup. Set both the
+  # enable flag and the full DoD text here. The string value MUST be wrapped in
+  # GVariant single quotes ('...') or generate-config rejects the keyfile.
+  community.general.ini_file:
+    path: /etc/gdm3/greeter.dconf-defaults
+    section: org/gnome/login-screen
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    mode: 'go-wx'
+  loop:
+    - { option: banner-message-enable, value: "true" }
+    - { option: banner-message-text, value: "'{{ dod_gui_banner }}'" }
 
 - name: Enforce screen lock on idle (GNOME) for STIG idle-timeout control
   ansible.builtin.copy:
