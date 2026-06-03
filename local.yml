@@ -14,5 +14,7 @@
     - role: base_packages    # clamav, wireshark, python, editor, putty (GUI + tools)
     - role: app_config       # clamav daemon/freshclam, wireshark group, etc.
     - role: dev_tools        # compilers/SDKs, /opt/eng-venv, VS Code extensions, docker
+    - role: classification_banner   # top/bottom security-classification bars (optional)
+      when: classification_banner_enabled | default(false)
     - role: stig_harden      # Ansible Lockdown Ubuntu 24.04 STIG role + desktop fixups
     - role: scap_scan        # OpenSCAP eval -> HTML/ARF report (run while online)

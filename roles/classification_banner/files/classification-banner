@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""Minimal security-classification banner for Ubuntu 24.04 / GNOME (GTK 3).
+
+Draws an always-on-top bar across the TOP and BOTTOM of every monitor showing
+the system's classification level. Vendored for this build because the common
+upstream tool (fcaviggia/classification-banner) is Python 2 / PyGTK and does not
+run on Ubuntu 24.04.
+
+Usage:   classification-banner [LEVEL]
+LEVEL is a section name in /etc/classification-banner.conf (default UNCLASSIFIED).
+
+NOTE: reliable docking requires an Xorg session; Wayland ignores X11 dock/strut
+hints. The role forces GDM to Xorg when the banner is enabled.
+"""
+import sys
+import configparser
+
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, Gdk, GLib  # noqa: E402
+
+CONF_FILE = "/etc/classification-banner.conf"
+BAR_HEIGHT = 22
+
+
+def load_level(level):
+    cp = configparser.ConfigParser()
+    cp.read(CONF_FILE)
+    section = level if cp.has_section(level) else cp.default_section
+    g = cp[section]
+    return (
+        g.get("message", level),
+        g.get("bgcolor", "#007a33"),
+        g.get("fgcolor", "#ffffff"),
+    )
+
+
+def rgba(hex_str):
+    c = Gdk.RGBA()
+    c.parse(hex_str)
+    return c
+
+
+def make_bar(geo, at_top, message, bgcolor, fgcolor):
+    win = Gtk.Window()
+    win.set_type_hint(Gdk.WindowTypeHint.DOCK)
+    win.set_decorated(False)
+    win.set_resizable(False)
+    win.set_skip_taskbar_hint(True)
+    win.set_skip_pager_hint(True)
+    win.set_keep_above(True)
+    win.set_accept_focus(False)
+    win.stick()
+
+    box = Gtk.EventBox()
+    box.override_background_color(Gtk.StateFlags.NORMAL, rgba(bgcolor))
+    label = Gtk.Label()
+    label.set_markup(
+        '<span weight="bold" foreground="%s">%s</span>'
+        % (fgcolor, GLib.markup_escape_text(message))
+    )
+    box.add(label)
+    win.add(box)
+    win.override_background_color(Gtk.StateFlags.NORMAL, rgba(bgcolor))
+
+    x = geo.x
+    y = geo.y if at_top else geo.y + geo.height - BAR_HEIGHT
+    win.set_size_request(geo.width, BAR_HEIGHT)
+    win.show_all()
+    win.move(x, y)
+    win.resize(geo.width, BAR_HEIGHT)
+    return win
+
+
+def monitor_geometries():
+    display = Gdk.Display.get_default()
+    try:
+        return [display.get_monitor(i).get_geometry()
+                for i in range(display.get_n_monitors())]
+    except Exception:
+        screen = Gdk.Screen.get_default()
+        return [screen.get_monitor_geometry(i)
+                for i in range(screen.get_n_monitors())]
+
+
+def main():
+    level = sys.argv[1] if len(sys.argv) > 1 else "UNCLASSIFIED"
+    message, bgcolor, fgcolor = load_level(level)
+    windows = []
+    for geo in monitor_geometries():
+        windows.append(make_bar(geo, True, message, bgcolor, fgcolor))
+        windows.append(make_bar(geo, False, message, bgcolor, fgcolor))
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    main()

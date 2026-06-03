@@ -108,6 +108,22 @@ Everything is toggled from **[`group_vars/all.yml`](group_vars/all.yml)**:
 Package and VS Code extension lists live in `roles/dev_tools/defaults/main.yml`. The dev-tooling
 layer is documented in [docs/dev-tools-design.md](docs/dev-tools-design.md).
 
+### Classification banner
+
+A persistent **top + bottom on-screen classification banner** is included (default
+**UNCLASSIFIED**). This is *not* a STIG control — it's a classified-system / accreditation
+requirement. **To change the level, edit `group_vars/all.yml`:**
+
+- `classification_banner_level` — `UNCLASSIFIED` | `CUI` | `FOUO` | `CONFIDENTIAL` | `SECRET` |
+  `"TOP SECRET"` | `SCI`. The level text and DoD-standard colors are defined in
+  `roles/classification_banner/files/classification-banner.conf` (add your own section there for
+  custom markings).
+- `classification_banner_enabled` — set `false` to omit the banner entirely.
+- `classification_banner_force_xorg` — the docked banner needs an **Xorg** session; `true` (default)
+  forces GDM to Xorg, since Wayland ignores the dock/strut hints.
+
+Change the value, commit/push, and re-run the build on the machine (it's idempotent — see Notes).
+
 ---
 
 ## Known issues & exceptions
@@ -159,3 +175,8 @@ ubuntu-stig-build/
   re-run the scan for accurate post-reboot results.
 - Validate on a throwaway VM before imaging production hardware — the Lockdown role can make
   breaking changes.
+- **Re-running is safe and idempotent.** After changing a setting or adding software, push and
+  re-run the same `stig-build` command on the machine — Ansible applies only the *delta*
+  (tasks already in the desired state report `ok` and do nothing; only changed/new tasks act).
+  Use the detached run method (hardening restarts GDM), and reboot afterward for settings that
+  need it (mounts, PAM, GRUB, the Xorg/Wayland switch).

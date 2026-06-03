@@ -101,3 +101,19 @@ dotnet_sdk_package: dotnet-sdk-8.0      # .NET SDK from the Ubuntu archive (LTS)
 
 # PowerShell LTS — installed in base_packages as a pinned .deb (PowerStrux backend).
 powershell_version: "7.4.16"
+
+# =============================================================================
+# CLASSIFICATION BANNER (persistent top + bottom on-screen bars)
+# =============================================================================
+# NOT a STIG requirement -- this is a classified-system / accreditation control.
+# To CHANGE THE LEVEL: edit classification_banner_level below, push, and re-run
+# the build (it's idempotent). Valid levels are the section names in
+# roles/classification_banner/files/classification-banner.conf:
+#   UNCLASSIFIED | CUI | FOUO | CONFIDENTIAL | SECRET | "TOP SECRET" | SCI
+classification_banner_enabled: true
+classification_banner_level: "UNCLASSIFIED"
+# A docked top/bottom banner needs an Xorg login session -- Wayland (Ubuntu's
+# default) ignores the X11 dock/strut hints, so the bars won't pin. true => the
+# build forces GDM to Xorg. Set false only if you switch to a Wayland-native
+# (GNOME Shell extension) approach.
+classification_banner_force_xorg: true

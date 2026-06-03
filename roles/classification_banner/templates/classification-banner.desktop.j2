@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Classification Banner
+Comment=Displays the system security classification level
+# Level is set from group_vars (classification_banner_level). GDK_BACKEND=x11
+# keeps the banner on the X server so the dock/strut hints work.
+Exec=env GDK_BACKEND=x11 /usr/local/bin/classification-banner "{{ classification_banner_level }}"
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+StartupNotify=false

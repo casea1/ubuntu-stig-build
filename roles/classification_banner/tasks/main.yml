@@ -1,0 +1,43 @@
+---
+# Persistent on-screen security-classification banner (top + bottom bars).
+# This is NOT a STIG requirement — it's a classified-system/accreditation
+# control. Runs before hardening (it installs packages + a GDM session setting).
+
+- name: Install GTK3 Python bindings for the classification banner
+  ansible.builtin.apt:
+    name:
+      - python3-gi
+      - gir1.2-gtk-3.0
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install the classification banner script
+  ansible.builtin.copy:
+    src: classification-banner
+    dest: /usr/local/bin/classification-banner
+    mode: "0755"
+
+- name: Install the classification level definitions
+  ansible.builtin.copy:
+    src: classification-banner.conf
+    dest: /etc/classification-banner.conf
+    mode: "0644"
+
+- name: Install the system-wide autostart entry (level = {{ classification_banner_level }})
+  ansible.builtin.template:
+    src: classification-banner.desktop.j2
+    dest: /etc/xdg/autostart/classification-banner.desktop
+    mode: "0644"
+
+# A docked top/bottom banner needs an Xorg session; Wayland (Ubuntu's default)
+# ignores the X11 dock/strut hints, so the bars won't pin. Force GDM to Xorg.
+- name: Force the GDM login session to Xorg (required for the docked banner)
+  ansible.builtin.lineinfile:
+    path: /etc/gdm3/custom.conf
+    regexp: '^#?\s*WaylandEnable\s*='
+    line: 'WaylandEnable=false'
+    insertafter: '^\[daemon\]'
+    create: true
+    mode: "0644"
+  when: classification_banner_force_xorg | default(true)
