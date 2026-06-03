@@ -93,3 +93,30 @@
   ansible.builtin.apt:
     deb: "/tmp/powershell_{{ powershell_version }}.deb"
     state: present
+
+# --- Network provisioning services (PXE/imaging) ----------------------------
+# tftpd-hpa, isc-dhcp-server, dnsmasq — installed per requirement. These are
+# server daemons the SCAP/STIG scan WILL flag (TFTP especially is a classic
+# "must not be installed" control); document them as mission-need exceptions
+# during triage. The STIG role itself does not remove them.
+# Installed but left DISABLED + STOPPED so the box has no unconfigured listening
+# services. Enable them deliberately once configured (note: dnsmasq binds :53
+# and will collide with systemd-resolved until you reconfigure one of them).
+- name: Install network provisioning services (TFTP/DHCP/DNS)
+  ansible.builtin.apt:
+    name:
+      - tftpd-hpa
+      - isc-dhcp-server
+      - dnsmasq
+    state: present
+
+- name: Leave provisioning services disabled + stopped until deliberately configured
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - tftpd-hpa
+    - isc-dhcp-server
+    - dnsmasq
+  failed_when: false
