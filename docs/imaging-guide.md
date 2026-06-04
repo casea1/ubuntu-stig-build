@@ -242,8 +242,9 @@ install passphrase as recovery** (never replaces it — see §3.2). Without it, 
 (no failure). **Test on one box first** (manual equivalent: `sudo clevis luks bind -d /dev/<part> tpm2
 '{"pcr_bank":"sha256","pcr_ids":"7"}'` then `sudo update-initramfs -u -k all`). A firmware/Secure-Boot/shim
 change that alters the PCRs falls back to the passphrase prompt (not a brick) — re-bind if needed. Security
-note: TPM-only / no-PIN auto-unlock is a deliberate data-at-rest deviation (§10), and the shared passphrase
-sits on each (encrypted) box in that file — remove it post-bind if you want to minimize exposure.
+note: TPM-only / no-PIN auto-unlock is a deliberate data-at-rest deviation (§10). Each box uses its **own**
+passphrase, and the role **auto-deletes** `luks_passphrase_file` after a successful bind
+(`luks_passphrase_purge_after_bind: true`), so it doesn't linger on the disk — re-drop it only to re-bind.
 
 ### 9.5 AIDE builds itself after the first boot
 AIDE's database is **no longer built during the run** (hashing the whole disk would stall the build).

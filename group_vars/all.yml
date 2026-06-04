@@ -383,6 +383,10 @@ luks_passphrase: ""
 # late-commands / write_files, or dropped manually). Read once for the bind; never
 # in git. See OPERATIONS.md "TPM2 LUKS auto-unlock".
 luks_passphrase_file: /etc/luks/initial-passphrase
+# Delete luks_passphrase_file right after a successful TPM bind so the per-box
+# passphrase doesn't persist on the auto-unlocking disk. Re-drop the file only if
+# you need to re-bind (e.g. after a firmware/PCR change). Set false to keep it.
+luks_passphrase_purge_after_bind: true
 # LUKS partition. Empty = auto-detect the single crypto_LUKS device. Set
 # explicitly (e.g. /dev/nvme0n1p3) if the box has more than one LUKS volume.
 luks_device: ""

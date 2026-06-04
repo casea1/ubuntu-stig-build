@@ -151,6 +151,21 @@
       when: "'tpm2' not in (tpm_clevis_list.stdout | default(''))"
       notify: rebuild initramfs
 
+    - name: "TPM | Purge the on-box passphrase file after a successful bind"
+      # The passphrase is only needed once, to authorize the new keyslot. Remove
+      # it after a FRESH bind so the (per-box) passphrase doesn't linger on the
+      # auto-unlocking disk. Fires only when the bind actually ran, so re-runs on
+      # an already-bound box don't touch anything. Re-drop the file only if you
+      # ever need to re-bind. Set luks_passphrase_purge_after_bind: false to keep
+      # it (e.g. for easy re-binds on a lab box).
+      ansible.builtin.file:
+        path: "{{ luks_passphrase_file }}"
+        state: absent
+      when:
+        - luks_passphrase_purge_after_bind | default(true) | bool
+        - tpm_clevis_bind is defined and (tpm_clevis_bind is changed)
+        - (luks_passphrase_file | default('')) | length > 0
+
     - name: "TPM | Report binding state (secret redacted)"
       ansible.builtin.debug:
         msg: >-

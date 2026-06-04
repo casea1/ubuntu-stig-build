@@ -259,10 +259,13 @@ late-commands:
   - printf '%s' 'YOUR-INSTALL-PASSPHRASE' > /target/etc/luks/initial-passphrase
   - chmod 600 /target/etc/luks/initial-passphrase
 ```
-The role consumes it once to authorize the TPM keyslot (it's never needed at boot afterwards). For a
-**private/offline** repo only you may instead set an inline/vaulted `luks_passphrase` — but **never**
-paste a secret into a public repo; the encrypted blob is permanent in git history. The build won't
-fail without the passphrase — it just skips the bind (and says so) until the file is present.
+The role consumes it once to authorize the TPM keyslot (never needed at boot afterwards) and then
+**deletes the file** by default (`luks_passphrase_purge_after_bind: true`), so the per-box passphrase
+doesn't linger on the auto-unlocking disk — re-drop it only if you need to re-bind. Each box uses its
+**own** passphrase (the seed writes that box's value), so a stolen booted box can only leak its own.
+For a **private/offline** repo only you may instead set an inline/vaulted `luks_passphrase` — but
+**never** paste a secret into a public repo; the encrypted blob is permanent in git history. The build
+won't fail without the passphrase — it just skips the bind (and says so) until the file is present.
 
 The role installs clevis, binds a **new** keyslot to **PCR 7** (Secure Boot state — stable across
 *signed* kernel updates), and rebuilds the initramfs. Your **original passphrase keyslot is kept
