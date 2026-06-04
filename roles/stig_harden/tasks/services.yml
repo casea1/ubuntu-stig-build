@@ -280,9 +280,15 @@
 
 - name: "RSYSLOG | Drop-in: route auth/authpriv/daemon (remote-access events) to logs"
   # auth,authpriv carry sshd / login / su / sudo authentication; daemon carries
-  # the service-manager events SSG's AND criteria also require. validate runs
-  # rsyslogd in config-check mode so a typo can't take down logging. All three
+  # the service-manager events SSG's AND criteria also require. All three
   # selectors are present so the rule's auth-AND-authpriv-AND-daemon test passes.
+  #
+  # NO validate: here on purpose. The content is three FIXED selector lines (no
+  # templating), so it cannot be syntactically invalid. And `rsyslogd -N1 -f %s`
+  # against Ansible's staged temp file FAILS with "Permission denied": rsyslogd
+  # drops privileges to the 'syslog' user / is AppArmor-confined and cannot read
+  # /root/.ansible/tmp/... (unlike sshd, which validates fine). The
+  # restart-rsyslog handler reloads the service after this file lands.
   ansible.builtin.copy:
     dest: /etc/rsyslog.d/50-stig-remote-access.conf
     mode: "0640"
@@ -296,5 +302,4 @@
       auth.*       /var/log/secure
       authpriv.*   /var/log/secure
       daemon.*     /var/log/messages
-    validate: "rsyslogd -N1 -f %s"
   notify: restart rsyslog

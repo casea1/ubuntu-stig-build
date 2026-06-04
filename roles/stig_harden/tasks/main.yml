@@ -63,7 +63,7 @@
 # SSG-correct GVariant spellings, LOCKS all of them, and removes the old
 # keyfiles. Do not re-add the inline block.
 - name: Apply SSG/ComplianceAsCode STIG gap remediation (desktop-safe, idempotent)
-  ansible.builtin.include_tasks: "{{ item }}"
+  ansible.builtin.include_tasks: "{{ gap_file }}"
   loop:
     - audit.yml        # auditd rules + retention + dispatcher plugins
     - pam.yml          # faillock lockout, faildelay, hashing rounds, no-empty-pw
@@ -73,3 +73,8 @@
     - services.yml     # chrony (NTP), ufw firewall, AIDE, rsyslog monitoring
     - filesystem.yml   # lib/var-log/journal perms, dmesg_restrict, RTC=UTC
     - grub.yml         # GRUB2 bootloader password (BIOS+UEFI; self-guarded)
+  loop_control:
+    # Use gap_file, NOT the default 'item': the included files run their own
+    # `loop:` tasks (also using 'item'), and a shared 'item' triggers Ansible's
+    # "loop variable 'item' is already in use" warning.
+    loop_var: gap_file
