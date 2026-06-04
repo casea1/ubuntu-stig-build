@@ -4,6 +4,9 @@ Ansible-pull repo to provision and DoD-STIG-harden an **Ubuntu 24.04 Desktop (GN
 machine, then produce an OpenSCAP compliance report — all in one run, while the box
 still has internet, before it's moved to an air-gapped network.
 
+> For the full step-by-step lifecycle (Ubuntu install → run → post-install checklist), see the
+> **[Imaging Guide](docs/imaging-guide.md)**. This file is the subsystem-by-subsystem reference.
+
 ## What it does, in order
 
 1. **base_packages** — ClamAV, Wireshark/tshark, Python3 (+pip/venv), PuTTY (GUI) and
@@ -54,8 +57,9 @@ Or just run `bootstrap.sh` (below), which does all of that.
 - **Order is load-bearing.** Packages first, harden second, scan last. Hardening sets
   `noexec` on /tmp, tightens umask, and locks down PAM — doing it before installs can
   break pip and apt.
-- **Pin the role version.** `requirements.yml` currently tracks `main`. Pin to a tagged
-  release so every machine you image is identical, then bump deliberately.
+- **The role/content versions are pinned.** `requirements.yml` pins `UBUNTU24-STIG` to `v1.3.0`
+  and the SSG datastream to `0.1.81`, so every machine you image is identical. Bump deliberately
+  and re-test.
 - **Collect reports before air-gapping.** `/var/log/stig-scan/*.html` and the
   `stig-viewer-*.xml` are your audit artifacts. Grab them while the box is online.
 - **High-impact controls are gated.** `ubtu24stig_disruption_high: false` makes the

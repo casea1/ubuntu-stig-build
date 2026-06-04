@@ -113,7 +113,9 @@ systemctl status stig-build        # active (exited) = success
 When it finishes, **collect the reports from `/var/log/stig-scan/` while still online**, then
 reboot. The machine comes up to a graphical login showing the DCSA banner.
 
-See **[OPERATIONS.md](OPERATIONS.md)** for the full imaging runbook and gotchas.
+**New to this?** Start with the **[Imaging Guide](docs/imaging-guide.md)** — the complete end-to-end
+runbook (Ubuntu install → setup → run → post-install checklist → troubleshooting). See
+**[OPERATIONS.md](OPERATIONS.md)** for subsystem deep-dives and gotchas.
 
 ---
 
