@@ -163,27 +163,62 @@
     update_cache: true
     cache_valid_time: 3600
 
-- name: "AIDE | Initialize the integrity database ONCE (idempotent via creates:)"
-  # aideinit (Ubuntu wrapper) reads /etc/aide/aide.conf, writes the new DB to
-  # /var/lib/aide/aide.db.new, and -y -f auto-confirms + moves it into place as
-  # /var/lib/aide/aide.db. creates: makes this skip entirely once the DB
-  # exists, so we never re-hash the disk or churn on subsequent pulls.
-  ansible.builtin.command:
-    cmd: aideinit -y -f
-    creates: /var/lib/aide/aide.db
-  # Long-running on a freshly imaged box; bump if your gold image is large.
-  # (Default Ansible command has no timeout; documented here for the integrator.)
-  changed_when: true
+# AIDE's first `aide --init` hashes the WHOLE filesystem. On this image that
+# includes the big engineering trees (/opt/eng-venv, /var/lib/docker, the .NET
+# SDK, VS Code), so a SYNCHRONOUS init can run for 30-90+ minutes -- it blocks
+# the entire pipeline before the scan and looks exactly like the build has hung.
+# (This is what stalls `ansible-pull` at the `aideinit -y -f` line.)
+#
+# Fix: DECOUPLE the init from the build. We deploy a one-shot systemd service +
+# timer that builds the DB a few minutes after the NEXT boot, at idle CPU/IO
+# priority, in the background. The build no longer blocks on AIDE at all.
+#
+# Trade-off: /var/lib/aide/aide.db does not exist during the build-time scan, so
+# the SSG "Build and Test AIDE Database" rule shows as a finding on the FIRST
+# scan. It passes on any re-scan once the DB has built (a few minutes after the
+# post-build reboot). The daily check task below is unchanged.
+- name: "AIDE | Deploy the one-time DB-init service (builds aide.db once, post-boot, idle priority)"
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/aide-init.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=One-time AIDE integrity database initialization (STIG)
+      # Only build the DB if it does not already exist -> runs exactly once, and
+      # is a no-op on every later boot once /var/lib/aide/aide.db is present.
+      ConditionPathExists=!/var/lib/aide/aide.db
+      After=multi-user.target
+      [Service]
+      Type=oneshot
+      Nice=19
+      IOSchedulingClass=idle
+      # aideinit regenerates the config, writes aide.db.new, and -y -f moves it
+      # into place as /var/lib/aide/aide.db.
+      ExecStart=/usr/sbin/aideinit -y -f
 
-- name: "AIDE | Ensure the live DB is in place if aideinit left only aide.db.new"
-  # Belt-and-suspenders: on some Ubuntu builds aideinit writes aide.db.new but
-  # leaves the move to the operator. If the live DB is missing but .new exists,
-  # promote it. Guarded by creates: so this is also a one-time no-op.
-  ansible.builtin.command:
-    cmd: mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
-    creates: /var/lib/aide/aide.db
-    removes: /var/lib/aide/aide.db.new
-  changed_when: true
+- name: "AIDE | Deploy the timer that fires the init shortly after boot"
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/aide-init.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Run the one-time AIDE init shortly after boot (STIG)
+      [Timer]
+      OnBootSec=5min
+      [Install]
+      WantedBy=timers.target
+
+- name: "AIDE | Enable the init timer (DB builds in the background after the next boot)"
+  # enabled (not started) on purpose: it activates on the NEXT boot, so the init
+  # never runs during this build. daemon_reload picks up the new unit files.
+  ansible.builtin.systemd_service:
+    name: aide-init.timer
+    enabled: true
+    daemon_reload: true
 
 - name: "AIDE | Schedule a DAILY integrity check (satisfies aide_periodic_cron_checking)"
   # SSG's Ubuntu OVAL greps /etc/cron.daily/* for a line starting with
