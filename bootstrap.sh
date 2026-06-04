@@ -3,7 +3,9 @@
 # Run once, while the machine has internet:
 #   curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo bash
 #
-# Edit REPO_URL before baking into your image.
+# It prompts (hidden) for the disk encryption password to enable TPM auto-unlock,
+# then launches the harden+scan build in the background. Press Enter at the prompt
+# to skip TPM unlock. Edit REPO_URL before baking into your image.
 
 set -euo pipefail
 
@@ -13,6 +15,33 @@ BRANCH="main"
 if [[ $EUID -ne 0 ]]; then
   echo "Run as root (sudo)." >&2
   exit 1
+fi
+
+# --- TPM auto-unlock: ask for the disk passphrase ONCE, up front --------------
+# The build runs detached (below) and can't prompt, so we collect the LUKS
+# passphrase HERE -- interactively, in your terminal -- and drop it where the
+# tpm_luks_unlock role reads it. The role uses it once to bind the TPM, then
+# deletes it. Auto-skipped if: there is no encrypted disk, the file already
+# exists (e.g. written by an autoinstall seed), the disk is already TPM-bound, or
+# there's no terminal to prompt on (headless). Press Enter to skip.
+LUKS_DEV="$(blkid -t TYPE=crypto_LUKS -o device 2>/dev/null | head -1 || true)"
+LUKS_PASS_FILE="/etc/luks/initial-passphrase"
+if [[ -n "${LUKS_DEV}" && ! -s "${LUKS_PASS_FILE}" && -r /dev/tty ]] \
+   && ! cryptsetup luksDump "${LUKS_DEV}" 2>/dev/null | grep -qi clevis; then
+  printf '\n[?] Enable TPM auto-unlock so the disk opens at boot with NO password?\n' > /dev/tty
+  printf '    Type this box'\''s disk encryption password (hidden), or press Enter to skip: ' > /dev/tty
+  LUKS_PASS=""
+  read -rs LUKS_PASS < /dev/tty || true
+  printf '\n' > /dev/tty
+  if [[ -n "${LUKS_PASS}" ]]; then
+    install -d -m 700 /etc/luks
+    printf '%s' "${LUKS_PASS}" > "${LUKS_PASS_FILE}"
+    chmod 600 "${LUKS_PASS_FILE}"
+    echo "[*] Passphrase saved — the build will bind the TPM, then delete the file."
+  else
+    echo "[*] Skipping TPM auto-unlock (enable later per OPERATIONS.md)."
+  fi
+  unset LUKS_PASS
 fi
 
 echo "[*] Installing Ansible + git + curl..."

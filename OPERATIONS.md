@@ -46,7 +46,9 @@ sudo systemd-run --unit=stig-build --collect \
 # Watch:  journalctl -u stig-build -f      Result: systemctl status stig-build
 ```
 
-Or just run `bootstrap.sh` (below), which does all of that.
+Or just run `bootstrap.sh` (below), which does all of that — and also **prompts (hidden) for the disk
+encryption password** to enable TPM auto-unlock before launching the detached build (press Enter to skip;
+it auto-skips on an unencrypted or already-bound disk). See *TPM2 LUKS auto-unlock*.
 
 ## Critical gotchas
 

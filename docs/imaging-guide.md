@@ -131,10 +131,12 @@ On the target box, online:
 curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo bash
 ```
 
-`bootstrap.sh`, in order: installs `ansible git curl`; downloads `requirements.yml` and runs
-`ansible-galaxy install -r` (which installs **both** the pinned `UBUNTU24-STIG` role **v1.3.0** **and** the
-`community.general` + `ansible.posix` collections); then launches the build **detached** as a transient
-systemd unit `stig-build` via `systemd-run`.
+It first **prompts (hidden) for the disk encryption password** to enable TPM auto-unlock — type it and
+press Enter, or just press Enter to skip. (It auto-skips on a non-encrypted disk, an already-bound box, or
+a headless run.) Then `bootstrap.sh`, in order: installs `ansible git curl`; downloads `requirements.yml`
+and runs `ansible-galaxy install -r` (which installs **both** the pinned `UBUNTU24-STIG` role **v1.3.0**
+**and** the `community.general` + `ansible.posix` collections); then launches the build **detached** as a
+transient systemd unit `stig-build` via `systemd-run`.
 
 > **Why detached:** hardening restarts GDM mid-run, which would kill a foreground job launched from the
 > GUI session. `systemd-run` decouples it so the build survives. The `curl | bash` returns immediately —
@@ -227,9 +229,14 @@ a throwaway VM before a gold image.
 ### 9.4 TPM2 LUKS auto-unlock (on by default, per machine)
 Passphrase-free boot via the TPM. **Secure Boot must be ON** (§3.1). It's **`tpm_luks_enabled: true` by
 default**, but it only binds once it can read the install passphrase — and **the passphrase is never put
-in this public repo**. Supply it **out-of-band** in a root-only file the role reads
-(`luks_passphrase_file`, default `/etc/luks/initial-passphrase`), written by your **private autoinstall
-seed** (which already has it):
+in this public repo**. Two ways to supply it, pick whichever fits your install style:
+
+- **Interactive / manual install (easiest — nothing to remember):** `bootstrap.sh` (the curl command, §5)
+  **prompts you** for the disk password up front, hidden. Just type it. It writes it to the file below for
+  the build, which binds the TPM and then deletes it.
+- **Automated / autoinstall install:** have your **private autoinstall seed** write the passphrase to the
+  same root-only file the role reads (`luks_passphrase_file`, default `/etc/luks/initial-passphrase`) — it
+  already has it:
 ```yaml
 # autoinstall user-data (PRIVATE install media, not this repo):
 late-commands:

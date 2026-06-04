@@ -102,8 +102,9 @@ On the target machine, run:
 curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo bash
 ```
 
-This installs Ansible + the Lockdown role, then runs the full pipeline as a detached systemd
-unit named `stig-build` (detached so the GDM restart during hardening can't kill it). Watch it:
+It first **prompts (hidden) for the disk encryption password** to enable TPM auto-unlock (type it, or
+press Enter to skip), then installs Ansible + the Lockdown role and runs the full pipeline as a detached
+systemd unit named `stig-build` (detached so the GDM restart during hardening can't kill it). Watch it:
 
 ```bash
 journalctl -u stig-build -f
