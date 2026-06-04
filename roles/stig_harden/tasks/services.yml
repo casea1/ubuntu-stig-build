@@ -261,5 +261,5 @@
       auth.*       /var/log/secure
       authpriv.*   /var/log/secure
       daemon.*     /var/log/messages
-  validate: "rsyslogd -N1 -f %s"
+    validate: "rsyslogd -N1 -f %s"
   notify: restart rsyslog

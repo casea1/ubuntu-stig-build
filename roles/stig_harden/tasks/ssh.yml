@@ -104,7 +104,7 @@
       # SSG sshd_enable_warning_banner: present the DoD/DCSA consent banner before
       # authentication. Points at the plain-text /etc/issue.net written above.
       Banner {{ ssh_banner_path }}
-  validate: "/usr/sbin/sshd -t -f %s"
+    validate: "/usr/sbin/sshd -t -f %s"
   notify: restart ssh
   # WHY validate with `sshd -t -f %s`: sshd parses the staged drop-in (as a
   # standalone config) and rejects a syntax error before Ansible installs the
