@@ -4,12 +4,23 @@
   changed_when: true
 
 - name: reload audit rules
-  # Ubuntu's auditd unit sets RefuseManualStop=yes, so `systemctl restart
-  # auditd` is unreliable / fails. The supported way to apply rule and
-  # auditd.conf changes is to re-merge rules.d and load them via augenrules.
-  # This both rebuilds /etc/audit/audit.rules and loads it into the kernel.
+  # augenrules --load re-merges /etc/audit/rules.d/*.rules into
+  # /etc/audit/audit.rules and loads them into the running kernel. (systemctl
+  # restart auditd is NOT used -- the unit sets RefuseManualStop=yes.)
+  #
+  # We MUST NOT let a non-zero exit abort the whole build. augenrules --load
+  # routinely returns rc=1 for non-fatal reasons on a hardened box:
+  #   * the DISA STIG makes the running audit config IMMUTABLE (-e 2, set by the
+  #     lockdown role), so a LIVE reload is refused until the next reboot; and/or
+  #   * a single rule references a privileged binary / watch path not present on
+  #     this machine, which makes auditctl exit 1 even though the rest loaded.
+  # In every case our 99-stig.rules is already written to rules.d and is loaded
+  # correctly at the NEXT BOOT, so failing here would needlessly kill the run
+  # (and skip everything after stig_harden). Tolerate it and let boot apply it.
   ansible.builtin.command: augenrules --load
-  changed_when: true
+  register: stig_audit_reload
+  changed_when: stig_audit_reload.rc == 0
+  failed_when: false
 
 - name: restart ssh
   # Ubuntu's SSH unit is 'ssh' (NOT 'sshd' as on RHEL). state=restarted so the
