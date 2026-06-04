@@ -174,9 +174,17 @@
 
 # ----------------------------------------------------------------------------
 # 2c) common-auth: pam_faillock 'authsucc' clears the tally on a clean login so
-#     legitimate users don't accumulate stale failures. 'sufficient' is safe --
-#     it only runs after an auth deciders already succeeded. Anchor it AFTER the
-#     authfail line we just inserted.
+#     legitimate users don't accumulate stale failures.
+#     CONTROL = [success=1 default=ignore], NOT 'sufficient'. 'sufficient' would
+#     return PAM_SUCCESS and STOP the whole auth stack the instant the password
+#     checks out -- short-circuiting /etc/pam.d/gdm-password's later
+#     `auth optional pam_gnome_keyring.so`, so the GNOME login keyring never
+#     auto-unlocks and apps like VS Code prompt to unlock it on every launch
+#     ("the login keyring did not get unlocked when you logged into your
+#     computer"). [success=1 default=ignore] instead resets the tally and jumps
+#     +1 over pam_deny to pam_permit -- exactly like the stock pam_unix line --
+#     so the stack falls through to gdm-password and the keyring unlocks normally.
+#     Anchor it AFTER the authfail line we just inserted.
 # ----------------------------------------------------------------------------
 - name: PAM | common-auth -- pam_faillock authsucc after the authfail line
   community.general.pamd:
@@ -185,7 +193,7 @@
     control: "[default=die]"
     module_path: pam_faillock.so
     new_type: auth
-    new_control: sufficient
+    new_control: "[success=1 default=ignore]"
     new_module_path: pam_faillock.so
     module_arguments: authsucc
     state: after
