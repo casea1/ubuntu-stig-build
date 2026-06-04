@@ -345,3 +345,33 @@ branding_wallpaper_dest: /usr/share/backgrounds/SHB_Background.jpg
 # STIG "Implement Blank Screensaver" control (documented deviation). Set false to
 # brand only the desktop (then re-enable the blank lock screen in gnome.yml).
 branding_lockscreen_wallpaper: true
+
+# =============================================================================
+# TPM2 LUKS AUTO-UNLOCK (tpm_luks_unlock role) -- OPT-IN, per physical machine
+# =============================================================================
+# Binds a LUKS keyslot to THIS machine's TPM2 (via clevis) so the encrypted disk
+# unlocks at boot with NO passphrase. The install passphrase keyslot is KEPT as
+# recovery and never removed.
+#
+# SECURITY (accepted deviation): TPM-only, no PIN -> a stolen powered-off disk
+# auto-decrypts on this hardware. Only meaningful with **Secure Boot ON** (PCR 7);
+# the role warns if it is off. The binding is sealed to this box's TPM, so this
+# must run on each PHYSICAL machine (the per-machine ansible-pull does) -- it
+# cannot be captured into a cloned gold image.
+tpm_luks_enabled: false           # OFF by default; flip true to bind the TPM
+# Existing install-time LUKS passphrase (same across the fleet). Used ONCE to
+# authorize the new TPM keyslot; never needed at boot afterwards. VAULT IT:
+#   ansible-vault encrypt_string '<the-exact-passphrase>' --name 'luks_passphrase'
+# (vault the EXACT passphrase, no trailing newline) and paste the !vault block here.
+luks_passphrase: "CHANGEME_vault_the_install_LUKS_passphrase"
+# LUKS partition. Empty = auto-detect the single crypto_LUKS device. Set
+# explicitly (e.g. /dev/nvme0n1p3) if the box has more than one LUKS volume.
+luks_device: ""
+# PCR 7 = Secure Boot state: stable across SIGNED kernel updates, so the unlock
+# survives `apt upgrade`. Do NOT add PCRs 0/4/8/9 unless you want to re-bind on
+# every kernel update.
+tpm_luks_pcrs: "7"
+tpm_luks_pcr_bank: "sha256"
+tpm_luks_tpm2_cfg:
+  pcr_bank: "{{ tpm_luks_pcr_bank }}"
+  pcr_ids: "{{ tpm_luks_pcrs }}"

@@ -1,0 +1,131 @@
+---
+# =============================================================================
+# tpm_luks_unlock -- bind a LUKS keyslot to the TPM2 for passphrase-free boot
+# =============================================================================
+# OPT-IN. Does nothing unless `tpm_luks_enabled: true` AND a real (non-CHANGEME)
+# `luks_passphrase` is vaulted in group_vars. The role is gated in local.yml on
+# tpm_luks_enabled, and self-skips again here if the passphrase is unset.
+#
+# WHY clevis (not systemd-cryptenroll): on Ubuntu 24.04 the default
+# initramfs-tools cryptroot does NOT honour `tpm2-device=` in /etc/crypttab, so a
+# systemd-cryptenroll TPM keyslot would enroll but never unlock at boot. clevis
+# ships an initramfs hook (clevis-initramfs) that DOES auto-unlock in Ubuntu's
+# initramfs, so it is the reliable path.
+#
+# WHAT it does: adds a NEW LUKS keyslot sealed to this machine's TPM2 against
+# PCR 7 (Secure Boot state). The ORIGINAL passphrase keyslot is KEPT as recovery
+# and is never removed -- if the TPM/PCRs change (firmware/Secure Boot/shim
+# update) the box falls back to prompting for the passphrase instead of bricking.
+#
+# SECURITY (accepted deviation): TPM-only, no PIN -> a powered-off stolen disk
+# auto-decrypts on this hardware. Only meaningful with Secure Boot ON (PCR 7);
+# the role warns if Secure Boot is off. Documented in OPERATIONS.md POA&M.
+#
+# PER PHYSICAL MACHINE: the keyslot is sealed to THIS box's TPM. It cannot be
+# captured into a cloned gold image -- this role must execute on each physical
+# machine (which the per-machine ansible-pull does). Takes effect on next boot;
+# no reboot is triggered here (the post-build reboot applies it).
+# =============================================================================
+
+- name: "TPM | Determine whether a real LUKS passphrase is configured"
+  ansible.builtin.set_fact:
+    tpm_luks_ready: >-
+      {{ (luks_passphrase is defined)
+         and (luks_passphrase | string | length > 0)
+         and ('CHANGEME' not in (luks_passphrase | string)) }}
+
+- name: "TPM | Notice + skip when no real passphrase is vaulted"
+  ansible.builtin.debug:
+    msg: >-
+      tpm_luks_unlock: tpm_luks_enabled is true but luks_passphrase is still the
+      placeholder. Vault the install passphrase
+      (ansible-vault encrypt_string '<passphrase>' --name luks_passphrase) to bind
+      the LUKS volume to the TPM. Boot keeps prompting until then.
+  when: not tpm_luks_ready
+
+- name: "TPM | Enable TPM2 LUKS auto-unlock (clevis)"
+  when: tpm_luks_ready
+  block:
+    - name: "TPM | Install clevis + TPM2 tooling"
+      ansible.builtin.apt:
+        name:
+          - clevis            # core
+          - clevis-luks       # LUKS binding (clevis luks bind/list/unlock)
+          - clevis-initramfs  # the initramfs hook that auto-unlocks at boot
+          - tpm2-tools        # runtime support for the tpm2 pin
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: "TPM | Read Secure Boot state (PCR 7 is only meaningful with SB on)"
+      ansible.builtin.command: mokutil --sb-state
+      register: tpm_sb_state
+      changed_when: false
+      failed_when: false
+
+    - name: "TPM | WARN if Secure Boot is OFF (TPM-only unlock then offers little protection)"
+      ansible.builtin.debug:
+        msg: >-
+          SECURE BOOT APPEARS OFF ({{ (tpm_sb_state.stdout | default('unknown')) | trim }}).
+          A PCR-7 TPM binding will still auto-unlock, but provides little tamper
+          protection without Secure Boot. Enable Secure Boot in firmware to make
+          this meaningful.
+      when: "'enabled' not in ((tpm_sb_state.stdout | default('')) | lower)"
+
+    - name: "TPM | Auto-detect the LUKS device when luks_device is unset"
+      ansible.builtin.shell: set -o pipefail; blkid -t TYPE=crypto_LUKS -o device | head -1
+      args:
+        executable: /bin/bash
+      register: tpm_luks_detect
+      changed_when: false
+      when: (luks_device | default('')) | length == 0
+
+    - name: "TPM | Resolve the LUKS device path"
+      ansible.builtin.set_fact:
+        tpm_luks_dev: >-
+          {{ luks_device
+             if ((luks_device | default('')) | length > 0)
+             else (tpm_luks_detect.stdout | default('') | trim) }}
+
+    - name: "TPM | Fail clearly if no LUKS device could be determined"
+      ansible.builtin.fail:
+        msg: >-
+          No crypto_LUKS device found and luks_device is not set. Set luks_device
+          in group_vars (e.g. /dev/nvme0n1p3) and re-run.
+      when: (tpm_luks_dev | trim) | length == 0
+
+    - name: "TPM | Check for an existing clevis TPM2 binding (idempotency)"
+      ansible.builtin.command: "clevis luks list -d {{ tpm_luks_dev | trim }}"
+      register: tpm_clevis_list
+      changed_when: false
+      failed_when: false
+
+    - name: "TPM | Bind a LUKS keyslot to the TPM2 (PCR {{ tpm_luks_pcrs }}); keeps passphrase as recovery"
+      ansible.builtin.command:
+        argv:
+          - clevis
+          - luks
+          - bind
+          - "-y"                                   # auto-confirm the tpm2 prompts
+          - "-k"
+          - "-"                                    # read the existing passphrase from stdin
+          - "-d"
+          - "{{ tpm_luks_dev | trim }}"
+          - tpm2
+          - "{{ tpm_luks_tpm2_cfg | to_json }}"
+        stdin: "{{ luks_passphrase }}"
+        stdin_add_newline: false                   # match the interactive passphrase (no trailing LF)
+      no_log: true                                  # the LUKS passphrase passes via stdin
+      register: tpm_clevis_bind
+      changed_when: true                             # only runs when no tpm2 slot exists -> always a real change
+      when: "'tpm2' not in (tpm_clevis_list.stdout | default(''))"
+      notify: rebuild initramfs
+
+    - name: "TPM | Report binding state (secret redacted)"
+      ansible.builtin.debug:
+        msg: >-
+          TPM2 LUKS binding on {{ tpm_luks_dev | trim }}:
+          {{ 'already present (no change)'
+             if ('tpm2' in (tpm_clevis_list.stdout | default('')))
+             else 'created -- initramfs will be rebuilt; auto-unlock applies on next boot' }}.
+          The install passphrase keyslot is retained for recovery.

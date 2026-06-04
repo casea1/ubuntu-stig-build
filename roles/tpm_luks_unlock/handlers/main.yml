@@ -1,0 +1,7 @@
+---
+- name: rebuild initramfs
+  # Rebuild every installed kernel's initramfs so the clevis-initramfs auto-unlock
+  # hook (and the new TPM-bound keyslot reference) are baked in. Takes effect on
+  # the next boot; the post-build reboot applies it. No reboot is forced here.
+  ansible.builtin.command: update-initramfs -u -k all
+  changed_when: true

@@ -148,6 +148,10 @@ doesn't have. Document each as a POA&M for your assessor:
 - **USB storage restricted to the `dta` group** (not blanket-disabled) — a deliberate, more
   granular control than the STIG's "disable USB mass storage." If your benchmark strictly
   requires USB *disabled*, document this group-based allowance as the exception.
+- **TPM-only LUKS auto-unlock (opt-in, `tpm_luks_enabled`)** — when enabled, the disk
+  auto-decrypts via the TPM with no boot secret (PCR 7 / Secure Boot). A deliberate data-at-rest
+  deviation accepted for operational need, mitigated only by Secure Boot; the install passphrase
+  is retained as a recovery keyslot. See *TPM2 LUKS auto-unlock* below.
 
 ### Full-disk encryption at install time (autoinstall)
 
@@ -224,6 +228,35 @@ blank-screensaver control (see POA&M above). The **GDM login screen** is best-ef
 Ubuntu's greeter usually renders its themed background and ignores the dconf key; a guaranteed
 login JPG needs a fragile `gnome-shell` gresource patch that is intentionally not done. Flip
 `branding_lockscreen_wallpaper: false` to brand only the desktop and keep the STIG blank lock screen.
+
+## TPM2 LUKS auto-unlock (opt-in)
+
+`tpm_luks_unlock` binds a keyslot of the install-time LUKS volume to the machine's **TPM2** (via
+`clevis` — the path Ubuntu 24.04's stock initramfs auto-unlocks reliably; `systemd-cryptenroll`'s
+`tpm2-device=` is *not* honoured by Ubuntu's default initramfs) so the disk unlocks at boot with
+**no passphrase**. It is **off by default** and self-skips unless you both:
+
+1. set `tpm_luks_enabled: true`, and
+2. replace the `luks_passphrase` placeholder with the vaulted install passphrase:
+   ```bash
+   ansible-vault encrypt_string '<the-exact-install-passphrase>' --name 'luks_passphrase'
+   ```
+
+The role installs clevis, binds a **new** keyslot to **PCR 7** (Secure Boot state — stable across
+*signed* kernel updates), and rebuilds the initramfs. Your **original passphrase keyslot is kept
+as recovery** and is never removed.
+
+**Read before enabling fleet-wide:**
+- **Per physical machine.** The keyslot is sealed to *that* box's TPM; it cannot be baked into a
+  cloned gold image — the role must run on each machine (the per-machine ansible-pull does).
+- **Secure Boot must be ON** or PCR 7 is meaningless (the role warns if off). TPM-only / no-PIN is
+  a deliberate data-at-rest deviation: a stolen powered-off disk auto-decrypts on its own hardware.
+- **Test on one box first** — TPM/PCR behaviour is hardware-specific, and the non-interactive bind
+  (passphrase via stdin) should be confirmed once before fleet rollout. Manual equivalent:
+  `sudo clevis luks bind -d /dev/<part> tpm2 '{"pcr_bank":"sha256","pcr_ids":"7"}'` then
+  `sudo update-initramfs -u -k all`.
+- **Recovery:** a firmware/Secure-Boot/shim update that changes the PCRs makes boot fall back to the
+  passphrase prompt (not a brick). Re-bind with `clevis luks unbind` + `clevis luks bind` if needed.
 
 ## Windows servers
 

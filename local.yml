@@ -19,4 +19,6 @@
       when: classification_banner_enabled | default(false)
     - role: stig_harden      # Ansible Lockdown Ubuntu 24.04 STIG role + desktop fixups
     - role: desktop_branding # system-wide wallpaper (desktop + lock screen), runs after STIG
+    - role: tpm_luks_unlock  # OPT-IN: bind LUKS to the TPM2 for passphrase-free boot (per machine)
+      when: tpm_luks_enabled | default(false)
     - role: scap_scan        # OpenSCAP eval -> HTML/ARF report (run while online)
