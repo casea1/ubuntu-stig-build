@@ -1,0 +1,172 @@
+---
+# =============================================================================
+# local_accounts -- org users, access groups, group-shared folders, USB policy
+# =============================================================================
+# Creates the standing local accounts and the access groups (dta/audit/sentry),
+# the two group-shared directories (with POSIX ACLs so sharing survives the STIG
+# umask 077), and the USB-storage access control that limits removable media to
+# the 'dta' group.
+#
+# Accounts are created with a LOCKED password: they exist but cannot be logged
+# into until an admin sets a password per-machine at deploy time
+# (`sudo passwd <user>`). A locked account ('!') is NOT an empty password, so it
+# satisfies the STIG no-empty-password control. See OPERATIONS.md.
+#
+# Runs after app_config (services up) and before stig_harden, so the accounts
+# exist when PAM/faillock hardening is applied. All tasks are idempotent.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# 0) Packages: 'acl' provides setfacl/getfacl for the shared-folder default
+#    ACLs below. Idempotent no-op if already present.
+# ---------------------------------------------------------------------------
+- name: ACCOUNTS | Ensure 'acl' is installed (POSIX ACLs for shared folders)
+  ansible.builtin.apt:
+    name: acl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# ---------------------------------------------------------------------------
+# 1) GROUPS. Created first so user creation can reference them as supplementary
+#    groups. Names come from group_vars (lowercase by Linux convention).
+# ---------------------------------------------------------------------------
+- name: ACCOUNTS | Ensure access groups exist (dta / audit / sentry)
+  ansible.builtin.group:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ local_groups }}"
+
+# ---------------------------------------------------------------------------
+# 2) USERS. Each account: own primary group (implicit), /bin/bash, a home dir,
+#    and supplementary groups set DECLARATIVELY to exactly item.groups
+#    (append:false -> the listed set is authoritative; a re-run re-asserts it).
+#    password '!' + update_password:on_create => created locked, and a password
+#    an admin sets later with `passwd` is NOT clobbered on subsequent runs.
+# ---------------------------------------------------------------------------
+- name: ACCOUNTS | Create local accounts (locked password; set per-machine at deploy)
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    shell: /bin/bash
+    create_home: true
+    groups: "{{ item.groups | default([]) }}"
+    append: false
+    password: "!"               # locked: account exists, no valid password yet
+    update_password: on_create  # never re-lock a password an admin sets later
+    state: present
+  loop: "{{ local_users }}"
+  loop_control:
+    label: "{{ item.name }} (groups: {{ item.groups | default([]) | join(',') }})"
+
+# ---------------------------------------------------------------------------
+# 3) GROUP-SHARED FOLDERS.
+#    mode 2770 = setgid (new entries inherit the dir's group) + rwx for
+#    owner(root)+group, nothing for others ("deny everyone else").
+#    BUT the STIG umask is 077, which would strip group bits off NEW files even
+#    in a setgid dir -> group members couldn't read each other's files. The
+#    default POSIX ACL below fixes that: when a directory carries a default ACL,
+#    new files take their permissions from it (the umask is bypassed), so group
+#    members always get rwx on everything created inside.
+# ---------------------------------------------------------------------------
+- name: ACCOUNTS | Create group-shared directories (setgid, others denied)
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop: "{{ local_shared_dirs }}"
+  loop_control:
+    label: "{{ item.path }} (root:{{ item.group }} {{ item.mode }})"
+
+- name: ACCOUNTS | Grant the group rwx on the shared dir (access ACL)
+  ansible.posix.acl:
+    path: "{{ item.path }}"
+    entity: "{{ item.group }}"
+    etype: group
+    permissions: rwx
+    state: present
+  loop: "{{ local_shared_dirs }}"
+  loop_control:
+    label: "{{ item.path }} -> g:{{ item.group }}:rwx"
+
+- name: ACCOUNTS | Make group rwx INHERIT to new files (default ACL beats umask 077)
+  ansible.posix.acl:
+    path: "{{ item.path }}"
+    entity: "{{ item.group }}"
+    etype: group
+    permissions: rwx
+    default: true               # default ACL: applied to entries created inside
+    state: present
+  loop: "{{ local_shared_dirs }}"
+  loop_control:
+    label: "{{ item.path }} -> default g:{{ item.group }}:rwx"
+
+# Setting any default ACL entry forces setfacl to synthesize a complete default
+# ACL; default:other:: is taken from the dir's 'other' mode (000 on 2770), so new
+# files deny everyone outside the group automatically -- no extra task needed.
+
+# ---------------------------------------------------------------------------
+# 4) USB STORAGE -> restricted to the 'dta' group.
+#    Two layers:
+#      a) polkit JS rule: the desktop/udisks2 path (Files, udisksctl). Allows
+#         mount/unmount/eject ONLY for dta members; denies everyone else.
+#      b) udev rule: raw USB block device node -> root:dta 0660, so the
+#         non-desktop path (manual `mount`, `dd`) is also group-gated.
+#    root (e.g. `sudo mount`) bypasses both -> a break-glass path remains.
+# ---------------------------------------------------------------------------
+- name: ACCOUNTS | Ensure polkit rules.d exists
+  ansible.builtin.file:
+    path: /etc/polkit-1/rules.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: ACCOUNTS | polkit -- allow udisks2 (USB) mounting only for the '{{ usb_access_group }}' group
+  ansible.builtin.copy:
+    dest: /etc/polkit-1/rules.d/49-{{ usb_access_group }}-usb.rules
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      // Managed by ansible (local_accounts) -- do not edit by hand.
+      // Restrict removable/USB storage operations (udisks2) to members of the
+      // '{{ usb_access_group }}' group; deny all other local users. polkitd reads
+      // rules.d live, so no service restart is required.
+      polkit.addRule(function(action, subject) {
+          // REMOVABLE-MEDIA (USB) actions only. We deliberately do NOT include
+          // filesystem-mount-system or filesystem-unmount-others: those govern
+          // internal/"system" volumes (e.g. fstab x-udisks-auth entries) and
+          // other users' mounts, and keep their default admin-auth behaviour so
+          // legitimate disk administration is not broken for non-dta admins.
+          var udisks = [
+              "org.freedesktop.udisks2.filesystem-mount",
+              "org.freedesktop.udisks2.eject-media",
+              "org.freedesktop.udisks2.power-off-drive",
+              "org.freedesktop.udisks2.encrypted-unlock"
+          ];
+          if (udisks.indexOf(action.id) !== -1) {
+              // Allow only an ACTIVE, local session of a '{{ usb_access_group }}'
+              // member; deny everyone else. Admins not in '{{ usb_access_group }}'
+              // use `sudo mount` (root bypasses polkit) as the break-glass path.
+              if (subject.isInGroup("{{ usb_access_group }}") && subject.active) {
+                  return polkit.Result.YES;
+              }
+              return polkit.Result.NO;
+          }
+      });
+
+- name: ACCOUNTS | udev -- raw USB block devices owned root:{{ usb_access_group }} 0660
+  ansible.builtin.copy:
+    dest: /etc/udev/rules.d/99-{{ usb_access_group }}-usb.rules
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible (local_accounts) -- do not edit by hand.
+      # Defense-in-depth behind the udisks2 polkit rule: give the raw USB block
+      # device node to root:{{ usb_access_group }} 0660 so only root and
+      # {{ usb_access_group }} members can read/write it directly (mount/dd).
+      ACTION=="add|change", SUBSYSTEM=="block", SUBSYSTEMS=="usb", GROUP="{{ usb_access_group }}", MODE="0660"
+  notify: reload udev

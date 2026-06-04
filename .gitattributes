@@ -6,3 +6,8 @@
 *.sh   text eol=lf
 *.yml  text eol=lf
 *.yaml text eol=lf
+
+# Binary assets -- never apply EOL normalization (would corrupt the wallpaper).
+*.jpg  binary
+*.jpeg binary
+*.png  binary

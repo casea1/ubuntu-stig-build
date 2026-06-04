@@ -12,8 +12,10 @@ still has internet, before it's moved to an air-gapped network.
 2. **app_config** — Starts ClamAV daemon + freshclam updates + a weekly scan timer;
    restricts Wireshark capture to a `wireshark` group (STIG requirement).
 3. **stig_harden** — Runs the `ansible-lockdown/UBUNTU24-STIG` remediation role
-   (CAT I + II by default, CAT III off), plus GNOME/GDM-specific fixups (DoD login
-   banner, idle screen lock) the *server* STIG doesn't cover.
+   (CAT I + II by default, CAT III off), then a set of **SSG gap-remediation task
+   files** (`tasks/*.yml`: audit, pam, sessions, gnome, ssh, services, filesystem,
+   grub) that close the ComplianceAsCode `stig`-profile findings the Lockdown role
+   skips under `disruption_high: false`. See *STIG gap remediation* below.
 4. **scap_scan** — Runs `oscap` against the DISA STIG profile and writes an HTML report
    plus a DISA-STIG-Viewer-importable XML into `/var/log/stig-scan`.
 
@@ -56,10 +58,172 @@ Or just run `bootstrap.sh` (below), which does all of that.
   release so every machine you image is identical, then bump deliberately.
 - **Collect reports before air-gapping.** `/var/log/stig-scan/*.html` and the
   `stig-viewer-*.xml` are your audit artifacts. Grab them while the box is online.
-- **First run interactive.** `ubtu24stig_fullauto: false` lets the role pause on risky
-  changes. Only set `true` for unattended imaging after you trust the result.
+- **High-impact controls are gated.** `ubtu24stig_disruption_high: false` makes the
+  Lockdown role SKIP its most breaking controls (there is no `ubtu24stig_fullauto` var or
+  interactive pause in 1.3.0). The `stig_harden/tasks/*.yml` gap files remediate the SSG
+  findings those skips leave behind; flip `disruption_high: true` only after a clean,
+  validated pass.
 - **Re-scan after air-gapping.** `oscap` works offline too (drop `--fetch-remote-resources`).
   Keep the SSG datastream on the box for periodic re-checks.
+
+## STIG gap remediation (SSG scan findings)
+
+The box is hardened by `ansible-lockdown/UBUNTU24-STIG`, but the **scan grades it with the
+SSG / ComplianceAsCode `stig` profile** — a different project whose rules don't map 1:1 to
+the Lockdown role. With `disruption_high: false` (Lockdown skips its most breaking controls)
+and `cat3: false`, a large set of SSG rules fail out of the box. `stig_harden` therefore
+includes **idempotent, desktop-safe, SSG-rule-targeted** task files
+(`roles/stig_harden/tasks/*.yml`) that run after the Lockdown role and close those gaps:
+
+| File | Closes (SSG rule families) |
+|------|----------------------------|
+| `audit.yml` | auditd syscall/watch rules (DAC, file-deletion, unsuccessful-access, kernel-modules, privileged-cmds, sudoers.d/journal/cron), data-retention actions, dispatcher plugins, rules.d perms |
+| `pam.yml` | faillock lockout (deny/interval/unlock/audit/silent), faildelay, password-hashing rounds, no-empty-password |
+| `sessions.yml` | concurrent-login cap, interactive (`TMOUT`) session timeout |
+| `gnome.yml` | screensaver idle/lock/blank, automount off, Ctrl-Alt-Del off, smartcard-removal lock, GDM login-banner enable — all dconf-locked |
+| `ssh.yml` | `X11Forwarding no`, `PubkeyAuthentication yes`, SSH `/etc/issue.net` banner |
+| `services.yml` | chrony (NTP) + remove timesyncd, ufw enable + rate-limit, AIDE init + daily check, rsyslog remote-access monitoring |
+| `filesystem.yml` | `/lib*` group-owner root, `/var/log` + journal perms, `journalctl` perms, `kernel.dmesg_restrict`, RTC=UTC |
+| `grub.yml` | GRUB2 bootloader password (BIOS + UEFI) — **self-guarded, see below** |
+
+All tunables (lockout counts, timeouts, retention, firewall ports, GRUB superuser/hash) live
+in the **`STIG GAP-REMEDIATION TUNABLES`** section of `group_vars/all.yml`. These files also
+need the `community.general` collection (now pinned in `requirements.yml`).
+
+### Required: set the GRUB bootloader password
+
+`grub.yml` ships a deliberate `CHANGEME` placeholder and **self-skips** until you supply a
+real hash, so a forgotten hash can never brick boot (the two GRUB rules just stay failing).
+To activate it:
+
+```bash
+grub-mkpasswd-pbkdf2          # type the GRUB password twice; copy the grub.pbkdf2.sha512... token
+ansible-vault encrypt_string 'grub.pbkdf2.sha512.10000.<salt>.<hash>' --name 'grub_password_pbkdf2'
+```
+
+Paste the resulting `!vault` block over `grub_password_pbkdf2` in `group_vars/all.yml`. Keep
+`grub_superuser` to letters/underscores only (the SSG regex rejects digits/hyphens). Normal
+boot stays **password-free** (menuentries are generated `--unrestricted`); the credential is
+required only to *edit* an entry or use the GRUB shell. **Test the hash on a throwaway VM
+before baking a gold image** — recovery from a bad hash means a GRUB edit from install media.
+
+### Validate PAM on a snapshot first
+
+`pam.yml` edits `common-auth`/`common-account`. It keeps `pam_unix`, never sets
+`even_deny_root`, and defaults `unlock_time=0` (admin-unlock), so failures are recoverable —
+but **mis-ordered PAM can lock everyone out**. On the first apply: keep a root shell open,
+confirm login works, fail 3 logins to confirm lockout, then `sudo faillock --user <name>
+--reset` to recover. The VM snapshot is the real safety net. The faillock pamd anchors assume
+a stock 24.04 `common-auth`; re-verify if `pam-auth-update` ran with extra profiles.
+
+### POA&M — findings NOT auto-remediated by the build
+
+These need a secret, a subscription, install-time action, or an environment this image
+doesn't have. Document each as a POA&M for your assessor:
+
+- **Disk encryption (`Encrypt Partitions`)** — LUKS happens in the installer, before
+  ansible-pull runs. See *Full-disk encryption at install time* below.
+- **FIPS mode (`/proc/sys/crypto/fips_enabled`)** — requires an Ubuntu Pro token
+  (`pro enable fips-updates`) + reboot. Not enabled on this image.
+- **Smartcard / CAC + SSSD** (opensc, pam_pkcs11, SSSD enable / cert-mapping / OCSP / cache,
+  "Enable Smart Card Logins in PAM") — this image is **password-login only** by decision. The
+  one harmless smartcard-adjacent control (GNOME *lock-on-smartcard-removal*) IS set.
+- **GUI login-banner TEXT (`Set the GNOME3 Login Warning Banner Text`)** — the SSG OVAL
+  pattern-matches the configured text against the **DoD Standard Mandatory Notice**; this
+  image displays the **DCSA Authorized Warning Banner** by requirement, so the text rule
+  stays failing as an **approved deviation**. (`banner-message-enable` passes.)
+- **Last-logon PAM notification** — `pam_lastlog` was removed in 24.04 and `pam_lastlog2` is
+  not in `noble` main; `pam.yml` wires it only if present, else POA&M (or backport
+  `libpam-lastlog2` into your mirror).
+- **Audit log offload** (`...Send Logs To Remote Server`, `Offload audit Logs to External
+  Media`) — set `stig_audit_remote_server` to a collector to enable au-remote; external-media
+  offload is operational.
+- **GRUB password** — failing until you complete the vault step above.
+- **TFTP / DHCP / DNS** provisioning services — installed-but-disabled mission-need
+  exceptions (pre-existing).
+- **Blank screensaver overridden** (`Implement Blank Screensaver`) — by requirement the
+  session lock screen shows the org wallpaper (`desktop_branding` role) instead of blank, so
+  `org.gnome.desktop.screensaver picture-uri` is non-empty. Approved deviation; the lock
+  *timing* (idle-delay, lock-enabled, lock-delay) is still STIG-enforced.
+- **USB storage restricted to the `dta` group** (not blanket-disabled) — a deliberate, more
+  granular control than the STIG's "disable USB mass storage." If your benchmark strictly
+  requires USB *disabled*, document this group-based allowance as the exception.
+
+### Full-disk encryption at install time (autoinstall)
+
+`Encrypt Partitions` can't be done post-install. Bake LUKS into the **Ubuntu autoinstall**
+(`user-data`) so fresh images come up encrypted. Simplest is LUKS-on-LVM via the guided
+layout:
+
+```yaml
+#cloud-config
+autoinstall:
+  version: 1
+  storage:
+    layout:
+      name: lvm
+      password: "REPLACE_WITH_A_STRONG_DISK_PASSPHRASE"   # turns on LUKS full-disk encryption
+  # ... identity / network / late-commands that kick off ansible-pull ...
+```
+
+- The `password` is the **disk-unlock passphrase**, prompted at every boot. For unattended
+  reboots on 24.04, enroll a TPM2 key after install (`systemd-cryptenroll --tpm2-device=auto
+  /dev/<luks-part>`) or use Ubuntu 24.04's TPM-backed FDE, then adjust prompting per policy.
+- Vault the passphrase; never commit it in cleartext.
+- This is install-media config, **separate from this ansible-pull repo** — keep it with your
+  autoinstall seed.
+
+## Local accounts, access groups & branding
+
+The `local_accounts` role provisions the standing users/groups, the group-shared folders, and
+the USB access policy; `desktop_branding` sets the wallpaper. All driven from `group_vars/all.yml`
+(`local_groups`, `local_users`, `local_shared_dirs`, `usb_access_group`, `branding_*`).
+
+**Accounts are created LOCKED.** Each exists but cannot log in until you set a password
+**per-machine at deploy** (a locked account is not an empty password, so STIG stays satisfied):
+
+```bash
+sudo passwd overlord
+sudo passwd austin_case_dta
+# ... one per account, on the fielded box (not baked into the gold image)
+```
+
+Supplementary groups are **declarative** — a re-run re-asserts exactly the `groups:` list for
+each user (so a manually-added group gets removed on the next `ansible-pull`). `sudo`-group
+membership grants full sudo. The `audit` group is for `/opt/_AuditFiles` access; sudo is granted
+to the named auditor accounts individually (their `groups:` include `sudo`), **not** to the whole
+`audit` group — change `local_users` if you want group-wide sudo.
+
+**Access groups & shared folders**
+
+| Group | Grants | Shared folder |
+|-------|--------|---------------|
+| `dta` | USB storage access | — |
+| `audit` | `/opt/_AuditFiles` (auditors; sudo per-account) | `/opt/_AuditFiles` → `root:audit 2770` |
+| `sentry` | `/home/shared` | `/home/shared` → `root:sentry 2770` |
+
+The folders are `setgid` **plus a POSIX default ACL** (`g:<group>:rwx`) — this matters because the
+STIG `umask 077` would otherwise make new files `0600` and break group sharing; the default ACL
+bypasses the umask so group members get full access to everything created inside, and others are
+denied. Needs the `acl` package (installed by the role).
+
+**USB storage → `dta` only.** Out of the box USB was *not* restricted (the STIG work only disabled
+auto-mounting). This role adds two layers:
+- a **polkit rule** (`/etc/polkit-1/rules.d/49-dta-usb.rules`) allowing udisks2 mount/unmount/eject
+  only for `dta` members (the Files / `udisksctl` desktop path);
+- a **udev rule** (`/etc/udev/rules.d/99-dta-usb.rules`) setting raw USB block devices to
+  `root:dta 0660` (the manual `mount`/`dd` path).
+
+Non-`dta` users (including admins) can't mount USB storage via the desktop; `sudo mount` as root
+remains a break-glass path. To change the gated group, edit `usb_access_group`.
+
+**Wallpaper.** `desktop_branding` deploys `roles/desktop_branding/files/SHB_Background.jpg` to
+`/usr/share/backgrounds/` and sets it **system-wide and locked** (users can't change it) on the
+**desktop background** and the **session lock screen**. The lock-screen part overrides the STIG
+blank-screensaver control (see POA&M above). The **GDM login screen** is best-effort only —
+Ubuntu's greeter usually renders its themed background and ignores the dconf key; a guaranteed
+login JPG needs a fragile `gnome-shell` gresource patch that is intentionally not done. Flip
+`branding_lockscreen_wallpaper: false` to brand only the desktop and keep the STIG blank lock screen.
 
 ## Windows servers
 

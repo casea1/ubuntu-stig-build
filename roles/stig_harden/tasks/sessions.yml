@@ -1,0 +1,116 @@
+---
+# =============================================================================
+# sessions.yml  --  Login-session limits (stig_harden role)
+# Pulled in by tasks/main.yml via ansible.builtin.include_tasks.
+#
+# Covers two SSG / ComplianceAsCode rules that the scan flags because the
+# ansible-lockdown server role leaves them to disruption_high (skipped here):
+#   * accounts_max_concurrent_login_sessions
+#       -> "Limit the Number of Concurrent Login Sessions Allowed Per User"
+#   * accounts_tmout
+#       -> "Set Interactive Session Timeout"
+#
+# Both are purely additive, login-safe controls: a maxlogins cap and an idle
+# shell timeout. Neither touches PAM auth/account stacks, so there is no
+# lock-out risk. We use drop-in files (limits.d, profile.d) rather than editing
+# the distro base files in place -- SSG's oscap check accepts either location,
+# and drop-ins keep the build idempotent and easy to audit/remove.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# 1) Limit concurrent login sessions per user
+# ---------------------------------------------------------------------------
+# SSG rule: accounts_max_concurrent_login_sessions
+# The oscap check greps for a line of the form
+#       <domain>  hard  maxlogins  <N>
+# in /etc/security/limits.conf OR any /etc/security/limits.d/*.conf file, and
+# passes when N <= var_accounts_max_concurrent_login_sessions (STIG = 10).
+# We apply it to the '*' (all users) domain with the 'hard' enforcement type so
+# a user cannot raise it themselves. pam_limits (already in common-session on
+# Ubuntu by default) enforces it at login time -- we don't touch PAM here.
+#
+# community.general.pam_limits is the idempotent, purpose-built module (it lives
+# in the community.general collection -- there is NO ansible.builtin.pam_limits).
+# It edits a single keyed line and is safe to re-run. We target a dedicated
+# drop-in file so we never rewrite the stock limits.conf.
+- name: "Sessions | Cap concurrent logins per user (SSG accounts_max_concurrent_login_sessions)"
+  community.general.pam_limits:
+    dest: /etc/security/limits.d/20-stig-maxlogins.conf
+    domain: '*'
+    limit_type: hard
+    limit_item: maxlogins
+    value: "{{ stig_max_concurrent_sessions }}"
+    comment: "STIG: cap simultaneous interactive logins per user"
+  # Note: pam_limits creates the dest file if absent and rewrites only the one
+  # matching '* hard maxlogins' line, so this is fully idempotent.
+
+- name: "Sessions | Lock down the maxlogins drop-in file permissions"
+  ansible.builtin.file:
+    path: /etc/security/limits.d/20-stig-maxlogins.conf
+    owner: root
+    group: root
+    mode: "0644"
+  # Cosmetic/hardening: ensure the drop-in is root-owned and world-readable
+  # (limits.d files must be readable by pam_limits at login).
+
+# ---------------------------------------------------------------------------
+# 2) Interactive session timeout (TMOUT)
+# ---------------------------------------------------------------------------
+# SSG rule: accounts_tmout
+# The oscap check scans /etc/profile and /etc/profile.d/*.sh for an assignment
+# 'TMOUT=<n>' with n > 0 and n <= var_accounts_tmout (STIG = 900s = 15 min),
+# AND that TMOUT is made 'readonly' and exported so an interactive shell cannot
+# unset it. The canonical ComplianceAsCode remediation drops a profile.d
+# snippet, which is what we do here.
+#
+# WHY a guard around the assignment: TMOUT only makes sense for *interactive*
+# shells. Setting/exporting it unconditionally can kill long-running
+# non-interactive jobs and some pipelines. We gate on an interactive,
+# non-login-script context ($PS1 set) so batch/SSH-exec shells are unaffected,
+# while still satisfying SSG. The oscap OVAL for accounts_tmout is a
+# textfilecontent54 regex that matches the literal 'TMOUT=<n>', 'readonly TMOUT'
+# and 'export TMOUT' tokens ANYWHERE in the file -- the surrounding 'if' block
+# does not hide them from the check (verified against ComplianceAsCode content).
+#
+# WHY ansible.builtin.copy with a static body (not lineinfile): the whole file
+# is owned by this control, the content is deterministic, and 'copy' is
+# idempotent by checksum -- re-runs produce zero churn.
+- name: "Sessions | Set readonly idle TMOUT via profile.d drop-in (SSG accounts_tmout)"
+  ansible.builtin.copy:
+    dest: /etc/profile.d/99-stig-tmout.sh
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (stig_harden/sessions.yml) -- do not edit by hand.
+      # SSG rule accounts_tmout: log out idle interactive shells after
+      # {{ stig_session_timeout }} seconds. readonly+export so it cannot be
+      # weakened within the session. Only armed for interactive shells ($PS1)
+      # to avoid killing non-interactive/batch jobs.
+      if [ -n "$PS1" ]; then
+        TMOUT={{ stig_session_timeout }}
+        readonly TMOUT
+        export TMOUT
+      fi
+  # The bare tokens 'TMOUT={{ stig_session_timeout }}', 'readonly TMOUT' and
+  # 'export TMOUT' appear literally in the file, which is what the SSG/oscap
+  # regex matches -- the surrounding 'if' does not hide them from the check.
+
+# csh/tcsh equivalent: precaution only. The SSG accounts_tmout OVAL on Ubuntu
+# checks /etc/profile and /etc/profile.d/*.sh (bash), NOT *.csh, so this file is
+# NOT required to pass the rule -- it just mirrors the control if a C shell is
+# ever installed. Ubuntu Desktop ships bash/dash only (no tcsh) by default, so
+# this is harmless belt-and-suspenders. tcsh 'autologout' is in MINUTES, hence
+# the /60; 'set -r' marks the variable read-only so a user cannot weaken it.
+- name: "Sessions | Set csh/tcsh autologout drop-in (mirror of accounts_tmout, csh side)"
+  ansible.builtin.copy:
+    dest: /etc/profile.d/99-stig-autologout.csh
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (stig_harden/sessions.yml). C-shell idle timeout to
+      # mirror the bash TMOUT control. autologout is in minutes. Precaution only:
+      # not exercised on stock Ubuntu Desktop (no tcsh), not required by the SSG
+      # accounts_tmout check (which only reads bash *.sh profiles).
+      set -r autologout={{ (stig_session_timeout | int / 60) | round(0, 'ceil') | int }}

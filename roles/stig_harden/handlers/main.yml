@@ -2,3 +2,46 @@
 - name: dconf update
   ansible.builtin.command: dconf update
   changed_when: true
+
+- name: reload audit rules
+  # Ubuntu's auditd unit sets RefuseManualStop=yes, so `systemctl restart
+  # auditd` is unreliable / fails. The supported way to apply rule and
+  # auditd.conf changes is to re-merge rules.d and load them via augenrules.
+  # This both rebuilds /etc/audit/audit.rules and loads it into the kernel.
+  ansible.builtin.command: augenrules --load
+  changed_when: true
+
+- name: restart ssh
+  # Ubuntu's SSH unit is 'ssh' (NOT 'sshd' as on RHEL). state=restarted so the
+  # new banner/drop-in takes effect; restart (not reload) because 24.04 ships
+  # socket-activated SSH and a plain reload can miss config changes.
+  ansible.builtin.systemd_service:
+    name: ssh
+    state: restarted
+  # Tolerate ONLY a deliberately masked/absent ssh unit on a no-inbound-SSH
+  # desktop (so the build doesn't fail there), but let a REAL restart failure
+  # surface instead of blanket-swallowing it with failed_when: false.
+  register: ssh_restart
+  failed_when:
+    - ssh_restart is failed
+    - >-
+      'Could not find the requested service' not in (ssh_restart.msg | default(''))
+      and 'is masked' not in (ssh_restart.msg | default(''))
+      and 'masked' not in (ssh_restart.msg | default(''))
+
+- name: restart rsyslog
+  # Ubuntu's rsyslog unit is 'rsyslog' (rsyslog.service). The services.yml
+  # drop-in is config-validated (rsyslogd -N1) before this fires, so a restart
+  # can't be triggered by a bad config that would take logging down.
+  ansible.builtin.systemd_service:
+    name: rsyslog
+    state: restarted
+
+- name: update grub
+  # Regenerate the active grub.cfg (BIOS: /boot/grub/grub.cfg, UEFI:
+  # /boot/efi/EFI/ubuntu/grub.cfg stub + /boot/grub/grub.cfg menu). update-grub
+  # is the Ubuntu/Debian wrapper around `grub-mkconfig -o`; it re-runs every
+  # /etc/grub.d/* snippet, so this is what actually bakes our superuser +
+  # password_pbkdf2 (and the --unrestricted menuentries) into the booted config.
+  ansible.builtin.command: update-grub
+  changed_when: true

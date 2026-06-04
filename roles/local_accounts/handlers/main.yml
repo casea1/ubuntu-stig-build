@@ -1,0 +1,7 @@
+---
+- name: reload udev
+  # Re-read the rules and re-apply them to already-connected block devices so the
+  # new GROUP/MODE takes effect without a reboot. Harmless on a box with no USB
+  # storage attached.
+  ansible.builtin.shell: udevadm control --reload-rules && udevadm trigger --subsystem-match=block
+  changed_when: true

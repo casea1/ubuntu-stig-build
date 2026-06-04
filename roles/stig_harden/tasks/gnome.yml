@@ -1,0 +1,250 @@
+---
+# =============================================================================
+# GNOME desktop dconf hardening  +  GDM login warning banner (SSG location)
+# =============================================================================
+# WHY this file exists:
+#   The SSG/ComplianceAsCode "stig" profile for ubuntu2404 checks GNOME settings
+#   the *dconf* way -- it does NOT trust a value that is merely "set somewhere".
+#   For every dconf rule the oscap OVAL check wants ALL THREE of:
+#     1. the key present in a keyfile under the dconf *system* db directory the
+#        OVAL actually globs (this is rule-specific -- see the table below),
+#     2. a matching LOCK entry under that db's locks/ dir (so a user can't
+#        override it), and
+#     3. that `dconf update` has been run to compile the binary db.
+#   Miss any one and SSG marks the rule FAIL. So below we write the keyfile, the
+#   lock file, and notify the existing "dconf update" handler.
+#
+# WHICH DB EACH RULE'S OVAL READS (verified against ComplianceAsCode v0.1.81 --
+# pinned by ssg_content_version in group_vars/all.yml -- by reading each rule's
+# oval/shared.xml directly, NOT by trusting the human-readable description):
+#   * The screensaver/media-handling/smartcard rules glob BOTH
+#       /etc/dconf/db/gdm.d/   (the {{{ dconf_gdm_dir }}} default for ubuntu2404)
+#       AND /etc/dconf/db/local.d/
+#     so local.d is ACCEPTED for them.
+#   * dconf_gnome_disable_ctrlaltdel_reboot globs ONLY /etc/dconf/db/local.d/
+#     -> that key MUST live in local.d (which is where this keyfile lives).
+#   * dconf_gnome_banner_enabled and dconf_gnome_login_banner_text glob ONLY
+#     /etc/dconf/db/gdm.d/  -> the login-screen banner keys MUST live in gdm.d.
+#   Putting the SESSION/desktop keys in local.d and the LOGIN-SCREEN keys in
+#   gdm.d therefore satisfies every rule's OVAL.  (This also matches normal GNOME
+#   practice: local.d = user desktop, gdm.d = greeter.)
+#
+# EXACT GVariant SPELLINGS THE v0.1.81 OVAL REGEXES DEMAND (these tripped up the
+# earlier draft -- each is enforced by an anchored regex in oval/shared.xml):
+#   * idle-delay    -> "uint32 N" where N>0 AND N<= inactivity_timeout_value.
+#                      The STIG control sets inactivity_timeout_value=10_minutes
+#                      = 600, and the OVAL is "<= 600 AND != 0", so 900 FAILS.
+#                      Default below is 600. (gnome_idle_delay_seconds)
+#   * lock-delay    -> "uint32 0" (var_screensaver_lock_delay=immediate).
+#   * picture-uri   -> (the "Implement Blank Screensaver" control that wanted
+#                      picture-uri=string '' here is OVERRIDDEN by a site
+#                      lock-screen-wallpaper requirement; the desktop_branding
+#                      role now owns this key. See the screensaver section + the
+#                      deviation note in OPERATIONS.md.)
+#   * logout        -> the literal text  logout=['']  (a one-element GVariant
+#                      string ARRAY). The OVAL regex is ...logout[\s]*=[\s]*\['']$
+#                      so a bare logout='' does NOT match and the rule FAILS.
+#                      (The original inline 00-screensaver block had this right;
+#                      do NOT "simplify" it to logout=''.)
+#
+# This file SUPERSEDES the old inline 00-screensaver / 00-stig-desktop-lock block
+# in tasks/main.yml: it covers the same keys, LOCKS all of them (the old block
+# left several unlocked), and keeps the SSG-correct spellings above. The
+# integrator removes the old inline block from main.yml.
+#
+# Ubuntu 24.04 specifics:
+#   - /etc/dconf/profile/user ships including system-db:local, so local.d is the
+#     correct system-wide desktop db.
+#   - /etc/dconf/profile/gdm (from the gdm3 package) includes system-db:gdm, so
+#     gdm.d is the login-screen db.
+# -----------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# 1) Make sure both dconf system-db dirs AND their locks/ subdirs exist.
+#    file:state=directory is idempotent (no churn on re-run).
+# ---------------------------------------------------------------------------
+- name: GNOME | Ensure dconf system-db directories (local + gdm) and their locks dirs exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /etc/dconf/db/local.d
+    - /etc/dconf/db/local.d/locks
+    - /etc/dconf/db/gdm.d
+    - /etc/dconf/db/gdm.d/locks
+
+# ---------------------------------------------------------------------------
+# 2) SESSION / DESKTOP keys -> /etc/dconf/db/local.d/00-stig-gnome
+#    One keyfile covers every non-login-screen rule in this category. Using
+#    copy: with templated content keeps it idempotent: the file only changes
+#    (and only then fires the handler) if a tunable changes.
+#
+#    The exact GVariant spellings here are dictated by the v0.1.81 OVAL regexes
+#    (see the header). Do not "tidy" them.
+# ---------------------------------------------------------------------------
+- name: GNOME | Write STIG desktop/session dconf keyfile (local db)
+  ansible.builtin.copy:
+    dest: /etc/dconf/db/local.d/00-stig-gnome
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by stig_harden/tasks/gnome.yml -- do not edit by hand.
+      # Keys + GVariant spellings match the SSG ubuntu2404 "stig" profile OVALs
+      # (ComplianceAsCode v0.1.81). See gnome.yml header for the regex rationale.
+
+      # "Set GNOME3 Screensaver Inactivity Timeout" (dconf_gnome_screensaver_idle_delay)
+      #  OVAL: idle-delay must be uint32, >0 and <= inactivity_timeout_value (600
+      #  for the STIG). 900 would FAIL. Tunable defaults to 600.
+      [org/gnome/desktop/session]
+      idle-delay=uint32 {{ gnome_idle_delay_seconds }}
+
+      # Screensaver lock behaviour (lock TIMING -- still STIG-enforced):
+      #  "Enable GNOME3 Screensaver Lock After Idle Period" -> lock-enabled=true
+      #  "Set ... Lock Delay After Activation Period"       -> lock-delay=uint32 0
+      #     (var_screensaver_lock_delay=immediate: lock the instant it activates)
+      #  NOTE: the screensaver picture-uri (the lock-screen IMAGE) is intentionally
+      #  NOT set here. The STIG "Implement Blank Screensaver" control is OVERRIDDEN
+      #  by a site requirement to show a lock-screen wallpaper -- the
+      #  desktop_branding role owns + locks picture-uri instead. Documented as an
+      #  approved deviation in OPERATIONS.md. (If you ever need the blank lock
+      #  screen back, re-add `picture-uri=string ''` here + its lock, and remove
+      #  the screensaver keys from desktop_branding.)
+      [org/gnome/desktop/screensaver]
+      lock-enabled=true
+      lock-delay=uint32 {{ gnome_lock_delay_seconds }}
+
+      # Removable-media handling:
+      #  "Disable GNOME3 Automount Opening" (dconf_gnome_disable_automount_open)
+      #     -> automount-open=false
+      #  "Disable GNOME3 Automounting" (dconf_gnome_disable_autorun)
+      #     -> autorun-never=true
+      #  automount=false is NOT a separately-scanned rule in the ubuntu2404 STIG
+      #  profile, but we set+lock it anyway as harmless defence-in-depth (no
+      #  auto-mount of inserted media). It costs nothing and reinforces intent.
+      [org/gnome/desktop/media-handling]
+      automount=false
+      automount-open=false
+      autorun-never=true
+
+      # "Disable Ctrl-Alt-Del Reboot Key Sequence in GNOME3"
+      #  (dconf_gnome_disable_ctrlaltdel_reboot) -- OVAL regex demands the
+      #  one-element ARRAY form  logout=['']  (NOT a bare logout=''). This OVAL
+      #  globs ONLY local.d, which is where this keyfile lives.
+      [org/gnome/settings-daemon/plugins/media-keys]
+      logout=['']
+
+      # "Enable the GNOME3 Screen Locking On Smartcard Removal"
+      #  (dconf_gnome_lock_screen_on_smartcard_removal). CAC/smartcard is NOT used
+      #  for login (POA&M), but this is a harmless pure-desktop setting the user
+      #  approved: if a smartcard is ever removed, lock the screen. Its OVAL
+      #  template uses path /etc/dconf/db/local.d/, so it belongs here.
+      [org/gnome/settings-daemon/peripherals/smartcard]
+      removal-action='lock-screen'
+  notify: dconf update
+
+# ---------------------------------------------------------------------------
+# 3) LOCKS for the desktop/session keys -> /etc/dconf/db/local.d/locks/00-stig-gnome
+#    EVERY key whose rule has a lock check needs a lock line here or SSG marks
+#    that rule FAIL. We lock all the keys we set (automount has no scanned lock
+#    check but locking it is harmless and keeps the set consistent). Lock paths
+#    are absolute dconf paths (leading slash), one per line.
+# ---------------------------------------------------------------------------
+- name: GNOME | Write STIG desktop/session dconf LOCKS (local db)
+  ansible.builtin.copy:
+    dest: /etc/dconf/db/local.d/locks/00-stig-gnome
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by stig_harden/tasks/gnome.yml -- do not edit by hand.
+      # One lock per key set in ../00-stig-gnome so users cannot override them.
+      /org/gnome/desktop/session/idle-delay
+      /org/gnome/desktop/screensaver/lock-enabled
+      /org/gnome/desktop/screensaver/lock-delay
+      /org/gnome/desktop/media-handling/automount
+      /org/gnome/desktop/media-handling/automount-open
+      /org/gnome/desktop/media-handling/autorun-never
+      /org/gnome/settings-daemon/plugins/media-keys/logout
+      /org/gnome/settings-daemon/peripherals/smartcard/removal-action
+  notify: dconf update
+
+# ---------------------------------------------------------------------------
+# 4) LOGIN-SCREEN (GDM) banner keys -> /etc/dconf/db/gdm.d/01-stig-banner
+#    These two rules are checked against the *gdm* db ONLY (their OVAL globs only
+#    /etc/dconf/db/gdm.d/):
+#      "Enable GNOME3 Login Warning Banner"        -> banner-message-enable=true
+#      "Set the GNOME3 Login Warning Banner Text"  -> banner-message-text='<text>'
+#
+#    Banner text: REUSE the existing dcsa_gui_banner var (do not redefine it).
+#    That var is a single physical line whose value contains literal \n GVariant
+#    escapes and is apostrophe-free, so wrapping it in GVariant single quotes
+#    ('...') is valid and dconf unescapes \n into real line breaks at the greeter.
+#
+#    IMPORTANT COMPLIANCE CAVEAT (see POA&M/risks): the OVAL for
+#    dconf_gnome_login_banner_text does not just check that the text is set --
+#    it pattern-matches the configured text against the dconf_login_banner_text
+#    variable, which the ubuntu2404 STIG control pins to the DoD Standard
+#    Mandatory Notice. The DCSA banner text differs from that DoD string, so this
+#    rule will very likely score FAIL/notchecked under oscap even though the
+#    banner is correctly enabled and displayed. We still set it correctly (the
+#    user mandated the DCSA banner); the residual finding is documented as a
+#    POA&M. banner-message-enable (the boolean rule) DOES pass.
+#
+#    The role separately writes this banner to /etc/gdm3/greeter.dconf-defaults
+#    for the actual DISPLAY; banner-message-enable additionally has an OVAL
+#    branch that accepts greeter.dconf-defaults, so that rule is doubly covered.
+# ---------------------------------------------------------------------------
+- name: GNOME | Write STIG GDM login-screen banner keyfile (gdm db)
+  ansible.builtin.copy:
+    dest: /etc/dconf/db/gdm.d/01-stig-banner
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by stig_harden/tasks/gnome.yml -- do not edit by hand.
+      # Login-screen warning banner, checked by SSG against the gdm dconf db.
+      [org/gnome/login-screen]
+      banner-message-enable=true
+      banner-message-text='{{ dcsa_gui_banner }}'
+  notify: dconf update
+
+# ---------------------------------------------------------------------------
+# 5) LOCKS for the GDM banner keys -> /etc/dconf/db/gdm.d/locks/01-stig-banner
+#    Both login-screen keys must be locked or SSG marks them FAIL.
+# ---------------------------------------------------------------------------
+- name: GNOME | Write STIG GDM login-screen banner LOCKS (gdm db)
+  ansible.builtin.copy:
+    dest: /etc/dconf/db/gdm.d/locks/01-stig-banner
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by stig_harden/tasks/gnome.yml -- do not edit by hand.
+      /org/gnome/login-screen/banner-message-enable
+      /org/gnome/login-screen/banner-message-text
+  notify: dconf update
+
+# ---------------------------------------------------------------------------
+# 6) Remove the superseded inline keyfiles if they are still on disk.
+#    main.yml's old 00-screensaver and its 00-stig-desktop-lock are replaced by
+#    the locked, SSG-correct keyfiles above. Deleting them guarantees our files
+#    are the only source of truth even on a box imaged before this file landed.
+#    Idempotent: file:state=absent is a no-op once they're gone.
+#
+#    NOTE: this only helps if gnome.yml runs AFTER (or instead of) the old inline
+#    block. If the old block in main.yml still executes LATER in the role it will
+#    recreate 00-screensaver with the wrong spellings -- the integrator MUST
+#    delete that inline block from main.yml (see risks), not rely on this cleanup.
+# ---------------------------------------------------------------------------
+- name: GNOME | Remove superseded inline screensaver/lock keyfiles (now in 00-stig-gnome)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/dconf/db/local.d/00-screensaver
+    - /etc/dconf/db/local.d/locks/00-stig-desktop-lock
+  notify: dconf update

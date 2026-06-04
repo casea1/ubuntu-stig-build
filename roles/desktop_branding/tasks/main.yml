@@ -1,0 +1,103 @@
+---
+# =============================================================================
+# desktop_branding -- system-wide wallpaper (desktop + session lock screen)
+# =============================================================================
+# Deploys SHB_Background.jpg and sets it as the wallpaper for EVERY user via the
+# dconf system database, LOCKED so users cannot change it.
+#
+# Runs AFTER stig_harden. It is the SOLE owner of the screensaver (lock screen)
+# picture-uri key: stig_harden/tasks/gnome.yml deliberately no longer sets that
+# key, because showing a lock-screen wallpaper OVERRIDES the STIG "Implement
+# Blank Screensaver" control (documented deviation -- see OPERATIONS.md). The
+# desktop background key is not touched by STIG at all.
+#
+# dconf mechanics: keyfile under /etc/dconf/db/local.d/ + a matching lock under
+# .../locks/ + `dconf update` to compile the binary db (the existing handler).
+# =============================================================================
+
+- name: BRANDING | Install the system wallpaper
+  ansible.builtin.copy:
+    src: SHB_Background.jpg
+    dest: "{{ branding_wallpaper_dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: BRANDING | Ensure dconf local + gdm db dirs (and their locks dirs) exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /etc/dconf/db/local.d
+    - /etc/dconf/db/local.d/locks
+    - /etc/dconf/db/gdm.d
+
+# ---------------------------------------------------------------------------
+# Desktop background (always) + session lock screen (when enabled).
+# picture-options 'zoom' fills the screen preserving aspect ratio. The dark
+# variant mirrors the light one so the wallpaper shows under the GNOME dark theme.
+# ---------------------------------------------------------------------------
+- name: BRANDING | Write system-wide wallpaper dconf keyfile (local db)
+  ansible.builtin.copy:
+    dest: /etc/dconf/db/local.d/05-branding
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by desktop_branding -- do not edit by hand.
+      [org/gnome/desktop/background]
+      picture-uri='file://{{ branding_wallpaper_dest }}'
+      picture-uri-dark='file://{{ branding_wallpaper_dest }}'
+      picture-options='zoom'
+      primary-color='#000000'
+      {% if branding_lockscreen_wallpaper | bool %}
+
+      # SESSION LOCK SCREEN. This intentionally OVERRIDES the STIG "Implement
+      # Blank Screensaver" control (which wants picture-uri=''); gnome.yml no
+      # longer manages this key. Tracked as an approved deviation in OPERATIONS.md.
+      [org/gnome/desktop/screensaver]
+      picture-uri='file://{{ branding_wallpaper_dest }}'
+      picture-options='zoom'
+      {% endif %}
+  notify: dconf update
+
+- name: BRANDING | Lock the wallpaper keys (system-wide; users cannot change them)
+  ansible.builtin.copy:
+    dest: /etc/dconf/db/local.d/locks/05-branding
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by desktop_branding -- do not edit by hand.
+      /org/gnome/desktop/background/picture-uri
+      /org/gnome/desktop/background/picture-uri-dark
+      /org/gnome/desktop/background/picture-options
+      {% if branding_lockscreen_wallpaper | bool %}
+      /org/gnome/desktop/screensaver/picture-uri
+      /org/gnome/desktop/screensaver/picture-options
+      {% endif %}
+  notify: dconf update
+
+# ---------------------------------------------------------------------------
+# GDM LOGIN screen -- best effort. Ubuntu 24.04's GDM greeter renders a themed
+# background and commonly IGNORES this dconf key; setting it is harmless and
+# costs nothing, but a guaranteed login-screen JPG would require patching the
+# gnome-shell gresource, which breaks on every shell update -- deliberately NOT
+# done. See OPERATIONS.md.
+# ---------------------------------------------------------------------------
+- name: BRANDING | Best-effort GDM login-screen background (greeter may ignore it)
+  ansible.builtin.copy:
+    dest: /etc/dconf/db/gdm.d/06-branding
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by desktop_branding -- do not edit by hand. Best-effort only
+      # (Ubuntu's GDM greeter may render its themed background instead).
+      [org/gnome/desktop/background]
+      picture-uri='file://{{ branding_wallpaper_dest }}'
+      picture-options='zoom'
+  notify: dconf update

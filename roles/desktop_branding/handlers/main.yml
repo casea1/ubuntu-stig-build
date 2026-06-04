@@ -1,0 +1,6 @@
+---
+- name: dconf update
+  # Recompile the dconf binary databases (system + gdm) so the wallpaper keyfiles
+  # and locks take effect. changed_when:true -- running it is the point.
+  ansible.builtin.command: dconf update
+  changed_when: true

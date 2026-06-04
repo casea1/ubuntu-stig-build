@@ -25,11 +25,11 @@
 # controls (banner, idle lock) that the server role may not set for GNOME.
 # ---------------------------------------------------------------------------
 
-- name: Set the GDM login-screen DoD banner (Ubuntu's greeter.dconf-defaults)
+- name: Set the GDM login-screen DCSA banner (Ubuntu's greeter.dconf-defaults)
   # The role's UBTU-24-200650 banner-text control is disabled (buggy join).
   # Ubuntu's GDM reads the banner from /etc/gdm3/greeter.dconf-defaults, which
   # gdm's generate-config bakes into the gdm dconf db at startup. Set both the
-  # enable flag and the full DoD text here. The string value MUST be wrapped in
+  # enable flag and the full DCSA banner text here. The string value MUST be wrapped in
   # GVariant single quotes ('...') or generate-config rejects the keyfile.
   community.general.ini_file:
     path: /etc/gdm3/greeter.dconf-defaults
@@ -39,38 +39,37 @@
     mode: 'go-wx'
   loop:
     - { option: banner-message-enable, value: "true" }
-    - { option: banner-message-text, value: "'{{ dod_gui_banner }}'" }
+    - { option: banner-message-text, value: "'{{ dcsa_gui_banner }}'" }
 
-- name: Enforce screen lock on idle (GNOME) for STIG idle-timeout control
-  ansible.builtin.copy:
-    dest: /etc/dconf/db/local.d/00-screensaver
-    mode: "0644"
-    content: |
-      [org/gnome/desktop/session]
-      idle-delay=uint32 900
-      [org/gnome/desktop/screensaver]
-      lock-enabled=true
-      lock-delay=uint32 0
-      picture-uri=''
-      [org/gnome/settings-daemon/plugins/media-keys]
-      logout=['']
-  notify: dconf update
-
-# These two keys are normally set by role controls UBTU-24-200043 (picture-uri)
-# and UBTU-24-300025 (media-keys logout), but those have a trailing-'=' typo in
-# the option name that corrupts dconf. We disable them (group_vars) and set +
-# lock the correct values here instead.
-- name: Ensure the dconf locks directory exists
-  ansible.builtin.file:
-    path: /etc/dconf/db/local.d/locks
-    state: directory
-    mode: "0755"
-
-- name: Lock the desktop dconf keys we set in place of the buggy role controls
-  ansible.builtin.copy:
-    dest: /etc/dconf/db/local.d/locks/00-stig-desktop-lock
-    mode: "0644"
-    content: |
-      /org/gnome/desktop/screensaver/picture-uri
-      /org/gnome/settings-daemon/plugins/media-keys/logout
-  notify: dconf update
+# ---------------------------------------------------------------------------
+# SSG / ComplianceAsCode GAP REMEDIATION  (tasks/*.yml, included below)
+# ---------------------------------------------------------------------------
+# The box is hardened by the ansible-lockdown role ABOVE, but the compliance
+# scan (scap_scan role) grades it with the SSG/ComplianceAsCode "stig" profile
+# for ubuntu2404 -- a DIFFERENT project whose rules don't map 1:1 to the
+# lockdown role. Combined with ubtu24stig_disruption_high:false (which SKIPS the
+# lockdown role's most breaking controls) and cat3:false, that leaves a large
+# set of SSG rules failing (auditd rules, PAM faillock, GNOME dconf locks, sshd,
+# chrony/ufw/AIDE, file perms, GRUB password, ...).
+#
+# Each file below is an idempotent, desktop-safe, SSG-rule-targeted set of tasks
+# that closes those gaps. They run AFTER the lockdown role (so they win on any
+# overlap) and AFTER all package installs. Tunables live in group_vars/all.yml;
+# per-file rationale + POA&M notes are in each file's header and in OPERATIONS.md.
+#
+# gnome.yml SUPERSEDES the old inline 00-screensaver / 00-stig-desktop-lock block
+# that used to live here -- it sets the same keys (including the UBTU-24-200043
+# picture-uri and UBTU-24-300025 media-keys-logout work-arounds) with the
+# SSG-correct GVariant spellings, LOCKS all of them, and removes the old
+# keyfiles. Do not re-add the inline block.
+- name: Apply SSG/ComplianceAsCode STIG gap remediation (desktop-safe, idempotent)
+  ansible.builtin.include_tasks: "{{ item }}"
+  loop:
+    - audit.yml        # auditd rules + retention + dispatcher plugins
+    - pam.yml          # faillock lockout, faildelay, hashing rounds, no-empty-pw
+    - sessions.yml     # concurrent-login cap + interactive session timeout
+    - gnome.yml        # GNOME dconf locks (screensaver/automount/ctrl-alt-del) + GDM banner
+    - ssh.yml          # sshd X11Forwarding/PubkeyAuth + SSH login banner
+    - services.yml     # chrony (NTP), ufw firewall, AIDE, rsyslog monitoring
+    - filesystem.yml   # lib/var-log/journal perms, dmesg_restrict, RTC=UTC
+    - grub.yml         # GRUB2 bootloader password (BIOS+UEFI; self-guarded)

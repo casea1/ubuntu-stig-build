@@ -21,9 +21,11 @@ compliance content must be downloaded while the box is still online.
 |-------|------|--------------|
 | 1. Install | `base_packages` | Core tooling (below) |
 | 2. Configure | `app_config` | Service config + access controls |
-| 3. Dev tools | `dev_tools` | Compilers, Python env, VS Code extensions |
-| 4. Harden | `stig_harden` | DISA STIG remediation + GNOME fixups |
-| 5. Scan | `scap_scan` | OpenSCAP evaluation → reports |
+| 3. Accounts | `local_accounts` | Org users/groups, ACL'd shared folders, USB→`dta` policy |
+| 4. Dev tools | `dev_tools` | Compilers, Python env, VS Code extensions |
+| 5. Harden | `stig_harden` | DISA STIG remediation + SSG gap-fixes + GNOME fixups |
+| 6. Branding | `desktop_branding` | System-wide wallpaper (desktop + lock screen) |
+| 7. Scan | `scap_scan` | OpenSCAP evaluation → reports |
 
 ### 1. `base_packages` — core tooling
 - **Security/scan:** ClamAV (daemon + freshclam), OpenSCAP (`oscap`), OpenSSH client
@@ -37,7 +39,17 @@ compliance content must be downloaded while the box is still online.
 - Starts the ClamAV daemon + freshclam definition updates + a weekly scan timer
 - Restricts packet capture to a `wireshark` group and locks down `dumpcap` (STIG requirement)
 
-### 3. `dev_tools` — engineering workstation layer
+### 3. `local_accounts` — org users, groups & access control
+- Creates the access groups **`dta`** (USB storage), **`audit`** (owns `/opt/_AuditFiles`),
+  **`sentry`** (owns `/home/shared`) and the standing user accounts (defined in `group_vars`),
+  each created with a **locked password** — set per-machine at deploy with `sudo passwd <user>`
+- Group-shared folders use setgid **+ POSIX default ACLs** so group sharing survives the STIG
+  `umask 077` (which would otherwise make new files `0600`)
+- **Restricts USB storage to the `dta` group** (udisks2 polkit + udev rule) — out of the box USB
+  was only de-auto-mounted, not access-controlled. See
+  [OPERATIONS.md](OPERATIONS.md#local-accounts-access-groups--branding)
+
+### 4. `dev_tools` — engineering workstation layer
 - **Toolchains:** `build-essential` (gcc/g++/make), `gdb`, `cmake`, GNAT (Ada), .NET SDK 8.0,
   Docker engine, Doxygen/Graphviz, a JRE (for UMLet)
 - **Shared Python environment** at `/opt/eng-venv` with ~140 libraries (data science +
@@ -48,15 +60,27 @@ compliance content must be downloaded while the box is still online.
   Docker, Remote-SSH, …) installed and seeded into `/etc/skel` so any account inherits them
 - Adds the primary user to the `docker` group
 
-### 4. `stig_harden` — hardening
+### 5. `stig_harden` — hardening
 - Imports the **UBUNTU24-STIG** Lockdown role (pinned to **v1.3.0**), applying **CAT I + II**
   (CAT III off by default; `disruption_high` off so the most breaking controls are skipped)
-- Adds the GNOME/GDM pieces the *server* STIG omits: the **DoD login banner**, idle screen lock,
+- Adds the GNOME/GDM pieces the *server* STIG omits: the **DCSA login banner**, idle screen lock,
   screensaver concealment, and disabling the Ctrl-Alt-Del logout key
+- **Closes the SSG/ComplianceAsCode `stig`-profile findings the Lockdown role skips** with a
+  set of idempotent, desktop-safe gap-remediation task files (`tasks/audit|pam|sessions|gnome|
+  ssh|services|filesystem|grub.yml`): full auditd rule set, PAM faillock, session limits, GNOME
+  dconf locks, sshd, chrony/ufw/AIDE, file/journal perms, and the GRUB2 bootloader password.
+  See [STIG gap remediation](OPERATIONS.md#stig-gap-remediation-ssg-scan-findings) for the
+  coverage table and the **POA&M list** (FIPS, smartcard, disk encryption, …).
 - Works around three upstream bugs in the role's GNOME dconf controls (see
   [Known issues & exceptions](#known-issues--exceptions))
 
-### 5. `scap_scan` — compliance report
+### 6. `desktop_branding` — system-wide wallpaper
+- Deploys `SHB_Background.jpg` to `/usr/share/backgrounds/` and sets it **locked, system-wide** on
+  the desktop background and the **session lock screen** — the lock-screen part overrides the STIG
+  blank-screensaver control (documented deviation). GDM login background is best-effort (Ubuntu's
+  greeter usually ignores it).
+
+### 7. `scap_scan` — compliance report
 - Fetches the **Ubuntu 24.04 SCAP Security Guide datastream** from SSG release **v0.1.81**
   (checksum-verified) — the distro's `ssg-debderived` package only ships content through 22.04
 - Runs `oscap` against the DISA STIG profile and writes, to `/var/log/stig-scan/`:
@@ -87,7 +111,7 @@ systemctl status stig-build        # active (exited) = success
 ```
 
 When it finishes, **collect the reports from `/var/log/stig-scan/` while still online**, then
-reboot. The machine comes up to a graphical login showing the DoD banner.
+reboot. The machine comes up to a graphical login showing the DCSA banner.
 
 See **[OPERATIONS.md](OPERATIONS.md)** for the full imaging runbook and gotchas.
 
@@ -101,7 +125,12 @@ Everything is toggled from **[`group_vars/all.yml`](group_vars/all.yml)**:
 - `editor_choice` — `vscode` | `vim` | `neovim`
 - `ubtu24stig_cat1` / `cat2` / `cat3` — which STIG severity tiers to apply
 - `ubtu24stig_disruption_high` — apply the high-impact controls (off until validated)
-- `dod_gui_banner` — the login banner text
+- `dcsa_gui_banner` — the login banner text (DCSA Authorized Warning Banner)
+- **`STIG GAP-REMEDIATION TUNABLES`** section — lockout counts, session/screensaver timeouts,
+  auditd retention, firewall ports, etc. for the `tasks/*.yml` gap files (STIG-safe defaults)
+- **`grub_password_pbkdf2`** — vaulted GRUB bootloader-password hash. Ships as a `CHANGEME`
+  placeholder; the GRUB task self-skips until you set a real hash (see OPERATIONS.md). **Set
+  this** to close the two GRUB findings.
 - `dev_tools_user`, `eng_venv_path`, `powershell_version` — dev-tooling settings
 - `scap_profile`, `ssg_content_version` — which compliance content to scan against
 

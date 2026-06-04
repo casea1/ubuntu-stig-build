@@ -1,0 +1,341 @@
+---
+# =============================================================================
+# stig_harden :: grub.yml
+# GRUB2 bootloader password (BIOS + UEFI) -- DISA STIG / SSG "Set Boot Loader
+# Password" controls.
+#
+# Pulled in from roles/stig_harden/tasks/main.yml via:
+#   - ansible.builtin.include_tasks: grub.yml
+#
+# WHY post-install is safe: this runs in the stig_harden role, AFTER every
+# package-install role. We only add a GRUB *superuser* + a PBKDF2 password
+# hash and (re)generate grub.cfg. It touches the boot chain, so the entire
+# block is GUARDED (see the `when:` on every task) and engineered so that
+# NORMAL/DEFAULT BOOT STILL WORKS WITHOUT A PASSWORD -- only *editing* a menu
+# entry (the GRUB `e` key) or dropping to the GRUB shell (`c`) requires the
+# superuser credential. See the long safety note + risks before flipping the
+# vaulted var on.
+#
+# -----------------------------------------------------------------------------
+# SSG CHECK SHAPE (this is WHY the file looks the way it does -- verified against
+# ComplianceAsCode/content master, profile xccdf_..._stig for ubuntu2404):
+#
+#   grub2_password   ("Set Boot Loader Password in grub2", non-UEFI) -- OVAL is
+#     an AND of two criteria:
+#       (A) OR:  user.cfg matches  ^[\s]*GRUB2_PASSWORD=grub\.pbkdf2\.sha512.*$
+#                  -- OR --
+#                grub.cfg matches  ^[\s]*password_pbkdf2[\s]+.*[\s]+grub\.pbkdf2\.sha512.*$
+#       (B)      grub.cfg matches  ^[\s]*set[\s]+superusers=("?)[a-zA-Z_]+\1$
+#
+#   grub2_uefi_password ("Set the UEFI Boot Loader Password", UEFI) -- OVAL on
+#     Ubuntu checks ONLY:
+#                user.cfg matches  ^[\s]*GRUB2_PASSWORD=grub\.pbkdf2\.sha512.*$
+#     (the RHEL8 fallback that also accepts grub.cfg does NOT apply to ubuntu).
+#
+# CONSEQUENCE -- and the bug this file's earlier draft had:
+#   * Putting `set superusers` + `password_pbkdf2` only in grub.cfg satisfies
+#     the NON-UEFI rule but NOT the UEFI rule. The UEFI rule wants a literal
+#     `GRUB2_PASSWORD=grub.pbkdf2.sha512...` line in user.cfg.
+#   * Ubuntu's grub-mkconfig/00_header does NOT auto-generate user.cfg from a
+#     GRUB2_PASSWORD variable (that ${prefix}/user.cfg auto-read is a Fedora/
+#     RHEL downstream patch; upstream/Ubuntu has no equivalent -- see Launchpad
+#     bug 392158). So on Ubuntu we must WRITE user.cfg ourselves. It is inert
+#     on Ubuntu boot (nothing sources it), which is exactly why writing it is
+#     SAFE -- it cannot brick boot; it only satisfies the scanner's
+#     textfilecontent54 probe.
+#
+# So this file does BOTH:
+#   1. A numbered /etc/grub.d/ snippet -> update-grub bakes
+#      `set superusers` + `password_pbkdf2` into /boot/grub/grub.cfg
+#      (covers grub2_password criteria A-grub.cfg + B).
+#   2. A static user.cfg with `GRUB2_PASSWORD=<hash>` in the grub boot dir(s)
+#      (covers grub2_uefi_password, and is a second way to satisfy
+#      grub2_password criterion A).
+#
+# WHERE update-grub writes on Ubuntu: the full menu (with our superuser +
+# password_pbkdf2 + --unrestricted entries) always lands in /boot/grub/grub.cfg
+# on BOTH BIOS and UEFI. On UEFI, /boot/efi/EFI/ubuntu/grub.cfg is only a tiny
+# signed stub that `search`es for and `configfile`s /boot/grub/grub.cfg -- it
+# does NOT contain the credential tokens. Verification below therefore reads
+# /boot/grub/grub.cfg (never the ESP stub).
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# 0) BRICK GUARD
+#    The hash comes from the vaulted var `grub_password_pbkdf2` (see
+#    group_vars/all.yml). It SHIPS as a clearly-fake "CHANGEME..." placeholder
+#    so a build that forgot to vault a real hash does NOT write an unusable
+#    credential into the boot chain. Every task below is gated on this fact via
+#    `grub_pw_ready`; when the placeholder is still in place the whole category
+#    is skipped (and shows up as a POA&M / scan finding, which is the safe
+#    failure mode -- a findable gap, never an unbootable box).
+# -----------------------------------------------------------------------------
+
+- name: "GRUB | Compute whether a REAL (non-placeholder) password hash is set"
+  # One fact drives every `when:` below so the guard logic lives in exactly one
+  # place. We require: the var is defined, is a non-empty string, does NOT
+  # contain the CHANGEME sentinel, and actually looks like a grub PBKDF2 hash
+  # (grub-mkpasswd-pbkdf2 emits 'grub.pbkdf2.sha512.<rounds>.<salt>.<hash>').
+  # The startswith() check is belt-and-suspenders against someone pasting the
+  # whole "PBKDF2 hash of your password is ..." sentence from the tool output.
+  ansible.builtin.set_fact:
+    grub_pw_ready: >-
+      {{
+        (grub_password_pbkdf2 is defined)
+        and (grub_password_pbkdf2 | string | length > 0)
+        and ('CHANGEME' not in (grub_password_pbkdf2 | string))
+        and ((grub_password_pbkdf2 | string).startswith('grub.pbkdf2.sha512.'))
+      }}
+
+- name: "GRUB | Warn (do not fail) when the bootloader password is still a placeholder"
+  # Make the skip LOUD in the play recap so an integrator notices the gap rather
+  # than silently shipping a gold image with no GRUB password. We warn instead
+  # of failing on purpose: the rest of the build (and other STIG categories)
+  # must still complete; this control is then a known POA&M item.
+  ansible.builtin.debug:
+    msg: >-
+      GRUB bootloader password NOT applied: 'grub_password_pbkdf2' is unset or
+      still the CHANGEME placeholder. Generate a hash with
+      'grub-mkpasswd-pbkdf2', ansible-vault it into group_vars, and re-run.
+      Rules grub2_password / grub2_uefi_password will FAIL the scan until then.
+  when: not grub_pw_ready
+
+
+# -----------------------------------------------------------------------------
+# 1) UNRESTRICTED MENU ENTRIES  --  keep normal boot PASSWORD-FREE
+#    THIS BLOCK MUST RUN BEFORE the credential snippet's update-grub fires.
+#    Stock /etc/grub.d/10_linux marks the generated menuentries with
+#    `--class ... ${CLASS}`. Once `set superusers` exists, GRUB locks EVERY
+#    menuentry to a superuser UNLESS the entry carries `--unrestricted`. SSG
+#    (and the STIG) only require a password to *edit*/recover, NOT to boot the
+#    default kernel. The canonical Debian/Ubuntu way to get `--unrestricted`
+#    onto the normal entries is to append it to the CLASS list that 10_linux
+#    bakes into each menuentry. We patch 10_linux's CLASS string idempotently.
+#
+#    We also disable the recovery menu entries (GRUB_DISABLE_RECOVERY=true):
+#    recovery drops to a root shell and is the one entry that SHOULD stay
+#    superuser-gated; removing it avoids an unauthenticated root path and keeps
+#    the menu clean. (Authorized recovery is still possible by editing an entry,
+#    which now correctly prompts for the superuser.)
+# -----------------------------------------------------------------------------
+
+- name: "GRUB | Make generated menuentries --unrestricted (normal boot needs NO password)"
+  # Idempotent in-place patch of the CLASS variable in /etc/grub.d/10_linux.
+  # Stock line is:   CLASS="--class gnu-linux --class gnu --class os"
+  # We rewrite it to append --unrestricted exactly once. The regexp anchors on a
+  # CLASS= assignment that does NOT already contain --unrestricted, so re-runs
+  # are a true no-op (the negative lookahead means an already-patched line will
+  # not match; backrefs preserve whatever distro classes are present).
+  ansible.builtin.replace:
+    path: /etc/grub.d/10_linux
+    regexp: '^(CLASS="(?:(?!--unrestricted).)*)"\s*$'
+    replace: '\1 --unrestricted"'
+  notify: update grub
+  when: grub_pw_ready
+
+- name: "GRUB | Disable the recovery menu entries (keep an unauthenticated root path out)"
+  # GRUB_DISABLE_RECOVERY=true tells grub-mkconfig not to emit the *-recovery
+  # 'single user' entries. Drop-in under /etc/default/grub.d (Ubuntu sources
+  # every *.cfg there from /etc/default/grub) so we never edit the base file.
+  ansible.builtin.copy:
+    dest: /etc/default/grub.d/99-stig-recovery.cfg
+    mode: "0644"
+    owner: root
+    group: root
+    content: |
+      # Managed by ansible (stig_harden/grub.yml) -- do not edit by hand.
+      # STIG: remove the unauthenticated 'recovery mode' (single-user root shell)
+      # menu entries. Authorized recovery is still reachable by editing a normal
+      # entry, which now prompts for the GRUB superuser credential.
+      GRUB_DISABLE_RECOVERY="true"
+  notify: update grub
+  when: grub_pw_ready
+
+
+# -----------------------------------------------------------------------------
+# 2) THE CREDENTIAL SNIPPET  --  set superusers + password_pbkdf2 (-> grub.cfg)
+#    A custom /etc/grub.d/ script is the SSG/ComplianceAsCode- AND DISA-STIG-
+#    canonical place for this (the official UBTU-24 fix edits /etc/grub.d/);
+#    grub-mkconfig runs every executable in /etc/grub.d in NUMERIC order and
+#    concatenates stdout into grub.cfg. We number it 01_ so it lands near the
+#    top (after 00_header, which defines the menu machinery) and the
+#    `set superusers` is in scope for every menuentry that follows.
+#
+#    The password hash is NOT a secret-in-cleartext exposure beyond what GRUB
+#    requires: password_pbkdf2 stores a PBKDF2-SHA512 *hash*, not the password,
+#    exactly as `grub-mkpasswd-pbkdf2` emits it. The hash still ends up in
+#    world-readable grub.cfg (that is unavoidable and how GRUB verifies at the
+#    console) -- so we keep the *source* snippet root-owned and 0755 (it must be
+#    executable for grub-mkconfig to run it; it has no read-secrecy value the
+#    generated grub.cfg doesn't already expose).
+#
+#    NOTE on superuser name: SSG's superuser OVAL regex is
+#    ^[\s]*set[\s]+superusers=("?)[a-zA-Z_]+\1$  -- it accepts ONLY letters and
+#    underscores (NO digits, NO hyphens). Keep `grub_superuser` to [a-zA-Z_]+ or
+#    rule (B) of grub2_password will silently miss. Default 'bootadmin' is fine.
+# -----------------------------------------------------------------------------
+
+- name: "GRUB | Install the superuser + PBKDF2 password snippet (/etc/grub.d/01_stig_password)"
+  # 0755 + a leading shebang are REQUIRED: grub-mkconfig only runs executable
+  # files in /etc/grub.d and pipes their stdout into grub.cfg. The `cat <<EOF`
+  # is the upstream idiom -- everything between the heredoc markers is emitted
+  # verbatim into the generated config.
+  #
+  # With a superuser defined, GRUB requires that user's password only for the
+  # interactive `e` (edit) and `c` (command-line) actions and for any entry
+  # lacking --unrestricted; the per-entry --unrestricted from step 1 is what
+  # keeps booting password-free.
+  ansible.builtin.copy:
+    dest: /etc/grub.d/01_stig_password
+    mode: "0755"
+    owner: root
+    group: root
+    # validate the rendered file is syntactically a shell script before grub
+    # ever sources it, so a templating slip can't break grub-mkconfig.
+    validate: "sh -n %s"
+    content: |
+      #!/bin/sh
+      # Managed by ansible (stig_harden/grub.yml) -- do not edit by hand.
+      # STIG grub2_password / grub2_uefi_password: define a GRUB superuser and a
+      # PBKDF2 password hash. grub-mkconfig concatenates this script's stdout
+      # into grub.cfg. Booting the DEFAULT entry stays password-free because the
+      # menuentries are generated with --unrestricted (see 10_linux patch); the
+      # credential below is required only to EDIT an entry or use the GRUB shell.
+      set -e
+      cat <<EOF
+      set superusers="{{ grub_superuser }}"
+      password_pbkdf2 {{ grub_superuser }} {{ grub_password_pbkdf2 }}
+      EOF
+  notify: update grub
+  when: grub_pw_ready
+
+
+# -----------------------------------------------------------------------------
+# 3) THE user.cfg FILE  --  GRUB2_PASSWORD=<hash>  (this is what the UEFI rule
+#    actually greps for; see the SSG CHECK SHAPE note at the top).
+#
+#    Ubuntu does NOT auto-generate user.cfg, so we write it ourselves as a
+#    STATIC file. It is inert on Ubuntu boot (nothing sources ${prefix}/user.cfg
+#    on Ubuntu), so it cannot affect booting -- it exists purely to satisfy the
+#    scanner's user.cfg textfilecontent54 probe for grub2_uefi_password (and as
+#    a second satisfier for grub2_password criterion A).
+#
+#    grub2_(uefi_)boot_path on Ubuntu resolves to the grub directory. To be
+#    robust against whichever path the pinned SSG content resolves it to, we
+#    write user.cfg to /boot/grub (the canonical Ubuntu grub tree, used for the
+#    menu on BOTH firmware modes) AND -- only if the ESP grub dir exists -- to
+#    /boot/efi/EFI/ubuntu. Writing both is harmless (inert files) and removes
+#    any path-resolution ambiguity.
+#
+#    No update-grub is needed for this file (it's not generated by grub-mkconfig
+#    and update-grub does not touch it), so these tasks do NOT notify the
+#    handler.
+# -----------------------------------------------------------------------------
+
+- name: "GRUB | Detect which grub boot directories exist (for user.cfg placement)"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /boot/grub                 # always present on Ubuntu (BIOS + UEFI)
+    - /boot/efi/EFI/ubuntu       # present only on UEFI installs
+  register: grub_dir_stat
+  when: grub_pw_ready
+
+- name: "GRUB | Write user.cfg with GRUB2_PASSWORD=<hash> (satisfies the UEFI rule's grep)"
+  # The SSG UEFI OVAL greps user.cfg for ^[\s]*GRUB2_PASSWORD=grub\.pbkdf2\.sha512.*$
+  # Mode 0600 root:root: this is the hash, identical in sensitivity to grub.cfg's
+  # copy, but there is no reason to make user.cfg world-readable. content has a
+  # trailing newline (the literal block) so the line-anchored regex matches.
+  ansible.builtin.copy:
+    dest: "{{ item.item }}/user.cfg"
+    mode: "0600"
+    owner: root
+    group: root
+    content: |
+      # Managed by ansible (stig_harden/grub.yml) -- do not edit by hand.
+      # STIG grub2_uefi_password / grub2_password: GRUB password hash probed by
+      # the SSG scanner in user.cfg. On Ubuntu this file is NOT sourced at boot
+      # (the live credential lives in grub.cfg via /etc/grub.d/01_stig_password),
+      # so it is inert and safe; it exists to satisfy the compliance check.
+      GRUB2_PASSWORD={{ grub_password_pbkdf2 }}
+  loop: "{{ grub_dir_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}/user.cfg"
+  when:
+    - grub_pw_ready
+    - item.stat.exists | default(false)
+
+
+# -----------------------------------------------------------------------------
+# 4) FLUSH HANDLERS NOW (regenerates grub.cfg before we verify it)
+#    The grub.cfg-affecting tasks above notify the "update grub" handler, which
+#    normally fires at end-of-play. We flush here so grub.cfg is regenerated
+#    BEFORE the verification read below -- the assert is meaningful only against
+#    a freshly-baked config, and we want any failure surfaced inside this
+#    category, not silently at play end.
+#    NOTE: meta:flush_handlers is GLOBAL -- it runs EVERY pending handler, so any
+#    still-queued "dconf update" / "reload audit rules" / "restart ssh" /
+#    "restart rsyslog" from the earlier-included gap files also fire at this
+#    point. That is harmless (all handlers here are idempotent and
+#    order-independent); it just means they run at the grub step rather than at
+#    play end.
+# -----------------------------------------------------------------------------
+
+- name: "GRUB | Regenerate grub.cfg now (flush pending handlers, incl. 'update grub')"
+  ansible.builtin.meta: flush_handlers
+
+
+# -----------------------------------------------------------------------------
+# 5) VERIFY  --  prove the SSG checks will pass (and that we didn't brick boot)
+#    On Ubuntu the credential menu is ALWAYS written to /boot/grub/grub.cfg
+#    (BIOS and UEFI alike -- the ESP file is only a stub). So we verify against
+#    /boot/grub/grub.cfg for the non-UEFI tokens + the --unrestricted anti-brick
+#    invariant, and against user.cfg for the UEFI token. This is a guardrail,
+#    not the remediation; it converts a "scan fails later / box won't boot"
+#    surprise into a build-time failure with a clear message.
+# -----------------------------------------------------------------------------
+
+- name: "GRUB | Read back /boot/grub/grub.cfg for verification"
+  ansible.builtin.slurp:
+    src: /boot/grub/grub.cfg
+  register: grub_cfg_content
+  when: grub_pw_ready
+
+- name: "GRUB | Read back a user.cfg for verification (first existing grub dir)"
+  ansible.builtin.slurp:
+    src: "{{ (grub_dir_stat.results | selectattr('stat.exists') | map(attribute='item') | first) }}/user.cfg"
+  register: grub_usercfg_content
+  when:
+    - grub_pw_ready
+    - grub_dir_stat.results | selectattr('stat.exists') | list | length > 0
+
+- name: "GRUB | Assert the SSG tokens are present AND default entries stay unrestricted"
+  # Four assertions:
+  #   1. `set superusers` in grub.cfg  -> grub2_password criterion (B)
+  #   2. `password_pbkdf2` in grub.cfg -> grub2_password criterion (A)
+  #   3. `GRUB2_PASSWORD=` in user.cfg -> grub2_uefi_password (and A again)
+  #   4. `--unrestricted` in grub.cfg  -> normal boot is NOT password-gated (the
+  #      anti-brick invariant). If this is missing we FAIL the build rather than
+  #      ship an image that demands a GRUB password at every power-on.
+  ansible.builtin.assert:
+    that:
+      - "'set superusers' in (grub_cfg_content.content | b64decode)"
+      - "'password_pbkdf2' in (grub_cfg_content.content | b64decode)"
+      - "'--unrestricted' in (grub_cfg_content.content | b64decode)"
+      - "'GRUB2_PASSWORD=grub.pbkdf2.sha512' in (grub_usercfg_content.content | b64decode)"
+    success_msg: >-
+      GRUB password baked into grub.cfg, GRUB2_PASSWORD present in user.cfg, and
+      default boot remains password-free (--unrestricted present).
+    fail_msg: >-
+      GRUB verification FAILED. Missing one of: 'set superusers' /
+      'password_pbkdf2' / '--unrestricted' in /boot/grub/grub.cfg, or
+      'GRUB2_PASSWORD=' in user.cfg. Do NOT ship this image -- it may fail the
+      STIG scan or, if --unrestricted is missing, demand a password to boot.
+      Recover with a GRUB edit from install media (see role README/risks).
+  when:
+    - grub_pw_ready
+    - grub_cfg_content is defined
+    - grub_cfg_content.content is defined
+    - grub_usercfg_content is defined
+    - grub_usercfg_content.content is defined

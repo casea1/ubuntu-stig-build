@@ -44,16 +44,24 @@ ubtu24stig_gui: true
 # corrupting it -> GDM's generate-config fails -> gdm.service won't start (the
 # box looks like it hangs at the boot splash). Verified on role 1.3.0.
 # Fix: disable that control and set the banner ourselves (stig_harden role,
-# /etc/dconf/db/gdm.d/01-banner-message) using the full standard DoD text below.
+# /etc/dconf/db/gdm.d/01-banner-message) using the full DCSA Authorized Warning
+# Banner text below.
 ubtu24stig_200650: false
-dod_gui_banner: "You are accessing a U.S. Government (USG) Information System (IS) that is provided for USG-authorized use only. By using this IS (which includes any device attached to this IS), you consent to the following conditions: -The USG routinely intercepts and monitors communications on this IS for purposes including, but not limited to, penetration testing, COMSEC monitoring, network operations and defense, personnel misconduct (PM), law enforcement (LE), and counterintelligence (CI) investigations. -At any time, the USG may inspect and seize data stored on this IS. -Communications using, or data stored on, this IS are not private, are subject to routine monitoring, interception, and search, and may be disclosed or used for any USG-authorized purpose. -This IS includes security measures (e.g., authentication and access controls) to protect USG interests--not for your personal benefit or privacy. -Notwithstanding the above, using this IS does not constitute consent to PM, LE or CI investigative searching or monitoring of the content of privileged communications, or work product, related to personal representation or services by attorneys, psychotherapists, or clergy, and their assistants. Such communications and work product are private and confidential. See User Agreement for details."
+# Single-quoted YAML + literal `\n` on purpose: the value is written verbatim
+# into the GVariant string ('...') in greeter.dconf-defaults, where GDM unescapes
+# `\n` into real line breaks. Single-quoted YAML keeps the backslashes literal --
+# a double-quoted scalar would turn `\n` into real newlines and corrupt the
+# (single physical line) keyfile. Keep the text apostrophe-free so the GVariant
+# '...' stays valid.
+dcsa_gui_banner: 'Defense Counterintelligence and Security Agency (DCSA) Authorized Warning Banner\n\nYou are accessing a U.S. Government (USG) Information System (IS). Use of this USG IS constitutes:\n- Consent for authorized monitoring at all times.\n-- To ensure proper functioning of equipment and systems including security systems and devices.\n-- To prevent, detect, and deter violations of statutes and security regulations and other unauthorized use of the system.\nThis system and related equipment are intended for the communication, transmission, processing, and storage of official USG or other authorized information only. Communications using, or data stored on this system are:\n- Not private\n-- Subject to routine monitoring, interception, and search.\n-- May be disclosed or used for any authorized purpose.\nIf monitoring of this USG IS reveals possible evidence of violation of criminal statutes or security regulations (or other unauthorized usage), this evidence and any other related information, including user identification, may be provided to law enforcement officials or may result in appropriate administrative or disciplinary action.'
 
 # ---- More upstream GNOME dconf bugs (malformed option names) ----------------
 # UBTU-24-200043 writes `option: picture-uri=` and UBTU-24-300025 writes
 # `option: logout=` (trailing '=' typos in community.general.ini_file), producing
 # invalid dconf keyfiles that break `dconf update`. Disable both; we set the
 # correct values (picture-uri='' and media-keys logout=['']) and lock them in
-# the stig_harden role's /etc/dconf/db/local.d/00-screensaver keyfile.
+# the stig_harden role's gnome.yml (the /etc/dconf/db/local.d/00-stig-gnome
+# keyfile + matching locks), which also satisfies the SSG dconf checks.
 ubtu24stig_200043: false
 ubtu24stig_300025: false
 
@@ -117,3 +125,223 @@ classification_banner_level: "UNCLASSIFIED"
 # build forces GDM to Xorg. Set false only if you switch to a Wayland-native
 # (GNOME Shell extension) approach.
 classification_banner_force_xorg: true
+
+# =============================================================================
+# STIG GAP-REMEDIATION TUNABLES
+# =============================================================================
+# Consumed by the per-category task files in roles/stig_harden/tasks/*.yml
+# (audit/pam/sessions/gnome/ssh/services/filesystem/grub). These close the SSG /
+# ComplianceAsCode "stig" profile findings that the ansible-lockdown role skips
+# under disruption_high:false / cat3:false. Defaults are STIG/SSG-aligned and
+# desktop-safe; override here. See OPERATIONS.md for the POA&M list.
+
+# =============================================================================
+# AUDIT (auditd) TUNABLES  -- consumed by roles/stig_harden/tasks/audit.yml
+# =============================================================================
+# Low-disk actions for /etc/audit/auditd.conf. WORKSTATION-SAFE defaults: warn
+# (email) on the soft threshold, drop to recoverable single-user only on the
+# hard/admin threshold. Do NOT use 'halt' on a desktop -- a full audit volume
+# would power-cycle the user's box (and 'halt' is deprecated upstream). These
+# are the SSG/STIG-canonical values (space_left_action=email,
+# admin_space_left_action=single).
+stig_audit_space_left_action: "email"     # soft trip: notify, keep running
+stig_audit_admin_space_left_action: "single"  # hard trip: drop to single-user (recoverable; NOT halt)
+stig_audit_mail_acct: "root"               # who gets the low-disk warning mail (needs a working MTA to deliver)
+# Soft low-disk trip point in MB. SSG just wants a positive value; 250MB gives
+# headroom to react before the admin (hard) threshold.
+stig_audit_space_left_mb: 250
+
+# Remote audit-log offload (au-remote). EMPTY = feature disabled + POA&M.
+# Set to the hostname/IP of your central audisp-remote collector to enable
+# /etc/audit/audisp-remote.conf + activate the au-remote plugin. Leave "" on
+# standalone/air-gapped images.
+stig_audit_remote_server: ""
+
+# ---- PAM faillock / password-policy tunables (stig_harden/pam.yml) ----------
+# All consumed by /etc/security/faillock.conf and the common-auth/-password edits.
+# Lock the account after this many consecutive failed logons. STIG: <= 3.
+pam_faillock_deny: 3
+# Window (seconds) over which failed attempts are counted toward 'deny'. STIG: 900 (15 min).
+pam_faillock_fail_interval: 900
+# Seconds an account stays locked. STIG-preferred 0 = locked until an admin runs
+# `faillock --user <name> --reset` (set a positive value, e.g. 900, for self-unlock).
+pam_faillock_unlock_time: 0
+# pam_faildelay delay AFTER a failed logon, in MICROSECONDS. STIG: >= 4s -> 4000000.
+pam_faildelay_delay_usec: 4000000
+# pam_unix password-hashing rounds (cost). SSG reference value is 5000; raise for stronger hashing.
+pam_unix_rounds: 5000
+
+# =============================================================================
+# SESSION LIMITS (stig_harden role -> tasks/sessions.yml)
+# =============================================================================
+# Max simultaneous interactive logins per user (SSG accounts_max_concurrent_login_sessions).
+# STIG default is 10. Lower it if your mission has a tighter requirement; do not
+# set it so low that legitimate multi-terminal admin work breaks.
+stig_max_concurrent_sessions: 10
+
+# Idle interactive-shell timeout in SECONDS before auto-logout
+# (SSG accounts_tmout). STIG default is 900 (15 minutes). The check passes for
+# any value 1..900; raising it above 900 will FAIL the scan.
+stig_session_timeout: 900
+
+# ---- GNOME dconf hardening tunables (stig_harden/tasks/gnome.yml) ------------
+# Screensaver idle/lock timings, written as GVariant uint32 in the keyfile.
+# CRITICAL: the SSG ubuntu2404 STIG control pins inactivity_timeout_value to
+# 10_minutes (=600s), and the idle-delay OVAL passes only when the value is
+# >0 AND <=600. So 600 is the MAX that still passes -- 900 (15 min) FAILS the
+# scan. Lower is fine; do not raise above 600.
+gnome_idle_delay_seconds: 600   # org/gnome/desktop/session idle-delay (>0 and <=600 to pass SSG)
+# Lock-delay is the grace window between the screensaver activating and the lock
+# engaging; the STIG control sets var_screensaver_lock_delay=immediate, i.e. 0.
+gnome_lock_delay_seconds: 0     # org/gnome/desktop/screensaver lock-delay (0 = lock immediately)
+
+# ---- OpenSSH server hardening (stig_harden role, ssh.yml) -------------------
+# STIG/SSG-mandated SSH directives. These are the baseline values the SSG oscap
+# check expects; only change them if you have an accreditation reason to.
+ssh_x11_forwarding: "no"            # SSG sshd_disable_x11_forwarding -> X11Forwarding no
+ssh_pubkey_authentication: "yes"    # SSG sshd_enable_pubkey_auth -> PubkeyAuthentication yes
+# Path to the plain-text login banner file sshd presents pre-auth. SSG's
+# sshd_enable_warning_banner check expects exactly /etc/issue.net on Ubuntu.
+ssh_banner_path: /etc/issue.net
+
+# =============================================================================
+# SERVICES CATEGORY TUNABLES (stig_harden/tasks/services.yml)
+# Time sync, host firewall, AIDE, rsyslog remote-access monitoring.
+# =============================================================================
+
+# ---- Host firewall: inbound services to OPEN and RATE-LIMIT (ufw) -----------
+# SSG's "ufw Must rate-limit network interfaces" check is satisfied per-opened
+# service via `ufw limit`. A hardened workstation typically exposes nothing
+# inbound; we open ONLY what's listed here, and we open it with `limit`
+# (drops a source IP making >6 connections / 30s) rather than a plain `allow`.
+# - Leave the default (ssh limited) if remote admin/build over SSH is needed.
+# - To run a fully closed box (no inbound at all), set this to [] -- but then
+#   the rate-limit rule has no opened port to demonstrate on; track it as POA&M
+#   (see services category POA&M). Each entry: port (name or number) + proto.
+stig_firewall_limit_ports:
+  - { port: ssh, proto: tcp }      # OpenSSH; rate-limited brute-force throttle
+
+# NOTE on time sync: there are no numeric tunables here -- chrony's NTP source
+# pool is set by the distro default /etc/chrony/chrony.conf (or your site's
+# pool drop-in). Override pool/server lines in a separate chrony drop-in if your
+# enclave uses internal time servers; this category only manages the service.
+
+# =============================================================================
+# FILESYSTEM hardening tunables (stig_harden/tasks/filesystem.yml)
+# Sane STIG/SSG defaults; override here if your content release expects different
+# values. All are referenced as {{ var }} in filesystem.yml.
+# =============================================================================
+
+# Restrict Access to Kernel Message Buffer (SSG sysctl_kernel_dmesg_restrict,
+# STIG UBTU-24-600140). 1 = only root may read the kernel ring buffer (dmesg).
+stig_kernel_dmesg_restrict: 1
+
+# Group that must own the /var/log directory (STIG UBTU-24-700100). On Ubuntu
+# this is 'syslog' (NOT root) -- the STIG check explicitly requires syslog.
+stig_var_log_group: "syslog"
+
+# /var/log directory mode. SSG/STIG caps log dirs at <= 0755 (UBTU-24-700120);
+# 0750 is tighter and still passes (group-readable, no 'other' access). Octal
+# string for Ansible.
+stig_var_log_dir_mode: "0750"
+
+# /var/log regular-file mode. SSG/STIG caps log files at <= 0640
+# (UBTU-24-700150); 0640 = root rw, group (adm) read, no 'other'. Octal string.
+stig_var_log_file_mode: "0640"
+
+# System journal DIRECTORY mode (SSG directory_permissions_var_log_journal,
+# STIG UBTU-24-700060/080 fix). 2640 = setgid (so new journal files inherit
+# systemd-journal) + rwxr-----. This is the DISA fix value; do NOT use 2750
+# (2750 grants group-execute and is MORE permissive than the 2640 the STIG
+# checks "or less permissive" against, so it would FAIL on Ubuntu 24.04).
+stig_journal_dir_mode: "2640"
+
+# /usr/bin/journalctl mode (SSG file_permissions_journalctl, STIG
+# UBTU-24-700030 fix `chmod 740`). 0740 = root rwx, group r, no other.
+stig_journalctl_mode: "0740"
+
+# =============================================================================
+# GRUB2 BOOTLOADER PASSWORD (stig_harden :: grub.yml)
+# STIG: "Set Boot Loader Password in grub2" (BIOS) + "Set the UEFI Boot Loader
+# Password". A GRUB superuser + PBKDF2 hash so EDITING a menu entry / dropping
+# to the GRUB shell requires a password. Default boot stays password-free
+# (menuentries are generated with --unrestricted).
+# =============================================================================
+
+# Name of the GRUB superuser written as `set superusers="..."`. This is a
+# GRUB-internal account, NOT a Linux user -- it does not need to exist in
+# /etc/passwd. Keep it generic; do not reuse a human login name.
+# IMPORTANT: the SSG superuser OVAL regex is ^[\s]*set[\s]+superusers=("?)[a-zA-Z_]+\1$
+# which accepts ONLY letters and underscores -- NO digits, NO hyphens. If you
+# change this, keep it to [a-zA-Z_]+ or the grub2_password check (criterion B)
+# will silently fail.
+grub_superuser: "bootadmin"
+
+# PBKDF2-SHA512 hash of the GRUB password. CHANGEME is a deliberate sentinel:
+# while it is present the entire grub.yml category SKIPS (no credential is
+# written) so a build can't brick boot with a bogus hash -- the rule then shows
+# as a scan finding / POA&M until you set a real value.
+#
+# HOW TO GENERATE (on any Ubuntu box, interactively):
+#     grub-mkpasswd-pbkdf2
+#   Enter the desired GRUB password twice. Copy the FULL token it prints:
+#     grub.pbkdf2.sha512.10000.<salt>.<hash>
+#   (copy ONLY that token, not the surrounding sentence).
+#
+# THEN VAULT IT (never commit the hash in plaintext):
+#     ansible-vault encrypt_string 'grub.pbkdf2.sha512.10000.<salt>.<hash>' \
+#       --name 'grub_password_pbkdf2'
+#   Paste the resulting !vault block in place of the line below.
+grub_password_pbkdf2: "grub.pbkdf2.sha512.10000.CHANGEME_RUN_grub-mkpasswd-pbkdf2_AND_VAULT_THE_HASH"
+
+# =============================================================================
+# LOCAL ACCOUNTS / ACCESS GROUPS / SHARED FOLDERS / USB POLICY (local_accounts)
+# =============================================================================
+# Access groups (lowercase Linux convention). Created before the accounts below.
+#   dta    -- data-transfer agents; the only group allowed to mount USB storage
+#   audit  -- auditors; owns /opt/_AuditFiles (sudo is granted per-account below)
+#   sentry -- owns /home/shared
+local_groups:
+  - dta
+  - audit
+  - sentry
+
+# Standing accounts. Each is created with a LOCKED password ('!') -- the account
+# exists but cannot be logged into until an admin sets one per-machine at deploy:
+#   sudo passwd <user>
+# A locked password is NOT an empty password, so this satisfies the STIG
+# no-empty-password control. Supplementary groups are set DECLARATIVELY (the
+# listed set is authoritative; the implicit per-user primary group is added by
+# useradd). "sudo" group membership grants full sudo via Ubuntu's stock
+# %sudo rule. (The installer account austin_case_adm is intentionally NOT listed.)
+local_users:
+  - { name: overlord,         groups: [sudo] }            # break-glass super admin
+  - { name: austin_case_dta,  groups: [dta] }
+  - { name: adam_kabat_adm,   groups: [sudo] }
+  - { name: adam_kabat_aud,   groups: [audit, sudo] }
+  - { name: adam_kabat_dta,   groups: [dta] }
+  - { name: pj_bates_adm,     groups: [sudo] }
+  - { name: pj_bates_aud,     groups: [audit, sudo] }
+  - { name: zac_mccamant_adm, groups: [sudo] }
+  - { name: zac_mccamant_aud, groups: [audit, sudo] }
+  - { name: zac_mccamant_dta, groups: [dta] }
+
+# Group-shared directories: setgid 2770 (others denied) + a POSIX default ACL so
+# group members get full access to everything created inside even under the STIG
+# umask 077 (which would otherwise strip group bits off new files).
+local_shared_dirs:
+  - { path: /opt/_AuditFiles, group: audit,  mode: "2770" }
+  - { path: /home/shared,     group: sentry, mode: "2770" }
+
+# USB storage is restricted to members of this group (udisks2 polkit + udev).
+usb_access_group: dta
+
+# =============================================================================
+# DESKTOP BRANDING / WALLPAPER (desktop_branding role)
+# =============================================================================
+# The wallpaper file ships in roles/desktop_branding/files/ and is deployed here.
+branding_wallpaper_dest: /usr/share/backgrounds/SHB_Background.jpg
+# true => also set the SESSION LOCK SCREEN to the wallpaper. This OVERRIDES the
+# STIG "Implement Blank Screensaver" control (documented deviation). Set false to
+# brand only the desktop (then re-enable the blank lock screen in gnome.yml).
+branding_lockscreen_wallpaper: true
