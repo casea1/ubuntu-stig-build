@@ -36,6 +36,26 @@
     - /etc/dconf/db/gdm.d
 
 # ---------------------------------------------------------------------------
+# CRITICAL: without /etc/dconf/profile/user listing `system-db:local`, dconf
+# IGNORES everything under /etc/dconf/db/local.d/ for the user session -- so the
+# wallpaper keyfile below (and the STIG GNOME settings) silently never apply.
+# Stock Ubuntu does NOT ship this file. We ensure it idempotently and ADDITIVELY
+# (only guaranteeing the two required lines; never removing other dbs). It is read
+# at login, so it takes effect on the next session.
+# ---------------------------------------------------------------------------
+- name: BRANDING | Ensure the dconf USER profile pulls in the system db (or local.d is ignored)
+  ansible.builtin.lineinfile:
+    path: /etc/dconf/profile/user
+    line: "{{ item }}"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - "user-db:user"      # user's own settings (write target, listed first)
+    - "system-db:local"   # makes /etc/dconf/db/local.d/ effective for the session
+
+# ---------------------------------------------------------------------------
 # Desktop background (always) + session lock screen (when enabled).
 # picture-options 'zoom' fills the screen preserving aspect ratio. The dark
 # variant mirrors the light one so the wallpaper shows under the GNOME dark theme.

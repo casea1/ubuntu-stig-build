@@ -53,8 +53,9 @@
 # integrator removes the old inline block from main.yml.
 #
 # Ubuntu 24.04 specifics:
-#   - /etc/dconf/profile/user ships including system-db:local, so local.d is the
-#     correct system-wide desktop db.
+#   - /etc/dconf/profile/user MUST list `system-db:local` or local.d is IGNORED
+#     for the user session. Stock Ubuntu does NOT ship this file -> task 1b below
+#     ensures it. local.d is then the correct system-wide desktop db.
 #   - /etc/dconf/profile/gdm (from the gdm3 package) includes system-db:gdm, so
 #     gdm.d is the login-screen db.
 # -----------------------------------------------------------------------------
@@ -75,6 +76,23 @@
     - /etc/dconf/db/local.d/locks
     - /etc/dconf/db/gdm.d
     - /etc/dconf/db/gdm.d/locks
+
+# ---------------------------------------------------------------------------
+# 1b) Ensure the dconf USER profile pulls in the system db, or EVERYTHING in
+#     local.d below is ignored for the session (stock Ubuntu ships no such file).
+#     Additive + idempotent; read at login, so it applies on the next session.
+# ---------------------------------------------------------------------------
+- name: GNOME | Ensure /etc/dconf/profile/user includes system-db:local (else local.d is ignored)
+  ansible.builtin.lineinfile:
+    path: /etc/dconf/profile/user
+    line: "{{ item }}"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - "user-db:user"      # user's own settings (write target, listed first)
+    - "system-db:local"   # makes /etc/dconf/db/local.d/ effective for the session
 
 # ---------------------------------------------------------------------------
 # 2) SESSION / DESKTOP keys -> /etc/dconf/db/local.d/00-stig-gnome
