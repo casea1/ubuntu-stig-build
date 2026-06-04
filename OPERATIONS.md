@@ -257,7 +257,9 @@ as recovery** and is never removed.
   a deliberate data-at-rest deviation: a stolen powered-off disk auto-decrypts on its own hardware.
 - **Test on one box first** — TPM/PCR behaviour is hardware-specific, and the non-interactive bind
   (passphrase via stdin) should be confirmed once before fleet rollout. Manual equivalent:
-  `sudo clevis luks bind -d /dev/<part> tpm2 '{"pcr_bank":"sha256","pcr_ids":"7"}'` then
+  `sudo apt install -y clevis clevis-luks clevis-initramfs clevis-tpm2 tpm2-tools` (**`clevis-tpm2`
+  is a SEPARATE package on Ubuntu 24.04** — without it the bind errors *"tpm2 is not a valid pin"*),
+  then `sudo clevis luks bind -d /dev/<part> tpm2 '{"pcr_bank":"sha256","pcr_ids":"7"}'` and
   `sudo update-initramfs -u -k all`.
 - **Recovery:** a firmware/Secure-Boot/shim update that changes the PCRs makes boot fall back to the
   passphrase prompt (not a brick). Re-bind with `clevis luks unbind` + `clevis luks bind` if needed.

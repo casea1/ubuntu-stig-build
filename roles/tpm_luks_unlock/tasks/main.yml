@@ -49,10 +49,13 @@
     - name: "TPM | Install clevis + TPM2 tooling"
       ansible.builtin.apt:
         name:
-          - clevis            # core
+          - clevis            # core framework
           - clevis-luks       # LUKS binding (clevis luks bind/list/unlock)
           - clevis-initramfs  # the initramfs hook that auto-unlocks at boot
-          - tpm2-tools        # runtime support for the tpm2 pin
+          - clevis-tpm2       # the TPM2 PIN -- Ubuntu 24.04 ships it as a SEPARATE
+                              #   package; WITHOUT it `clevis luks bind ... tpm2`
+                              #   fails with "tpm2 is not a valid pin".
+          - tpm2-tools        # generic TPM2 CLI the tpm2 pin uses at runtime
         state: present
         update_cache: true
         cache_valid_time: 3600

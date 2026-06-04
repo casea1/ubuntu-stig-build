@@ -330,7 +330,9 @@ sudo faillock --user <name> --reset
 grub-mkpasswd-pbkdf2
 ansible-vault encrypt_string '<value>' --name '<var>'
 
-# TPM auto-unlock (manual equivalent)
+# TPM auto-unlock (manual equivalent). clevis-tpm2 is a SEPARATE package on 24.04
+# (without it: "tpm2 is not a valid pin").
+sudo apt install -y clevis clevis-luks clevis-initramfs clevis-tpm2 tpm2-tools
 sudo clevis luks bind -d /dev/<part> tpm2 '{"pcr_bank":"sha256","pcr_ids":"7"}'
 sudo update-initramfs -u -k all
 
