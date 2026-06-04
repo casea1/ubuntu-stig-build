@@ -240,18 +240,29 @@ Ubuntu's greeter usually renders its themed background and ignores the dconf key
 login JPG needs a fragile `gnome-shell` gresource patch that is intentionally not done. Flip
 `branding_lockscreen_wallpaper: false` to brand only the desktop and keep the STIG blank lock screen.
 
-## TPM2 LUKS auto-unlock (opt-in)
+## TPM2 LUKS auto-unlock (on by default; passphrase supplied out-of-band)
 
 `tpm_luks_unlock` binds a keyslot of the install-time LUKS volume to the machine's **TPM2** (via
 `clevis` — the path Ubuntu 24.04's stock initramfs auto-unlocks reliably; `systemd-cryptenroll`'s
 `tpm2-device=` is *not* honoured by Ubuntu's default initramfs) so the disk unlocks at boot with
-**no passphrase**. It is **off by default** and self-skips unless you both:
+**no passphrase**. It is **`tpm_luks_enabled: true` by default**, but it only binds once it can read
+the install passphrase — and that passphrase is **never stored in this public repo**.
 
-1. set `tpm_luks_enabled: true`, and
-2. replace the `luks_passphrase` placeholder with the vaulted install passphrase:
-   ```bash
-   ansible-vault encrypt_string '<the-exact-install-passphrase>' --name 'luks_passphrase'
-   ```
+**Supply the passphrase out-of-band.** The role reads it from a root-only (`0600`) file on the box,
+`luks_passphrase_file` (default `/etc/luks/initial-passphrase`). Your **private autoinstall seed**
+writes that file during install — it already has the passphrase (it sets `storage.layout.password`),
+so no new secret location is introduced and nothing lands in git:
+```yaml
+# in your autoinstall user-data (PRIVATE install media, NOT this repo):
+late-commands:
+  - install -d -m 700 /target/etc/luks
+  - printf '%s' 'YOUR-INSTALL-PASSPHRASE' > /target/etc/luks/initial-passphrase
+  - chmod 600 /target/etc/luks/initial-passphrase
+```
+The role consumes it once to authorize the TPM keyslot (it's never needed at boot afterwards). For a
+**private/offline** repo only you may instead set an inline/vaulted `luks_passphrase` — but **never**
+paste a secret into a public repo; the encrypted blob is permanent in git history. The build won't
+fail without the passphrase — it just skips the bind (and says so) until the file is present.
 
 The role installs clevis, binds a **new** keyslot to **PCR 7** (Secure Boot state — stable across
 *signed* kernel updates), and rebuilds the initramfs. Your **original passphrase keyslot is kept

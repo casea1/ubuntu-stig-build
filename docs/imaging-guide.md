@@ -74,9 +74,10 @@ hostname → clock.
 In the installer choose **"Erase disk and use LVM"** and tick **"Encrypt the new Ubuntu installation
 for security."** Set a strong **LUKS passphrase**.
 
-- **Record this passphrase and keep it forever.** It is the disk's recovery key. It is also the exact
-  secret you later vault as `luks_passphrase` if you enable TPM auto-unlock — and that feature *keeps*
-  this passphrase as the recovery keyslot (it never replaces it). Losing it = losing your only recovery.
+- **Record this passphrase and keep it forever.** It is the disk's recovery key. It is also what TPM
+  auto-unlock needs (supplied **out-of-band** via `luks_passphrase_file`, never in this public repo —
+  §9.4), and that feature *keeps* this passphrase as the recovery keyslot (it never replaces it).
+  Losing it = losing your only recovery.
 - Encryption **cannot** be added after install. (For unattended/fleet installs, bake LUKS into an Ubuntu
   autoinstall seed — see *Full-disk encryption at install time* in [OPERATIONS.md](../OPERATIONS.md);
   that seed is separate from this repo and the passphrase must be vaulted, never committed.)
@@ -223,18 +224,26 @@ build, **then reboot**. Normal boot stays password-free (menuentries are `--unre
 is required only to *edit* an entry. Keep `grub_superuser` to letters/underscores only. Test the hash on
 a throwaway VM before a gold image.
 
-### 9.4 TPM2 LUKS auto-unlock (opt-in, per machine)
-Passphrase-free boot via the TPM. **Secure Boot must be ON** (§3.1). To enable, set in `group_vars/all.yml`:
+### 9.4 TPM2 LUKS auto-unlock (on by default, per machine)
+Passphrase-free boot via the TPM. **Secure Boot must be ON** (§3.1). It's **`tpm_luks_enabled: true` by
+default**, but it only binds once it can read the install passphrase — and **the passphrase is never put
+in this public repo**. Supply it **out-of-band** in a root-only file the role reads
+(`luks_passphrase_file`, default `/etc/luks/initial-passphrase`), written by your **private autoinstall
+seed** (which already has it):
 ```yaml
-tpm_luks_enabled: true
-luks_passphrase: !vault | ...        # ansible-vault encrypt_string '<your install passphrase>' --name 'luks_passphrase'
+# autoinstall user-data (PRIVATE install media, not this repo):
+late-commands:
+  - install -d -m 700 /target/etc/luks
+  - printf '%s' 'YOUR-INSTALL-PASSPHRASE' > /target/etc/luks/initial-passphrase
+  - chmod 600 /target/etc/luks/initial-passphrase
 ```
-then **push → re-run → reboot**. It binds a **new** keyslot to **PCR 7** via `clevis` and **keeps your
-install passphrase as recovery** (never replaces it — see §3.2). **Test on one box first** (the manual
-equivalent is `sudo clevis luks bind -d /dev/<part> tpm2 '{"pcr_bank":"sha256","pcr_ids":"7"}'` then
-`sudo update-initramfs -u -k all`). A firmware/Secure-Boot/shim change that alters the PCRs falls back to
-the passphrase prompt (not a brick) — re-bind if needed. Security note: TPM-only / no-PIN auto-unlock is a
-deliberate data-at-rest deviation (§10).
+With that file present, the build binds a **new** keyslot to **PCR 7** via `clevis` and **keeps your
+install passphrase as recovery** (never replaces it — see §3.2). Without it, the build just skips the bind
+(no failure). **Test on one box first** (manual equivalent: `sudo clevis luks bind -d /dev/<part> tpm2
+'{"pcr_bank":"sha256","pcr_ids":"7"}'` then `sudo update-initramfs -u -k all`). A firmware/Secure-Boot/shim
+change that alters the PCRs falls back to the passphrase prompt (not a brick) — re-bind if needed. Security
+note: TPM-only / no-PIN auto-unlock is a deliberate data-at-rest deviation (§10), and the shared passphrase
+sits on each (encrypted) box in that file — remove it post-bind if you want to minimize exposure.
 
 ### 9.5 AIDE builds itself after the first boot
 AIDE's database is **no longer built during the run** (hashing the whole disk would stall the build).
@@ -300,9 +309,9 @@ All operator-facing knobs. Values with a **cap** will *fail the scan* if exceede
 - `stig_var_log_group: syslog` *(must be syslog)*, `stig_journal_dir_mode: "2640"` *(must be 2640, not 2750)*, `stig_journalctl_mode: "0740"`, `stig_kernel_dmesg_restrict: 1`.
 - `stig_firewall_limit_ports` — ufw rate-limited inbound (default: ssh).
 
-**Secrets to vault** 🔒
-- `grub_password_pbkdf2` — GRUB hash (opt-in; self-skips on `CHANGEME`). `grub_superuser` must be `[a-zA-Z_]+` (no digits/hyphens).
-- `luks_passphrase` — install LUKS passphrase, for `tpm_luks_unlock` (opt-in; `tpm_luks_enabled: false` by default).
+**Secrets — never commit to a public repo** 🔒
+- `grub_password_pbkdf2` — GRUB hash (opt-in; self-skips on `CHANGEME`). `grub_superuser` must be `[a-zA-Z_]+` (no digits/hyphens). Vault it.
+- `luks_passphrase` — leave **empty** in this public repo. TPM auto-unlock (`tpm_luks_enabled: true` by default) reads the install passphrase **out-of-band** from `luks_passphrase_file` (default `/etc/luks/initial-passphrase`, written by your private autoinstall seed). See §9.4.
 
 **Accounts / access / branding**
 - `local_groups`, `local_users`, `local_shared_dirs`, `usb_access_group: dta`.

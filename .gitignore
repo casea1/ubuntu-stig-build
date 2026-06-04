@@ -15,3 +15,16 @@ stig-viewer-*.xml
 .vscode/
 .DS_Store
 *.swp
+
+# Secrets must NEVER be committed (this repo is public). Supply the LUKS
+# passphrase out-of-band via luks_passphrase_file; vault files / secret drops are
+# blocked here as a safety net so they can't be added by accident.
+vault.yml
+vault*.yml
+*vault*.yml
+group_vars/vault*
+*.vault
+secrets.yml
+*.secret
+*luks*passphrase*
+*.key

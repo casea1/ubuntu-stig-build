@@ -27,20 +27,47 @@
 # no reboot is triggered here (the post-build reboot applies it).
 # =============================================================================
 
-- name: "TPM | Determine whether a real LUKS passphrase is configured"
+# Passphrase resolution -- the secret is supplied OUT OF BAND, never from this
+# public repo. Priority: an inline `luks_passphrase` (only for a PRIVATE repo) >
+# a root-only file on the box (`luks_passphrase_file`, written by your autoinstall
+# seed) > nothing. All three tasks are no_log so the passphrase is never printed.
+- name: "TPM | Stat the out-of-band passphrase file"
+  ansible.builtin.stat:
+    path: "{{ luks_passphrase_file | default('') }}"
+  register: tpm_luks_pass_file
+  when: (luks_passphrase_file | default('')) | length > 0
+
+- name: "TPM | Read the LUKS passphrase from the file when no inline var is set"
+  ansible.builtin.slurp:
+    src: "{{ luks_passphrase_file }}"
+  register: tpm_luks_pass_slurp
+  no_log: true
+  when:
+    - (luks_passphrase | default('')) | length == 0
+    - tpm_luks_pass_file.stat.exists | default(false)
+
+- name: "TPM | Resolve the effective passphrase (inline var > file > none)"
+  ansible.builtin.set_fact:
+    tpm_luks_pass: >-
+      {{ (luks_passphrase | default(''))
+         if ((luks_passphrase | default('')) | length > 0)
+         else ((tpm_luks_pass_slurp.content | b64decode | trim)
+               if (tpm_luks_pass_slurp.content is defined) else '') }}
+  no_log: true
+
+- name: "TPM | Determine whether a usable LUKS passphrase is available"
   ansible.builtin.set_fact:
     tpm_luks_ready: >-
-      {{ (luks_passphrase is defined)
-         and (luks_passphrase | string | length > 0)
-         and ('CHANGEME' not in (luks_passphrase | string)) }}
+      {{ (tpm_luks_pass | length > 0) and ('CHANGEME' not in tpm_luks_pass) }}
 
-- name: "TPM | Notice + skip when no real passphrase is vaulted"
+- name: "TPM | Notice + skip when no passphrase is available"
   ansible.builtin.debug:
     msg: >-
-      tpm_luks_unlock: tpm_luks_enabled is true but luks_passphrase is still the
-      placeholder. Vault the install passphrase
-      (ansible-vault encrypt_string '<passphrase>' --name luks_passphrase) to bind
-      the LUKS volume to the TPM. Boot keeps prompting until then.
+      tpm_luks_unlock: no LUKS passphrase available, so the TPM bind is skipped.
+      This is normal if the box is already TPM-bound. Otherwise place the install
+      passphrase (root-only, 0600) in {{ luks_passphrase_file }} out-of-band -- e.g.
+      from your autoinstall seed -- and re-run. Do NOT put the passphrase in this
+      public repo.
   when: not tpm_luks_ready
 
 - name: "TPM | Enable TPM2 LUKS auto-unlock (clevis)"
@@ -116,7 +143,7 @@
           - "{{ tpm_luks_dev | trim }}"
           - tpm2
           - "{{ tpm_luks_tpm2_cfg | to_json }}"
-        stdin: "{{ luks_passphrase }}"
+        stdin: "{{ tpm_luks_pass }}"               # resolved from inline var OR the out-of-band file
         stdin_add_newline: false                   # match the interactive passphrase (no trailing LF)
       no_log: true                                  # the LUKS passphrase passes via stdin
       register: tpm_clevis_bind

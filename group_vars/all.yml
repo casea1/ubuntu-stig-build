@@ -368,12 +368,21 @@ branding_lockscreen_wallpaper: true
 # the role warns if it is off. The binding is sealed to this box's TPM, so this
 # must run on each PHYSICAL machine (the per-machine ansible-pull does) -- it
 # cannot be captured into a cloned gold image.
-tpm_luks_enabled: false           # OFF by default; flip true to bind the TPM
-# Existing install-time LUKS passphrase (same across the fleet). Used ONCE to
-# authorize the new TPM keyslot; never needed at boot afterwards. VAULT IT:
-#   ansible-vault encrypt_string '<the-exact-passphrase>' --name 'luks_passphrase'
-# (vault the EXACT passphrase, no trailing newline) and paste the !vault block here.
-luks_passphrase: "CHANGEME_vault_the_install_LUKS_passphrase"
+tpm_luks_enabled: true            # ON by default (fleet standard: TPM auto-unlock)
+#
+# SECRET HANDLING -- the LUKS passphrase must NOT live in this PUBLIC repo.
+# Leave `luks_passphrase` EMPTY here. The role reads the passphrase OUT OF BAND
+# from a root-only (0600) file on each box (`luks_passphrase_file`), which your
+# PRIVATE autoinstall seed writes during install (it already knows the passphrase,
+# since it sets disk encryption). It is used ONCE to authorize the TPM keyslot and
+# is never needed at boot afterwards. Nothing secret is committed.
+# (An inline `luks_passphrase` is still honoured for a PRIVATE/offline repo, but
+#  NEVER paste a secret into a PUBLIC one -- the encrypted blob is forever in git.)
+luks_passphrase: ""
+# Root-only file holding the install passphrase, placed out-of-band (autoinstall
+# late-commands / write_files, or dropped manually). Read once for the bind; never
+# in git. See OPERATIONS.md "TPM2 LUKS auto-unlock".
+luks_passphrase_file: /etc/luks/initial-passphrase
 # LUKS partition. Empty = auto-detect the single crypto_LUKS device. Set
 # explicitly (e.g. /dev/nvme0n1p3) if the box has more than one LUKS volume.
 luks_device: ""
