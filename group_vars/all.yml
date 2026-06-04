@@ -336,6 +336,16 @@ local_shared_dirs:
 # USB storage is restricted to members of this group (udisks2 polkit + udev).
 usb_access_group: dta
 
+# Base-box default accounts to PURGE if present. Vagrant/Packer base images ship
+# a 'vagrant' user with a known password, NOPASSWD sudo (/etc/sudoers.d/vagrant),
+# and a public "insecure" SSH key -- a STIG finding the build does not create but
+# should clean up. Removal is idempotent (a no-op if the account is absent).
+# Do NOT list your operator account (austin_case_adm) or any local_users entry.
+purge_default_accounts:
+  - vagrant
+  # - ubuntu     # uncomment if your base image's cloud-init 'ubuntu' user is unwanted
+  # - packer
+
 # =============================================================================
 # DESKTOP BRANDING / WALLPAPER (desktop_branding role)
 # =============================================================================

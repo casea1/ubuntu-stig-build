@@ -202,6 +202,13 @@ membership grants full sudo. The `audit` group is for `/opt/_AuditFiles` access;
 to the named auditor accounts individually (their `groups:` include `sudo`), **not** to the whole
 `audit` group — change `local_users` if you want group-wide sudo.
 
+**Base-box default accounts are purged.** The role removes any account listed in
+`purge_default_accounts` (default: `vagrant`) along with its home, its insecure SSH key, and any
+matching `/etc/sudoers.d/` drop-in. Vagrant/Packer base images ship a `vagrant` user with a
+well-known password + `NOPASSWD` sudo + a publicly-published SSH key (a STIG finding); this build
+doesn't create it, but cleans it up if your base image had one. Removal is idempotent. **Never add
+your operator account or a `local_users` name to that list.**
+
 **Access groups & shared folders**
 
 | Group | Grants | Shared folder |

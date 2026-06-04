@@ -170,3 +170,45 @@
       # {{ usb_access_group }} members can read/write it directly (mount/dd).
       ACTION=="add|change", SUBSYSTEM=="block", SUBSYSTEMS=="usb", GROUP="{{ usb_access_group }}", MODE="0660"
   notify: reload udev
+
+# ---------------------------------------------------------------------------
+# 5) PURGE BASE-BOX DEFAULT ACCOUNTS (vagrant, etc.)
+#    Vagrant/Packer base images ship a default 'vagrant' account with a
+#    well-known password, passwordless sudo (/etc/sudoers.d/vagrant), and the
+#    publicly-published "insecure" SSH key in its authorized_keys -- a STIG
+#    finding (default account + known credential + NOPASSWD root). This build
+#    does NOT create it; it comes from the base image. We remove it (and any
+#    other names listed in purge_default_accounts) idempotently: user:absent is
+#    a no-op when the account isn't present, so this is safe on images that
+#    never had it. NEVER list your operator account or any local_users name in
+#    purge_default_accounts (group_vars enforces sane defaults: just 'vagrant').
+# ---------------------------------------------------------------------------
+- name: ACCOUNTS | Remove base-box default accounts + their homes (vagrant/etc.)
+  ansible.builtin.user:
+    name: "{{ item }}"
+    state: absent
+    remove: true          # userdel -r: also deletes the home, incl. the insecure ~/.ssh key
+  loop: "{{ purge_default_accounts | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: ACCOUNTS | Find sudoers drop-ins that grant a purged default account
+  # find:contains regex-matches each file's content, so this catches the
+  # canonical /etc/sudoers.d/vagrant AND oddly-named variants (99_vagrant, etc.).
+  ansible.builtin.find:
+    paths: /etc/sudoers.d
+    file_type: file
+    patterns: "*"
+    contains: "^%?{{ item }}\\b"
+  loop: "{{ purge_default_accounts | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
+  register: purge_sudoers
+
+- name: ACCOUNTS | Remove the sudoers drop-ins for purged default accounts
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ purge_sudoers.results | default([]) | map(attribute='files') | flatten }}"
+  loop_control:
+    label: "{{ item.path }}"
