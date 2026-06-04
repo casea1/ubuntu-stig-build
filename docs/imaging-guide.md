@@ -336,6 +336,10 @@ sudo apt install -y clevis clevis-luks clevis-initramfs clevis-tpm2 tpm2-tools
 sudo clevis luks bind -d /dev/<part> tpm2 '{"pcr_bank":"sha256","pcr_ids":"7"}'
 sudo update-initramfs -u -k all
 
+# Rotate the LUKS passphrase (independent of TPM unlock; re-vault luks_passphrase after).
+# Full notes: OPERATIONS.md -> "Rotating the LUKS passphrase".
+sudo cryptsetup luksChangeKey /dev/<part>      # current passphrase, then new one twice
+
 # Re-scan offline (after air-gap)
 sudo oscap xccdf eval --profile <profile> --report report.html <on-box ssg-ubuntu2404-ds.xml>
 ```

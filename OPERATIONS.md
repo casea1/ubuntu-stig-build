@@ -271,6 +271,38 @@ as recovery** and is never removed.
 - **Recovery:** a firmware/Secure-Boot/shim update that changes the PCRs makes boot fall back to the
   passphrase prompt (not a brick). Re-bind with `clevis luks unbind` + `clevis luks bind` if needed.
 
+### Rotating the LUKS passphrase
+
+The disk passphrase you set at install lives in a LUKS **keyslot**, and you can change it any time
+**without re-encrypting** the disk. It is **independent of the TPM keyslot** — changing it does not
+disturb auto-unlock, and the box keeps booting via the TPM.
+
+```bash
+sudo blkid -t TYPE=crypto_LUKS -o device       # find the LUKS partition, e.g. /dev/sda3 or /dev/nvme0n1p3
+sudo cryptsetup luksChangeKey /dev/<part>       # prompts: current passphrase, then the new one twice
+# inspect / manage slots:
+sudo cryptsetup luksDump   /dev/<part>          # shows used slots (your passphrase + the clevis/TPM slot)
+sudo cryptsetup luksAddKey /dev/<part>          # ADD another passphrase (authorize with an existing one)
+sudo cryptsetup luksKillSlot /dev/<part> <N>    # remove an old slot by number
+```
+`cryptsetup` operates on the **LUKS partition** (the bottom layer), not the LVM volumes inside it. No
+reboot needed — it applies to future unlocks immediately.
+
+**Keep the vaulted value in sync.** `luks_passphrase` (group_vars) is used **only once** — to authorize
+the initial `clevis luks bind`; the role skips it on a box that's already bound, so rotating the
+passphrase won't break an already-unlocking machine. But re-vault it so a **fresh image** or a
+**re-bind** (after a PCR/firmware change) still authorizes:
+```bash
+ansible-vault encrypt_string '<new-passphrase>' --name 'luks_passphrase'
+```
+Update the autoinstall seed too if you bake the passphrase there.
+
+**Don't kill your only passphrase slot** and rely solely on the TPM — a firmware/Secure-Boot/shim
+change alters the PCRs and you'd need a passphrase to get back in. The TPM bind deliberately keeps
+your passphrase as recovery. If you've forgotten the passphrase but the box still auto-unlocks via the
+TPM, a new one can still be added from the running (unlocked) system — a more involved procedure; ask
+before attempting.
+
 ## Windows servers
 
 This repo is Linux-only. STIG automation for Windows uses a different stack (PowerShell
