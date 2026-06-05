@@ -1,16 +1,29 @@
 #!/usr/bin/env python3
-"""Minimal security-classification banner for Ubuntu 24.04 / GNOME (GTK 3).
+"""Security-classification banner for Ubuntu 24.04 / GNOME (GTK 3, Xorg).
 
-Draws an always-on-top bar across the TOP and BOTTOM of every monitor showing
-the system's classification level. Vendored for this build because the common
-upstream tool (fcaviggia/classification-banner) is Python 2 / PyGTK and does not
-run on Ubuntu 24.04.
+Draws a bar across the TOP and BOTTOM of every monitor showing the system's
+classification level, and -- crucially -- RESERVES that screen space by
+publishing X11 strut hints (_NET_WM_STRUT / _NET_WM_STRUT_PARTIAL). The window
+manager then shrinks the work area, so MAXIMIZED windows reflow above the bottom
+bar instead of being hidden behind it.
+
+Why this matters: setting the DOCK window-type hint ALONE does not reserve any
+space -- a dock window without a strut is just an always-on-top overlay, which is
+exactly what hides content at the screen edge. The strut is what makes the WM
+keep other windows off the bar.
+
+Note on the TOP bar under GNOME: GNOME Shell's own top panel owns the very top
+edge and is always drawn on top, so the top classification bar sits behind it
+during a normal session (visible at the lock/login screen, where there is no
+panel). That is a GNOME limitation; the bottom bar is the one that reserves
+usable space here.
 
 Usage:   classification-banner [LEVEL]
 LEVEL is a section name in /etc/classification-banner.conf (default UNCLASSIFIED).
 
-NOTE: reliable docking requires an Xorg session; Wayland ignores X11 dock/strut
-hints. The role forces GDM to Xorg when the banner is enabled.
+Requires an Xorg session (the role forces GDM to Xorg); on Wayland the strut/dock
+hints are ignored and get_xid() is unavailable. Strut setup is wrapped so the
+bars still draw (as a plain overlay) rather than crashing if X is unavailable.
 """
 import sys
 import configparser
@@ -19,8 +32,30 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib  # noqa: E402
 
+# GdkX11 (get_xid) ships in gir1.2-gtk-3.0 (Provides: gir1.2-gdkx11-3.0);
+# Xlib comes from python3-xlib. Both are optional at runtime -- on Wayland or a
+# missing dep we skip strut reservation and fall back to a plain overlay.
+try:
+    gi.require_version("GdkX11", "3.0")
+    from gi.repository import GdkX11  # noqa: F401,E402  (loads the typelib for get_xid)
+    from Xlib import display as _xlib_display, Xatom  # noqa: E402
+    _XLIB_OK = True
+except Exception as exc:  # pragma: no cover - environment dependent
+    sys.stderr.write("classification-banner: strut reservation unavailable "
+                     "(%s); bars will overlay\n" % exc)
+    _XLIB_OK = False
+
 CONF_FILE = "/etc/classification-banner.conf"
 BAR_HEIGHT = 22
+
+_XDISPLAY = None
+
+
+def _xdisplay():
+    global _XDISPLAY
+    if _XDISPLAY is None:
+        _XDISPLAY = _xlib_display.Display()
+    return _XDISPLAY
 
 
 def load_level(level):
@@ -41,7 +76,48 @@ def rgba(hex_str):
     return c
 
 
-def make_bar(geo, at_top, message, bgcolor, fgcolor):
+def reserve_strut(win, geo, at_top, screen_h):
+    """Publish _NET_WM_STRUT[_PARTIAL] so the WM keeps windows off the bar.
+
+    EWMH struts describe space reserved at a SCREEN edge, so we only set one when
+    the bar actually touches that edge (true for single + side-by-side monitors).
+    An interior bar (stacked monitors) is left as a plain overlay rather than
+    reserving the wrong region.
+    """
+    if not _XLIB_OK:
+        return
+    if at_top and geo.y != 0:
+        return
+    if (not at_top) and (geo.y + geo.height != screen_h):
+        return
+    try:
+        gdkwin = win.get_window()
+        if gdkwin is None:
+            return
+        d = _xdisplay()
+        xwin = d.create_resource_object("window", gdkwin.get_xid())
+        # _NET_WM_STRUT_PARTIAL: left, right, top, bottom, then the start/end
+        # extents for each (we only use the top OR bottom edge here).
+        if at_top:
+            partial = [0, 0, BAR_HEIGHT, 0,
+                       0, 0, 0, 0,
+                       geo.x, geo.x + geo.width - 1,
+                       0, 0]
+        else:
+            partial = [0, 0, 0, BAR_HEIGHT,
+                       0, 0, 0, 0,
+                       0, 0,
+                       geo.x, geo.x + geo.width - 1]
+        xwin.change_property(d.intern_atom("_NET_WM_STRUT_PARTIAL"),
+                             Xatom.CARDINAL, 32, partial)
+        xwin.change_property(d.intern_atom("_NET_WM_STRUT"),
+                             Xatom.CARDINAL, 32, partial[:4])
+        d.flush()
+    except Exception as exc:  # pragma: no cover - environment dependent
+        sys.stderr.write("classification-banner: could not set strut (%s)\n" % exc)
+
+
+def make_bar(geo, at_top, message, bgcolor, fgcolor, screen_h):
     win = Gtk.Window()
     win.set_type_hint(Gdk.WindowTypeHint.DOCK)
     win.set_decorated(False)
@@ -51,6 +127,7 @@ def make_bar(geo, at_top, message, bgcolor, fgcolor):
     win.set_keep_above(True)
     win.set_accept_focus(False)
     win.stick()
+    win.set_size_request(geo.width, BAR_HEIGHT)
 
     box = Gtk.EventBox()
     box.override_background_color(Gtk.StateFlags.NORMAL, rgba(bgcolor))
@@ -65,10 +142,10 @@ def make_bar(geo, at_top, message, bgcolor, fgcolor):
 
     x = geo.x
     y = geo.y if at_top else geo.y + geo.height - BAR_HEIGHT
-    win.set_size_request(geo.width, BAR_HEIGHT)
-    win.show_all()
+    win.show_all()              # realize + map -> the window now has an X id
     win.move(x, y)
     win.resize(geo.width, BAR_HEIGHT)
+    reserve_strut(win, geo, at_top, screen_h)
     return win
 
 
@@ -86,10 +163,11 @@ def monitor_geometries():
 def main():
     level = sys.argv[1] if len(sys.argv) > 1 else "UNCLASSIFIED"
     message, bgcolor, fgcolor = load_level(level)
+    screen_h = Gdk.Screen.get_default().get_height()   # X screen (root) height
     windows = []
     for geo in monitor_geometries():
-        windows.append(make_bar(geo, True, message, bgcolor, fgcolor))
-        windows.append(make_bar(geo, False, message, bgcolor, fgcolor))
+        windows.append(make_bar(geo, True, message, bgcolor, fgcolor, screen_h))
+        windows.append(make_bar(geo, False, message, bgcolor, fgcolor, screen_h))
     Gtk.main()
 
 

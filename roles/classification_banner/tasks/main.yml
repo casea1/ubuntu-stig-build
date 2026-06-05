@@ -7,7 +7,8 @@
   ansible.builtin.apt:
     name:
       - python3-gi
-      - gir1.2-gtk-3.0
+      - gir1.2-gtk-3.0      # also Provides gir1.2-gdkx11-3.0 -> GdkX11 get_xid()
+      - python3-xlib        # sets _NET_WM_STRUT_PARTIAL so the bars RESERVE space
     state: present
     update_cache: true
     cache_valid_time: 3600
