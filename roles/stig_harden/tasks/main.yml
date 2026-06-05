@@ -78,3 +78,45 @@
     # `loop:` tasks (also using 'item'), and a shared 'item' triggers Ansible's
     # "loop variable 'item' is already in use" warning.
     loop_var: gap_file
+
+# ---------------------------------------------------------------------------
+# USB MASS STORAGE -- reconcile the lockdown control with the dta carve-out.
+# The DISA STIG "disable USB mass storage" control makes the lockdown role
+# blacklist the usb-storage kernel module:
+#     /etc/modprobe.d/usb-storage.conf:
+#         install usb-storage /bin/false
+#         blacklist usb-storage
+# That disables USB storage for EVERYONE -- mass-storage devices still enumerate
+# at the USB layer but never bind a /dev/sdX, so the local_accounts dta carve-out
+# (udev + polkit) has nothing to govern. This fleet REQUIRES USB for data-transfer
+# agents, so when usb_storage_enabled is true (default) we strip that blacklist
+# AFTER the lockdown role and load the module; the dta udev + polkit policy then
+# governs WHO may mount. Documented removable-media deviation (OPERATIONS.md POA&M).
+# Set usb_storage_enabled: false to keep USB storage fully disabled (the dta
+# carve-out is then moot). Runs here -- after the lockdown role above -- so the
+# strip isn't immediately re-applied. (No initramfs rebuild needed: root is not
+# on USB, so the module only loads post-boot when a device is plugged.)
+- name: "USB | Find modprobe.d files that disable usb-storage (lockdown control)"
+  ansible.builtin.find:
+    paths: /etc/modprobe.d
+    patterns: "*.conf"
+    contains: '(install|blacklist)\s+usb[-_]?storage'
+  register: stig_usb_blacklist
+  when: usb_storage_enabled | default(true) | bool
+
+- name: "USB | Strip the usb-storage install/blacklist lines (re-enable for the dta carve-out)"
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '(?m)^[ \t]*(install[ \t]+usb[-_]?storage[ \t]+.*|blacklist[ \t]+usb[-_]?storage)[ \t]*$'
+    replace: ''
+  loop: "{{ stig_usb_blacklist.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: usb_storage_enabled | default(true) | bool
+
+- name: "USB | Load the usb-storage module now (no reboot needed)"
+  community.general.modprobe:
+    name: usb-storage
+    state: present
+  failed_when: false
+  when: usb_storage_enabled | default(true) | bool

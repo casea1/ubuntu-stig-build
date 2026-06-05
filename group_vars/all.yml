@@ -336,6 +336,16 @@ local_shared_dirs:
 # USB storage is restricted to members of this group (udisks2 polkit + udev).
 usb_access_group: dta
 
+# Re-enable the usb-storage kernel module. The lockdown role (stig_harden)
+# blacklists usb-storage per the DISA STIG "disable USB mass storage" control --
+# which disables USB storage for EVERYONE and would defeat the dta carve-out
+# above (no block device ever appears). This fleet needs USB for data-transfer
+# agents, so stig_harden strips that blacklist AFTER the lockdown role and loads
+# the module; the dta udev + polkit policy then governs who may mount. Documented
+# deviation (OPERATIONS.md POA&M). Set false to keep USB mass storage fully
+# disabled (the dta carve-out is then moot).
+usb_storage_enabled: true
+
 # Base-box default accounts to PURGE if present. Vagrant/Packer base images ship
 # a 'vagrant' user with a known password, NOPASSWD sudo (/etc/sudoers.d/vagrant),
 # and a public "insecure" SSH key -- a STIG finding the build does not create but

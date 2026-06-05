@@ -151,9 +151,13 @@ doesn't have. Document each as a POA&M for your assessor:
   session lock screen shows the org wallpaper (`desktop_branding` role) instead of blank, so
   `org.gnome.desktop.screensaver picture-uri` is non-empty. Approved deviation; the lock
   *timing* (idle-delay, lock-enabled, lock-delay) is still STIG-enforced.
-- **USB storage restricted to the `dta` group** (not blanket-disabled) — a deliberate, more
-  granular control than the STIG's "disable USB mass storage." If your benchmark strictly
-  requires USB *disabled*, document this group-based allowance as the exception.
+- **USB storage re-enabled and restricted to the `dta` group** (not blanket-disabled) — a
+  deliberate, more granular control than the STIG's "disable USB mass storage." The lockdown role
+  blacklists the `usb-storage` kernel module (`/etc/modprobe.d/usb-storage.conf`), which `stig_harden`
+  then **strips** (when `usb_storage_enabled: true`, the default) so USB works for the data-transfer
+  agents; the `dta` udev + polkit policy governs who may mount. If your benchmark strictly requires
+  USB *disabled*, set `usb_storage_enabled: false` and document the `dta` allowance as the exception
+  only where you do enable it.
 - **TPM-only LUKS auto-unlock (opt-in, `tpm_luks_enabled`)** — when enabled, the disk
   auto-decrypts via the TPM with no boot secret (PCR 7 / Secure Boot). A deliberate data-at-rest
   deviation accepted for operational need, mitigated only by Secure Boot; the install passphrase
