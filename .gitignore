@@ -16,6 +16,11 @@ stig-viewer-*.xml
 .DS_Store
 *.swp
 
+# Python bytecode (banner/helper scripts get byte-compiled when run or linted)
+__pycache__/
+*.pyc
+*.pyo
+
 # Secrets must NEVER be committed (this repo is public). Supply the LUKS
 # passphrase out-of-band via luks_passphrase_file; vault files / secret drops are
 # blocked here as a safety net so they can't be added by accident.
