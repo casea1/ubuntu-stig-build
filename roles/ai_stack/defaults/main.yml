@@ -1,0 +1,25 @@
+---
+# Role-internal constants for ai_stack. User-facing toggles (server_tools, image
+# pins, ports, model, gpu_enabled, ...) live in group_vars/all.yml.
+
+# ---- Docker's official apt repository (docker-ce) --------------------------
+# Map Ansible's architecture fact to the apt arch string Docker publishes under.
+docker_apt_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else (ansible_architecture | default('amd64')) }}"
+docker_apt_gpg_url: "https://download.docker.com/linux/ubuntu/gpg"
+docker_apt_keyring: "/etc/apt/keyrings/docker.asc"
+# {{ ansible_distribution_release }} = the Ubuntu codename (noble on 24.04).
+docker_apt_repo: >-
+  deb [arch={{ docker_apt_arch }} signed-by={{ docker_apt_keyring }}]
+  https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+
+# ---- NVIDIA container toolkit apt repository -------------------------------
+# We follow NVIDIA's documented method verbatim: fetch the published .list and
+# inject the signed-by keyring (their `sed` step) so the repo is signature-pinned.
+nvidia_ct_gpg_url: "https://nvidia.github.io/libnvidia-container/gpgkey"
+nvidia_ct_list_url: "https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list"
+nvidia_ct_keyring: "/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg"
+nvidia_ct_list_path: "/etc/apt/sources.list.d/nvidia-container-toolkit.list"
+
+# Set true by gpu.yml when a driver is installed, so the role can remind the
+# operator a reboot is needed before the GPU is usable.
+ai_stack_reboot_required: false

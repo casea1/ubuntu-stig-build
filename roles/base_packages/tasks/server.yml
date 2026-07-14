@@ -1,0 +1,36 @@
+---
+# SERVER profile baseline -- a deliberately LEAN headless set.
+# Included from main.yml only when is_server. We install just what a bare Ubuntu
+# Pro server needs before the two big roles take over:
+#   - the ai_stack role installs docker-ce + the NVIDIA stack + the containers
+#   - the usg_harden role installs `usg` (via Ubuntu Pro) and runs it
+# so this file only provides the always-useful essentials and the bits the later
+# roles assume are present (curl/gnupg/ca-certificates for adding the Docker &
+# NVIDIA apt repos; openssh-server for remote admin of a headless box).
+#
+# We intentionally do NOT install the desktop app set (clamav GUI stack,
+# wireshark, putty, VS Code, PowerStrux/PowerShell, PXE provisioning services) --
+# they're workstation tooling and would only add attack surface + STIG findings
+# on a server.
+
+- name: "SERVER | Install the lean headless baseline"
+  ansible.builtin.apt:
+    name:
+      - ca-certificates     # needed to trust the Docker/NVIDIA apt repo TLS
+      - curl                # ai_stack fetches repo GPG keys with curl
+      - gnupg               # de-armoring repo keys
+      - apt-transport-https
+      - software-properties-common
+      - git
+      - openssh-server      # headless box: remote admin over SSH
+      - openssh-client
+      - python3
+      - python3-apt         # ansible apt/deb modules rely on it
+      - jq                  # handy for inspecting container/API JSON on the box
+    state: present
+
+- name: "SERVER | Enable and start sshd (remote admin of a headless box)"
+  ansible.builtin.systemd:
+    name: ssh
+    enabled: true
+    state: started

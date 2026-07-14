@@ -1,0 +1,85 @@
+---
+# =============================================================================
+# ai_stack :: compose.yml -- render a docker-compose.yml containing ONLY the
+# selected services, wire them together, and bring the stack up.
+#
+# Secrets (Postgres password, Open WebUI signing key, HF token) are kept out of
+# the compose file: they live in a root-only .env (0600) that Docker Compose
+# interpolates for ${VAR} references. The compose file itself is non-secret.
+# Generated passwords are created ONCE (ansible password lookup persists them
+# under {{ ai_stack_secrets_dir }}) and stay stable across re-runs.
+# =============================================================================
+
+- name: "COMPOSE | Ensure the project dir exists"
+  ansible.builtin.file:
+    path: "{{ ai_stack_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "COMPOSE | Ensure the secrets dir exists (root-only)"
+  ansible.builtin.file:
+    path: "{{ ai_stack_secrets_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+# ---- Secrets ---------------------------------------------------------------
+# The password lookup generates a random value on first run, writes it under the
+# (0700) secrets dir, and returns the SAME value on every later run -> stable,
+# idempotent secrets that are never committed.
+- name: "COMPOSE | Generate/load persistent stack secrets"
+  ansible.builtin.set_fact:
+    _pg_password: "{{ lookup('ansible.builtin.password', ai_stack_secrets_dir ~ '/pg_password chars=ascii_letters,digits length=32') }}"
+    _webui_secret: "{{ lookup('ansible.builtin.password', ai_stack_secrets_dir ~ '/webui_secret_key chars=ascii_letters,digits length=48') }}"
+  no_log: true
+
+# HF token: prefer an inline var (private repos only), else an out-of-band file,
+# else empty (fine for the default ungated model).
+- name: "COMPOSE | Look for an out-of-band Hugging Face token file"
+  ansible.builtin.slurp:
+    src: "{{ ai_stack_secrets_dir }}/hf_token"
+  register: _hf_slurp
+  failed_when: false
+  when: (hf_token | default('') | length) == 0
+
+- name: "COMPOSE | Resolve the effective HF token"
+  ansible.builtin.set_fact:
+    _hf_token: >-
+      {{ hf_token if (hf_token | default('') | length) > 0
+         else ((_hf_slurp.content | b64decode | trim)
+               if (_hf_slurp is defined and _hf_slurp.get('content')) else '') }}
+  no_log: true
+
+# ---- Render ----------------------------------------------------------------
+- name: "COMPOSE | Render the secret .env (0600, never committed)"
+  ansible.builtin.template:
+    src: ai-stack.env.j2
+    dest: "{{ ai_stack_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: "COMPOSE | Render docker-compose.yml (selected services only)"
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ ai_stack_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  register: _compose_rendered
+
+# ---- Launch ----------------------------------------------------------------
+- name: "COMPOSE | Pull images + bring the stack up (docker compose up -d)"
+  # pull: missing => pulls any image not already present (do it now, while online,
+  # so the box can go air-gapped afterwards). wait: false => don't block the build
+  # on slow first-time model downloads / GPU containers that need a post-boot driver.
+  community.docker.docker_compose_v2:
+    project_src: "{{ ai_stack_dir }}"
+    project_name: "{{ ai_stack_project }}"
+    state: present
+    pull: missing
+    wait: false

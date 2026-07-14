@@ -1,0 +1,9 @@
+---
+# Role-internal constants for usg_harden. User-facing toggles (ubuntu_pro_token,
+# usg_profile, usg_fix_enabled, usg_enable_fips, ...) live in group_vars/all.yml.
+
+# Stamp file that records the last profile `usg fix` was applied for, so the
+# expensive/disruptive fix runs once per image (or when the profile changes /
+# usg_force_fix is set) rather than on every ansible-pull.
+usg_stamp_dir: /var/lib/usg-harden
+usg_stamp_file: "{{ usg_stamp_dir }}/applied-profile"
