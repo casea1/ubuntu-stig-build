@@ -3,21 +3,21 @@
 # restrictions don't interfere with package and pip operations.
 #
 # The concrete package set depends on the deployment profile (see local.yml):
-#   desktop -> desktop.yml  (the full engineering-workstation app set:
-#              clamav, wireshark, putty, editor, VS Code, PowerShell,
-#              provisioning services -- unchanged from the original build)
-#   server  -> server.yml   (a lean headless baseline; the AI stack and USG
-#              pull in almost everything else they need themselves)
+#   development -> development.yml  (the full engineering-workstation app set:
+#                  clamav, wireshark, putty, editor, VS Code, PowerShell,
+#                  provisioning services)
+#   ai          -> ai.yml           (a lean headless baseline; the AI stack and
+#                  USG pull in almost everything else they need themselves)
 
 - name: Update apt cache
   ansible.builtin.apt:
     update_cache: true
     cache_valid_time: 3600
 
-- name: Install the DESKTOP engineering-workstation package set
-  ansible.builtin.import_tasks: desktop.yml
-  when: is_desktop | default(true) | bool
+- name: Install the DEVELOPMENT engineering-workstation package set
+  ansible.builtin.import_tasks: development.yml
+  when: is_development | default(true) | bool
 
-- name: Install the SERVER baseline package set
-  ansible.builtin.import_tasks: server.yml
-  when: is_server | default(false) | bool
+- name: Install the AI-server baseline package set
+  ansible.builtin.import_tasks: ai.yml
+  when: is_ai | default(false) | bool

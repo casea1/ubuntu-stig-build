@@ -2,20 +2,22 @@
 # First-boot bootstrap for imaging an Ubuntu 24.04 STIG box.
 # Run once, while the machine has internet.
 #
-#   DESKTOP (default) -- GNOME engineering workstation:
+#   DEVELOPMENT (default) -- engineering workstation with a GNOME desktop reached
+#   over RDP (xrdp). Works on a headless server base (it installs the GUI):
 #     curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo bash
 #
-#   SERVER -- Ubuntu Pro AI server (USG DISA-STIG + selectable AI stack). Pass
-#   options as environment variables (piped bash can't take flags):
-#     curl -fsSL .../bootstrap.sh | sudo PROFILE=server TOOLS=docker,vllm,open_webui,pgvector,docling bash
+#   AI -- Ubuntu Pro AI server (USG DISA-STIG + selectable AI stack). Pass options
+#   as environment variables (piped bash can't take flags):
+#     curl -fsSL .../bootstrap.sh | sudo PROFILE=ai TOOLS=docker,vllm,open_webui,pgvector,docling bash
 #
 # Recognised environment variables:
-#   PROFILE=desktop|server   which build to run                 (default: desktop)
-#   TOOLS=a,b,c              server only: which AI tools to install
+#   PROFILE=development|ai   which build to run                 (default: development)
+#                           (aliases: desktop->development, server->ai)
+#   TOOLS=a,b,c             ai only: which AI tools to install
 #                           (docker,vllm,open_webui,pgvector,docling; default: all)
-#   PRO_TOKEN=<token>        server only: Ubuntu Pro token (else you're prompted)
-#   HF_TOKEN=<token>         server only: Hugging Face token for gated models (optional)
-#   HARDEN=0                 server only: install the stack but SKIP `usg fix`
+#   PRO_TOKEN=<token>       ai only: Ubuntu Pro token (else you're prompted)
+#   HF_TOKEN=<token>        ai only: Hugging Face token for gated models (optional)
+#   HARDEN=0                ai only: install the stack but SKIP `usg fix`
 #                           (audit-only; flip to validate before hardening)
 #
 # It also prompts (hidden) for the disk encryption password to enable TPM
@@ -26,15 +28,21 @@ set -euo pipefail
 
 REPO_URL="https://github.com/casea1/ubuntu-stig-build.git"
 BRANCH="main"
-PROFILE="${PROFILE:-desktop}"
+PROFILE="${PROFILE:-development}"
 
 if [[ $EUID -ne 0 ]]; then
   echo "Run as root (sudo)." >&2
   exit 1
 fi
 
-if [[ "${PROFILE}" != "desktop" && "${PROFILE}" != "server" ]]; then
-  echo "PROFILE must be 'desktop' or 'server' (got '${PROFILE}')." >&2
+# Back-compat aliases from the first release.
+case "${PROFILE}" in
+  desktop) PROFILE="development" ;;
+  server)  PROFILE="ai" ;;
+esac
+
+if [[ "${PROFILE}" != "development" && "${PROFILE}" != "ai" ]]; then
+  echo "PROFILE must be 'development' or 'ai' (got '${PROFILE}')." >&2
   exit 1
 fi
 
@@ -43,11 +51,11 @@ echo "[*] Deployment profile: ${PROFILE}"
 # --- Extra vars passed to ansible-pull (built up below) ----------------------
 EXTRA_ARGS=(-e "deployment_profile=${PROFILE}")
 
-# --- SERVER: Ubuntu Pro token (secret, out-of-band) --------------------------
+# --- AI: Ubuntu Pro token (secret, out-of-band) ------------------------------
 # USG needs the box Pro-attached. Collect the token HERE (interactively) and drop
 # it where the usg_harden role reads it. Skipped if already present, already
 # attached, or supplied via PRO_TOKEN. The token is NEVER placed in the repo.
-if [[ "${PROFILE}" == "server" ]]; then
+if [[ "${PROFILE}" == "ai" ]]; then
   PRO_TOKEN_FILE="/etc/ubuntu-advantage/pro-token"
   ALREADY_ATTACHED="no"
   if command -v pro >/dev/null 2>&1 && pro status --format json 2>/dev/null | grep -q '"attached": *true'; then
@@ -158,11 +166,12 @@ echo
 echo "[✓] Build started in the background as systemd unit 'stig-build'."
 echo "    Watch it:     journalctl -u stig-build -f"
 echo "    Result:       systemctl status stig-build   (active(exited) = success)"
-if [[ "${PROFILE}" == "server" ]]; then
+if [[ "${PROFILE}" == "ai" ]]; then
   echo "    Reports:      /var/log/stig-scan/  — 'usg audit' output (collect BEFORE air-gapping)."
   echo "    AI stack:     cd /opt/ai-stack && docker compose ps   (once images finish pulling)."
   echo "    Then REBOOT to apply USG hardening (and load the NVIDIA driver, if installed)."
 else
   echo "    Reports:      /var/log/stig-scan/  — collect BEFORE air-gapping."
-  echo "    Then reboot to apply hardening and reach the graphical login banner."
+  echo "    RDP:          connect an RDP client to this host:3389 (TLS) and log in as a local user."
+  echo "    Then reboot to apply hardening; the box comes up to GDM with the DCSA banner."
 fi

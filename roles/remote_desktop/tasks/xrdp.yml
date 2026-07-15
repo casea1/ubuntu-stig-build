@@ -1,0 +1,102 @@
+---
+# =============================================================================
+# remote_desktop :: xrdp.yml -- RDP server for the GNOME session.
+# Handles the well-known Ubuntu 24.04 gotchas: Wayland (disabled in gui.yml), the
+# ssl-cert private-key permission, and the colord/PackageKit polkit prompts that
+# otherwise block or crash a GNOME-over-xrdp login.
+# =============================================================================
+
+- name: "XRDP | Install xrdp + xorgxrdp (+ ssl-cert for the TLS cert)"
+  ansible.builtin.apt:
+    name:
+      - xrdp
+      - xorgxrdp
+      - ssl-cert          # provides the snakeoil cert xrdp presents over TLS
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# TLS: xrdp runs as the 'xrdp' user and must read the private key of the cert it
+# presents. On 24.04 the key lives in /etc/ssl/private (root:ssl-cert 0640), so
+# xrdp needs to be in ssl-cert. (Ubuntu's postinst does this too; we make it
+# explicit + idempotent.)
+- name: "XRDP | Add the xrdp service user to ssl-cert (read the TLS private key)"
+  ansible.builtin.user:
+    name: xrdp
+    groups: ssl-cert
+    append: true
+  when: dev_rdp_use_tls | default(true) | bool
+  notify: restart xrdp
+
+- name: "XRDP | Configure [Globals] in /etc/xrdp/xrdp.ini (port + TLS)"
+  community.general.ini_file:
+    path: /etc/xrdp/xrdp.ini
+    section: Globals
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    mode: "0644"
+  loop:
+    - { option: port, value: "{{ dev_rdp_port }}" }
+    - { option: security_layer, value: "{{ 'tls' if (dev_rdp_use_tls | default(true) | bool) else 'negotiate' }}" }
+    - { option: crypt_level, value: "high" }
+    - { option: certificate, value: "{{ rdp_tls_cert }}" }
+    - { option: key_file, value: "{{ rdp_tls_key }}" }
+  notify: restart xrdp
+
+- name: "XRDP | Polkit: silence colord/PackageKit auth prompts for RDP sessions"
+  ansible.builtin.copy:
+    dest: /etc/polkit-1/rules.d/02-allow-colord-packagekit.rules
+    mode: "0644"
+    content: |
+      // Managed by ansible (remote_desktop role) -- do not edit by hand.
+      // GNOME-over-xrdp otherwise pops an auth dialog (or the session drops) on
+      // login for color-managed devices, and again for a repo refresh. Allow
+      // just those two low-risk actions, and only for ACTIVE LOCAL sessions (an
+      // xrdp session is both). Everything else still requires authentication.
+      polkit.addRule(function(action, subject) {
+        if (subject.local && subject.active &&
+            (action.id.indexOf("org.freedesktop.color-manager.") === 0 ||
+             action.id == "org.freedesktop.packagekit.system-sources-refresh")) {
+          return polkit.Result.YES;
+        }
+      });
+
+# ---- Optional: restrict RDP to a group (PAM) -- off by default -------------
+- name: "XRDP | Ensure the RDP-allowed group exists"
+  ansible.builtin.group:
+    name: "{{ dev_rdp_allowed_group }}"
+    state: present
+  when: (dev_rdp_allowed_group | default('') | length) > 0
+
+- name: "XRDP | Restrict RDP logins to the {{ dev_rdp_allowed_group }} group (PAM)"
+  ansible.builtin.lineinfile:
+    path: /etc/pam.d/xrdp-sesman
+    insertafter: '^@include common-auth'
+    line: "auth required pam_succeed_if.so user ingroup {{ dev_rdp_allowed_group }}"
+    state: present
+  when: (dev_rdp_allowed_group | default('') | length) > 0
+
+- name: "XRDP | Enable + start xrdp and the session manager"
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - xrdp
+    - xrdp-sesman
+
+# ---- Host firewall ---------------------------------------------------------
+# Open + rate-limit RDP. ufw is installed here (stig_harden also installs and
+# ENABLES it later); a rule added while ufw is inactive persists and takes effect
+# the moment stig_harden brings ufw up (default-deny inbound).
+- name: "XRDP | Ensure ufw is installed"
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+
+- name: "XRDP | Rate-limit RDP inbound ({{ dev_rdp_port }}/tcp)"
+  community.general.ufw:
+    rule: limit
+    port: "{{ dev_rdp_port }}"
+    proto: tcp
+    comment: "RDP (xrdp) rate-limited inbound"

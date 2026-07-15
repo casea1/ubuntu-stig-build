@@ -2,17 +2,22 @@
 
 Ansible-pull project that STIG-hardens a fresh Ubuntu 24.04 LTS install in a single run — all
 while the machine still has internet, before it is moved to an air-gapped network. It ships **two
-deployment profiles**, selected by `deployment_profile` (default `desktop`):
+deployment profiles**, selected by `deployment_profile` (default `development`). Both can run on
+headless server hardware:
 
-- **`desktop`** — turns a **Ubuntu 24.04 Desktop (GNOME)** into a **DoD-STIG-hardened engineering
-  workstation**: installs the tooling, applies the DISA STIG (CAT I + II) via
+- **`development`** — a **DoD-STIG-hardened engineering workstation**: installs the dev toolchain,
+  a **GNOME desktop + xrdp** so users **RDP in for a full GUI** (it installs the GUI, so a server
+  base works too), applies the DISA STIG (CAT I + II) via
   [ansible-lockdown/UBUNTU24-STIG](https://github.com/ansible-lockdown/UBUNTU24-STIG), and produces
   an OpenSCAP compliance report.
-- **`server`** — turns a **Ubuntu Pro 24.04 Server** into a hardened **local-AI inference box**:
+- **`ai`** — turns a **Ubuntu Pro 24.04 Server** into a hardened **local-AI inference box**:
   hardens with **Canonical's Ubuntu Security Guide** (`usg fix disa_stig`) and installs a
   **selectable, container-based AI stack** — Docker, vLLM, Open WebUI, PostgreSQL 16 + pgvector,
   and Docling — where you pick which tools each server gets. See
-  **[Ubuntu Pro Server profile](#ubuntu-pro-server-profile)**.
+  **[the `ai` server profile](#ai-server-profile)**.
+
+> The first release named these `desktop`/`server`; those are still accepted as aliases for
+> `development`/`ai`.
 
 You install Ubuntu, run one command, reboot, and collect the report.
 
@@ -128,10 +133,33 @@ runbook (Ubuntu install → setup → run → post-install checklist → trouble
 
 ---
 
-## Ubuntu Pro Server profile
+## Development profile — GUI over RDP
 
-Set `deployment_profile: server` (or pass `PROFILE=server` to `bootstrap.sh`) to build a
-headless **Ubuntu Pro** AI server instead of the desktop. The pipeline runs a different role
+The default `development` profile builds the engineering workstation. Beyond the dev toolchain
+(`dev_tools`), the **`remote_desktop`** role makes it usable on **headless server hardware** that
+users reach over RDP:
+
+- **Installs GNOME** (`ubuntu-desktop-minimal` by default, via `dev_gnome_package`) and GDM, and
+  sets the box to boot to the graphical target — so a server base with no display still gets a GUI.
+- **Installs and configures xrdp** for the GNOME-over-Xorg path, with the Ubuntu 24.04 gotchas
+  handled automatically: **Wayland disabled** (xrdp needs Xorg), **xrdp added to `ssl-cert`** so it
+  can present the TLS cert, and a **colord/PackageKit polkit rule** so logins don't hit an auth
+  prompt / black screen. RDP is served with **TLS** (`dev_rdp_use_tls`) and **rate-limited** on the
+  firewall (`ufw limit 3389/tcp`).
+- RDP logins go through **PAM**, so the STIG faillock/faildelay lockout applies to them too.
+  Optionally restrict RDP to a group with `dev_rdp_allowed_group`.
+
+Connect any RDP client to `‹host›:3389` and log in as a local account (each ships **locked** — set
+a password with `sudo passwd <user>` first). Toggles live under **`REMOTE DESKTOP`** in
+`group_vars/all.yml` (`dev_install_gnome`, `dev_gnome_package`, `dev_rdp_enabled`, `dev_rdp_port`,
+`dev_rdp_use_tls`, `dev_rdp_allowed_group`).
+
+---
+
+## AI server profile
+
+Set `deployment_profile: ai` (or pass `PROFILE=ai` to `bootstrap.sh`) to build a
+headless **Ubuntu Pro** AI server instead of the development box. The pipeline runs a different role
 set — a lean baseline, the AI tool stack, then USG hardening — keeping the same
 **install-while-online, harden-last** ordering.
 
@@ -139,7 +167,7 @@ set — a lean baseline, the AI tool stack, then USG hardening — keeping the s
 
 The server hardens with **Canonical's USG** — `usg fix disa_stig` — the officially supported
 DISA-STIG implementation that ships with Ubuntu Pro, and `usg audit` writes the compliance
-report to `/var/log/stig-scan/` (same place as the desktop scan). The box must be **Pro-attached**
+report to `/var/log/stig-scan/` (same place as the development-profile scan). The box must be **Pro-attached**
 first; the token is a **secret** and is handled exactly like the LUKS passphrase — supplied
 out-of-band, never committed (`bootstrap.sh` prompts for it, or drop it in
 `ubuntu_pro_token_file`).
@@ -173,16 +201,16 @@ container tool is selected. With `gpu_enabled: true` (default) the role also ins
 driver + `nvidia-container-toolkit`** and wires the `nvidia` runtime into Docker so vLLM can use
 the GPU (a **reboot** is needed before the driver loads).
 
-### Quick start (server)
+### Quick start (ai server)
 
 ```bash
 # All tools, GPU, USG hardening (prompts for the Pro token, hidden):
 curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh \
-  | sudo PROFILE=server bash
+  | sudo PROFILE=ai bash
 
 # A subset, audit-only first pass (validate before hardening):
 curl -fsSL .../bootstrap.sh \
-  | sudo PROFILE=server TOOLS=docker,pgvector,open_webui HARDEN=0 bash
+  | sudo PROFILE=ai TOOLS=docker,pgvector,open_webui HARDEN=0 bash
 ```
 
 Then `journalctl -u stig-build -f` to watch, `cd /opt/ai-stack && docker compose ps` once images

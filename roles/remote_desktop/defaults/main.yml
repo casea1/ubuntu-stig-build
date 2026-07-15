@@ -1,0 +1,9 @@
+---
+# Role-internal constants for remote_desktop. User-facing toggles
+# (dev_install_gnome, dev_gnome_package, dev_rdp_*) live in group_vars/all.yml.
+
+# TLS material xrdp presents. The system snakeoil cert is created by the
+# `ssl-cert` package (an xrdp dependency); xrdp is added to the ssl-cert group so
+# it can read the key. Point these at a real cert/key to present a trusted one.
+rdp_tls_cert: /etc/ssl/certs/ssl-cert-snakeoil.pem
+rdp_tls_key: /etc/ssl/private/ssl-cert-snakeoil.key

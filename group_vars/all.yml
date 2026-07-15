@@ -8,19 +8,22 @@
 # ---- Deployment profile ----------------------------------------------------
 # Selects WHICH build this box gets. The pipeline (local.yml) runs a different
 # role set per profile:
-#   desktop -> the original GNOME engineering workstation: base apps, dev_tools,
-#              classification banner, ansible-lockdown DISA STIG, wallpaper,
-#              OpenSCAP/SSG scan. (Everything documented in the rest of this file.)
-#   server  -> a headless Ubuntu Pro SERVER: a lean baseline, the selectable AI
-#              tool stack (ai_stack role -> Docker Compose: vLLM / Open WebUI /
-#              pgvector / Docling), and hardening via Canonical's Ubuntu Security
-#              Guide (USG -> `usg fix disa_stig`) instead of the lockdown role.
+#   development -> an engineering workstation: base apps, dev_tools, a GNOME
+#                  desktop + xrdp (so users RDP in for a GUI, even on a headless
+#                  server base), classification banner, ansible-lockdown DISA
+#                  STIG, wallpaper, OpenSCAP/SSG scan.
+#   ai          -> a headless Ubuntu Pro AI server: a lean baseline, the
+#                  selectable AI tool stack (ai_stack role -> Docker Compose:
+#                  vLLM / Open WebUI / pgvector / Docling), and hardening via
+#                  Canonical's Ubuntu Security Guide (USG -> `usg fix disa_stig`).
 #
-# Default is 'desktop' so existing images build byte-identically. Override
-# per-machine at deploy WITHOUT editing this file:
-#   ansible-pull ... -e deployment_profile=server
-# (bootstrap.sh accepts PROFILE=server and passes this for you.)
-deployment_profile: desktop        # options: desktop | server
+# Default is 'development'. Override per-machine at deploy WITHOUT editing this
+# file:
+#   ansible-pull ... -e deployment_profile=ai
+# (bootstrap.sh accepts PROFILE=ai and passes this for you.)
+# Back-compat: the first release used 'desktop'/'server'; those are still
+# accepted as aliases for 'development'/'ai'.
+deployment_profile: development    # options: development | ai  (aliases: desktop, server)
 
 # ---- Users who need to run packet captures (Wireshark) ---------------------
 # STIG restricts raw packet capture to authorized users. These users get added
@@ -126,6 +129,34 @@ dotnet_sdk_package: dotnet-sdk-8.0      # .NET SDK from the Ubuntu archive (LTS)
 
 # PowerShell LTS — installed in base_packages as a pinned .deb (PowerStrux backend).
 powershell_version: "7.4.16"
+
+# =============================================================================
+# REMOTE DESKTOP  (development profile -> remote_desktop role)
+# =============================================================================
+# The development profile can run on HEADLESS SERVER hardware that users RDP into.
+# This role installs the GNOME desktop (so a server base gets a GUI) and xrdp (the
+# RDP server), configured for the GNOME-over-Xorg path with the Ubuntu 24.04
+# gotchas handled (Wayland off, ssl-cert key access, colord polkit prompt).
+
+# Install the GNOME desktop environment. Idempotent no-op on a box that already
+# has it (e.g. an Ubuntu Desktop base). ubuntu-desktop-minimal = GNOME Shell +
+# GDM3 + core apps without the full application suite; use "ubuntu-desktop" for
+# the complete set, or "" to skip installing GNOME (assume it's already present).
+dev_install_gnome: true
+dev_gnome_package: ubuntu-desktop-minimal   # or: ubuntu-desktop
+
+# Install + configure xrdp so users can RDP into the GNOME session. xrdp logins
+# go through PAM, so the STIG faillock/faildelay hardening applies to them too.
+dev_rdp_enabled: true
+dev_rdp_port: 3389
+# TLS security layer for RDP: xrdp presents the system snakeoil cert and is added
+# to the ssl-cert group so it can read the key. Set false only if a client truly
+# can't negotiate TLS (then RDP falls back to negotiate/RDP security).
+dev_rdp_use_tls: true
+# OPTIONAL: restrict RDP logins to members of this group (enforced in PAM). Empty
+# = any local account with a password may RDP (still password- + faillock-gated).
+# Set e.g. "rdpusers" to gate it; the role creates the group and adds the check.
+dev_rdp_allowed_group: ""
 
 # =============================================================================
 # CLASSIFICATION BANNER (persistent top + bottom on-screen bars)
