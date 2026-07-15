@@ -211,18 +211,18 @@
       ansible.builtin.file:
         path: "{{ usg_report_dir }}"
         state: directory
-        owner: root
-        group: root
-        mode: "0750"
+        owner: "{{ usg_report_dir_owner | default('root') }}"
+        group: "{{ usg_report_dir_group | default('root') }}"
+        mode: "{{ usg_report_dir_mode | default('0750') }}"
 
     - name: "REMED | Copy refreshed reports into {{ usg_report_dir }}"
       ansible.builtin.copy:
         src: "{{ item.path }}"
         dest: "{{ usg_report_dir }}/"
         remote_src: true
-        owner: root
-        group: root
-        mode: "0640"
+        owner: "{{ usg_report_dir_owner | default('root') }}"
+        group: "{{ usg_report_file_group | default('root') }}"
+        mode: "{{ usg_report_file_mode | default('0640') }}"
       loop: "{{ _reaudit_art.files | default([]) }}"
       loop_control:
         label: "{{ item.path | basename }}"

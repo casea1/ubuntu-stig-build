@@ -671,9 +671,16 @@ usg_disable_smartcard_rules:
   - smartcard_pam_enabled            # "Enable Smart Card Logins in PAM" (adds pam_pkcs11.so to the auth stack)
   - service_sssd_enabled             # "Enable the SSSD Service" (central identity / CAC cert-mapping backend)
   - sssd_enable_user_cert            # "Enable Certificates Mapping in SSSD" (maps CAC cert -> user)
-# USG reports land alongside the desktop scan reports for a single collection
-# point. Reuses scap_report_dir (/var/log/stig-scan) defined in the SCAP section.
-usg_report_dir: "{{ scap_report_dir }}"
+# USG reports auto-copy to /opt/ia (ia_dir) so the IA team has a single, admin-only
+# collection point (see IA/IT MANAGED DIRECTORIES below). The dir + files are owned
+# root and group-readable by the admin (sudo) group. Override usg_report_dir to send
+# them elsewhere (e.g. back to scap_report_dir / /var/log/stig-scan).
+usg_report_dir: "{{ ia_dir }}"
+usg_report_dir_owner: root
+usg_report_dir_group: "{{ ia_it_group }}"      # admin (sudo) group can read the reports
+usg_report_dir_mode: "{{ ia_it_dir_mode }}"    # 2770: setgid, sudo-group rwx, others denied
+usg_report_file_group: "{{ ia_it_group }}"
+usg_report_file_mode: "0640"                   # root rw, admin group read, others none
 
 # =============================================================================
 # USG RESIDUAL REMEDIATION  (usg_remediate role -> runs AFTER USG + the firewall
@@ -730,3 +737,24 @@ cockpit_allow_from: ""
 # Extra cockpit add-on packages to install alongside the base console. Leave as-is
 # for the standard set; cockpit-pcp adds historical metrics.
 cockpit_extra_packages: []
+
+# =============================================================================
+# IA/IT MANAGED DIRECTORIES  (managed_dirs role -> BOTH profiles)
+# =============================================================================
+# Two admin working areas created on every box:
+#   /opt/ia  -- Information Assurance (also the USG report drop, usg_report_dir)
+#   /opt/it  -- IT / systems administration
+# They are readable/writable ONLY by admins (the `sudo` group) and usable WITHOUT
+# a `sudo` prefix: an admin can cd in, create/edit files, and run commands directly.
+# Perms: owner root, group ia_it_group, mode 2770 (setgid + group rwx, others none),
+# plus a default POSIX ACL so files created inside stay group-accessible even under
+# the STIG umask 077. Change ia_it_group to a dedicated admin group if you don't want
+# to use `sudo` itself. Set managed_dirs_enabled: false to skip.
+managed_dirs_enabled: true
+ia_it_group: sudo                 # group allowed into the dirs (Ubuntu admin group)
+ia_it_dir_mode: "2770"            # setgid + rwx for the group, nothing for others
+ia_dir: /opt/ia
+it_dir: /opt/it
+managed_dirs:
+  - "{{ ia_dir }}"
+  - "{{ it_dir }}"

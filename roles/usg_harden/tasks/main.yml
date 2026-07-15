@@ -272,9 +272,9 @@
       ansible.builtin.file:
         path: "{{ usg_report_dir }}"
         state: directory
-        owner: root
-        group: root
-        mode: "0750"
+        owner: "{{ usg_report_dir_owner | default('root') }}"
+        group: "{{ usg_report_dir_group | default('root') }}"
+        mode: "{{ usg_report_dir_mode | default('0750') }}"
 
     - name: "USG | Run `usg audit {{ usg_profile }}` -> compliance report"
       # usg audit writes its HTML + XCCDF results into /var/lib/usg/ by default
@@ -299,9 +299,9 @@
         src: "{{ item.path }}"
         dest: "{{ usg_report_dir }}/"
         remote_src: true
-        owner: root
-        group: root
-        mode: "0640"
+        owner: "{{ usg_report_dir_owner | default('root') }}"
+        group: "{{ usg_report_file_group | default('root') }}"
+        mode: "{{ usg_report_file_mode | default('0640') }}"
       loop: "{{ _usg_artifacts.files | default([]) }}"
       loop_control:
         label: "{{ item.path | basename }}"

@@ -69,8 +69,9 @@ it auto-skips on an unencrypted or already-bound disk). See *TPM2 LUKS auto-unlo
 - **The role/content versions are pinned.** `requirements.yml` pins `UBUNTU24-STIG` to `v1.3.0`
   and the SSG datastream to `0.1.81`, so every machine you image is identical. Bump deliberately
   and re-test.
-- **Collect reports before air-gapping.** `/var/log/stig-scan/*.html` and the
-  `stig-viewer-*.xml` are your audit artifacts. Grab them while the box is online.
+- **Collect reports before air-gapping.** The USG audit report lands in `/opt/ia/` (`*.html` +
+  XCCDF `*.xml`); the legacy OpenSCAP `stig-viewer-*.xml` (dev scan, if run) is in
+  `/var/log/stig-scan/`. Grab them while the box is online.
 - **High-impact controls are gated.** `ubtu24stig_disruption_high: false` makes the
   Lockdown role SKIP its most breaking controls (there is no `ubtu24stig_fullauto` var or
   interactive pause in 1.3.0). The `stig_harden/tasks/*.yml` gap files remediate the SSG
@@ -455,9 +456,11 @@ curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/boots
 > Ansible installs Docker + NVIDIA, hardens with USG, and opens the container ports — it does not
 > manage the containers. There is no `TOOLS`/`HF_TOKEN` anymore.
 
-Watch: `journalctl -u stig-build -f`. Reports land in `/var/log/stig-scan/` (the `usg audit`
-HTML + XCCDF results). **Reboot** afterwards to apply USG controls and load the NVIDIA driver,
-then re-run `sudo usg audit disa_stig` for accurate post-reboot numbers.
+Watch: `journalctl -u stig-build -f`. The `usg audit` report (HTML + XCCDF) auto-copies to
+**`/opt/ia/`** (admin-readable — `usg_remediate` re-runs the audit at the end so it reflects the
+fully-built box). **Reboot** afterwards to apply USG controls and load the NVIDIA driver,
+then re-run `sudo usg audit disa_stig --tailoring-file /etc/usg/managed-tailoring.xml` for accurate
+post-reboot numbers.
 
 ### USG hardening
 
@@ -473,9 +476,13 @@ then re-run `sudo usg audit disa_stig` for accurate post-reboot numbers.
   build doesn't re-apply it. Force a re-fix with `-e usg_force_fix=true`.
 - **FIPS.** Off by default (`usg_enable_fips`) — it swaps the kernel via `pro enable
   fips-updates` and needs a reboot. Validate on a throwaway box first; otherwise it's a POA&M.
-- **Manual audit any time:** `sudo usg audit disa_stig --html-file /var/log/stig-scan/audit.html`.
-  To customize/relax rules, generate a tailoring file (`usg generate-tailoring …`) and point
-  `usg_tailoring_file` at it.
+- **Manual audit any time:** `sudo usg audit disa_stig --tailoring-file /etc/usg/managed-tailoring.xml`
+  (USG writes its results under `/var/lib/usg/`; the build copies them to `/opt/ia/`). To
+  customize/relax rules further, generate your own tailoring file (`usg generate-tailoring …`) and
+  point `usg_tailoring_file` at it.
+- **Report drop `/opt/ia`.** The audit report auto-copies to `/opt/ia/` (owner `root`, group
+  `{{ ia_it_group }}`/`sudo`, `0640`) — the admin-only IA collection point created by `managed_dirs`.
+  Override with `usg_report_dir`.
 
 ### Host prep + firewall (Ansible), then bring your own compose
 

@@ -1,0 +1,56 @@
+---
+# =============================================================================
+# managed_dirs -- create the org IA/IT working directories on BOTH profiles.
+#
+#   /opt/ia   Information Assurance  (also where the USG compliance report lands)
+#   /opt/it   IT / systems admin working area
+#
+# Requirement: readable/writable ONLY by admins (the sudo group), and usable
+# WITHOUT a `sudo` prefix -- an admin can cd in, create/edit files, and run
+# commands directly. We do that with owner root, group {{ ia_it_group }} (sudo),
+# mode 2770 (setgid + rwx group, NOTHING for other), plus a default POSIX ACL so
+# files created inside stay group-accessible even under the STIG's umask 077
+# (which would otherwise make new files 0600 and break admin-to-admin sharing).
+# Self-contained (installs its own `acl`), so it runs even if local_accounts is off.
+# =============================================================================
+
+- name: "DIRS | Ensure 'acl' is installed (POSIX ACLs for the shared dirs)"
+  ansible.builtin.apt:
+    name: acl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "DIRS | Create the IA/IT dirs (setgid, sudo-only, others denied)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: "{{ ia_it_group }}"
+    mode: "{{ ia_it_dir_mode }}"
+  loop: "{{ managed_dirs }}"
+  loop_control:
+    label: "{{ item }} (root:{{ ia_it_group }} {{ ia_it_dir_mode }})"
+
+- name: "DIRS | Grant the group rwx on each dir (access ACL)"
+  ansible.posix.acl:
+    path: "{{ item }}"
+    entity: "{{ ia_it_group }}"
+    etype: group
+    permissions: rwx
+    state: present
+  loop: "{{ managed_dirs }}"
+  loop_control:
+    label: "{{ item }} -> g:{{ ia_it_group }}:rwx"
+
+- name: "DIRS | Make group rwx INHERIT to new entries (default ACL beats umask 077)"
+  ansible.posix.acl:
+    path: "{{ item }}"
+    entity: "{{ ia_it_group }}"
+    etype: group
+    permissions: rwx
+    default: true
+    state: present
+  loop: "{{ managed_dirs }}"
+  loop_control:
+    label: "{{ item }} -> default g:{{ ia_it_group }}:rwx"
