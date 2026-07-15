@@ -1,0 +1,224 @@
+---
+# =============================================================================
+# usg_remediate -- close the REASONABLE residual DISA-STIG findings that `usg fix`
+# leaves open, on BOTH profiles, running AFTER usg_harden AND the firewall roles.
+#
+# WHY this role exists: `usg fix` is stamped run-once, and the `usg audit` inside
+# usg_harden is a snapshot taken MID-BUILD (before the firewall roles bring ufw
+# up), so a handful of findings show open in that report. Everything here is
+# idempotent and re-applied every ansible-pull (config-drift correction). Nothing
+# here can lock out password login.
+#
+# Deliberately left as POA&M (NOT auto-fixed -- each needs a secret, infra, or a
+# kernel swap): FIPS mode (usg_enable_fips), UEFI/GRUB boot-loader password (needs
+# a hashed secret), audit-log offload (needs a remote collector). The SSSD/CAC
+# rules are de-selected in the tailoring instead (see usg_disable_smartcard_rules).
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# 1) SMART CARD / pam_pkcs11 cleanup
+# Fixes "ERROR:pam_pkcs11.c:365: no suitable token available / Error 2308: No
+# smart card found" on boxes hardened BEFORE the smartcard tailoring opt-out
+# existed (smartcard_pam_enabled had already wired pam_pkcs11.so into the stack,
+# and `usg fix` is stamped run-once so it won't undo it). We simply COMMENT OUT
+# the pam_pkcs11 auth line -- this removes an auth *requirement*, never touches
+# pam_unix, so password login cannot be lost.
+# ---------------------------------------------------------------------------
+- name: "REMED | Smart card / pam_pkcs11 cleanup"
+  when: usg_cleanup_pam_pkcs11 | default(true) | bool
+  block:
+    - name: "REMED | Find pam.d files that still reference pam_pkcs11"
+      ansible.builtin.find:
+        paths: /etc/pam.d
+        patterns: "*"
+        contains: 'pam_pkcs11\.so'
+        file_type: file
+      register: _pkcs11_pam
+
+    - name: "REMED | Comment out active pam_pkcs11 lines (keeps pam_unix intact)"
+      ansible.builtin.replace:
+        path: "{{ item.path }}"
+        # Match an uncommented auth line invoking pam_pkcs11.so; prefix it with '#'.
+        regexp: '(?m)^(?!\s*#)(\s*auth\s+.*\bpam_pkcs11\.so.*)$'
+        replace: '#\1  # disabled by usg_remediate (password-login only)'
+      loop: "{{ _pkcs11_pam.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    # Rare on this fleet (SSG edits common-auth directly rather than shipping a
+    # pam-auth-update profile), but if one exists, `pam-auth-update` could re-add
+    # the module on a future package trigger. Surface it so the operator can
+    # `pam-auth-update` it off; we don't auto-edit pam-configs (regeneration risk).
+    - name: "REMED | Detect a pam-auth-update pkcs11 profile (advisory)"
+      ansible.builtin.find:
+        paths: /usr/share/pam-configs
+        patterns: "*"
+        contains: 'pam_pkcs11\.so'
+        file_type: file
+      register: _pkcs11_profile
+
+    - name: "REMED | Warn if a pkcs11 pam-config profile is present"
+      ansible.builtin.debug:
+        msg: >-
+          A pam-auth-update profile referencing pam_pkcs11 exists
+          ({{ _pkcs11_profile.files | map(attribute='path') | list | join(', ') }}).
+          The active auth line was commented out, but run
+          `sudo pam-auth-update` and untick PKCS#11 so it isn't re-added on a
+          package update.
+      when: (_pkcs11_profile.files | default([]) | length) > 0
+
+# ---------------------------------------------------------------------------
+# 2) /var/log FILE PERMS + /var/log/audit DIR MODE
+# file_permissions_var_log_stig (UBTU-24-700010) + directory_permissions_var_log_audit
+# ---------------------------------------------------------------------------
+- name: "REMED | /var/log permission fixes"
+  when: usg_fix_log_permissions | default(true) | bool
+  block:
+    - name: "REMED | Find over-permissive files under /var/log (UBTU-24-700010)"
+      # Mirrors the DISA remediation: any file with setuid/setgid/exec or
+      # group/other-write/other-read+sticky, excluding the wtmp/btmp/lastlog files.
+      ansible.builtin.command:
+        cmd: >-
+          find -P /var/log/ -perm /u+xs,g+xws,o+xwrt
+          ! -name "[bw]tmp" ! -name "[bw]tmp.*" ! -name "[bw]tmp-*"
+          ! -name "lastlog" ! -name "lastlog.*"
+          -type f -regextype posix-extended -regex ".*"
+      register: _var_log_bad
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: "REMED | Tighten perms on those files (u-xs,g-xws,o-xwrt)"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        mode: "u-xs,g-xws,o-xwrt"
+        state: file
+      loop: "{{ _var_log_bad.stdout_lines | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: "REMED | Stat /var/log/audit"
+      ansible.builtin.stat:
+        path: /var/log/audit
+      register: _audit_dir
+
+    - name: "REMED | /var/log/audit must be mode 0750 or less permissive"
+      ansible.builtin.file:
+        path: /var/log/audit
+        state: directory
+        mode: "0750"
+      when:
+        - _audit_dir.stat.exists | default(false)
+        - _audit_dir.stat.isdir | default(false)
+
+# ---------------------------------------------------------------------------
+# 3) CHRONY -- remote time source configured with the `server` directive (STIG
+# wants `server`, not `pool`). chronyd_specify_remote_server + chronyd_server_directive
+# ---------------------------------------------------------------------------
+- name: "REMED | Chrony remote time server (server directive)"
+  when: (usg_chrony_servers | default([]) | length) > 0
+  block:
+    - name: "REMED | Is chrony configured on this box?"
+      ansible.builtin.stat:
+        path: /etc/chrony/chrony.conf
+      register: _chrony_conf
+
+    - name: "REMED | Configure chrony server directives"
+      when: _chrony_conf.stat.exists | default(false)
+      block:
+        - name: "REMED | Ensure /etc/chrony/sources.d exists"
+          ansible.builtin.file:
+            path: /etc/chrony/sources.d
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: "REMED | Write the STIG time sources (server + iburst)"
+          ansible.builtin.copy:
+            dest: /etc/chrony/sources.d/stig.sources
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              # Managed by ansible (usg_remediate) -- DISA-STIG remote time source.
+              {% for s in usg_chrony_servers %}
+              server {{ s }} iburst
+              {% endfor %}
+          notify: Restart chrony
+
+        - name: "REMED | Ensure chrony reads sources.d"
+          ansible.builtin.lineinfile:
+            path: /etc/chrony/chrony.conf
+            regexp: '^\s*#?\s*sourcedir\s+/etc/chrony/sources\.d\s*$'
+            line: "sourcedir /etc/chrony/sources.d"
+            state: present
+          notify: Restart chrony
+
+        - name: "REMED | Comment out `pool` directives (STIG: server-only)"
+          ansible.builtin.replace:
+            path: /etc/chrony/chrony.conf
+            regexp: '(?m)^(?!\s*#)(\s*)(pool\s+.*)$'
+            replace: '\1# \2  # disabled by usg_remediate (STIG: server directive)'
+          notify: Restart chrony
+
+        - name: "REMED | Set makestep (sync large offsets at start)"
+          ansible.builtin.lineinfile:
+            path: /etc/chrony/chrony.conf
+            regexp: '^\s*#?\s*makestep\b.*$'
+            line: "{{ usg_chrony_makestep }}"
+            state: present
+          when: (usg_chrony_makestep | default('') | length) > 0
+          notify: Restart chrony
+
+# ---------------------------------------------------------------------------
+# 4) UFW ACTIVE (check_ufw_active) -- belt-and-suspenders. The firewall roles
+# already enable ufw before this role; re-assert so an audit-only build (USG
+# skipped) is never left with an inactive firewall.
+# ---------------------------------------------------------------------------
+- name: "REMED | Ensure ufw is active"
+  community.general.ufw:
+    state: enabled
+
+# ---------------------------------------------------------------------------
+# 5) RE-AUDIT -- regenerate the USG report so it reflects the fully-built,
+# remediated box rather than the mid-build snapshot. Pro-attached boxes only.
+# (_usg_active / _usg_tailoring_arg are facts set by usg_harden earlier in this play.)
+# ---------------------------------------------------------------------------
+- name: "REMED | Regenerate the USG compliance report (post-build)"
+  when:
+    - usg_remediate_reaudit | default(true) | bool
+    - _usg_active | default(false) | bool
+  block:
+    - name: "REMED | Re-run `usg audit {{ usg_profile }}` after remediation"
+      ansible.builtin.command: "usg audit {{ usg_profile }} {{ _usg_tailoring_arg | default('') }}"
+      register: _reaudit
+      changed_when: false
+      failed_when: false
+
+    - name: "REMED | Collect refreshed audit artifacts from /var/lib/usg"
+      ansible.builtin.find:
+        paths: /var/lib/usg
+        patterns: ["*.html", "*.xml"]
+        file_type: file
+      register: _reaudit_art
+
+    - name: "REMED | Ensure the report dir exists"
+      ansible.builtin.file:
+        path: "{{ usg_report_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: "REMED | Copy refreshed reports into {{ usg_report_dir }}"
+      ansible.builtin.copy:
+        src: "{{ item.path }}"
+        dest: "{{ usg_report_dir }}/"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0640"
+      loop: "{{ _reaudit_art.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path | basename }}"

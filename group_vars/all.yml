@@ -656,12 +656,77 @@ usg_tailoring_file: ""
 # `usg fix` never wires up pam_pkcs11 and `usg audit` won't flag them. Set false to
 # keep the stock STIG smartcard control (e.g. once you deploy CAC readers + certs).
 # IGNORED when usg_tailoring_file is set -- then you control rule selection.
-# NOTE: this only affects FRESH `usg fix` runs. On a box already hardened before
-# this was enabled, the pam_pkcs11 line is already in the stack (and the fix is
-# stamped run-once) -- clean it up manually or rebuild. See OPERATIONS.md.
+# NOTE: the tailoring only affects FRESH `usg fix` runs. On a box already hardened
+# before this was enabled, the pam_pkcs11 line is already in the auth stack (and the
+# fix is stamped run-once) -- the usg_remediate role (runs every pull) strips it back
+# out automatically (usg_cleanup_pam_pkcs11 below), so no manual step is needed.
+#
+# The SSSD rules are here too: SSSD provides the CAC certificate->user mapping and
+# central-identity backend the STIG expects. This fleet uses LOCAL accounts
+# (local_accounts role) with no directory service and no CAC, so those controls are
+# not applicable -- de-selecting them is the honest treatment (documented deviation),
+# versus enabling an SSSD with no backend that would just fail to start.
 usg_disable_smartcard: true
 usg_disable_smartcard_rules:
   - smartcard_pam_enabled            # "Enable Smart Card Logins in PAM" (adds pam_pkcs11.so to the auth stack)
+  - service_sssd_enabled             # "Enable the SSSD Service" (central identity / CAC cert-mapping backend)
+  - sssd_enable_user_cert            # "Enable Certificates Mapping in SSSD" (maps CAC cert -> user)
 # USG reports land alongside the desktop scan reports for a single collection
 # point. Reuses scap_report_dir (/var/log/stig-scan) defined in the SCAP section.
 usg_report_dir: "{{ scap_report_dir }}"
+
+# =============================================================================
+# USG RESIDUAL REMEDIATION  (usg_remediate role -> runs AFTER USG + the firewall
+# roles, both profiles). `usg fix` is stamped run-once and its audit is a snapshot
+# taken mid-build (before the firewall roles bring ufw up), so a handful of
+# reasonable findings remain open in the report. This role closes the low-risk,
+# low-inconvenience ones every pull (idempotent), and can re-run `usg audit` at the
+# very end so the report reflects the fully-built box. Deliberately left as POA&M:
+# FIPS (kernel swap; usg_enable_fips), UEFI/GRUB boot password (needs a secret),
+# audit-log offload (needs a remote collector), SSSD/CAC (de-selected above).
+# =============================================================================
+usg_remediate_enabled: true
+
+# Strip pam_pkcs11 back out of the PAM stack on already-hardened boxes (fixes the
+# "no suitable token available / No smart card found" spam). Tied to the same
+# password-only decision as usg_disable_smartcard. SAFE: it only comments out the
+# smartcard auth step, never touches pam_unix, so password login cannot be lost.
+usg_cleanup_pam_pkcs11: "{{ usg_disable_smartcard }}"
+
+# Fix /var/log file perms (file_permissions_var_log_stig / UBTU-24-700010) and
+# /var/log/audit dir mode 0750 (directory_permissions_var_log_audit).
+usg_fix_log_permissions: true
+
+# Chrony: the STIG requires a remote time source configured with the `server`
+# directive (not `pool`). We write these as `server <host> iburst` into a
+# sources.d drop-in and comment out any `pool` lines. Set to your enclave's
+# internal NTP servers; on an isolated net chrony just won't reach them, but the
+# STIG config check (chronyd_specify_remote_server / chronyd_server_directive)
+# still passes. Empty list = leave chrony untouched (finding stays a POA&M).
+usg_chrony_servers:
+  - ntp.ubuntu.com
+# makestep line the STIG wants (sync big offsets on start); only applied when
+# usg_chrony_servers is non-empty.
+usg_chrony_makestep: "makestep 1 1"
+
+# Re-run `usg audit` at the very end (after remediation + firewall) so the report
+# in usg_report_dir reflects the fully-built, remediated box rather than the
+# mid-build snapshot. Only runs when the box is Pro-attached (USG present).
+usg_remediate_reaudit: true
+
+# =============================================================================
+# COCKPIT  (web server-management console -- BOTH profiles)
+# =============================================================================
+# Cockpit (https://<host>:9090) is a lightweight web console for systemd units,
+# journald logs, storage, networking, updates, and an in-browser terminal. Handy
+# for managing a headless AI server or a dev box without a full desktop session.
+# It is a PRIVILEGED management surface (root-capable actions), so -- like Portainer
+# -- its port is opened RATE-LIMITED and should be restricted to an admin subnet in
+# production (set cockpit_allow_from). Set cockpit_enabled: false to skip entirely.
+cockpit_enabled: true
+cockpit_port: 9090
+# Restrict the cockpit port to this source CIDR (e.g. "10.0.0.0/24"); empty = any.
+cockpit_allow_from: ""
+# Extra cockpit add-on packages to install alongside the base console. Leave as-is
+# for the standard set; cockpit-pcp adds historical metrics.
+cockpit_extra_packages: []

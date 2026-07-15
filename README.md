@@ -241,6 +241,11 @@ The `ai_stack` role prepares the host so your containers can run:
   It's the management plane, not your AI stack; `ai_firewall` opens its port. It mounts the Docker
   socket (root-equivalent) — set a strong admin password on first login and restrict its port to
   admins.
+- **Cockpit** (`cockpit_enabled: true`, default — **both profiles**) — a web server-management
+  console at `https://‹host›:9090` (systemd units, journald logs, storage, networking, updates,
+  in-browser terminal). Log in with a local account. It's a privileged surface, so the firewall
+  opens `cockpit_port` **rate-limited**; set `cockpit_allow_from` to an admin CIDR in production.
+  Set `cockpit_enabled: false` to skip.
 
 It does **not** render a compose file, pull your workload images, generate secrets, or start your AI
 containers — deploy your **prebuilt images + compose files** however you like once the host is prepped.

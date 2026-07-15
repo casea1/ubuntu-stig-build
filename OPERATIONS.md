@@ -152,16 +152,46 @@ doesn't have. Document each as a POA&M for your assessor:
   `usg_disable_smartcard_rules` in `group_vars/all.yml`; set the toggle `false` (or supply your
   own `usg_tailoring_file`) once you deploy CAC readers + certs and actually want CAC login.
 
-  > **Already-hardened boxes:** the opt-out only affects a *fresh* `usg fix`. On a machine that
-  > was hardened **before** this was enabled, `pam_pkcs11` is already in the stack and the fix is
-  > stamped run-once, so re-running ansible-pull won't undo it. Either **rebuild**, or clean it up
-  > by hand (keep a second root session open as a safety net):
+  > **Already-hardened boxes self-heal.** The tailoring opt-out only affects a *fresh* `usg fix`,
+  > but the **`usg_remediate`** role (runs every ansible-pull, both profiles) also **strips
+  > `pam_pkcs11` back out** of the PAM stack — it comments out any active `pam_pkcs11.so` auth line
+  > under `/etc/pam.d/` (never touching `pam_unix`, so password login can't be lost). So a box
+  > hardened before the opt-out existed is fixed on its next pull; no manual step needed. Toggle
+  > with `usg_cleanup_pam_pkcs11` (defaults to follow `usg_disable_smartcard`). To do it by hand
+  > instead, keep a second root session open as a safety net and:
   > ```bash
   > sudo grep -rn pkcs11 /etc/pam.d/ /usr/share/pam-configs/
-  > # if it's a pam-auth-update profile: sudo pam-auth-update  (untick PKCS#11), else:
   > sudo sed -ri.bak 's/^(auth.*pam_pkcs11\.so.*)/# \1/' /etc/pam.d/common-auth
   > sudo -k; sudo true    # verify password auth still works, no pkcs11 error
   > ```
+
+### Residual findings auto-remediated by `usg_remediate`
+
+`usg fix` is stamped run-once and its in-role `usg audit` is a **mid-build snapshot** (taken
+before the firewall roles bring ufw up), so the report shows a handful of findings open that are
+either transient or that `usg fix` doesn't remediate. The **`usg_remediate`** role runs *after*
+USG **and** the firewall roles, on **both** profiles, and closes the low-risk ones idempotently
+every pull (nothing here can lose password/SSH login):
+
+| Finding (SSG rule) | What `usg_remediate` does |
+| --- | --- |
+| Smart Card Logins in PAM (`smartcard_pam_enabled`) | comments out any active `pam_pkcs11.so` line (see above) |
+| `/var/log` file perms (`file_permissions_var_log_stig`, UBTU-24-700010) | `find` over-permissive files, strip `u-xs,g-xws,o-xwrt` (mirrors DISA remediation) |
+| `/var/log/audit` mode (`directory_permissions_var_log_audit`) | `chmod 0750 /var/log/audit` |
+| Remote time server (`chronyd_specify_remote_server`, `chronyd_server_directive`) | write `server <host> iburst` into `/etc/chrony/sources.d/stig.sources`, ensure `sourcedir`, comment out any `pool` line, set `makestep` — set `usg_chrony_servers` to your enclave NTP |
+| ufw active (`check_ufw_active`) | re-assert `ufw` enabled |
+| SSSD service + cert mapping (`service_sssd_enabled`, `sssd_enable_user_cert`) | **de-selected in the tailoring** — no central directory/CAC on this fleet (documented deviation) |
+
+After remediation the role **re-runs `usg audit`** (Pro-attached boxes; `usg_remediate_reaudit`)
+so the report in `usg_report_dir` reflects the fully-built box, not the mid-build snapshot.
+Re-run manually any time with
+`sudo usg audit disa_stig --tailoring-file /etc/usg/managed-tailoring.xml`.
+
+> **`ufw` rate-limit (`ufw_rate_limit`, UBTU-24-600200)** stays a **documented deviation on the
+> `ai` profile**: the STIG check wants *every* listening port rate-limited, but rate-limiting the
+> Open WebUI / vLLM / Docling ports would throttle legitimate inference traffic. Only the
+> **management** ports (SSH, RDP, Cockpit, Portainer) are `ufw limit`ed; the AI service ports are
+> plain `allow`. On `development` everything exposed is limited, so the rule passes there.
 - **GUI login-banner TEXT (`Set the GNOME3 Login Warning Banner Text`)** — the SSG OVAL
   pattern-matches the configured text against the **DoD Standard Mandatory Notice**; this
   image displays the **DCSA Authorized Warning Banner** by requirement, so the text rule
@@ -466,6 +496,13 @@ prebuilt images + compose files**.
   Docker socket, so restrict its port to admins (add a `from:` entry in `ai_firewall_allow_ports`) or
   front it with a proxy. Update it later with `docker pull <portainer_image> && docker rm -f
   portainer` then re-run the play (`portainer_image` in group_vars). Set `portainer_enabled: false` to skip it.
+- **Cockpit (`cockpit` role, `cockpit_enabled`, BOTH profiles):** a web server-management console on
+  `https://‹host›:{{ cockpit_port }}` (9090 by default), opened **rate-limited** by the firewall roles
+  after USG. Systemd units, journald, storage, networking, updates, and a browser terminal — log in
+  with a local account. Privileged surface: set **`cockpit_allow_from`** to an admin CIDR to restrict
+  it (else it's opened to any source). Change the port with `cockpit_port` (writes a `cockpit.socket`
+  override). `cockpit_extra_packages` adds add-ons (e.g. `cockpit-pcp` for historical metrics). Set
+  `cockpit_enabled: false` to skip.
 - **Firewall (`ai_firewall`, after USG):** USG enables ufw with **default-deny inbound**, so the
   ports your containers publish must be opened here. Edit **`ai_firewall_allow_ports`** in
   `group_vars/all.yml`:
