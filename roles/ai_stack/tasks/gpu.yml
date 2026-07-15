@@ -4,7 +4,7 @@
 #   1. (optional) install the NVIDIA driver on the HOST  (needs a reboot)
 #   2. install the nvidia-container-toolkit
 #   3. wire the `nvidia` runtime into Docker so containers can request GPUs
-# Runs BEFORE compose.yml, so restarting Docker here bounces nothing.
+# Runs before your container deploy, so restarting Docker here bounces nothing.
 # =============================================================================
 
 # ---- 1. Host driver (optional) ---------------------------------------------
@@ -14,32 +14,79 @@
   changed_when: false
   failed_when: false
 
-- name: "GPU | Install the NVIDIA driver (autoselected for this GPU)"
+- name: "GPU | Install the NVIDIA driver"
   when:
     - gpu_install_driver | default(true) | bool
     - _nvidia_smi.rc != 0
   block:
-    - name: "GPU | Install ubuntu-drivers-common"
+    # PINNED path: install a specific driver branch (needed for very new GPUs /
+    # the RTX PRO 6000 Blackwell -open modules and the cu129 vLLM image).
+    - name: "GPU | Install the pinned NVIDIA driver ({{ nvidia_driver_package }})"
+      ansible.builtin.apt:
+        name: "{{ nvidia_driver_package }}"
+        state: present
+        update_cache: true
+      when: (nvidia_driver_package | default('') | length) > 0
+      register: _drv_pkg
+
+    # AUTOSELECT path: let ubuntu-drivers pick the recommended driver.
+    - name: "GPU | Install ubuntu-drivers-common (autoselect)"
       ansible.builtin.apt:
         name: ubuntu-drivers-common
         state: present
         update_cache: true
         cache_valid_time: 3600
+      when: (nvidia_driver_package | default('') | length) == 0
 
     - name: "GPU | Autoinstall the recommended NVIDIA driver"
-      # `ubuntu-drivers install` picks the right (incl. -server) driver for the
-      # detected card. It is a no-op if the recommended driver is already present.
+      # No-op if the recommended driver is already present. Don't brick the build
+      # if there's genuinely no card / no candidate; the version assert below (and
+      # vLLM at runtime) will surface a driver that's missing or too old.
       ansible.builtin.command: ubuntu-drivers install
       register: _drv_install
       changed_when: "'is already the newest version' not in _drv_install.stdout"
-      # Don't brick the build if there's genuinely no NVIDIA card / no candidate;
-      # vLLM will surface the missing GPU at runtime and the operator can triage.
       failed_when: false
+      when: (nvidia_driver_package | default('') | length) == 0
 
     - name: "GPU | A driver was (re)installed -> a reboot is required"
       ansible.builtin.set_fact:
         ai_stack_reboot_required: true
-      when: _drv_install.rc == 0
+      when: >-
+        (_drv_pkg is defined and _drv_pkg is changed) or
+        (_drv_install is defined and not (_drv_install is skipped) and _drv_install.rc == 0)
+
+# ---- 1b. Enforce the driver version floor ----------------------------------
+- name: "GPU | Read the active NVIDIA driver version (if the module is loaded)"
+  ansible.builtin.command: nvidia-smi --query-gpu=driver_version --format=csv,noheader
+  register: _nv_driver_ver
+  changed_when: false
+  failed_when: false
+
+- name: "GPU | Enforce the NVIDIA driver floor (>= {{ nvidia_driver_min_version }})"
+  ansible.builtin.assert:
+    that:
+      - (_nv_driver_ver.stdout_lines | first | trim) is version(nvidia_driver_min_version, '>=')
+    fail_msg: >-
+      Active NVIDIA driver {{ _nv_driver_ver.stdout_lines | first | trim }} is older
+      than the required {{ nvidia_driver_min_version }} (needed by the cu129 vLLM
+      image on the dual RTX 6000 7960). Pin a newer branch via nvidia_driver_package
+      (e.g. nvidia-driver-595-server-open) and re-run.
+    success_msg: "NVIDIA driver {{ _nv_driver_ver.stdout_lines | first | trim }} satisfies >= {{ nvidia_driver_min_version }}."
+    quiet: true
+  when:
+    - (nvidia_driver_min_version | default('') | length) > 0
+    - _nv_driver_ver.rc == 0
+    - (_nv_driver_ver.stdout | trim | length) > 0
+
+- name: "GPU | Driver not loaded yet (reboot pending) -- verify the floor after reboot"
+  ansible.builtin.debug:
+    msg: >-
+      Could not read the driver version yet (a fresh driver install needs a REBOOT).
+      After rebooting, confirm `nvidia-smi --query-gpu=driver_version --format=csv,noheader`
+      reports >= {{ nvidia_driver_min_version }}.
+  when:
+    - (nvidia_driver_min_version | default('') | length) > 0
+    - _nv_driver_ver.rc != 0 or (_nv_driver_ver.stdout | trim | length) == 0
 
 # ---- 2. nvidia-container-toolkit -------------------------------------------
 - name: "GPU | Fetch the NVIDIA container-toolkit GPG key (armored)"
@@ -82,6 +129,24 @@
     state: present
     update_cache: true
 
+- name: "GPU | Read the nvidia-container-toolkit version"
+  ansible.builtin.command: nvidia-ctk --version
+  register: _nvctk_ver
+  changed_when: false
+  failed_when: false
+
+- name: "GPU | Enforce the nvidia-container-toolkit floor (>= {{ nvidia_container_toolkit_min_version }})"
+  ansible.builtin.assert:
+    that:
+      - (_nvctk_ver.stdout | regex_search('([0-9]+\\.[0-9]+\\.[0-9]+)', '\\1') | first) is version(nvidia_container_toolkit_min_version, '>=')
+    fail_msg: >-
+      nvidia-container-toolkit is older than the required
+      {{ nvidia_container_toolkit_min_version }}. Update it (apt) and re-run.
+    quiet: true
+  when:
+    - (nvidia_container_toolkit_min_version | default('') | length) > 0
+    - _nvctk_ver.rc == 0
+
 # ---- 3. Wire the nvidia runtime into Docker --------------------------------
 - name: "GPU | Is the nvidia runtime already configured in Docker?"
   ansible.builtin.command: grep -q nvidia /etc/docker/daemon.json
@@ -97,7 +162,7 @@
   changed_when: true          # only reached when the runtime is not yet wired in
   notify: restart docker
 
-# Flush now so Docker is restarted with the nvidia runtime BEFORE compose.yml
-# brings up the GPU containers.
+# Flush now so Docker is restarted with the nvidia runtime BEFORE any container
+# (Portainer, or your GPU workload stack) comes up.
 - name: "GPU | Apply the Docker runtime change now"
   ansible.builtin.meta: flush_handlers

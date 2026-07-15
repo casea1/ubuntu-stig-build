@@ -1,0 +1,31 @@
+---
+# =============================================================================
+# ai_stack :: portainer.yml -- Portainer CE, a web UI to manage the box's
+# containers. This is the MANAGEMENT PLANE, deliberately separate from your AI
+# workload stack (which you deploy from your own compose files).
+#
+# SECURITY: Portainer mounts the Docker socket, so its web UI is root-equivalent
+# on this host. Treat {{ portainer_https_port }} as privileged -- restrict it to an
+# admin subnet in ai_firewall_allow_ports (`from:`), and SET A STRONG ADMIN
+# PASSWORD on first login (Portainer locks itself out if left unconfigured).
+#
+# Runs after docker.yml (Docker is up) and while the box is still online (image
+# pull). Idempotent: only creates the container when it isn't already present.
+# =============================================================================
+
+- name: "Portainer | Is the container already present?"
+  ansible.builtin.command: docker ps -aq --filter "name=^portainer$"
+  register: _portainer_ps
+  changed_when: false
+
+- name: "Portainer | Deploy Portainer CE ({{ portainer_image }})"
+  # --restart=always so it survives reboot; named volume portainer_data is created
+  # implicitly. `docker run` pulls the image if missing (do it now, while online).
+  ansible.builtin.command: >-
+    docker run -d --name portainer --restart=always
+    -p {{ portainer_https_port }}:9443
+    -v /var/run/docker.sock:/var/run/docker.sock
+    -v portainer_data:/data
+    {{ portainer_image }}
+  when: (_portainer_ps.stdout | trim) == ""
+  changed_when: true

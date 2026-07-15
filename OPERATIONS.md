@@ -424,10 +424,20 @@ then re-run `sudo usg audit disa_stig` for accurate post-reboot numbers.
 Ansible does **host prep only** on the ai profile; the AI containers are deployed from **your own
 prebuilt images + compose files**.
 
-- **Docker + GPU (`ai_stack`):** installs docker-ce (≥29.5.2) + the compose v2 plugin, and (when
+- **Docker + GPU (`ai_stack`):** installs docker-ce (≥29.5.2) + the compose v2 plugin + the extra
+  plugins in `docker_extra_packages` (default `docker-model-plugin`, `docker-sbx`), and (when
   `gpu_enabled`) the NVIDIA driver + `nvidia-container-toolkit` with the `nvidia` runtime wired into
-  Docker. Verify: `docker --version`, `docker info | grep -i runtime`, `nvidia-smi` (after reboot).
-  `ai_stack_user` is added to the `docker` group so it can drive compose without sudo.
+  Docker. The driver is autoselected unless you pin `nvidia_driver_package` (needed to reach the
+  7960 baseline **≥595.71.05** — the RTX PRO 6000 Blackwell cards want the `-open` variant, which may
+  require NVIDIA's CUDA apt repo / the graphics-drivers PPA); the role **asserts** the active driver
+  ≥ `nvidia_driver_min_version` after reboot. Verify: `docker --version`, `docker model version`,
+  `docker info | grep -i runtime`, `nvidia-smi`.  `ai_stack_user` is added to the `docker` group.
+- **Portainer (`ai_stack`, `portainer_enabled`):** a container-management web UI on
+  `https://‹host›:9443` (opened by `ai_firewall`, rate-limited). **Set a strong admin password on
+  first login** — Portainer locks itself out if left unconfigured for a few minutes. It mounts the
+  Docker socket, so restrict its port to admins (add a `from:` entry in `ai_firewall_allow_ports`) or
+  front it with a proxy. Update it later with `docker pull <portainer_image> && docker rm -f
+  portainer` then re-run the play (`portainer_image` in group_vars). Set `portainer_enabled: false` to skip it.
 - **Firewall (`ai_firewall`, after USG):** USG enables ufw with **default-deny inbound**, so the
   ports your containers publish must be opened here. Edit **`ai_firewall_allow_ports`** in
   `group_vars/all.yml`:

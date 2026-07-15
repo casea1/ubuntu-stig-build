@@ -497,7 +497,14 @@ tpm_luks_tpm2_cfg:
 # the role then ASSERTS the installed version is >= docker_ce_min_version so the
 # >=29.5.2 requirement is enforced without brittle exact-version apt pinning.
 docker_ce_version: ""                 # "" = latest from Docker's apt repo
-docker_ce_min_version: "29.5.2"       # hard floor asserted after install
+docker_ce_min_version: "29.5.2"       # hard floor asserted after install (7960 baseline ships 29.6.1)
+
+# Extra Docker CLI plugins beyond the base engine, from Docker's apt repo. The
+# 7960 software baseline adds the Model Runner + Sandbox plugins. Set to [] to
+# install just the base engine.
+docker_extra_packages:
+  - docker-model-plugin      # `docker model ...` (Docker Model Runner)
+  - docker-sbx               # `docker sbx ...`   (Docker Sandboxes)
 
 # Account added to the `docker` group so it can drive your compose without sudo.
 ai_stack_user: "{{ dev_tools_user }}"
@@ -511,6 +518,29 @@ gpu_enabled: true
 # Set false if drivers are managed out-of-band (cloud GPU image, MAAS, etc.):
 # the toolkit + Docker runtime are still configured, but no driver is installed.
 gpu_install_driver: true
+
+# NVIDIA driver package. "" = let `ubuntu-drivers` autoselect the recommended
+# driver. The dual RTX 6000 7960s + the cu129 vLLM image need a RECENT driver, so
+# if autoselect is too old, PIN a branch here, e.g. "nvidia-driver-595-server-open"
+# (the RTX PRO 6000 "Blackwell" cards require the -open kernel-module variant; you
+# may need NVIDIA's CUDA apt repo / the graphics-drivers PPA to reach 595).
+nvidia_driver_package: ""
+# Enforced floor on the ACTIVE driver (nvidia-smi) after install/reboot. Matches
+# the 7960 baseline. "" disables the check. (On a fresh install the check defers to
+# after the reboot, with a reminder.)
+nvidia_driver_min_version: "595.71.05"
+# nvidia-container-toolkit floor (7960 baseline: >= 1.19.1). "" disables the check.
+nvidia_container_toolkit_min_version: "1.19.1"
+
+# ---- Portainer (container management web UI) -------------------------------
+# Optional MANAGEMENT-PLANE container Ansible deploys so ops can manage the box's
+# containers from a browser. It is NOT part of your AI workload stack. It mounts
+# the Docker socket (root-equivalent), so treat its port as privileged: restrict it
+# to an admin subnet via ai_firewall_allow_ports `from:`, and set a strong admin
+# password on first login. Set false to skip.
+portainer_enabled: true
+portainer_image: "portainer/portainer-ce:lts"   # pin an exact tag for frozen images
+portainer_https_port: 9443
 
 # =============================================================================
 # AI SERVER FIREWALL  (ai_firewall role -> opens container ports AFTER USG)

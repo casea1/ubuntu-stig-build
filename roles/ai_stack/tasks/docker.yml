@@ -50,6 +50,14 @@
       - docker-buildx-plugin
       - docker-compose-plugin
 
+- name: "DOCKER | Install extra Docker CLI plugins (Model Runner, Sandbox, ...)"
+  # From Docker's apt repo, per the 7960 baseline. Fails loudly if a name is wrong
+  # so the baseline stays accurate; drop entries from docker_extra_packages to skip.
+  ansible.builtin.apt:
+    name: "{{ docker_extra_packages }}"
+    state: present
+  when: (docker_extra_packages | default([]) | length) > 0
+
 - name: "DOCKER | Read the installed docker-ce version"
   ansible.builtin.command: docker --version
   register: _docker_ver

@@ -220,13 +220,22 @@ Safety rails (mirroring the desktop's `disruption_high` caution):
 The `ai_stack` role prepares the host so your containers can run:
 
 - **Docker Engine** — docker-ce (floor **≥ 29.5.2**, asserted) + the compose v2 plugin, from
-  Docker's official apt repo (not `docker.io`); adds `ai_stack_user` to the `docker` group.
-- **NVIDIA GPU stack** (`gpu_enabled: true`, default) — driver + `nvidia-container-toolkit`, and
-  wires the `nvidia` runtime into Docker so your GPU containers can request `--gpus all`. A driver
-  install needs a **reboot** before the GPU is usable.
+  Docker's official apt repo (not `docker.io`); adds `ai_stack_user` to the `docker` group. Extra
+  Docker CLI plugins come from **`docker_extra_packages`** (default: **`docker-model-plugin`** +
+  **`docker-sbx`**, per the 7960 baseline).
+- **NVIDIA GPU stack** (`gpu_enabled: true`, default) — installs the driver (autoselected, or pin a
+  branch with **`nvidia_driver_package`**, e.g. `nvidia-driver-595-server-open` for the RTX PRO 6000
+  Blackwell cards) + `nvidia-container-toolkit`, and wires the `nvidia` runtime into Docker. It
+  **asserts** the active driver is **≥ `nvidia_driver_min_version`** (default `595.71.05`) and the
+  toolkit is **≥ `nvidia_container_toolkit_min_version`** (1.19.1) so a too-old driver fails the build
+  instead of your cu129 vLLM image. A driver install needs a **reboot** first.
+- **Portainer** (`portainer_enabled: true`, default) — a web UI to manage the box's containers.
+  It's the management plane, not your AI stack; `ai_firewall` opens its port. It mounts the Docker
+  socket (root-equivalent) — set a strong admin password on first login and restrict its port to
+  admins.
 
-It does **not** render a compose file, pull images, generate secrets, or start containers — deploy
-your **prebuilt images + compose files** however you like once the host is prepped.
+It does **not** render a compose file, pull your workload images, generate secrets, or start your AI
+containers — deploy your **prebuilt images + compose files** however you like once the host is prepped.
 
 ### Firewall (`ai_firewall` role) — opens your containers' ports after USG
 
