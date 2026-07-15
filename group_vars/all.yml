@@ -187,11 +187,12 @@ classification_banner_force_xorg: true
 # =============================================================================
 # STIG GAP-REMEDIATION TUNABLES
 # =============================================================================
-# Consumed by the per-category task files in roles/stig_harden/tasks/*.yml
-# (audit/pam/sessions/gnome/ssh/services/filesystem/grub). These close the SSG /
-# ComplianceAsCode "stig" profile findings that the ansible-lockdown role skips
-# under disruption_high:false / cat3:false. Defaults are STIG/SSG-aligned and
-# desktop-safe; override here. See OPERATIONS.md for the POA&M list.
+# MOSTLY LEGACY: these fed the deleted SSG gap files (audit/pam/sessions/ssh/
+# filesystem/grub) that USG now supersedes -- so the audit/pam/sessions/ssh/
+# filesystem/grub tunables below are no longer consumed. STILL LIVE and used by
+# desktop_hardening: the GNOME dconf tunables (gnome_idle_delay_seconds,
+# gnome_lock_delay_seconds), the ufw list (stig_firewall_limit_ports), and
+# usb_storage_enabled. The rest are kept for reference / rollback to lockdown.
 
 # =============================================================================
 # AUDIT (auditd) TUNABLES  -- consumed by roles/stig_harden/tasks/audit.yml
@@ -276,6 +277,8 @@ ssh_banner_path: /etc/issue.net
 # - To run a fully closed box (no inbound at all), set this to [] -- but then
 #   the rate-limit rule has no opened port to demonstrate on; track it as POA&M
 #   (see services category POA&M). Each entry: port (name or number) + proto.
+# NOTE: now consumed by desktop_hardening/tasks/main.yml (the FW block), which
+# `ufw limit`s each entry here and adds RDP (dev_rdp_port) when dev_rdp_enabled.
 stig_firewall_limit_ports:
   - { port: ssh, proto: tcp }      # OpenSSH; rate-limited brute-force throttle
 

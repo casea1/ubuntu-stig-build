@@ -23,6 +23,26 @@
 # =============================================================================
 
 # ---------------------------------------------------------------------------
+# 0) SAFETY: don't ship a FAKE-hardened development image.
+# This role stamps the DCSA banner + branding regardless of USG. If USG SKIPPED
+# (box not Pro-attached) the box would boot with a DoD warning banner but ZERO
+# DISA controls -- looking hardened while being wide open. Fail loudly unless the
+# operator DELIBERATELY built an unhardened box (usg_fix_enabled=false / HARDEN=0).
+# (_usg_active is set by usg_harden, which runs immediately before this role.)
+# ---------------------------------------------------------------------------
+- name: "SAFETY | Refuse to ship an unhardened development box that looks hardened"
+  ansible.builtin.assert:
+    that:
+      - (not (usg_fix_enabled | default(true) | bool)) or (_usg_active | default(false) | bool)
+    fail_msg: >-
+      This development box is NOT Ubuntu Pro-attached, so USG hardening was
+      SKIPPED -- but the profile still applies the DCSA banner + branding, which
+      would make an UNHARDENED box masquerade as hardened. Supply a Pro token
+      (bootstrap.sh prompt, or {{ ubuntu_pro_token_file }}), or set
+      usg_fix_enabled=false (HARDEN=0) to deliberately build an unhardened box.
+    quiet: true
+
+# ---------------------------------------------------------------------------
 # 1) RE-ASSERT THE REMOTE GUI  (undo anything USG's server hardening tightened)
 # ---------------------------------------------------------------------------
 - name: "GUI | Keep booting to the graphical target (USG server hardening may set multi-user)"
@@ -55,21 +75,37 @@
     state: present
   failed_when: false        # custom.conf is created by remote_desktop; tolerate absence
 
-# Re-open the remote-access ports USG's ufw default-deny would otherwise close.
-# Rate-limited (ufw limit) to match the STIG brute-force-throttle expectation.
-- name: "FW | Re-assert rate-limited SSH + RDP after USG's firewall hardening"
+# Host firewall: GUARANTEE it is active (never leave a dev box wide open) and
+# re-open the rate-limited inbound services. USG normally enables ufw, but on an
+# audit-only build (usg_fix_enabled=false) USG doesn't, so we set default-deny +
+# enable it here too -- idempotent if USG already did. Driven from the shared
+# stig_firewall_limit_ports tunable (so operator-added ports are honoured), plus
+# RDP when enabled.
+- name: "FW | Default policy: deny inbound"
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+
+- name: "FW | Default policy: allow outbound"
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+
+- name: "FW | Rate-limit each configured inbound service (+ RDP)"
   community.general.ufw:
     rule: limit
     port: "{{ item.port }}"
-    proto: tcp
-    comment: "{{ item.comment }}"
-  loop:
-    - { port: "ssh", comment: "OpenSSH (rate-limited)" }
-    - { port: "{{ dev_rdp_port | default(3389) }}", comment: "RDP (xrdp) rate-limited" }
+    proto: "{{ item.proto | default('tcp') }}"
+    comment: "STIG rate-limited inbound ({{ item.port }})"
+  loop: "{{ (stig_firewall_limit_ports | default([{'port': 'ssh', 'proto': 'tcp'}])) + _rdp_fw }}"
+  vars:
+    _rdp_fw: "{{ [{'port': dev_rdp_port | default(3389), 'proto': 'tcp'}] if (dev_rdp_enabled | default(true) | bool) else [] }}"
   loop_control:
-    label: "{{ item.port }}/tcp"
-  # Skip the RDP entry when RDP is disabled; always keep SSH.
-  when: (item.port == 'ssh') or (dev_rdp_enabled | default(true) | bool)
+    label: "{{ item.port }}/{{ item.proto | default('tcp') }}"
+
+- name: "FW | Enable ufw and persist across reboot"
+  community.general.ufw:
+    state: enabled
 
 # ---------------------------------------------------------------------------
 # 2) GDM LOGIN-SCREEN DCSA BANNER  (Ubuntu's greeter.dconf-defaults)
