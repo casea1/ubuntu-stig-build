@@ -1,0 +1,6 @@
+---
+# Only the GNOME dconf compile is needed now -- the audit/ssh/rsyslog/grub
+# handlers went with the SSG gap files (USG owns those controls).
+- name: dconf update
+  ansible.builtin.command: dconf update
+  changed_when: true

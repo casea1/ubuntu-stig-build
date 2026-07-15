@@ -86,9 +86,9 @@
     - xrdp-sesman
 
 # ---- Host firewall ---------------------------------------------------------
-# Open + rate-limit RDP. ufw is installed here (stig_harden also installs and
+# Open + rate-limit RDP. ufw is installed here (USG (usg_harden) also installs and
 # ENABLES it later); a rule added while ufw is inactive persists and takes effect
-# the moment stig_harden brings ufw up (default-deny inbound).
+# the moment USG brings ufw up (default-deny inbound).
 - name: "XRDP | Ensure ufw is installed"
   ansible.builtin.apt:
     name: ufw

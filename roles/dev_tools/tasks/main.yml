@@ -1,5 +1,5 @@
 ---
-# Developer tooling. Runs AFTER app_config and BEFORE stig_harden — it needs
+# Developer tooling. Runs AFTER app_config and BEFORE hardening (usg_harden) — it needs
 # internet and must finish before hardening locks down /tmp / PAM / network.
 
 - name: Install developer toolchains (compilers, SDKs, Docker)

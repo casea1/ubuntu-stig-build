@@ -13,12 +13,13 @@
 # Recognised environment variables:
 #   PROFILE=development|ai   which build to run                 (default: development)
 #                           (aliases: desktop->development, server->ai)
+#   PRO_TOKEN=<token>       Ubuntu Pro token for USG hardening (BOTH profiles use
+#                           USG now; else you're prompted). Enter to skip = POA&M.
 #   TOOLS=a,b,c             ai only: which AI tools to install
 #                           (docker,vllm,open_webui,pgvector,docling; default: all)
-#   PRO_TOKEN=<token>       ai only: Ubuntu Pro token (else you're prompted)
 #   HF_TOKEN=<token>        ai only: Hugging Face token for gated models (optional)
-#   HARDEN=0                ai only: install the stack but SKIP `usg fix`
-#                           (audit-only; flip to validate before hardening)
+#   HARDEN=0                install but SKIP the disruptive `usg fix` (both
+#                           profiles; audit-only -- validate before hardening)
 #
 # It also prompts (hidden) for the disk encryption password to enable TPM
 # auto-unlock (either profile). Press Enter at any prompt to skip.
@@ -51,41 +52,42 @@ echo "[*] Deployment profile: ${PROFILE}"
 # --- Extra vars passed to ansible-pull (built up below) ----------------------
 EXTRA_ARGS=(-e "deployment_profile=${PROFILE}")
 
-# --- AI: Ubuntu Pro token (secret, out-of-band) ------------------------------
+# --- Ubuntu Pro token (secret, out-of-band) -- BOTH profiles harden with USG ---
 # USG needs the box Pro-attached. Collect the token HERE (interactively) and drop
 # it where the usg_harden role reads it. Skipped if already present, already
 # attached, or supplied via PRO_TOKEN. The token is NEVER placed in the repo.
-if [[ "${PROFILE}" == "ai" ]]; then
-  PRO_TOKEN_FILE="/etc/ubuntu-advantage/pro-token"
-  ALREADY_ATTACHED="no"
-  if command -v pro >/dev/null 2>&1 && pro status --format json 2>/dev/null | grep -q '"attached": *true'; then
-    ALREADY_ATTACHED="yes"
-  fi
-  if [[ -n "${PRO_TOKEN:-}" ]]; then
+PRO_TOKEN_FILE="/etc/ubuntu-advantage/pro-token"
+ALREADY_ATTACHED="no"
+if command -v pro >/dev/null 2>&1 && pro status --format json 2>/dev/null | grep -q '"attached": *true'; then
+  ALREADY_ATTACHED="yes"
+fi
+if [[ -n "${PRO_TOKEN:-}" ]]; then
+  install -d -m 700 /etc/ubuntu-advantage
+  printf '%s' "${PRO_TOKEN}" > "${PRO_TOKEN_FILE}"
+  chmod 600 "${PRO_TOKEN_FILE}"
+  echo "[*] Ubuntu Pro token saved from PRO_TOKEN."
+  unset PRO_TOKEN
+elif [[ "${ALREADY_ATTACHED}" == "no" && ! -s "${PRO_TOKEN_FILE}" && -r /dev/tty ]]; then
+  printf '\n[?] Ubuntu Pro token (required for USG DISA-STIG hardening).\n' > /dev/tty
+  printf '    Paste your Pro token (hidden), or press Enter to skip hardening: ' > /dev/tty
+  PRO_TOKEN_INPUT=""
+  read -rs PRO_TOKEN_INPUT < /dev/tty || true
+  printf '\n' > /dev/tty
+  if [[ -n "${PRO_TOKEN_INPUT}" ]]; then
     install -d -m 700 /etc/ubuntu-advantage
-    printf '%s' "${PRO_TOKEN}" > "${PRO_TOKEN_FILE}"
+    printf '%s' "${PRO_TOKEN_INPUT}" > "${PRO_TOKEN_FILE}"
     chmod 600 "${PRO_TOKEN_FILE}"
-    echo "[*] Ubuntu Pro token saved from PRO_TOKEN."
-    unset PRO_TOKEN
-  elif [[ "${ALREADY_ATTACHED}" == "no" && ! -s "${PRO_TOKEN_FILE}" && -r /dev/tty ]]; then
-    printf '\n[?] Ubuntu Pro token (required for USG DISA-STIG hardening).\n' > /dev/tty
-    printf '    Paste your Pro token (hidden), or press Enter to skip hardening: ' > /dev/tty
-    PRO_TOKEN_INPUT=""
-    read -rs PRO_TOKEN_INPUT < /dev/tty || true
-    printf '\n' > /dev/tty
-    if [[ -n "${PRO_TOKEN_INPUT}" ]]; then
-      install -d -m 700 /etc/ubuntu-advantage
-      printf '%s' "${PRO_TOKEN_INPUT}" > "${PRO_TOKEN_FILE}"
-      chmod 600 "${PRO_TOKEN_FILE}"
-      echo "[*] Token saved — the build will Pro-attach and run USG."
-    else
-      echo "[*] No token — USG hardening will be SKIPPED (POA&M). Attach later and re-run."
-    fi
-    unset PRO_TOKEN_INPUT
-  elif [[ "${ALREADY_ATTACHED}" == "yes" ]]; then
-    echo "[*] Box is already Ubuntu Pro-attached; USG will use the existing attach."
+    echo "[*] Token saved — the build will Pro-attach and run USG."
+  else
+    echo "[*] No token — USG hardening will be SKIPPED (POA&M). Attach later and re-run."
   fi
+  unset PRO_TOKEN_INPUT
+elif [[ "${ALREADY_ATTACHED}" == "yes" ]]; then
+  echo "[*] Box is already Ubuntu Pro-attached; USG will use the existing attach."
+fi
 
+# --- AI-only options: model token + tool selection ---------------------------
+if [[ "${PROFILE}" == "ai" ]]; then
   # Optional Hugging Face token for gated model downloads (vLLM).
   if [[ -n "${HF_TOKEN:-}" ]]; then
     install -d -m 700 /etc/ai-stack
@@ -107,12 +109,12 @@ if [[ "${PROFILE}" == "ai" ]]; then
     EXTRA_ARGS+=(-e "{\"server_tools\": [${JSON_TOOLS}]}")
     echo "[*] AI tools selected: ${TOOLS}"
   fi
+fi
 
-  # HARDEN=0 -> install everything but don't run the disruptive `usg fix`.
-  if [[ "${HARDEN:-1}" == "0" ]]; then
-    EXTRA_ARGS+=(-e "usg_fix_enabled=false")
-    echo "[*] HARDEN=0 -> USG will AUDIT only (no fix)."
-  fi
+# HARDEN=0 -> install everything but don't run the disruptive `usg fix` (both profiles).
+if [[ "${HARDEN:-1}" == "0" ]]; then
+  EXTRA_ARGS+=(-e "usg_fix_enabled=false")
+  echo "[*] HARDEN=0 -> USG will AUDIT only (no fix)."
 fi
 
 # --- TPM auto-unlock: ask for the disk passphrase ONCE, up front --------------
@@ -171,7 +173,7 @@ if [[ "${PROFILE}" == "ai" ]]; then
   echo "    AI stack:     cd /opt/ai-stack && docker compose ps   (once images finish pulling)."
   echo "    Then REBOOT to apply USG hardening (and load the NVIDIA driver, if installed)."
 else
-  echo "    Reports:      /var/log/stig-scan/  — collect BEFORE air-gapping."
+  echo "    Reports:      /var/log/stig-scan/  — 'usg audit' output (collect BEFORE air-gapping)."
   echo "    RDP:          connect an RDP client to this host:3389 (TLS) and log in as a local user."
-  echo "    Then reboot to apply hardening; the box comes up to GDM with the DCSA banner."
+  echo "    Then REBOOT to apply USG hardening; the box comes up to GDM with the DCSA banner."
 fi

@@ -9,6 +9,13 @@ still has internet, before it's moved to an air-gapped network.
 
 ## What it does, in order
 
+> **Profiles + USG.** There are now two profiles, `development` (default) and `ai` (old names
+> `desktop`/`server` still work). **Both harden with Canonical's USG** (`usg fix disa_stig`), not the
+> ansible-lockdown role — see [Ubuntu Pro Server (USG + AI stack)](#ubuntu-pro-server-usg--ai-stack)
+> and [Remote desktop](#remote-desktop-development-profile--gnome-over-rdp). The steps below describe
+> the legacy `development` pipeline (ansible-lockdown + OpenSCAP); the hardening/scan steps (3, 4) are
+> superseded by `usg_harden` + `desktop_hardening` and `usg audit`.
+
 1. **base_packages** — ClamAV, Wireshark/tshark, Python3 (+pip/venv), PuTTY (GUI) and
    putty-tools (plink/pscp/psftp), OpenSSH client, git, OpenSCAP, and your editor
    (VS Code by default; vim/neovim selectable).
@@ -328,6 +335,13 @@ before attempting.
 The `development` profile installs a GNOME desktop and **xrdp** (via the `remote_desktop` role) so
 the box can run on headless server hardware that users reach over RDP. Driven from the
 **`REMOTE DESKTOP`** block in `group_vars/all.yml`.
+
+> **Hardening interaction.** `development` is hardened by **USG** (`usg fix disa_stig`, needs an
+> Ubuntu Pro token — same as `ai`). USG's DISA profile targets Ubuntu Server, so the `desktop_hardening`
+> role runs **after** USG to re-assert the graphical target, GDM, xrdp, Wayland-off, and the SSH+RDP
+> ufw openings, then applies the GNOME/GDM banner + dconf locks + USB carve-out. **Validate on a
+> throwaway VM first** — after `usg fix` + reboot, confirm RDP still connects and lands in a GNOME
+> session. If USG disabled something, the fix belongs in `desktop_hardening` (re-assert it there).
 
 **Connecting.** Point any RDP client (Windows `mstsc`, Remmina, FreeRDP) at `‹host›:3389`. The
 session is TLS-secured; accept the self-signed cert on first connect (or set `rdp_tls_cert` /

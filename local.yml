@@ -2,22 +2,24 @@
 # ansible-pull entrypoint. ansible-pull runs local.yml by default.
 #
 # TWO PROFILES, selected by `deployment_profile` (group_vars/all.yml, overridable
-# with `-e deployment_profile=ai`). Both can run on headless server hardware.
+# with `-e deployment_profile=ai`). Both can run on headless server hardware, and
+# BOTH now harden with Canonical's USG (`usg fix disa_stig`); `usg audit` is the
+# compliance report for both.
 #
 #   development (default) -- an engineering workstation. Installs the dev
-#     toolchain, then a GNOME desktop + xrdp so users can REMOTE IN over RDP for a
-#     full GUI (works on a server base with no display), then hardens with the
-#     ansible-lockdown DISA STIG (GNOME-aware) and scans with OpenSCAP.
+#     toolchain, then a GNOME desktop + xrdp so users REMOTE IN over RDP for a
+#     full GUI (works on a server base with no display). Hardened by USG, then a
+#     small desktop_hardening role re-asserts the GUI/RDP and adds the GNOME/GDM
+#     and USB carve-outs USG doesn't do. (Needs an Ubuntu Pro token, like ai.)
 #
 #   ai          -- a headless Ubuntu Pro AI server: the selectable container AI
-#     stack (ai_stack) installed while online, then hardening via Canonical's USG
-#     (`usg fix disa_stig`). `usg audit` produces the compliance report.
+#     stack (ai_stack) installed while online, then hardened by USG.
 #
-# Run order is deliberate for BOTH: install + configure FIRST, harden SECOND,
-# scan LAST. Hardening (umask, noexec /tmp, PAM) can break installs/pip if applied
-# first, and the compliance content must download while the box is still online.
+# Run order is deliberate for BOTH: install + configure FIRST, harden SECOND.
+# Hardening (umask, noexec /tmp, PAM) can break installs/pip if applied first, and
+# the AI images / USG content must download while the box is still online.
 
-- name: Build and harden Ubuntu 24.04 (DoD STIG)
+- name: Build and harden Ubuntu 24.04 (DoD STIG via USG)
   hosts: localhost
   connection: local
   become: true
@@ -73,19 +75,16 @@
       when: is_ai
 
     # -------------------------------------------------------------------------
-    # HARDENING  (one backend per profile)
+    # HARDENING  -- BOTH profiles harden with Canonical USG.
     # -------------------------------------------------------------------------
-    - role: stig_harden             # development: ansible-lockdown Ubuntu 24.04 DISA STIG + GNOME fixups
+    - role: usg_harden              # Ubuntu Pro attach + `usg fix disa_stig` + `usg audit` -> report
+    - role: desktop_hardening       # development: GUI-preserving fixups AFTER USG (GNOME/GDM banner, USB, firewall)
       when: is_development
-    - role: usg_harden              # ai: Canonical USG (`usg fix disa_stig`) + audit report
-      when: is_ai
 
     # -------------------------------------------------------------------------
-    # POST-HARDENING  (desktop branding, optional TPM, compliance report)
+    # POST-HARDENING  (desktop branding, optional TPM)
     # -------------------------------------------------------------------------
-    - role: desktop_branding        # system-wide wallpaper (desktop + lock screen), runs after STIG
+    - role: desktop_branding        # system-wide wallpaper (desktop + lock screen), runs after hardening
       when: is_development
     - role: tpm_luks_unlock         # OPT-IN: bind LUKS to the TPM2 (works on either profile if encrypted)
       when: tpm_luks_enabled | default(false)
-    - role: scap_scan               # development: OpenSCAP/SSG eval -> HTML/ARF report (ai uses `usg audit`)
-      when: is_development

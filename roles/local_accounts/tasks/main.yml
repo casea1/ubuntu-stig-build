@@ -12,7 +12,7 @@
 # (`sudo passwd <user>`). A locked account ('!') is NOT an empty password, so it
 # satisfies the STIG no-empty-password control. See OPERATIONS.md.
 #
-# Runs after app_config (services up) and before stig_harden, so the accounts
+# Runs after app_config (services up) and before hardening, so the accounts
 # exist when PAM/faillock hardening is applied. All tasks are idempotent.
 # =============================================================================
 

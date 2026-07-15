@@ -5,8 +5,8 @@
 # Deploys SHB_Background.jpg and sets it as the wallpaper for EVERY user via the
 # dconf system database, LOCKED so users cannot change it.
 #
-# Runs AFTER stig_harden. It is the SOLE owner of the screensaver (lock screen)
-# picture-uri key: stig_harden/tasks/gnome.yml deliberately no longer sets that
+# Runs AFTER hardening (usg_harden + desktop_hardening). It is the SOLE owner of the screensaver (lock screen)
+# picture-uri key: desktop_hardening/tasks/gnome.yml deliberately no longer sets that
 # key, because showing a lock-screen wallpaper OVERRIDES the STIG "Implement
 # Blank Screensaver" control (documented deviation -- see OPERATIONS.md). The
 # desktop background key is not touched by STIG at all.

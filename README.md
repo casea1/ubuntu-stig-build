@@ -7,17 +7,17 @@ headless server hardware:
 
 - **`development`** — a **DoD-STIG-hardened engineering workstation**: installs the dev toolchain,
   a **GNOME desktop + xrdp** so users **RDP in for a full GUI** (it installs the GUI, so a server
-  base works too), applies the DISA STIG (CAT I + II) via
-  [ansible-lockdown/UBUNTU24-STIG](https://github.com/ansible-lockdown/UBUNTU24-STIG), and produces
-  an OpenSCAP compliance report.
-- **`ai`** — turns a **Ubuntu Pro 24.04 Server** into a hardened **local-AI inference box**:
-  hardens with **Canonical's Ubuntu Security Guide** (`usg fix disa_stig`) and installs a
-  **selectable, container-based AI stack** — Docker, vLLM, Open WebUI, PostgreSQL 16 + pgvector,
-  and Docling — where you pick which tools each server gets. See
-  **[the `ai` server profile](#ai-server-profile)**.
+  base works too), then hardens with **Canonical's Ubuntu Security Guide** (`usg fix disa_stig`)
+  plus a small `desktop_hardening` role that re-asserts the GUI/RDP and adds the GNOME/GDM and USB
+  carve-outs USG doesn't cover. `usg audit` is the compliance report. Needs an **Ubuntu Pro** token.
+- **`ai`** — turns a **Ubuntu Pro 24.04 Server** into a hardened **local-AI inference box**: hardens
+  with the same **USG** (`usg fix disa_stig`) and installs a **selectable, container-based AI
+  stack** — Docker, vLLM, Open WebUI, PostgreSQL 16 + pgvector, and Docling — where you pick which
+  tools each server gets. See **[the `ai` server profile](#ai-server-profile)**.
 
-> The first release named these `desktop`/`server`; those are still accepted as aliases for
-> `development`/`ai`.
+> **Both profiles now harden with Canonical's USG** (they need an Ubuntu Pro token), not the
+> community ansible-lockdown role. The first release named the profiles `desktop`/`server` and used
+> ansible-lockdown + an OpenSCAP scan on the desktop; those names are still accepted as aliases.
 
 You install Ubuntu, run one command, reboot, and collect the report.
 
@@ -36,9 +36,15 @@ compliance content must be downloaded while the box is still online.
 | 2. Configure | `app_config` | Service config + access controls |
 | 3. Accounts | `local_accounts` | Org users/groups, ACL'd shared folders, USB→`dta` policy |
 | 4. Dev tools | `dev_tools` | Compilers, Python env, VS Code extensions |
-| 5. Harden | `stig_harden` | DISA STIG remediation + SSG gap-fixes + GNOME fixups |
+| 5. Harden | `usg_harden` + `desktop_hardening` | USG `usg fix disa_stig`, then GUI/GNOME/USB re-assert |
 | 6. Branding | `desktop_branding` | System-wide wallpaper (desktop + lock screen) |
-| 7. Scan | `scap_scan` | OpenSCAP evaluation → reports |
+| 7. Report | `usg audit` (in `usg_harden`) | Compliance report → `/var/log/stig-scan` |
+
+> **Hardening switched to Canonical USG for both profiles.** The `development` pipeline used to run
+> the `ansible-lockdown/UBUNTU24-STIG` role + SSG gap-remediation task files + an OpenSCAP scan; it
+> now runs `usg_harden` (USG) followed by `desktop_hardening` (the GNOME/GDM/USB carve-outs USG
+> doesn't do, plus a GUI/firewall re-assert). The stage descriptions below marked *(legacy)* describe
+> the old lockdown flow and are kept for historical context.
 
 ### 1. `base_packages` — core tooling
 - **Security/scan:** ClamAV (daemon + freshclam), OpenSCAP (`oscap`), OpenSSH client
@@ -73,7 +79,19 @@ compliance content must be downloaded while the box is still online.
   Docker, Remote-SSH, …) installed and seeded into `/etc/skel` so any account inherits them
 - Adds the primary user to the `docker` group
 
-### 5. `stig_harden` — hardening
+### 5. `usg_harden` + `desktop_hardening` — hardening (current)
+- **`usg_harden`** attaches the box to **Ubuntu Pro** (token supplied out-of-band) and runs
+  **`usg fix disa_stig`** — Canonical's officially-supported DISA-STIG remediation — then
+  **`usg audit`** writes the compliance report to `/var/log/stig-scan/`. Guarded so it won't lock
+  you out (self-skips with no token; refuses `usg fix` unless an admin has a usable password;
+  stamped to run once per image).
+- **`desktop_hardening`** runs **after** USG and does only what USG doesn't: re-asserts the
+  graphical target / GDM / xrdp and the SSH+RDP firewall openings, sets the **GDM DCSA banner** and
+  the **GNOME dconf** screensaver/automount/Ctrl-Alt-Del locks, and re-enables `usb-storage` for the
+  `dta` carve-out (the STIG blacklists it).
+- Runs on the `development` profile; the `ai` profile runs `usg_harden` only.
+
+### 5b. `stig_harden` — hardening *(legacy, no longer used)*
 - Imports the **UBUNTU24-STIG** Lockdown role (pinned to **v1.3.0**), applying **CAT I + II**
   (CAT III off by default; `disruption_high` off so the most breaking controls are skipped)
 - Adds the GNOME/GDM pieces the *server* STIG omits: the **DCSA login banner**, idle screen lock,
@@ -93,7 +111,12 @@ compliance content must be downloaded while the box is still online.
   blank-screensaver control (documented deviation). GDM login background is best-effort (Ubuntu's
   greeter usually ignores it).
 
-### 7. `scap_scan` — compliance report
+### 7. Compliance report — `usg audit` (current)
+- The report now comes from **`usg audit disa_stig`** (run inside `usg_harden`), which writes its
+  HTML + XCCDF results to `/var/log/stig-scan/`. The standalone OpenSCAP scan below is **no longer
+  run** (the `scap_scan` role remains in the repo but is not in the pipeline).
+
+### 7b. `scap_scan` — compliance report *(legacy, no longer used)*
 - Fetches the **Ubuntu 24.04 SCAP Security Guide datastream** from SSG release **v0.1.81**
   (checksum-verified) — the distro's `ssg-debderived` package only ships content through 22.04
 - Runs `oscap` against the DISA STIG profile and writes, to `/var/log/stig-scan/`:
@@ -148,6 +171,14 @@ users reach over RDP:
   firewall (`ufw limit 3389/tcp`).
 - RDP logins go through **PAM**, so the STIG faillock/faildelay lockout applies to them too.
   Optionally restrict RDP to a group with `dev_rdp_allowed_group`.
+
+**Hardening.** The development box is hardened by **Canonical's USG** (`usg fix disa_stig`) — the
+same engine as the `ai` profile — so it needs an **Ubuntu Pro** token (handled out-of-band, exactly
+like the `ai` profile; `bootstrap.sh` prompts for it). USG applies the DISA server controls; the
+`desktop_hardening` role then runs **after** USG to re-assert the GUI/RDP and add the GNOME/GDM/USB
+carve-outs USG doesn't cover. Because USG's DISA profile targets Ubuntu Server, **validate this on a
+throwaway VM before imaging production hardware** — confirm you can still RDP in and reach a GNOME
+session after the `usg fix` + reboot.
 
 Connect any RDP client to `‹host›:3389` and log in as a local account (each ships **locked** — set
 a password with `sudo passwd <user>` first). Toggles live under **`REMOTE DESKTOP`** in

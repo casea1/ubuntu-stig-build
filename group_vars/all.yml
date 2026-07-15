@@ -10,8 +10,10 @@
 # role set per profile:
 #   development -> an engineering workstation: base apps, dev_tools, a GNOME
 #                  desktop + xrdp (so users RDP in for a GUI, even on a headless
-#                  server base), classification banner, ansible-lockdown DISA
-#                  STIG, wallpaper, OpenSCAP/SSG scan.
+#                  server base), classification banner, hardening via Canonical's
+#                  USG (`usg fix disa_stig`) + GUI/GNOME/USB desktop fixups
+#                  (desktop_hardening role), and a wallpaper. Needs an Ubuntu Pro
+#                  token, same as ai.
 #   ai          -> a headless Ubuntu Pro AI server: a lean baseline, the
 #                  selectable AI tool stack (ai_stack role -> Docker Compose:
 #                  vLLM / Open WebUI / pgvector / Docling), and hardening via
@@ -43,8 +45,16 @@ clamav_freshclam_enabled: true
 clamav_freshclam_checks_per_day: 12
 
 # =============================================================================
-# STIG HARDENING TOGGLES (passed through to ansible-lockdown/UBUNTU24-STIG)
+# STIG HARDENING TOGGLES (LEGACY -- ansible-lockdown/UBUNTU24-STIG)
 # =============================================================================
+# NOTE: as of the USG switch, BOTH profiles harden with Canonical's USG, not the
+# ansible-lockdown role -- so the ubtu24stig_* toggles and GNOME-bug workarounds
+# in THIS section are no longer consumed. They're kept for reference / rollback
+# (re-add the UBUNTU24-STIG role to requirements.yml and the import to
+# desktop_hardening if you ever revert). USG settings live in the USG HARDENING
+# section near the bottom of this file; the GNOME dconf tunables further down
+# (gnome_idle_delay_seconds, etc.) ARE still used by desktop_hardening/gnome.yml.
+#
 # CAT I = high severity, CAT II = medium, CAT III = low.
 # Default: apply CAT I + II, leave CAT III off until you've validated it
 # doesn't break your desktop workflow. Flip cat3 on once you're confident.
@@ -564,10 +574,12 @@ docling_port: 5001                    # host port -> docling-serve API
 # =============================================================================
 # USG HARDENING  (usg_harden role -> Ubuntu Security Guide / DISA-STIG)
 # =============================================================================
-# On the server profile the box is hardened by Canonical's Ubuntu Security Guide
-# (`usg`) applying the DISA-STIG profile, NOT the ansible-lockdown role. USG ships
-# with Ubuntu Pro, so the box must be Pro-ATTACHED first. USG then produces the
-# same style of compliance report the desktop's OpenSCAP scan does.
+# BOTH profiles (development and ai) are hardened by Canonical's Ubuntu Security
+# Guide (`usg`) applying the DISA-STIG profile. USG ships with Ubuntu Pro, so the
+# box must be Pro-ATTACHED first (development needs a Pro token now, just like ai).
+# `usg audit` is the compliance report for both. On development, the
+# desktop_hardening role runs AFTER USG to re-assert the GUI/RDP and add the
+# GNOME/GDM/USB carve-outs USG doesn't cover.
 #
 # WORKFLOW (all handled by the role, in order):
 #   pro attach <token>  ->  pro enable usg [+ fips-updates]  ->  apt install usg
