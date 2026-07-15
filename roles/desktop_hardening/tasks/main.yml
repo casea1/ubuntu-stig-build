@@ -103,6 +103,14 @@
   loop_control:
     label: "{{ item.port }}/{{ item.proto | default('tcp') }}"
 
+- name: "FW | Open code-server ({{ dev_code_server_port | default(8080) }}/tcp, rate-limited) when enabled"
+  community.general.ufw:
+    rule: limit
+    port: "{{ dev_code_server_port | default(8080) | string }}"
+    proto: tcp
+    comment: "code-server (rate-limited)"
+  when: dev_code_server_enabled | default(false) | bool
+
 - name: "FW | Enable ufw and persist across reboot"
   community.general.ufw:
     state: enabled

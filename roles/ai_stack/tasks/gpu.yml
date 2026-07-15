@@ -14,13 +14,34 @@
   changed_when: false
   failed_when: false
 
+# Optional: add NVIDIA's CUDA apt repo so a very new driver branch (e.g. 595)
+# that Ubuntu's archive doesn't carry becomes installable via nvidia_driver_package.
+- name: "GPU | Add NVIDIA's CUDA apt repo (for newer driver branches)"
+  when:
+    - gpu_install_driver | default(true) | bool
+    - _nvidia_smi.rc != 0
+    - nvidia_use_cuda_repo | default(false) | bool
+  block:
+    - name: "GPU | Fetch the CUDA repo keyring package"
+      ansible.builtin.get_url:
+        url: >-
+          https://developer.download.nvidia.com/compute/cuda/repos/{{ nvidia_cuda_repo_distro }}/{{ ansible_architecture }}/cuda-keyring_{{ nvidia_cuda_keyring_version }}_all.deb
+        dest: /tmp/cuda-keyring.deb
+        mode: "0644"
+
+    - name: "GPU | Install the CUDA repo keyring (adds the repo + signing key)"
+      ansible.builtin.apt:
+        deb: /tmp/cuda-keyring.deb
+        update_cache: true
+
 - name: "GPU | Install the NVIDIA driver"
   when:
     - gpu_install_driver | default(true) | bool
     - _nvidia_smi.rc != 0
   block:
     # PINNED path: install a specific driver branch (needed for very new GPUs /
-    # the RTX PRO 6000 Blackwell -open modules and the cu129 vLLM image).
+    # the RTX PRO 6000 Blackwell -open modules and the cu129 vLLM image). With
+    # nvidia_use_cuda_repo, this pulls from NVIDIA's CUDA repo added above.
     - name: "GPU | Install the pinned NVIDIA driver ({{ nvidia_driver_package }})"
       ansible.builtin.apt:
         name: "{{ nvidia_driver_package }}"

@@ -140,6 +140,16 @@ dotnet_sdk_package: dotnet-sdk-8.0      # .NET SDK from the Ubuntu archive (LTS)
 # PowerShell LTS — installed in base_packages as a pinned .deb (PowerStrux backend).
 powershell_version: "7.4.16"
 
+# ---- code-server (VS Code in the browser; development profile) --------------
+# Installs code-server (dev_tools) and runs it as a per-user systemd service so
+# users can reach a full VS Code from a browser (in addition to RDP). Served over
+# self-signed TLS with a generated password; desktop_hardening opens the port.
+dev_code_server_enabled: true
+dev_code_server_version: ""           # "" = latest; pin e.g. "4.100.1" for frozen images
+dev_code_server_bind_addr: "0.0.0.0"  # set 127.0.0.1 to require an SSH tunnel / RDP browser
+dev_code_server_port: 8080
+dev_code_server_tls: true             # self-signed HTTPS (front with a real cert for prod)
+
 # =============================================================================
 # REMOTE DESKTOP  (development profile -> remote_desktop role)
 # =============================================================================
@@ -525,6 +535,14 @@ gpu_install_driver: true
 # (the RTX PRO 6000 "Blackwell" cards require the -open kernel-module variant; you
 # may need NVIDIA's CUDA apt repo / the graphics-drivers PPA to reach 595).
 nvidia_driver_package: ""
+# Reach very new driver branches (e.g. 595) that AREN'T in Ubuntu's archive by
+# adding NVIDIA's CUDA apt repo before installing nvidia_driver_package. Pair this
+# with nvidia_driver_package set to a CUDA-repo package name, e.g.
+# "nvidia-driver-595-open" (open kernel modules, required for Blackwell). Leaves
+# the ubuntu-drivers autoselect path alone when false.
+nvidia_use_cuda_repo: false
+nvidia_cuda_repo_distro: "ubuntu2404"        # NVIDIA CUDA repo distro slug
+nvidia_cuda_keyring_version: "1.1-1"         # cuda-keyring package version
 # Enforced floor on the ACTIVE driver (nvidia-smi) after install/reboot. Matches
 # the 7960 baseline. "" disables the check. (On a fresh install the check defers to
 # after the reboot, with a reminder.)

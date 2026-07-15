@@ -186,6 +186,12 @@ a password with `sudo passwd <user>` first). Toggles live under **`REMOTE DESKTO
 `group_vars/all.yml` (`dev_install_gnome`, `dev_gnome_package`, `dev_rdp_enabled`, `dev_rdp_port`,
 `dev_rdp_use_tls`, `dev_rdp_allowed_group`).
 
+**Browser VS Code (code-server).** `dev_tools` also installs **code-server** (`dev_code_server_enabled`,
+default on) and runs it as a per-user systemd service, so users can reach a full VS Code from a
+browser at `https://‹host›:8080` (self-signed TLS + a generated password under `/etc/code-server/`).
+`desktop_hardening` opens the port (rate-limited). Bind it to `127.0.0.1` (`dev_code_server_bind_addr`)
+to require an SSH tunnel, and front it with a real cert for production.
+
 ---
 
 ## AI server profile
@@ -224,8 +230,10 @@ The `ai_stack` role prepares the host so your containers can run:
   Docker CLI plugins come from **`docker_extra_packages`** (default: **`docker-model-plugin`** +
   **`docker-sbx`**, per the 7960 baseline).
 - **NVIDIA GPU stack** (`gpu_enabled: true`, default) — installs the driver (autoselected, or pin a
-  branch with **`nvidia_driver_package`**, e.g. `nvidia-driver-595-server-open` for the RTX PRO 6000
-  Blackwell cards) + `nvidia-container-toolkit`, and wires the `nvidia` runtime into Docker. It
+  branch with **`nvidia_driver_package`**, e.g. `nvidia-driver-595-open` for the RTX PRO 6000
+  Blackwell cards) + `nvidia-container-toolkit`, and wires the `nvidia` runtime into Docker. To reach
+  a driver branch Ubuntu's archive doesn't carry (like 595), set **`nvidia_use_cuda_repo: true`** to
+  add NVIDIA's CUDA apt repo before the pinned install. It
   **asserts** the active driver is **≥ `nvidia_driver_min_version`** (default `595.71.05`) and the
   toolkit is **≥ `nvidia_container_toolkit_min_version`** (1.19.1) so a too-old driver fails the build
   instead of your cu129 vLLM image. A driver install needs a **reboot** first.

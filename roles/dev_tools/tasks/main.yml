@@ -11,3 +11,7 @@
 - name: Install and wire VS Code extensions
   ansible.builtin.import_tasks: vscode.yml
   when: editor_choice == "vscode"
+
+- name: Install code-server (VS Code in the browser)
+  ansible.builtin.import_tasks: code_server.yml
+  when: dev_code_server_enabled | default(false) | bool
