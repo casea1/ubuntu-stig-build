@@ -12,8 +12,10 @@
 #     small desktop_hardening role re-asserts the GUI/RDP and adds the GNOME/GDM
 #     and USB carve-outs USG doesn't do. (Needs an Ubuntu Pro token, like ai.)
 #
-#   ai          -- a headless Ubuntu Pro AI server: the selectable container AI
-#     stack (ai_stack) installed while online, then hardened by USG.
+#   ai          -- a headless Ubuntu Pro AI server. Ansible does HOST PREP only
+#     (Docker + NVIDIA via ai_stack) and hardens with USG; the AI tools ship as
+#     your OWN prebuilt images + compose files. ai_firewall opens their inbound
+#     ports after USG's default-deny.
 #
 # Run order is deliberate for BOTH: install + configure FIRST, harden SECOND.
 # Hardening (umask, noexec /tmp, PAM) can break installs/pip if applied first, and
@@ -80,6 +82,8 @@
     - role: usg_harden              # Ubuntu Pro attach + `usg fix disa_stig` + `usg audit` -> report
     - role: desktop_hardening       # development: GUI-preserving fixups AFTER USG (GNOME/GDM banner, USB, firewall)
       when: is_development
+    - role: ai_firewall             # ai: open the prebuilt AI stack's inbound ports AFTER USG's default-deny
+      when: is_ai
 
     # -------------------------------------------------------------------------
     # POST-HARDENING  (desktop branding, optional TPM)

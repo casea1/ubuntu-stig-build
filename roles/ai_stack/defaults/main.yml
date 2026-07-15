@@ -1,6 +1,7 @@
 ---
-# Role-internal constants for ai_stack. User-facing toggles (server_tools, image
-# pins, ports, model, gpu_enabled, ...) live in group_vars/all.yml.
+# Role-internal constants for ai_stack (HOST PREP ONLY: Docker + NVIDIA). The
+# user-facing toggles (docker_ce_*, gpu_enabled, ai_stack_user) live in
+# group_vars/all.yml.
 
 # ---- Docker's official apt repository (docker-ce) --------------------------
 # Map Ansible's architecture fact to the apt arch string Docker publishes under.

@@ -1,6 +1,14 @@
 # Ubuntu Pro AI Server Profile — Design
 
-Status: **implemented** · Date: 2026-07-14 · Target: Ubuntu Pro 24.04 LTS Server
+Status: **superseded in part** · Date: 2026-07-14 · Target: Ubuntu Pro 24.04 LTS Server
+
+> **UPDATE — the `ai_stack` role is now HOST PREP ONLY.** The AI containers ship as
+> the operator's own **prebuilt images + compose files**, so `ai_stack` no longer renders a
+> compose file, generates secrets, pulls images, or starts containers. It now installs only
+> **Docker + the NVIDIA GPU stack**; USG hardens the host; and a new **`ai_firewall`** role opens
+> the containers' inbound ports (`ai_firewall_allow_ports`) after USG's default-deny. The
+> Compose-orchestration design below (server_tools selection, rendered compose, cross-host wiring,
+> secrets) is **retained for historical context only** — that logic was removed.
 
 ## Context & goal
 

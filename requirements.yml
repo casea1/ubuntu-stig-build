@@ -8,9 +8,7 @@
 # the module collections the roles use are pinned here, for reproducible builds.
 
 collections:
-  - name: community.general # ini_file/ufw/modprobe/pamd (desktop_hardening, remote_desktop, app_config)
+  - name: community.general # ini_file/ufw/modprobe/pamd (desktop_hardening, remote_desktop, ai_firewall, app_config)
     version: ">=8.0.0"     # floor; pin an exact version for a frozen gold image
   - name: ansible.posix    # local_accounts uses ansible.posix.acl for shared-folder ACLs
     version: ">=1.5.0"     # also bundled with the full `ansible` package
-  - name: community.docker # ai profile: ai_stack uses community.docker.docker_compose_v2
-    version: ">=3.10.0"    # docker_compose_v2 shells out to the compose v2 CLI plugin

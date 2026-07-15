@@ -6,20 +6,21 @@
 #   over RDP (xrdp). Works on a headless server base (it installs the GUI):
 #     curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo bash
 #
-#   AI -- Ubuntu Pro AI server (USG DISA-STIG + selectable AI stack). Pass options
-#   as environment variables (piped bash can't take flags):
-#     curl -fsSL .../bootstrap.sh | sudo PROFILE=ai TOOLS=docker,vllm,open_webui,pgvector,docling bash
+#   AI -- Ubuntu Pro AI server (host prep: Docker + NVIDIA + USG hardening +
+#   firewall). Your prebuilt images + compose files deploy the AI tools:
+#     curl -fsSL .../bootstrap.sh | sudo PROFILE=ai bash
 #
 # Recognised environment variables:
 #   PROFILE=development|ai   which build to run                 (default: development)
 #                           (aliases: desktop->development, server->ai)
 #   PRO_TOKEN=<token>       Ubuntu Pro token for USG hardening (BOTH profiles use
-#                           USG now; else you're prompted). Enter to skip = POA&M.
-#   TOOLS=a,b,c             ai only: which AI tools to install
-#                           (docker,vllm,open_webui,pgvector,docling; default: all)
-#   HF_TOKEN=<token>        ai only: Hugging Face token for gated models (optional)
+#                           USG; else you're prompted). Enter to skip = POA&M.
 #   HARDEN=0                install but SKIP the disruptive `usg fix` (both
 #                           profiles; audit-only -- validate before hardening)
+#
+# NOTE (ai profile): Ansible does HOST PREP only (Docker + NVIDIA + firewall).
+# Your prebuilt images + compose files deploy the AI tools -- there is no TOOLS or
+# HF_TOKEN to pass anymore.
 #
 # It also prompts (hidden) for the disk encryption password to enable TPM
 # auto-unlock (either profile). Press Enter at any prompt to skip.
@@ -86,31 +87,6 @@ elif [[ "${ALREADY_ATTACHED}" == "yes" ]]; then
   echo "[*] Box is already Ubuntu Pro-attached; USG will use the existing attach."
 fi
 
-# --- AI-only options: model token + tool selection ---------------------------
-if [[ "${PROFILE}" == "ai" ]]; then
-  # Optional Hugging Face token for gated model downloads (vLLM).
-  if [[ -n "${HF_TOKEN:-}" ]]; then
-    install -d -m 700 /etc/ai-stack
-    printf '%s' "${HF_TOKEN}" > /etc/ai-stack/hf_token
-    chmod 600 /etc/ai-stack/hf_token
-    echo "[*] Hugging Face token saved for gated model downloads."
-    unset HF_TOKEN
-  fi
-
-  # Tool selection -> JSON list extra-var.
-  if [[ -n "${TOOLS:-}" ]]; then
-    JSON_TOOLS=""
-    IFS=',' read -ra _tool_arr <<< "${TOOLS}"
-    for t in "${_tool_arr[@]}"; do
-      t="$(echo "$t" | tr -d '[:space:]')"
-      [[ -z "$t" ]] && continue
-      JSON_TOOLS="${JSON_TOOLS:+${JSON_TOOLS},}\"${t}\""
-    done
-    EXTRA_ARGS+=(-e "{\"server_tools\": [${JSON_TOOLS}]}")
-    echo "[*] AI tools selected: ${TOOLS}"
-  fi
-fi
-
 # HARDEN=0 -> install everything but don't run the disruptive `usg fix` (both profiles).
 if [[ "${HARDEN:-1}" == "0" ]]; then
   EXTRA_ARGS+=(-e "usg_fix_enabled=false")
@@ -170,7 +146,8 @@ echo "    Watch it:     journalctl -u stig-build -f"
 echo "    Result:       systemctl status stig-build   (active(exited) = success)"
 if [[ "${PROFILE}" == "ai" ]]; then
   echo "    Reports:      /var/log/stig-scan/  — 'usg audit' output (collect BEFORE air-gapping)."
-  echo "    AI stack:     cd /opt/ai-stack && docker compose ps   (once images finish pulling)."
+  echo "    Host is prepped (Docker + NVIDIA + firewall). Deploy your prebuilt AI"
+  echo "    compose stack (docker compose up -d) — Ansible does not manage the containers."
   echo "    Then REBOOT to apply USG hardening (and load the NVIDIA driver, if installed)."
 else
   echo "    Reports:      /var/log/stig-scan/  — 'usg audit' output (collect BEFORE air-gapping)."
