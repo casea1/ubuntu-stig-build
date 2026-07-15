@@ -38,8 +38,12 @@
     - name: "REMED | Comment out active pam_pkcs11 lines (keeps pam_unix intact)"
       ansible.builtin.replace:
         path: "{{ item.path }}"
-        # Match an uncommented auth line invoking pam_pkcs11.so; prefix it with '#'.
-        regexp: '(?m)^(?!\s*#)(\s*auth\s+.*\bpam_pkcs11\.so.*)$'
+        # Match an uncommented auth line whose MODULE is pam_pkcs11.so; prefix '#'.
+        # The [^#]* (not .*) before the module ensures we never match a line where
+        # pam_pkcs11.so only appears in an inline comment after a DIFFERENT module
+        # (e.g. `auth required pam_unix.so # pam_pkcs11.so`) -- commenting that out
+        # would drop pam_unix and could lock the box out.
+        regexp: '(?m)^(?!\s*#)(\s*auth\s+[^#]*\bpam_pkcs11\.so.*)$'
         replace: '#\1  # disabled by usg_remediate (password-login only)'
       loop: "{{ _pkcs11_pam.files | default([]) }}"
       loop_control:
