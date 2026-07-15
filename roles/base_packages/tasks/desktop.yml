@@ -1,0 +1,120 @@
+---
+# DESKTOP profile baseline -- the full engineering-workstation app set.
+# Included from main.yml only when is_desktop. Unchanged from the original
+# base_packages content (the apt-cache refresh now lives in main.yml, which runs
+# for both profiles). Runs BEFORE hardening so that umask/mount restrictions
+# don't interfere with package and pip operations.
+
+- name: Install core packages
+  ansible.builtin.apt:
+    name:
+      - clamav
+      - clamav-daemon
+      - clamav-freshclam
+      - wireshark           # pulls tshark/dumpcap; install prompts handled below
+      - tshark
+      - python3
+      - python3-pip
+      - python3-venv
+      - putty               # PuTTY GUI app
+      - putty-tools         # plink / pscp / psftp CLI
+      - openssh-client
+      - git
+      - openscap-scanner    # OpenSCAP scanner (CLI: oscap) — 24.04 pkg name (was libopenscap8)
+    state: present
+
+# --- Wireshark non-interactive install --------------------------------------
+# The wireshark package asks (via debconf) whether non-root users may capture.
+# Preseed the answer so ansible-pull never hangs on the prompt.
+- name: Preseed wireshark-common (allow non-root capture, group-gated)
+  ansible.builtin.debconf:
+    name: wireshark-common
+    question: wireshark-common/install-setuid
+    value: "true"
+    vtype: boolean
+
+- name: Reconfigure wireshark-common to apply preseed
+  ansible.builtin.command: dpkg-reconfigure -f noninteractive wireshark-common
+  changed_when: false
+
+# --- Editor (conditional) ---------------------------------------------------
+- name: Install vim
+  ansible.builtin.apt:
+    name: vim
+    state: present
+  when: editor_choice == "vim"
+
+- name: Install neovim
+  ansible.builtin.apt:
+    name: neovim
+    state: present
+  when: editor_choice == "neovim"
+
+- name: Add Microsoft VS Code apt key and repo
+  when: editor_choice == "vscode"
+  block:
+    - name: Ensure keyrings dir exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Download Microsoft GPG key
+      ansible.builtin.get_url:
+        url: https://packages.microsoft.com/keys/microsoft.asc
+        dest: /etc/apt/keyrings/microsoft.asc
+        mode: "0644"
+
+    - name: Add VS Code repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/microsoft.asc] https://packages.microsoft.com/repos/code stable main"
+        filename: vscode
+        state: present
+
+    - name: Install VS Code
+      ansible.builtin.apt:
+        name: code
+        update_cache: true
+        state: present
+
+# --- PowerShell (LTS) -------------------------------------------------------
+# Required by the PowerStrux auditing tool. Pinned .deb from the official
+# GitHub release (no third-party apt repo). Installs /usr/bin/pwsh; not added
+# to /etc/shells, so it is not a valid login shell.
+- name: Download pinned PowerShell {{ powershell_version }} .deb
+  ansible.builtin.get_url:
+    url: "https://github.com/PowerShell/PowerShell/releases/download/v{{ powershell_version }}/powershell_{{ powershell_version }}-1.deb_amd64.deb"
+    dest: "/tmp/powershell_{{ powershell_version }}.deb"
+    mode: "0644"
+
+- name: Install PowerShell from the .deb (apt resolves dependencies)
+  ansible.builtin.apt:
+    deb: "/tmp/powershell_{{ powershell_version }}.deb"
+    state: present
+
+# --- Network provisioning services (PXE/imaging) ----------------------------
+# tftpd-hpa, isc-dhcp-server, dnsmasq — installed per requirement. These are
+# server daemons the SCAP/STIG scan WILL flag (TFTP especially is a classic
+# "must not be installed" control); document them as mission-need exceptions
+# during triage. The STIG role itself does not remove them.
+# Installed but left DISABLED + STOPPED so the box has no unconfigured listening
+# services. Enable them deliberately once configured (note: dnsmasq binds :53
+# and will collide with systemd-resolved until you reconfigure one of them).
+- name: Install network provisioning services (TFTP/DHCP/DNS)
+  ansible.builtin.apt:
+    name:
+      - tftpd-hpa
+      - isc-dhcp-server
+      - dnsmasq
+    state: present
+
+- name: Leave provisioning services disabled + stopped until deliberately configured
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - tftpd-hpa
+    - isc-dhcp-server
+    - dnsmasq
+  failed_when: false

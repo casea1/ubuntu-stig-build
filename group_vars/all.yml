@@ -1,9 +1,26 @@
 ---
 # =============================================================================
-# Central configuration for the Ubuntu 24.04 Desktop STIG build.
+# Central configuration for the Ubuntu 24.04 STIG build.
 # Edit this file to control what gets installed and how aggressively the box
 # is hardened. Everything else reads from here.
 # =============================================================================
+
+# ---- Deployment profile ----------------------------------------------------
+# Selects WHICH build this box gets. The pipeline (local.yml) runs a different
+# role set per profile:
+#   desktop -> the original GNOME engineering workstation: base apps, dev_tools,
+#              classification banner, ansible-lockdown DISA STIG, wallpaper,
+#              OpenSCAP/SSG scan. (Everything documented in the rest of this file.)
+#   server  -> a headless Ubuntu Pro SERVER: a lean baseline, the selectable AI
+#              tool stack (ai_stack role -> Docker Compose: vLLM / Open WebUI /
+#              pgvector / Docling), and hardening via Canonical's Ubuntu Security
+#              Guide (USG -> `usg fix disa_stig`) instead of the lockdown role.
+#
+# Default is 'desktop' so existing images build byte-identically. Override
+# per-machine at deploy WITHOUT editing this file:
+#   ansible-pull ... -e deployment_profile=server
+# (bootstrap.sh accepts PROFILE=server and passes this for you.)
+deployment_profile: desktop        # options: desktop | server
 
 # ---- Users who need to run packet captures (Wireshark) ---------------------
 # STIG restricts raw packet capture to authorized users. These users get added
@@ -408,3 +425,162 @@ tpm_luks_pcr_bank: "sha256"
 tpm_luks_tpm2_cfg:
   pcr_bank: "{{ tpm_luks_pcr_bank }}"
   pcr_ids: "{{ tpm_luks_pcrs }}"
+
+# #############################################################################
+# #############################################################################
+# ##                                                                         ##
+# ##   UBUNTU PRO SERVER PROFILE  (deployment_profile: server)               ##
+# ##                                                                         ##
+# ##   Everything below is consumed ONLY when deployment_profile == server.  ##
+# ##   On a desktop build these vars are inert. See docs/ai-server-design.md ##
+# ##                                                                         ##
+# #############################################################################
+# #############################################################################
+
+# =============================================================================
+# AI / ML SERVER TOOL STACK  (ai_stack role -> Docker Compose)
+# =============================================================================
+# A selectable, container-based local-inference stack. Pick per-server which
+# tools to install with `server_tools` below -- some boxes get all of them,
+# others only a subset. The ai_stack role renders a docker-compose.yml that
+# contains ONLY the services you list, wires them together, and brings them up.
+#
+# The pieces form the standard "sovereign AI" pipeline:
+#   vllm       -- OpenAI-compatible LLM inference server (needs an NVIDIA GPU)
+#   open_webui -- browser chat UI / RAG front-end (talks to vllm, pgvector, docling)
+#   pgvector   -- PostgreSQL 16 + pgvector: the RAG vector store + app database
+#   docling    -- document-extraction service Open WebUI uses to ingest PDFs/DOCX
+#   docker     -- the container engine everything above runs on (implied
+#                 dependency: installed automatically if any container tool is
+#                 selected; list it alone to install ONLY the engine)
+#
+# Override per-machine at deploy without editing this file (JSON list):
+#   ansible-pull ... -e '{"server_tools":["docker","pgvector","open_webui"]}'
+# (bootstrap.sh accepts TOOLS=docker,pgvector,open_webui and builds this for you.)
+server_tools:
+  - docker
+  - vllm
+  - open_webui
+  - pgvector
+  - docling
+
+# Where the rendered compose project + its (root-only) secrets live.
+ai_stack_dir: /opt/ai-stack
+ai_stack_secrets_dir: /etc/ai-stack           # 0700; generated passwords never in git
+# Compose project name (container/volume/network prefix).
+ai_stack_project: ai-stack
+# Account added to the `docker` group so it can drive the stack without sudo.
+# Defaults to the desktop dev user for continuity; set to your server admin.
+ai_stack_user: "{{ dev_tools_user }}"
+
+# ---- GPU (NVIDIA) ----------------------------------------------------------
+# vLLM needs a CUDA GPU to be useful. true => the ai_stack role installs the
+# NVIDIA driver (optional, see gpu_install_driver) AND the nvidia-container-
+# toolkit, and wires the `nvidia` runtime into Docker so containers can request
+# `--gpus all`. A DRIVER install requires a REBOOT before the GPU is usable;
+# the stack is deployed with `restart: unless-stopped` so vLLM recovers once
+# the driver module loads after that reboot.
+gpu_enabled: true
+# Set false if drivers are managed out-of-band (cloud GPU image, MaaS, etc.):
+# the toolkit + Docker runtime are still configured, but no driver is installed.
+gpu_install_driver: true
+
+# ---- Docker Engine (docker-ce, official Docker apt repo) -------------------
+# NOTE: this is docker-ce, NOT Ubuntu's `docker.io` (which the desktop dev_tools
+# role uses and which lags several major versions behind). The server needs a
+# current engine + the compose v2 plugin.
+# Empty version = install the repo's latest; the role then ASSERTS the installed
+# version is >= docker_ce_min_version so the >=29.5.2 requirement is enforced
+# without brittle exact-version apt pinning.
+docker_ce_version: ""                 # "" = latest from Docker's apt repo
+docker_ce_min_version: "29.5.2"       # hard floor asserted after install
+
+# ---- Container image pins (reproducible builds; bump deliberately) ---------
+# vLLM inference server. Tag lives on Docker Hub (vllm/vllm-openai).
+vllm_image: "vllm/vllm-openai"
+vllm_image_tag: "v0.22.1"
+# Model vLLM serves. Default is an OPEN (ungated) model so a fresh box works with
+# no Hugging Face token. For gated models (Llama, etc.) set hf_token below.
+vllm_model: "Qwen/Qwen2.5-7B-Instruct"
+vllm_served_model_name: "local"       # the model name Open WebUI/clients call
+vllm_port: 8000                       # host port -> vLLM OpenAI API (/v1)
+vllm_max_model_len: 8192              # context window; lower if VRAM-limited
+vllm_gpu_memory_utilization: "0.90"   # fraction of VRAM vLLM may claim
+vllm_extra_args: ""                   # e.g. "--tensor-parallel-size 2" for multi-GPU
+# Hugging Face token for gated/private model downloads. SECRET -- leave "" here
+# and supply out-of-band (bootstrap.sh prompt -> {{ ai_stack_secrets_dir }}/hf_token,
+# or -e hf_token=... at deploy). Never commit a real token to this public repo.
+hf_token: ""
+
+# Open WebUI (front-end). Image on GitHub Container Registry.
+open_webui_image: "ghcr.io/open-webui/open-webui"
+open_webui_image_tag: "0.9.6"         # >= 0.9.6
+open_webui_port: 3000                 # host port -> Open WebUI (container listens 8080)
+
+# PostgreSQL 16 + pgvector (RAG vector store + Open WebUI app DB).
+pgvector_image: "pgvector/pgvector"
+pgvector_image_tag: "pg16"            # PostgreSQL 16 build with pgvector
+pgvector_db: "openwebui"
+pgvector_user: "openwebui"
+pgvector_port: 5432                   # published on 127.0.0.1 only (see compose)
+
+# Docling document-extraction service. GPU build when gpu_enabled, else CPU.
+docling_image_gpu: "ghcr.io/docling-project/docling-serve-cu128"
+docling_image_cpu: "ghcr.io/docling-project/docling-serve-cpu"
+docling_image_tag: "latest"           # pin to a released tag for frozen images
+docling_port: 5001                    # host port -> docling-serve API
+
+# =============================================================================
+# USG HARDENING  (usg_harden role -> Ubuntu Security Guide / DISA-STIG)
+# =============================================================================
+# On the server profile the box is hardened by Canonical's Ubuntu Security Guide
+# (`usg`) applying the DISA-STIG profile, NOT the ansible-lockdown role. USG ships
+# with Ubuntu Pro, so the box must be Pro-ATTACHED first. USG then produces the
+# same style of compliance report the desktop's OpenSCAP scan does.
+#
+# WORKFLOW (all handled by the role, in order):
+#   pro attach <token>  ->  pro enable usg [+ fips-updates]  ->  apt install usg
+#   ->  usg fix disa_stig   (guarded; see usg_fix_enabled)   ->  usg audit -> report
+#
+# READ: `usg fix disa_stig` is DISRUPTIVE and, like the DISA profile itself,
+# REQUIRES a usable password on an admin account or it can lock you out. It also
+# expects a FRESH install -- run it before piling on unrelated services. A REBOOT
+# is required afterwards for all controls to take effect. (These are Canonical's
+# own warnings for `usg fix`.)
+
+# ---- Ubuntu Pro attach -----------------------------------------------------
+# The Pro token is a SECRET -- treat it exactly like the LUKS passphrase above.
+# Leave `ubuntu_pro_token` EMPTY in this PUBLIC repo. The role reads the token
+# OUT OF BAND from a root-only (0600) file (`ubuntu_pro_token_file`) that
+# bootstrap.sh (hidden prompt) or your private seed drops. If the box is already
+# attached, or no token is available anywhere, the whole USG step self-skips with
+# a POA&M warning rather than failing the build. An inline token is still honoured
+# for a PRIVATE/offline repo -- never paste one here.
+ubuntu_pro_token: ""
+ubuntu_pro_token_file: /etc/ubuntu-advantage/pro-token
+
+# ---- FIPS ------------------------------------------------------------------
+# DISA-STIG formally requires FIPS-validated crypto. true => the role runs
+# `pro enable fips-updates` (installs the FIPS kernel/modules; needs a REBOOT).
+# Off by default because it swaps the kernel -- validate on a throwaway box first,
+# then flip true. Left off, FIPS is a documented POA&M.
+usg_enable_fips: false
+
+# ---- USG fix (the disruptive remediation) ----------------------------------
+# Mirrors the desktop's `ubtu24stig_disruption_high` safety philosophy. When
+# false, the role installs USG and runs `usg audit` (non-destructive, produces the
+# report) but does NOT run `usg fix`, so an un-validated box can't lock itself out.
+# Flip true once you've validated on a throwaway VM (bootstrap.sh sets it for you
+# when you pass HARDEN=1). The role ALSO refuses to run `usg fix` unless a
+# sudo-group account has a usable (non-locked) password, as a lockout backstop.
+usg_fix_enabled: true
+usg_profile: "disa_stig"              # `usg fix/audit <profile>`: disa_stig | cis_level1_server | cis_level2_server
+# Re-running `usg fix` on every ansible-pull is slow and needless. The role
+# stamps success and skips a re-fix unless the profile changed or you force it.
+usg_force_fix: false
+# Optional USG tailoring file (customize/relax specific rules). Empty = stock
+# profile. Point at a path on the box (e.g. dropped by your seed) to use one.
+usg_tailoring_file: ""
+# USG reports land alongside the desktop scan reports for a single collection
+# point. Reuses scap_report_dir (/var/log/stig-scan) defined in the SCAP section.
+usg_report_dir: "{{ scap_report_dir }}"

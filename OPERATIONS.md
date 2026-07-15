@@ -323,6 +323,82 @@ your passphrase as recovery. If you've forgotten the passphrase but the box stil
 TPM, a new one can still be added from the running (unlocked) system — a more involved procedure; ask
 before attempting.
 
+## Ubuntu Pro Server (USG + AI stack)
+
+The `server` profile (`deployment_profile: server`, or `PROFILE=server` to `bootstrap.sh`)
+builds a headless Ubuntu Pro AI box. Role order: `base_packages` (lean) → `ai_stack` →
+`usg_harden` → optional `tpm_luks_unlock`. Same rule as the desktop: **install online, harden
+last.** Design rationale is in [docs/ai-server-design.md](docs/ai-server-design.md).
+
+### Running it on the server (online)
+
+```bash
+# All tools, GPU, hardening. Prompts (hidden) for the Ubuntu Pro token:
+curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh \
+  | sudo PROFILE=server bash
+
+# Env-var options (piped bash can't take flags):
+#   TOOLS=docker,vllm,open_webui,pgvector,docling   which AI tools (default: all)
+#   PRO_TOKEN=<tok>   supply the Pro token non-interactively (else you're prompted)
+#   HF_TOKEN=<tok>    Hugging Face token for GATED models (Llama, etc.)
+#   HARDEN=0          install + `usg audit` only, SKIP the disruptive `usg fix`
+```
+
+Watch: `journalctl -u stig-build -f`. Reports land in `/var/log/stig-scan/` (the `usg audit`
+HTML + XCCDF results). **Reboot** afterwards to apply USG controls and load the NVIDIA driver,
+then re-run `sudo usg audit disa_stig` for accurate post-reboot numbers.
+
+### USG hardening
+
+- **Pro token (secret).** Never in the repo. `bootstrap.sh` writes it to
+  `/etc/ubuntu-advantage/pro-token` (0600); the `usg_harden` role reads it out-of-band,
+  `pro attach`es, `pro enable usg`, `apt install usg`. Not attachable → USG **self-skips**
+  (POA&M), build still succeeds.
+- **Admin password backstop.** `usg fix disa_stig` (and the DISA profile) lock out
+  password-less admins. The role verifies a `sudo`/`admin` account has a hashed password in
+  `/etc/shadow` before running the fix; if none, it **skips the fix** and warns. Set one with
+  `sudo passwd <admin>` and re-run.
+- **Run-once.** The fix is stamped at `/var/lib/usg-harden/applied-profile`, so re-running the
+  build doesn't re-apply it. Force a re-fix with `-e usg_force_fix=true`.
+- **FIPS.** Off by default (`usg_enable_fips`) — it swaps the kernel via `pro enable
+  fips-updates` and needs a reboot. Validate on a throwaway box first; otherwise it's a POA&M.
+- **Manual audit any time:** `sudo usg audit disa_stig --html-file /var/log/stig-scan/audit.html`.
+  To customize/relax rules, generate a tailoring file (`usg generate-tailoring …`) and point
+  `usg_tailoring_file` at it.
+
+### AI stack operations
+
+The rendered project lives in **`/opt/ai-stack`** (compose file 0644; `.env` with generated
+secrets 0600). Generated passwords persist under `/etc/ai-stack/` (0700) and are stable across
+re-runs.
+
+```bash
+cd /opt/ai-stack
+docker compose ps                 # which services are up
+docker compose logs -f vllm       # model load progress (first run downloads weights)
+docker compose pull && docker compose up -d   # update to newer pinned images
+```
+
+- **Endpoints:** Open WebUI on `:3000` (`open_webui_port`, all interfaces);
+  vLLM `127.0.0.1:8000/v1`, Docling `127.0.0.1:5001`, Postgres `127.0.0.1:5432` (localhost-only,
+  reached container-to-container). Open WebUI talks to the others by service name over the
+  internal Compose network, so it works even with those host ports closed.
+- **Firewall:** USG enables ufw. To reach Open WebUI over the network you must open its port
+  (POA&M): `sudo ufw allow 3000/tcp` — and ideally front it with an
+  authenticating reverse proxy rather than exposing it directly.
+- **GPU:** vLLM needs an NVIDIA GPU. After the first build **reboot** so the driver module
+  loads; the containers are `restart: unless-stopped` and come up automatically. Check with
+  `nvidia-smi` (host) and `docker compose exec vllm nvidia-smi` (in-container). If vLLM
+  crash-loops with an OOM, lower `vllm_max_model_len` / `vllm_gpu_memory_utilization` or pick a
+  smaller `vllm_model`.
+- **Gated models:** the default `vllm_model` is ungated (Qwen). For Llama etc., supply
+  `HF_TOKEN` (bootstrap) or drop it at `/etc/ai-stack/hf_token` (0600) and re-run.
+- **Selecting fewer tools:** re-run with `-e '{"server_tools":[...]}'`. Note that Compose does
+  not remove a service just because you dropped it from the list on a later run — `docker
+  compose down <svc>` the ones you no longer want.
+- **Air-gapping:** images are pulled while online. For a fully offline rebuild, mirror the
+  pinned images into an internal registry and repoint the `*_image` vars.
+
 ## Windows servers
 
 This repo is Linux-only. STIG automation for Windows uses a different stack (PowerShell

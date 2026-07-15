@@ -1,10 +1,18 @@
 # ubuntu-stig-build
 
-Ansible-pull project that turns a **fresh Ubuntu 24.04 LTS Desktop (GNOME)** install into a
-**DoD-STIG-hardened engineering workstation** in a single run: it installs the tooling, applies
-the DISA STIG (CAT I + II) via [ansible-lockdown/UBUNTU24-STIG](https://github.com/ansible-lockdown/UBUNTU24-STIG),
-and produces an OpenSCAP compliance report — all while the machine still has internet, before it
-is moved to an air-gapped network.
+Ansible-pull project that STIG-hardens a fresh Ubuntu 24.04 LTS install in a single run — all
+while the machine still has internet, before it is moved to an air-gapped network. It ships **two
+deployment profiles**, selected by `deployment_profile` (default `desktop`):
+
+- **`desktop`** — turns a **Ubuntu 24.04 Desktop (GNOME)** into a **DoD-STIG-hardened engineering
+  workstation**: installs the tooling, applies the DISA STIG (CAT I + II) via
+  [ansible-lockdown/UBUNTU24-STIG](https://github.com/ansible-lockdown/UBUNTU24-STIG), and produces
+  an OpenSCAP compliance report.
+- **`server`** — turns a **Ubuntu Pro 24.04 Server** into a hardened **local-AI inference box**:
+  hardens with **Canonical's Ubuntu Security Guide** (`usg fix disa_stig`) and installs a
+  **selectable, container-based AI stack** — Docker, vLLM, Open WebUI, PostgreSQL 16 + pgvector,
+  and Docling — where you pick which tools each server gets. See
+  **[Ubuntu Pro Server profile](#ubuntu-pro-server-profile)**.
 
 You install Ubuntu, run one command, reboot, and collect the report.
 
@@ -117,6 +125,70 @@ reboot. The machine comes up to a graphical login showing the DCSA banner.
 **New to this?** Start with the **[Imaging Guide](docs/imaging-guide.md)** — the complete end-to-end
 runbook (Ubuntu install → setup → run → post-install checklist → troubleshooting). See
 **[OPERATIONS.md](OPERATIONS.md)** for subsystem deep-dives and gotchas.
+
+---
+
+## Ubuntu Pro Server profile
+
+Set `deployment_profile: server` (or pass `PROFILE=server` to `bootstrap.sh`) to build a
+headless **Ubuntu Pro** AI server instead of the desktop. The pipeline runs a different role
+set — a lean baseline, the AI tool stack, then USG hardening — keeping the same
+**install-while-online, harden-last** ordering.
+
+### Hardening: Ubuntu Security Guide (USG), not the lockdown role
+
+The server hardens with **Canonical's USG** — `usg fix disa_stig` — the officially supported
+DISA-STIG implementation that ships with Ubuntu Pro, and `usg audit` writes the compliance
+report to `/var/log/stig-scan/` (same place as the desktop scan). The box must be **Pro-attached**
+first; the token is a **secret** and is handled exactly like the LUKS passphrase — supplied
+out-of-band, never committed (`bootstrap.sh` prompts for it, or drop it in
+`ubuntu_pro_token_file`).
+
+Safety rails (mirroring the desktop's `disruption_high` caution):
+
+- **No token / offline → USG self-skips** with a POA&M warning; the build never fails on a
+  missing subscription.
+- **`usg fix` refuses to run** unless an admin account has a real password (the DISA profile
+  locks out password-less admins). It's also **stamped** so it applies once per image, not on
+  every run.
+- **`HARDEN=0`** (or `usg_fix_enabled: false`) → install + **audit only**. Validate on a
+  throwaway VM, then flip it on.
+
+### Selectable AI tool stack (Docker Compose)
+
+Pick which tools each server gets with **`server_tools`** — install all of them, or only a subset:
+
+| Tool | What it is | Image (pinned) |
+|------|-----------|----------------|
+| `docker` | Container engine (docker-ce, floor **≥ 29.5.2**) | Docker official apt repo |
+| `vllm` | OpenAI-compatible LLM inference server (needs a GPU) | `vllm/vllm-openai:v0.22.1` |
+| `open_webui` | Browser chat UI / RAG front-end | `ghcr.io/open-webui/open-webui:0.9.6` |
+| `pgvector` | PostgreSQL 16 + pgvector (RAG vector store + app DB) | `pgvector/pgvector:pg16` |
+| `docling` | Document-extraction service for RAG ingestion | `ghcr.io/docling-project/docling-serve` |
+
+The `ai_stack` role renders a `docker-compose.yml` containing **only the selected services**,
+wires them together (Open WebUI → vLLM for chat, → pgvector for vectors, → Docling for document
+ingest), and brings the stack up under `/opt/ai-stack`. Docker is installed automatically if any
+container tool is selected. With `gpu_enabled: true` (default) the role also installs the **NVIDIA
+driver + `nvidia-container-toolkit`** and wires the `nvidia` runtime into Docker so vLLM can use
+the GPU (a **reboot** is needed before the driver loads).
+
+### Quick start (server)
+
+```bash
+# All tools, GPU, USG hardening (prompts for the Pro token, hidden):
+curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh \
+  | sudo PROFILE=server bash
+
+# A subset, audit-only first pass (validate before hardening):
+curl -fsSL .../bootstrap.sh \
+  | sudo PROFILE=server TOOLS=docker,pgvector,open_webui HARDEN=0 bash
+```
+
+Then `journalctl -u stig-build -f` to watch, `cd /opt/ai-stack && docker compose ps` once images
+finish pulling, collect `/var/log/stig-scan/`, and **reboot** to apply USG (and load the GPU
+driver). Full runbook + operations: **[OPERATIONS.md](OPERATIONS.md#ubuntu-pro-server-usg--ai-stack)**
+and the design notes in **[docs/ai-server-design.md](docs/ai-server-design.md)**.
 
 ---
 

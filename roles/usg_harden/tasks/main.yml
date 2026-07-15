@@ -1,0 +1,273 @@
+---
+# =============================================================================
+# usg_harden -- SERVER-profile hardening via Canonical's Ubuntu Security Guide.
+#
+# Replaces the desktop's ansible-lockdown role. Flow:
+#   1. ensure the Pro client is present
+#   2. resolve the Pro token (inline var / out-of-band file) and ATTACH
+#   3. install `usg` (+ optional FIPS)
+#   4. apply `usg fix <profile>`  -- guarded so it can't lock you out
+#   5. `usg audit <profile>`      -- writes the compliance report
+#
+# SAFE-BY-DEFAULT: if the box can't be Pro-attached (no token, offline) the whole
+# role self-skips with a POA&M warning instead of failing the build; and `usg fix`
+# refuses to run unless an admin account has a usable password (lockout backstop).
+# A REBOOT is required after a fix / FIPS enable for all controls to take effect.
+# =============================================================================
+
+- name: "USG | Ensure the Ubuntu Pro client is installed"
+  ansible.builtin.apt:
+    name: ubuntu-pro-client
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# ---- Resolve the Pro token (secret; out-of-band) ---------------------------
+- name: "USG | Look for an out-of-band Pro token file"
+  ansible.builtin.slurp:
+    src: "{{ ubuntu_pro_token_file }}"
+  register: _pro_token_slurp
+  failed_when: false
+  when: (ubuntu_pro_token | default('') | length) == 0
+
+- name: "USG | Resolve the effective Pro token"
+  ansible.builtin.set_fact:
+    _pro_token: >-
+      {{ ubuntu_pro_token if (ubuntu_pro_token | default('') | length) > 0
+         else ((_pro_token_slurp.content | b64decode | trim)
+               if (_pro_token_slurp is defined and _pro_token_slurp.get('content')) else '') }}
+  no_log: true
+
+# ---- Attach ----------------------------------------------------------------
+- name: "USG | Check whether this box is already Pro-attached"
+  ansible.builtin.command: pro status --format json
+  register: _pro_status_raw
+  changed_when: false
+  failed_when: false
+
+- name: "USG | Determine current attach state"
+  ansible.builtin.set_fact:
+    _pro_attached: >-
+      {{ ((_pro_status_raw.stdout | from_json).attached | default(false))
+         if (_pro_status_raw.rc == 0 and (_pro_status_raw.stdout | default('') | length) > 0)
+         else false }}
+
+- name: "USG | Attach to Ubuntu Pro (uses the resolved token)"
+  ansible.builtin.command: "pro attach {{ _pro_token }}"
+  when:
+    - not _pro_attached
+    - (_pro_token | length) > 0
+  register: _pro_attach
+  no_log: true
+  changed_when: _pro_attach.rc == 0
+  # Safe-by-default: a bad token / network error becomes a POA&M skip (below),
+  # not a hard build abort.
+  failed_when: false
+
+# Re-read the real attach state instead of trusting the attach rc / first parse.
+# This is robust to an already-attached box (attach skipped) AND to any quirk in
+# the initial status parse: _usg_active reflects what `pro` actually reports now.
+- name: "USG | Re-check attach state after the attach attempt"
+  ansible.builtin.command: pro status --format json
+  register: _pro_status_final
+  changed_when: false
+  failed_when: false
+
+- name: "USG | Mark USG active based on the authoritative post-attach status"
+  ansible.builtin.set_fact:
+    _usg_active: >-
+      {{ ((_pro_status_final.stdout | from_json).attached | default(false))
+         if (_pro_status_final.rc == 0 and (_pro_status_final.stdout | default('') | length) > 0)
+         else false }}
+
+- name: "USG | POA&M WARNING -- not Pro-attached, skipping USG hardening"
+  ansible.builtin.debug:
+    msg: >-
+      Ubuntu Pro is NOT attached and no token was supplied
+      (ubuntu_pro_token / {{ ubuntu_pro_token_file }}). USG DISA-STIG hardening is
+      SKIPPED -- track as a POA&M. Provide a token (bootstrap.sh prompt, or the
+      out-of-band file) and re-run to harden this box.
+  when: not (_usg_active | default(false) | bool)
+
+# =============================================================================
+# Everything below only runs when the box is Pro-attached.
+# =============================================================================
+- name: "USG | Enable + apply USG"
+  when: _usg_active | default(false) | bool
+  block:
+    # ---- Install USG (+ optional FIPS) -------------------------------------
+    - name: "USG | Enable the usg Pro service (tolerant: some releases ship it in the attached repos)"
+      ansible.builtin.command: pro enable usg --assume-yes
+      register: _usg_enable
+      changed_when: "'Updating' in _usg_enable.stdout or 'Installing' in _usg_enable.stdout"
+      # Not fatal: on releases where `usg` isn't a distinct pro service the enable
+      # is a no-op error and the package installs straight from the attached repo.
+      failed_when: false
+
+    - name: "USG | Install the usg package"
+      ansible.builtin.apt:
+        name: usg
+        state: present
+        update_cache: true
+
+    - name: "USG | Enable FIPS (fips-updates) -- swaps the kernel, needs a reboot"
+      ansible.builtin.command: pro enable fips-updates --assume-yes
+      register: _fips_enable
+      when: usg_enable_fips | default(false) | bool
+      changed_when: _fips_enable.rc == 0 and 'is already enabled' not in _fips_enable.stdout
+      failed_when:
+        - _fips_enable.rc != 0
+        - "'is already enabled' not in (_fips_enable.stdout + _fips_enable.stderr)"
+
+    - name: "USG | FIPS enabled -> reboot required"
+      ansible.builtin.set_fact:
+        usg_reboot_required: true
+      when:
+        - usg_enable_fips | default(false) | bool
+        - _fips_enable is defined
+        - _fips_enable.rc == 0
+
+    # ---- Optional tailoring -------------------------------------------------
+    - name: "USG | Validate the tailoring file exists (if one was configured)"
+      ansible.builtin.stat:
+        path: "{{ usg_tailoring_file }}"
+      register: _usg_tailoring_stat
+      when: (usg_tailoring_file | default('') | length) > 0
+
+    - name: "USG | Compute the tailoring CLI fragment"
+      ansible.builtin.set_fact:
+        _usg_tailoring_arg: >-
+          {{ ('--tailoring-file ' ~ usg_tailoring_file)
+             if ((usg_tailoring_file | default('') | length) > 0
+                  and _usg_tailoring_stat.stat.exists | default(false))
+             else '' }}
+
+    # ---- Lockout backstop ---------------------------------------------------
+    # `usg fix disa_stig` (and the DISA profile) require a usable password on an
+    # admin account or you WILL be locked out. Confirm at least one sudo/admin
+    # group member has a hashed password before we run the fix.
+    - name: "USG | Verify an admin account has a usable password (lockout backstop)"
+      ansible.builtin.shell: |
+        set -o pipefail
+        for u in $(getent group sudo admin 2>/dev/null | awk -F: '{print $4}' | tr ',' '\n' | sort -u); do
+          [ -n "$u" ] || continue
+          h=$(getent shadow "$u" 2>/dev/null | cut -d: -f2)
+          case "$h" in
+            \$*) echo "ok:$u"; exit 0 ;;
+          esac
+        done
+        exit 1
+      args:
+        executable: /bin/bash
+      register: _admin_pw
+      changed_when: false
+      failed_when: false
+
+    - name: "USG | Decide whether it is safe to run `usg fix`"
+      ansible.builtin.set_fact:
+        _usg_fix_safe: "{{ (usg_fix_enabled | default(true) | bool) and (_admin_pw.rc == 0) }}"
+
+    - name: "USG | POA&M WARNING -- `usg fix` skipped (no admin password set)"
+      ansible.builtin.debug:
+        msg: >-
+          `usg fix` was NOT run: no sudo/admin account has a usable password, so
+          applying the DISA profile would lock this box out. Set one with
+          `sudo passwd <admin>` and re-run. (usg audit still runs below.)
+      when:
+        - usg_fix_enabled | default(true) | bool
+        - _admin_pw.rc != 0
+
+    # ---- Apply the fix (once per image, unless forced) ---------------------
+    - name: "USG | Has this profile already been fixed on this box?"
+      ansible.builtin.slurp:
+        src: "{{ usg_stamp_file }}"
+      register: _usg_stamp
+      failed_when: false
+
+    - name: "USG | Apply `usg fix {{ usg_profile }}` (disruptive; reboot after)"
+      ansible.builtin.command: "usg fix {{ usg_profile }} {{ _usg_tailoring_arg }}"
+      register: _usg_fix
+      changed_when: _usg_fix.rc == 0
+      when:
+        - _usg_fix_safe | bool
+        - usg_force_fix | default(false) | bool
+          or not (_usg_stamp is defined and _usg_stamp.get('content')
+                  and (_usg_stamp.content | b64decode | trim) == usg_profile)
+
+    - name: "USG | Record that the profile was applied + require a reboot"
+      when: _usg_fix is defined and not (_usg_fix is skipped) and _usg_fix.rc == 0
+      block:
+        - name: "USG | Ensure the stamp dir exists"
+          ansible.builtin.file:
+            path: "{{ usg_stamp_dir }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: "USG | Write the applied-profile stamp"
+          ansible.builtin.copy:
+            dest: "{{ usg_stamp_file }}"
+            content: "{{ usg_profile }}\n"
+            owner: root
+            group: root
+            mode: "0644"
+
+        - name: "USG | fix applied -> reboot required"
+          ansible.builtin.set_fact:
+            usg_reboot_required: true
+
+    # ---- Audit (always; produces the compliance report) --------------------
+    - name: "USG | Ensure the report dir exists"
+      ansible.builtin.file:
+        path: "{{ usg_report_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: "USG | Run `usg audit {{ usg_profile }}` -> compliance report"
+      # usg audit writes its HTML + XCCDF results into /var/lib/usg/ by default
+      # (no output-path flags in the stock CLI). We run it plainly for maximum
+      # version compatibility, then copy the artifacts into the collection dir.
+      ansible.builtin.command: "usg audit {{ usg_profile }} {{ _usg_tailoring_arg }}"
+      register: _usg_audit
+      changed_when: false
+      # A non-zero rc here just means "some rules failed" or a version quirk --
+      # neither should abort the whole build; the report copy below still runs.
+      failed_when: false
+
+    - name: "USG | Collect the usg audit artifacts from /var/lib/usg"
+      ansible.builtin.find:
+        paths: /var/lib/usg
+        patterns: ["*.html", "*.xml"]
+        file_type: file
+      register: _usg_artifacts
+
+    - name: "USG | Copy audit artifacts into {{ usg_report_dir }} (single collection point)"
+      ansible.builtin.copy:
+        src: "{{ item.path }}"
+        dest: "{{ usg_report_dir }}/"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0640"
+      loop: "{{ _usg_artifacts.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    - name: "USG | Audit result"
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'usg audit complete; reports in ' ~ usg_report_dir ~ ' (and /var/lib/usg).'
+             if (_usg_artifacts.files | default([]) | length) > 0
+             else 'usg audit produced no report (rc=' ~ _usg_audit.rc ~ '); run `sudo usg audit '
+                  ~ usg_profile ~ '` manually. stderr: ' ~ (_usg_audit.stderr | default('')) }}
+
+- name: "USG | Reboot reminder"
+  ansible.builtin.debug:
+    msg: >-
+      USG hardening applied. REBOOT this box now so all controls
+      {{ '(including the FIPS kernel) ' if usg_enable_fips | default(false) | bool else '' }}take
+      effect, then re-run `sudo usg audit {{ usg_profile }}` for accurate post-reboot results.
+  when: usg_reboot_required | default(false) | bool

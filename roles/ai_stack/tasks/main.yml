@@ -1,0 +1,69 @@
+---
+# =============================================================================
+# ai_stack -- selectable, container-based local AI inference stack.
+# Runs ONLY on the server profile (gated in local.yml), BEFORE usg_harden, while
+# the box still has internet to pull images.
+#
+# The operator picks which tools to install via `server_tools` (group_vars).
+# This role installs exactly what's needed for that selection and no more:
+#   - Docker engine        -- if any container tool is selected (or 'docker' listed)
+#   - NVIDIA GPU stack      -- if a GPU-consuming tool (vllm/docling) is selected
+#                              AND gpu_enabled
+#   - a rendered Compose stack containing ONLY the selected services
+# Everything is idempotent: re-running applies just the delta.
+# =============================================================================
+
+- name: "AI stack | Resolve which tools were selected"
+  ansible.builtin.set_fact:
+    # The container services (everything except the bare 'docker' engine).
+    _ai_container_services: "{{ server_tools | intersect(['vllm', 'open_webui', 'pgvector', 'docling']) }}"
+    # Docker is needed if any container service is selected, or explicitly asked for.
+    _ai_need_docker: "{{ ('docker' in server_tools) or (server_tools | intersect(['vllm', 'open_webui', 'pgvector', 'docling']) | length > 0) }}"
+    # The GPU stack is only worth installing for GPU-consuming services.
+    _ai_need_gpu: "{{ (gpu_enabled | default(true) | bool) and (server_tools | intersect(['vllm', 'docling']) | length > 0) }}"
+
+- name: "AI stack | Show the resolved plan"
+  ansible.builtin.debug:
+    msg:
+      - "server_tools        = {{ server_tools }}"
+      - "container services  = {{ _ai_container_services }}"
+      - "install docker      = {{ _ai_need_docker }}"
+      - "install GPU stack   = {{ _ai_need_gpu }}"
+
+# vLLM's image is CUDA-only; warn loudly if it was selected without a GPU so the
+# operator isn't surprised by a crash-looping container (rather than silently
+# proceeding). Not fatal -- they may be wiring GPUs out-of-band.
+- name: "AI stack | WARN: vLLM selected without a GPU (it needs CUDA to run)"
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: 'vllm' is in server_tools but gpu_enabled is false. The
+      vllm/vllm-openai image requires an NVIDIA GPU and will fail to start
+      CPU-only. Set gpu_enabled: true (and install a GPU), or drop 'vllm'.
+  when:
+    - "'vllm' in server_tools"
+    - not (gpu_enabled | default(true) | bool)
+
+- name: "AI stack | Install Docker engine (docker-ce + compose v2)"
+  ansible.builtin.import_tasks: docker.yml
+  when: _ai_need_docker | bool
+
+- name: "AI stack | Install the NVIDIA GPU stack (driver + container toolkit)"
+  # include_tasks (dynamic), NOT import_tasks: gpu.yml ends with a
+  # `meta: flush_handlers`, and meta tasks IGNORE a task-level `when`. With a
+  # static import that flush would fire on every server even when the GPU stack is
+  # skipped, prematurely flushing unrelated pending handlers. A dynamic include
+  # gates the ENTIRE file -- meta included -- behind this condition.
+  ansible.builtin.include_tasks: gpu.yml
+  when: _ai_need_gpu | bool
+
+- name: "AI stack | Render + launch the Docker Compose stack"
+  ansible.builtin.import_tasks: compose.yml
+  when: _ai_container_services | length > 0
+
+- name: "AI stack | Reboot reminder (NVIDIA driver just installed)"
+  ansible.builtin.debug:
+    msg: >-
+      An NVIDIA driver was installed. REBOOT this box before the GPU is usable;
+      vLLM/Docling GPU containers are set to restart automatically and will come
+      up once the driver module loads after reboot.
+  when: ai_stack_reboot_required | bool

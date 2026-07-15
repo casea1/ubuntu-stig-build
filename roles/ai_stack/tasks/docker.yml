@@ -1,0 +1,92 @@
+---
+# =============================================================================
+# ai_stack :: docker.yml -- install Docker Engine (docker-ce) from Docker's
+# OFFICIAL apt repo, not Ubuntu's `docker.io` (which lags far behind and ships
+# no compose v2 plugin). Enforces the >= docker_ce_min_version floor.
+# =============================================================================
+
+- name: "DOCKER | Prereqs for adding the Docker apt repo"
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: "DOCKER | Ensure /etc/apt/keyrings exists"
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: "DOCKER | Fetch Docker's apt GPG key"
+  ansible.builtin.get_url:
+    url: "{{ docker_apt_gpg_url }}"
+    dest: "{{ docker_apt_keyring }}"
+    mode: "0644"
+
+- name: "DOCKER | Add Docker's apt repository (signature-pinned)"
+  ansible.builtin.apt_repository:
+    # apt_repository normalises whitespace, so the folded (>-) repo string is fine.
+    repo: "{{ docker_apt_repo }}"
+    filename: docker
+    state: present
+
+- name: "DOCKER | Install docker-ce + CLI + compose v2 plugin"
+  # docker_ce_version is empty by default (=> latest from the repo). If set, it is
+  # applied ONLY to docker-ce / docker-ce-cli (containerd/plugins keep their repo
+  # latest, which is the supported combination). The >= floor is asserted below.
+  ansible.builtin.apt:
+    name: "{{ _docker_ce_packages }}"
+    state: present
+    update_cache: true
+  vars:
+    _ver_suffix: "{{ ('=' + docker_ce_version) if (docker_ce_version | default('') | length > 0) else '' }}"
+    _docker_ce_packages:
+      - "docker-ce{{ _ver_suffix }}"
+      - "docker-ce-cli{{ _ver_suffix }}"
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+
+- name: "DOCKER | Read the installed docker-ce version"
+  ansible.builtin.command: docker --version
+  register: _docker_ver
+  changed_when: false
+
+- name: "DOCKER | Enforce the docker_ce_min_version ({{ docker_ce_min_version }}) floor"
+  ansible.builtin.assert:
+    that:
+      - _installed_docker_version is version(docker_ce_min_version, '>=')
+    fail_msg: >-
+      Installed docker-ce {{ _installed_docker_version }} is older than the
+      required {{ docker_ce_min_version }}. Docker's apt repo should provide a
+      newer build -- check the repo/codename, or pin docker_ce_version.
+    success_msg: "docker-ce {{ _installed_docker_version }} satisfies >= {{ docker_ce_min_version }}."
+    quiet: true
+  vars:
+    # "Docker version 29.5.2, build abcdef" -> "29.5.2"
+    _installed_docker_version: "{{ _docker_ver.stdout | regex_search('([0-9]+\\.[0-9]+\\.[0-9]+)', '\\1') | first }}"
+
+- name: "DOCKER | Enable and start the Docker service"
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+
+- name: "DOCKER | Enumerate existing local accounts"
+  ansible.builtin.getent:
+    database: passwd
+
+- name: "DOCKER | Add {{ ai_stack_user }} to the docker group (only if the account exists)"
+  # Root-equivalent membership -- documented dev-workstation exception. We must
+  # NOT create the account here: on the SERVER profile the desktop roles that own
+  # user creation (dev_tools / local_accounts) don't run, and ansible.builtin.user
+  # defaults to state:present, which would CREATE an unmanaged privileged login on
+  # a box about to be STIG-hardened. Gate on prior existence so this is add-only.
+  ansible.builtin.user:
+    name: "{{ ai_stack_user }}"
+    groups: docker
+    append: true
+  when: ai_stack_user in ansible_facts.getent_passwd

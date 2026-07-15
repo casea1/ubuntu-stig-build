@@ -1,0 +1,103 @@
+---
+# =============================================================================
+# ai_stack :: gpu.yml -- NVIDIA GPU support for containers.
+#   1. (optional) install the NVIDIA driver on the HOST  (needs a reboot)
+#   2. install the nvidia-container-toolkit
+#   3. wire the `nvidia` runtime into Docker so containers can request GPUs
+# Runs BEFORE compose.yml, so restarting Docker here bounces nothing.
+# =============================================================================
+
+# ---- 1. Host driver (optional) ---------------------------------------------
+- name: "GPU | Is an NVIDIA driver already active? (nvidia-smi)"
+  ansible.builtin.command: nvidia-smi
+  register: _nvidia_smi
+  changed_when: false
+  failed_when: false
+
+- name: "GPU | Install the NVIDIA driver (autoselected for this GPU)"
+  when:
+    - gpu_install_driver | default(true) | bool
+    - _nvidia_smi.rc != 0
+  block:
+    - name: "GPU | Install ubuntu-drivers-common"
+      ansible.builtin.apt:
+        name: ubuntu-drivers-common
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: "GPU | Autoinstall the recommended NVIDIA driver"
+      # `ubuntu-drivers install` picks the right (incl. -server) driver for the
+      # detected card. It is a no-op if the recommended driver is already present.
+      ansible.builtin.command: ubuntu-drivers install
+      register: _drv_install
+      changed_when: "'is already the newest version' not in _drv_install.stdout"
+      # Don't brick the build if there's genuinely no NVIDIA card / no candidate;
+      # vLLM will surface the missing GPU at runtime and the operator can triage.
+      failed_when: false
+
+    - name: "GPU | A driver was (re)installed -> a reboot is required"
+      ansible.builtin.set_fact:
+        ai_stack_reboot_required: true
+      when: _drv_install.rc == 0
+
+# ---- 2. nvidia-container-toolkit -------------------------------------------
+- name: "GPU | Fetch the NVIDIA container-toolkit GPG key (armored)"
+  ansible.builtin.get_url:
+    url: "{{ nvidia_ct_gpg_url }}"
+    dest: /tmp/nvidia-container-toolkit.gpgkey
+    mode: "0644"
+
+- name: "GPU | De-armor the key into a keyring"
+  ansible.builtin.command: "gpg --dearmor -o {{ nvidia_ct_keyring }} /tmp/nvidia-container-toolkit.gpgkey"
+  args:
+    creates: "{{ nvidia_ct_keyring }}"
+
+- name: "GPU | Add the NVIDIA container-toolkit apt list"
+  ansible.builtin.get_url:
+    url: "{{ nvidia_ct_list_url }}"
+    dest: "{{ nvidia_ct_list_path }}"
+    mode: "0644"
+
+- name: "GPU | Pin the list to our keyring (mirror NVIDIA's sed step)"
+  # NVIDIA's published .list has bare `deb https://...`; inject signed-by so apt
+  # verifies against the keyring we just installed. Idempotent (re-run matches).
+  ansible.builtin.replace:
+    path: "{{ nvidia_ct_list_path }}"
+    regexp: '^deb https://'
+    replace: "deb [signed-by={{ nvidia_ct_keyring }}] https://"
+
+- name: "GPU | Expand the literal $(ARCH) placeholder NVIDIA ships in the .list"
+  # apt does NOT perform shell substitution, so the `$(ARCH)` token NVIDIA's list
+  # contains would be taken literally and the repo path would 404. Substitute the
+  # real dpkg architecture at provisioning time. No-op if a future .list drops it.
+  ansible.builtin.replace:
+    path: "{{ nvidia_ct_list_path }}"
+    regexp: '\$\(ARCH\)'
+    replace: "{{ docker_apt_arch }}"
+
+- name: "GPU | Install nvidia-container-toolkit"
+  ansible.builtin.apt:
+    name: nvidia-container-toolkit
+    state: present
+    update_cache: true
+
+# ---- 3. Wire the nvidia runtime into Docker --------------------------------
+- name: "GPU | Is the nvidia runtime already configured in Docker?"
+  ansible.builtin.command: grep -q nvidia /etc/docker/daemon.json
+  register: _nv_runtime
+  changed_when: false
+  failed_when: false
+
+- name: "GPU | Configure Docker to use the nvidia runtime"
+  # nvidia-ctk edits /etc/docker/daemon.json to register the runtime. We only run
+  # it when not already present, then restart Docker (no containers up yet).
+  ansible.builtin.command: nvidia-ctk runtime configure --runtime=docker
+  when: _nv_runtime.rc != 0
+  changed_when: true          # only reached when the runtime is not yet wired in
+  notify: restart docker
+
+# Flush now so Docker is restarted with the nvidia runtime BEFORE compose.yml
+# brings up the GPU containers.
+- name: "GPU | Apply the Docker runtime change now"
+  ansible.builtin.meta: flush_handlers
