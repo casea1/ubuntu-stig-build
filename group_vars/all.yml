@@ -368,6 +368,13 @@ grub_password_pbkdf2: "grub.pbkdf2.sha512.10000.CHANGEME_RUN_grub-mkpasswd-pbkdf
 # =============================================================================
 # LOCAL ACCOUNTS / ACCESS GROUPS / SHARED FOLDERS / USB POLICY (local_accounts)
 # =============================================================================
+# Run the local_accounts role (groups + standing accounts + shared folders + USB
+# policy). true (default) => it runs on BOTH the development and ai profiles, so the
+# org access groups/accounts are consistent fleet-wide. Set false to skip it on a
+# given box. (On the ai profile the dta USB *mount* carve-out is inert unless
+# usb-storage is also re-enabled after USG -- the groups/accounts/folders still work.)
+local_accounts_enabled: true
+
 # Access groups (lowercase Linux convention). Created before the accounts below.
 #   dta    -- data-transfer agents; the only group allowed to mount USB storage
 #   audit  -- auditors; owns /opt/_AuditFiles (sudo is granted per-account below)
