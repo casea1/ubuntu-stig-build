@@ -55,11 +55,18 @@
     - role: base_packages    # development: clamav/wireshark/python/editor/putty; ai: lean baseline
 
     # -------------------------------------------------------------------------
+    # SHARED PROVISIONING  (both profiles)
+    # Org access groups (dta/audit/sentry) + standing accounts + ACL'd shared
+    # folders + USB->dta policy. Runs before hardening so the accounts exist when
+    # PAM/faillock is applied. Toggle with local_accounts_enabled.
+    # -------------------------------------------------------------------------
+    - role: local_accounts          # org users/groups, ACL'd shared folders, USB->dta policy
+      when: local_accounts_enabled | default(true)
+
+    # -------------------------------------------------------------------------
     # DEVELOPMENT-ONLY PROVISIONING  (GUI engineering box, RDP-accessible)
     # -------------------------------------------------------------------------
     - role: app_config              # clamav daemon/freshclam, wireshark group, etc.
-      when: is_development
-    - role: local_accounts          # org users/groups, ACL'd shared folders, USB->dta policy
       when: is_development
     - role: dev_tools               # compilers/SDKs, /opt/eng-venv, VS Code extensions, docker.io
       when: is_development

@@ -200,6 +200,13 @@ The `local_accounts` role provisions the standing users/groups, the group-shared
 the USB access policy; `desktop_branding` sets the wallpaper. All driven from `group_vars/all.yml`
 (`local_groups`, `local_users`, `local_shared_dirs`, `usb_access_group`, `branding_*`).
 
+> **Runs on BOTH profiles now** (`local_accounts_enabled: true`, default) so the org groups/accounts
+> are consistent fleet-wide. On the **ai** profile the groups, accounts, and ACL'd shared folders all
+> work, but the dta USB *mount* carve-out is **inert** — USG blacklists `usb-storage` on a server and
+> nothing re-enables it there (the `development` profile's `desktop_hardening` does). If an ai box
+> needs USB-for-dta, ask and I'll add the re-enable to the ai path. Set `local_accounts_enabled: false`
+> to skip the role entirely on a box.
+
 **Accounts are created LOCKED.** Each exists but cannot log in until you set a password
 **per-machine at deploy** (a locked account is not an empty password, so STIG stays satisfied):
 
