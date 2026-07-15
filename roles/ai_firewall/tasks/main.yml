@@ -1,0 +1,56 @@
+---
+# =============================================================================
+# ai_firewall -- open the prebuilt AI stack's inbound ports on the ai profile,
+# applied AFTER USG hardening (gated is_ai in local.yml).
+#
+# WHY post-USG: `usg fix disa_stig` enables ufw with a DEFAULT-DENY inbound
+# policy. Without this role every port your containers publish (Open WebUI on
+# 80/443, and the cross-node vLLM / Docling / pgvector ports) would be blocked
+# and the stack would be unreachable. We also ENABLE ufw here so that even if USG
+# was skipped (no Pro token), an ai box is never left with an inactive firewall
+# (= all ports open). Idempotent if USG already configured ufw.
+#
+# Openings are driven from ai_firewall_allow_ports (group_vars); SSH is always
+# kept (rate-limited) so remote admin can't be locked out.
+# =============================================================================
+
+- name: "AI FW | Ensure ufw is installed"
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+
+- name: "AI FW | Default policy: deny inbound"
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+
+- name: "AI FW | Default policy: allow outbound"
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+
+- name: "AI FW | Keep SSH reachable (rate-limited) for remote admin"
+  community.general.ufw:
+    rule: limit
+    port: ssh
+    proto: tcp
+    comment: "OpenSSH (rate-limited)"
+
+- name: "AI FW | Open the configured inbound ports for the prebuilt AI stack"
+  # Each entry: port, proto (default tcp), rule (default allow; use 'limit' for
+  # brute-force-sensitive ports), from (source CIDR; '' or unset = anywhere).
+  # Use `from` to restrict the cross-node ports (vLLM/Docling/pgvector) to the
+  # peer node's IP so they aren't exposed fleet-wide.
+  community.general.ufw:
+    rule: "{{ item.rule | default('allow') }}"
+    port: "{{ item.port | string }}"
+    proto: "{{ item.proto | default('tcp') }}"
+    from_ip: "{{ item.from | default('any', true) }}"
+    comment: "AI stack inbound ({{ item.port }})"
+  loop: "{{ ai_firewall_allow_ports | default([]) }}"
+  loop_control:
+    label: "{{ item.port }}/{{ item.proto | default('tcp') }} from {{ item.from | default('any', true) }}"
+
+- name: "AI FW | Enable ufw and persist across reboot"
+  community.general.ufw:
+    state: enabled

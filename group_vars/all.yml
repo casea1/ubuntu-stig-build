@@ -482,97 +482,56 @@ tpm_luks_tpm2_cfg:
 # #############################################################################
 
 # =============================================================================
-# AI / ML SERVER TOOL STACK  (ai_stack role -> Docker Compose)
+# AI SERVER HOST PREP  (ai profile -> ai_stack role: Docker + NVIDIA only)
 # =============================================================================
-# A selectable, container-based local-inference stack. Pick per-server which
-# tools to install with `server_tools` below -- some boxes get all of them,
-# others only a subset. The ai_stack role renders a docker-compose.yml that
-# contains ONLY the services you list, wires them together, and brings them up.
-#
-# The pieces form the standard "sovereign AI" pipeline:
-#   vllm       -- OpenAI-compatible LLM inference server (needs an NVIDIA GPU)
-#   open_webui -- browser chat UI / RAG front-end (talks to vllm, pgvector, docling)
-#   pgvector   -- PostgreSQL 16 + pgvector: the RAG vector store + app database
-#   docling    -- document-extraction service Open WebUI uses to ingest PDFs/DOCX
-#   docker     -- the container engine everything above runs on (implied
-#                 dependency: installed automatically if any container tool is
-#                 selected; list it alone to install ONLY the engine)
-#
-# Override per-machine at deploy without editing this file (JSON list):
-#   ansible-pull ... -e '{"server_tools":["docker","pgvector","open_webui"]}'
-# (bootstrap.sh accepts TOOLS=docker,pgvector,open_webui and builds this for you.)
-server_tools:
-  - docker
-  - vllm
-  - open_webui
-  - pgvector
-  - docling
-
-# Where the rendered compose project + its (root-only) secrets live.
-ai_stack_dir: /opt/ai-stack
-ai_stack_secrets_dir: /etc/ai-stack           # 0700; generated passwords never in git
-# Compose project name (container/volume/network prefix).
-ai_stack_project: ai-stack
-# Account added to the `docker` group so it can drive the stack without sudo.
-# Defaults to the desktop dev user for continuity; set to your server admin.
-ai_stack_user: "{{ dev_tools_user }}"
-
-# ---- GPU (NVIDIA) ----------------------------------------------------------
-# vLLM needs a CUDA GPU to be useful. true => the ai_stack role installs the
-# NVIDIA driver (optional, see gpu_install_driver) AND the nvidia-container-
-# toolkit, and wires the `nvidia` runtime into Docker so containers can request
-# `--gpus all`. A DRIVER install requires a REBOOT before the GPU is usable;
-# the stack is deployed with `restart: unless-stopped` so vLLM recovers once
-# the driver module loads after that reboot.
-gpu_enabled: true
-# Set false if drivers are managed out-of-band (cloud GPU image, MaaS, etc.):
-# the toolkit + Docker runtime are still configured, but no driver is installed.
-gpu_install_driver: true
+# IMPORTANT: the AI tools (vLLM / Open WebUI / pgvector / Docling) are deployed
+# from YOUR OWN prebuilt images + compose files. Ansible does NOT render compose,
+# pull images, generate secrets, or start containers. On the ai profile it only:
+#   - installs Docker (docker-ce + compose v2 plugin) and the NVIDIA GPU stack,
+#   - STIG-hardens the host with USG (usg_harden), and
+#   - opens the inbound ports your containers publish (ai_firewall, after USG).
+# Deploy your compose stack however you like once the host is prepared.
 
 # ---- Docker Engine (docker-ce, official Docker apt repo) -------------------
-# NOTE: this is docker-ce, NOT Ubuntu's `docker.io` (which the desktop dev_tools
-# role uses and which lags several major versions behind). The server needs a
-# current engine + the compose v2 plugin.
-# Empty version = install the repo's latest; the role then ASSERTS the installed
-# version is >= docker_ce_min_version so the >=29.5.2 requirement is enforced
-# without brittle exact-version apt pinning.
+# docker-ce (NOT Ubuntu's docker.io). "" version = install the repo's latest;
+# the role then ASSERTS the installed version is >= docker_ce_min_version so the
+# >=29.5.2 requirement is enforced without brittle exact-version apt pinning.
 docker_ce_version: ""                 # "" = latest from Docker's apt repo
 docker_ce_min_version: "29.5.2"       # hard floor asserted after install
 
-# ---- Container image pins (reproducible builds; bump deliberately) ---------
-# vLLM inference server. Tag lives on Docker Hub (vllm/vllm-openai).
-vllm_image: "vllm/vllm-openai"
-vllm_image_tag: "v0.22.1"
-# Model vLLM serves. Default is an OPEN (ungated) model so a fresh box works with
-# no Hugging Face token. For gated models (Llama, etc.) set hf_token below.
-vllm_model: "Qwen/Qwen2.5-7B-Instruct"
-vllm_served_model_name: "local"       # the model name Open WebUI/clients call
-vllm_port: 8000                       # host port -> vLLM OpenAI API (/v1)
-vllm_max_model_len: 8192              # context window; lower if VRAM-limited
-vllm_gpu_memory_utilization: "0.90"   # fraction of VRAM vLLM may claim
-vllm_extra_args: ""                   # e.g. "--tensor-parallel-size 2" for multi-GPU
-# Hugging Face token for gated/private model downloads. SECRET -- leave "" here
-# and supply out-of-band (bootstrap.sh prompt -> {{ ai_stack_secrets_dir }}/hf_token,
-# or -e hf_token=... at deploy). Never commit a real token to this public repo.
-hf_token: ""
+# Account added to the `docker` group so it can drive your compose without sudo.
+ai_stack_user: "{{ dev_tools_user }}"
 
-# Open WebUI (front-end). Image on GitHub Container Registry.
-open_webui_image: "ghcr.io/open-webui/open-webui"
-open_webui_image_tag: "0.9.6"         # >= 0.9.6
-open_webui_port: 3000                 # host port -> Open WebUI (container listens 8080)
+# ---- GPU (NVIDIA) ----------------------------------------------------------
+# Your vLLM containers need CUDA. true => install the NVIDIA driver (optional,
+# see gpu_install_driver) AND the nvidia-container-toolkit, and wire the `nvidia`
+# runtime into Docker so containers can request `--gpus all`. A DRIVER install
+# requires a REBOOT before the GPU is usable.
+gpu_enabled: true
+# Set false if drivers are managed out-of-band (cloud GPU image, MAAS, etc.):
+# the toolkit + Docker runtime are still configured, but no driver is installed.
+gpu_install_driver: true
 
-# PostgreSQL 16 + pgvector (RAG vector store + Open WebUI app DB).
-pgvector_image: "pgvector/pgvector"
-pgvector_image_tag: "pg16"            # PostgreSQL 16 build with pgvector
-pgvector_db: "openwebui"
-pgvector_user: "openwebui"
-pgvector_port: 5432                   # published on 127.0.0.1 only (see compose)
-
-# Docling document-extraction service. GPU build when gpu_enabled, else CPU.
-docling_image_gpu: "ghcr.io/docling-project/docling-serve-cu128"
-docling_image_cpu: "ghcr.io/docling-project/docling-serve-cpu"
-docling_image_tag: "latest"           # pin to a released tag for frozen images
-docling_port: 5001                    # host port -> docling-serve API
+# =============================================================================
+# AI SERVER FIREWALL  (ai_firewall role -> opens container ports AFTER USG)
+# =============================================================================
+# USG enables ufw with default-deny inbound, so the ports your prebuilt containers
+# publish must be opened explicitly or the stack is unreachable. List them here.
+# Each entry: port (required); proto (default tcp); rule ('allow' default, or
+# 'limit' to rate-limit a brute-force-sensitive port); from (source CIDR to
+# restrict to, '' = anywhere). SSH is always kept open (rate-limited) by the role.
+#
+# Default exposes only the Open WebUI front-end. For the two-node design, open the
+# cross-node ports RESTRICTED to the peer node's IP (uncomment + set the CIDRs):
+ai_firewall_allow_ports:
+  - { port: 80,  proto: tcp, rule: allow }     # Open WebUI (HTTP)  -> users
+  - { port: 443, proto: tcp, rule: allow }     # Open WebUI (HTTPS) -> users
+  # ---- System 1 (UI/text-gen) also exposes, to the peer node only: ----
+  # - { port: 8000, proto: tcp, rule: allow, from: "10.0.0.0/24" }   # vLLM (text gen)
+  # - { port: 5432, proto: tcp, rule: allow, from: "10.0.0.0/24" }   # pgvector
+  # ---- System 2 (embeddings/extraction) exposes, to System 1 only: ----
+  # - { port: 8001, proto: tcp, rule: allow, from: "10.0.0.10/32" }  # vLLM (embed/vision)
+  # - { port: 5001, proto: tcp, rule: allow, from: "10.0.0.10/32" }  # Docling
 
 # =============================================================================
 # USG HARDENING  (usg_harden role -> Ubuntu Security Guide / DISA-STIG)

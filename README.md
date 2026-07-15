@@ -10,10 +10,11 @@ headless server hardware:
   base works too), then hardens with **Canonical's Ubuntu Security Guide** (`usg fix disa_stig`)
   plus a small `desktop_hardening` role that re-asserts the GUI/RDP and adds the GNOME/GDM and USB
   carve-outs USG doesn't cover. `usg audit` is the compliance report. Needs an **Ubuntu Pro** token.
-- **`ai`** — turns a **Ubuntu Pro 24.04 Server** into a hardened **local-AI inference box**: hardens
-  with the same **USG** (`usg fix disa_stig`) and installs a **selectable, container-based AI
-  stack** — Docker, vLLM, Open WebUI, PostgreSQL 16 + pgvector, and Docling — where you pick which
-  tools each server gets. See **[the `ai` server profile](#ai-server-profile)**.
+- **`ai`** — turns a **Ubuntu Pro 24.04 Server** into a hardened **host for a local-AI inference
+  stack**: installs **Docker + the NVIDIA GPU stack**, hardens with the same **USG**
+  (`usg fix disa_stig`), and **opens the inbound ports** your containers need. You deploy the AI
+  tools (vLLM / Open WebUI / pgvector / Docling) from your **own prebuilt images + compose files** —
+  Ansible does host prep, not container management. See **[the `ai` server profile](#ai-server-profile)**.
 
 > **Both profiles now harden with Canonical's USG** (they need an Ubuntu Pro token), not the
 > community ansible-lockdown role. The first release named the profiles `desktop`/`server` and used
@@ -190,9 +191,10 @@ a password with `sudo passwd <user>` first). Toggles live under **`REMOTE DESKTO
 ## AI server profile
 
 Set `deployment_profile: ai` (or pass `PROFILE=ai` to `bootstrap.sh`) to build a
-headless **Ubuntu Pro** AI server instead of the development box. The pipeline runs a different role
-set — a lean baseline, the AI tool stack, then USG hardening — keeping the same
-**install-while-online, harden-last** ordering.
+headless **Ubuntu Pro** AI server instead of the development box. **Ansible does host prep only** —
+it installs Docker + the NVIDIA GPU stack, STIG-hardens the host with USG, and opens the inbound
+ports your containers need. **You deploy the AI tools from your own prebuilt images + compose
+files;** Ansible never renders a compose file, pulls images, or starts containers.
 
 ### Hardening: Ubuntu Security Guide (USG), not the lockdown role
 
@@ -213,41 +215,43 @@ Safety rails (mirroring the desktop's `disruption_high` caution):
 - **`HARDEN=0`** (or `usg_fix_enabled: false`) → install + **audit only**. Validate on a
   throwaway VM, then flip it on.
 
-### Selectable AI tool stack (Docker Compose)
+### Host prep (`ai_stack` role) — Docker + NVIDIA only
 
-Pick which tools each server gets with **`server_tools`** — install all of them, or only a subset:
+The `ai_stack` role prepares the host so your containers can run:
 
-| Tool | What it is | Image (pinned) |
-|------|-----------|----------------|
-| `docker` | Container engine (docker-ce, floor **≥ 29.5.2**) | Docker official apt repo |
-| `vllm` | OpenAI-compatible LLM inference server (needs a GPU) | `vllm/vllm-openai:v0.22.1` |
-| `open_webui` | Browser chat UI / RAG front-end | `ghcr.io/open-webui/open-webui:0.9.6` |
-| `pgvector` | PostgreSQL 16 + pgvector (RAG vector store + app DB) | `pgvector/pgvector:pg16` |
-| `docling` | Document-extraction service for RAG ingestion | `ghcr.io/docling-project/docling-serve` |
+- **Docker Engine** — docker-ce (floor **≥ 29.5.2**, asserted) + the compose v2 plugin, from
+  Docker's official apt repo (not `docker.io`); adds `ai_stack_user` to the `docker` group.
+- **NVIDIA GPU stack** (`gpu_enabled: true`, default) — driver + `nvidia-container-toolkit`, and
+  wires the `nvidia` runtime into Docker so your GPU containers can request `--gpus all`. A driver
+  install needs a **reboot** before the GPU is usable.
 
-The `ai_stack` role renders a `docker-compose.yml` containing **only the selected services**,
-wires them together (Open WebUI → vLLM for chat, → pgvector for vectors, → Docling for document
-ingest), and brings the stack up under `/opt/ai-stack`. Docker is installed automatically if any
-container tool is selected. With `gpu_enabled: true` (default) the role also installs the **NVIDIA
-driver + `nvidia-container-toolkit`** and wires the `nvidia` runtime into Docker so vLLM can use
-the GPU (a **reboot** is needed before the driver loads).
+It does **not** render a compose file, pull images, generate secrets, or start containers — deploy
+your **prebuilt images + compose files** however you like once the host is prepped.
+
+### Firewall (`ai_firewall` role) — opens your containers' ports after USG
+
+USG enables `ufw` with **default-deny inbound**, so the ports your containers publish must be opened
+explicitly or the stack is unreachable. List them in **`ai_firewall_allow_ports`** (group_vars);
+the role opens them **after** USG (and ensures `ufw` is active even if USG was skipped). Each entry
+takes `port`, `proto` (default `tcp`), `rule` (`allow` default, or `limit`), and `from` (source CIDR
+to restrict to). Default opens Open WebUI on `80/443`; restrict the cross-node ports
+(`8000/8001/5001/5432`) to the peer node's IP with `from:`. SSH is always kept (rate-limited).
 
 ### Quick start (ai server)
 
 ```bash
-# All tools, GPU, USG hardening (prompts for the Pro token, hidden):
+# Host prep + GPU + USG hardening (prompts for the Pro token, hidden):
 curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh \
   | sudo PROFILE=ai bash
 
-# A subset, audit-only first pass (validate before hardening):
-curl -fsSL .../bootstrap.sh \
-  | sudo PROFILE=ai TOOLS=docker,pgvector,open_webui HARDEN=0 bash
+# Audit-only first pass (validate hardening before applying it):
+curl -fsSL .../bootstrap.sh | sudo PROFILE=ai HARDEN=0 bash
 ```
 
-Then `journalctl -u stig-build -f` to watch, `cd /opt/ai-stack && docker compose ps` once images
-finish pulling, collect `/var/log/stig-scan/`, and **reboot** to apply USG (and load the GPU
-driver). Full runbook + operations: **[OPERATIONS.md](OPERATIONS.md#ubuntu-pro-server-usg--ai-stack)**
-and the design notes in **[docs/ai-server-design.md](docs/ai-server-design.md)**.
+Then `journalctl -u stig-build -f` to watch, collect `/var/log/stig-scan/`, **reboot** to apply USG
+(and load the GPU driver), and **deploy your prebuilt AI compose stack**. Full runbook + operations:
+**[OPERATIONS.md](OPERATIONS.md#ubuntu-pro-server-usg--ai-stack)** and the design notes in
+**[docs/ai-server-design.md](docs/ai-server-design.md)**.
 
 ---
 

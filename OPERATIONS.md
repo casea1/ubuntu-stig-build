@@ -389,11 +389,13 @@ curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/boots
   | sudo PROFILE=ai bash
 
 # Env-var options (piped bash can't take flags):
-#   TOOLS=docker,vllm,open_webui,pgvector,docling   which AI tools (default: all)
 #   PRO_TOKEN=<tok>   supply the Pro token non-interactively (else you're prompted)
-#   HF_TOKEN=<tok>    Hugging Face token for GATED models (Llama, etc.)
-#   HARDEN=0          install + `usg audit` only, SKIP the disruptive `usg fix`
+#   HARDEN=0          host prep + `usg audit` only, SKIP the disruptive `usg fix`
 ```
+
+> **Ansible does host prep only.** The AI tools ship as your own prebuilt images + compose files;
+> Ansible installs Docker + NVIDIA, hardens with USG, and opens the container ports — it does not
+> manage the containers. There is no `TOOLS`/`HF_TOKEN` anymore.
 
 Watch: `journalctl -u stig-build -f`. Reports land in `/var/log/stig-scan/` (the `usg audit`
 HTML + XCCDF results). **Reboot** afterwards to apply USG controls and load the NVIDIA driver,
@@ -417,38 +419,36 @@ then re-run `sudo usg audit disa_stig` for accurate post-reboot numbers.
   To customize/relax rules, generate a tailoring file (`usg generate-tailoring …`) and point
   `usg_tailoring_file` at it.
 
-### AI stack operations
+### Host prep + firewall (Ansible), then bring your own compose
 
-The rendered project lives in **`/opt/ai-stack`** (compose file 0644; `.env` with generated
-secrets 0600). Generated passwords persist under `/etc/ai-stack/` (0700) and are stable across
-re-runs.
+Ansible does **host prep only** on the ai profile; the AI containers are deployed from **your own
+prebuilt images + compose files**.
 
-```bash
-cd /opt/ai-stack
-docker compose ps                 # which services are up
-docker compose logs -f vllm       # model load progress (first run downloads weights)
-docker compose pull && docker compose up -d   # update to newer pinned images
-```
+- **Docker + GPU (`ai_stack`):** installs docker-ce (≥29.5.2) + the compose v2 plugin, and (when
+  `gpu_enabled`) the NVIDIA driver + `nvidia-container-toolkit` with the `nvidia` runtime wired into
+  Docker. Verify: `docker --version`, `docker info | grep -i runtime`, `nvidia-smi` (after reboot).
+  `ai_stack_user` is added to the `docker` group so it can drive compose without sudo.
+- **Firewall (`ai_firewall`, after USG):** USG enables ufw with **default-deny inbound**, so the
+  ports your containers publish must be opened here. Edit **`ai_firewall_allow_ports`** in
+  `group_vars/all.yml`:
 
-- **Endpoints:** Open WebUI on `:3000` (`open_webui_port`, all interfaces);
-  vLLM `127.0.0.1:8000/v1`, Docling `127.0.0.1:5001`, Postgres `127.0.0.1:5432` (localhost-only,
-  reached container-to-container). Open WebUI talks to the others by service name over the
-  internal Compose network, so it works even with those host ports closed.
-- **Firewall:** USG enables ufw. To reach Open WebUI over the network you must open its port
-  (POA&M): `sudo ufw allow 3000/tcp` — and ideally front it with an
-  authenticating reverse proxy rather than exposing it directly.
-- **GPU:** vLLM needs an NVIDIA GPU. After the first build **reboot** so the driver module
-  loads; the containers are `restart: unless-stopped` and come up automatically. Check with
-  `nvidia-smi` (host) and `docker compose exec vllm nvidia-smi` (in-container). If vLLM
-  crash-loops with an OOM, lower `vllm_max_model_len` / `vllm_gpu_memory_utilization` or pick a
-  smaller `vllm_model`.
-- **Gated models:** the default `vllm_model` is ungated (Qwen). For Llama etc., supply
-  `HF_TOKEN` (bootstrap) or drop it at `/etc/ai-stack/hf_token` (0600) and re-run.
-- **Selecting fewer tools:** re-run with `-e '{"server_tools":[...]}'`. Note that Compose does
-  not remove a service just because you dropped it from the list on a later run — `docker
-  compose down <svc>` the ones you no longer want.
-- **Air-gapping:** images are pulled while online. For a fully offline rebuild, mirror the
-  pinned images into an internal registry and repoint the `*_image` vars.
+  ```yaml
+  ai_firewall_allow_ports:
+    - { port: 80,  proto: tcp, rule: allow }                        # Open WebUI (users)
+    - { port: 443, proto: tcp, rule: allow }
+    - { port: 8001, proto: tcp, rule: allow, from: "10.0.0.10/32" } # System 2 vLLM, from System 1 only
+    - { port: 5001, proto: tcp, rule: allow, from: "10.0.0.10/32" } # System 2 Docling, from System 1 only
+  ```
+
+  `rule: limit` rate-limits a port; `from:` restricts it to a source CIDR (use it for the cross-node
+  vLLM/Docling/pgvector ports so they aren't fleet-wide). SSH is always kept (rate-limited). The role
+  also **enables ufw itself**, so an ai box is never left with an inactive firewall even if USG was
+  skipped. Check: `sudo ufw status verbose`.
+
+**Deploying your stack** (your process, not Ansible's): once the host is prepped and rebooted, drop
+your compose files on the box and `docker compose up -d`. For air-gap, mirror your images into an
+internal registry or `docker load` them from tarballs. Nothing in this repo pulls, builds, or starts
+those containers.
 
 ## Windows servers
 
