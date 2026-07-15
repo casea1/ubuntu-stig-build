@@ -1,0 +1,52 @@
+---
+# =============================================================================
+# cockpit -- web-based server-management console (https://<host>:9090), installed
+# on BOTH profiles. Handy for managing a headless AI server or a dev box from a
+# browser: systemd units, journald logs, storage, networking, updates, and an
+# in-browser terminal.
+#
+# INSTALL + ENABLE ONLY. Cockpit is a privileged management surface, so the
+# firewall roles (desktop_hardening / ai_firewall) open cockpit_port RATE-LIMITED
+# and AFTER USG's default-deny -- never here. This role runs in the pre-hardening
+# provisioning phase because it needs the network to install.
+# =============================================================================
+
+- name: "COCKPIT | Install the cockpit console (+ any extras)"
+  ansible.builtin.apt:
+    name: "{{ ['cockpit'] + (cockpit_extra_packages | default([])) }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# cockpit listens on 9090 by default via the socket unit. Only when a custom port
+# is requested do we drop in a socket override so ListenStream matches cockpit_port.
+- name: "COCKPIT | Override the listen port when non-default"
+  when: (cockpit_port | default(9090) | int) != 9090
+  block:
+    - name: "COCKPIT | Ensure the socket override dir exists"
+      ansible.builtin.file:
+        path: /etc/systemd/system/cockpit.socket.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "COCKPIT | Write the ListenStream override"
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/cockpit.socket.d/override.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by ansible (cockpit role) -- do not edit by hand.
+          [Socket]
+          ListenStream=
+          ListenStream={{ cockpit_port | int }}
+      notify: Restart cockpit socket
+
+- name: "COCKPIT | Enable + start the cockpit socket"
+  ansible.builtin.systemd:
+    name: cockpit.socket
+    enabled: true
+    state: started
+    daemon_reload: true

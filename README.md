@@ -37,9 +37,9 @@ compliance content must be downloaded while the box is still online.
 | 2. Configure | `app_config` | Service config + access controls |
 | 3. Accounts | `local_accounts` | Org users/groups, ACL'd shared folders, USB→`dta` policy |
 | 4. Dev tools | `dev_tools` | Compilers, Python env, VS Code extensions |
-| 5. Harden | `usg_harden` + `desktop_hardening` | USG `usg fix disa_stig`, then GUI/GNOME/USB re-assert |
+| 5. Harden | `usg_harden` + `desktop_hardening` + `usg_remediate` | USG `usg fix disa_stig`, GUI/GNOME/USB re-assert, then idempotent residual fixes + smartcard cleanup |
 | 6. Branding | `desktop_branding` | System-wide wallpaper (desktop + lock screen) |
-| 7. Report | `usg audit` (in `usg_harden`) | Compliance report → `/var/log/stig-scan` |
+| 7. Report | `usg audit` (in `usg_harden` / re-run by `usg_remediate`) | Compliance report → `/opt/ia` |
 
 > **Hardening switched to Canonical USG for both profiles.** The `development` pipeline used to run
 > the `ansible-lockdown/UBUNTU24-STIG` role + SSG gap-remediation task files + an OpenSCAP scan; it
@@ -83,7 +83,7 @@ compliance content must be downloaded while the box is still online.
 ### 5. `usg_harden` + `desktop_hardening` — hardening (current)
 - **`usg_harden`** attaches the box to **Ubuntu Pro** (token supplied out-of-band) and runs
   **`usg fix disa_stig`** — Canonical's officially-supported DISA-STIG remediation — then
-  **`usg audit`** writes the compliance report to `/var/log/stig-scan/`. Guarded so it won't lock
+  **`usg audit`** writes the compliance report to `/opt/ia/` (admin-readable). Guarded so it won't lock
   you out (self-skips with no token; refuses `usg fix` unless an admin has a usable password;
   stamped to run once per image).
 - **`desktop_hardening`** runs **after** USG and does only what USG doesn't: re-asserts the
@@ -114,7 +114,8 @@ compliance content must be downloaded while the box is still online.
 
 ### 7. Compliance report — `usg audit` (current)
 - The report now comes from **`usg audit disa_stig`** (run inside `usg_harden`), which writes its
-  HTML + XCCDF results to `/var/log/stig-scan/`. The standalone OpenSCAP scan below is **no longer
+  HTML + XCCDF results to `/opt/ia/` (auto-copied there for the IA team; `usg_remediate` re-runs the
+  audit at the end so the report reflects the fully-built box). The standalone OpenSCAP scan below is **no longer
   run** (the `scap_scan` role remains in the repo but is not in the pipeline).
 
 ### 7b. `scap_scan` — compliance report *(legacy, no longer used)*
@@ -129,27 +130,59 @@ compliance content must be downloaded while the box is still online.
 
 ## Quick start
 
-**Prerequisites:** a freshly installed Ubuntu 24.04.4 Desktop with internet access, and a local
-account whose name matches `dev_tools_user`/`wireshark_users` in `group_vars/all.yml`
-(default `austin_case_adm`).
+Two profiles, **one command each** — they differ only by the `PROFILE` variable. Both run the same
+`bootstrap.sh`, install Ansible, and run the full pipeline as a detached systemd unit named
+`stig-build` (detached so the GDM/network restarts during hardening can't kill it).
 
-On the target machine, run:
+> **Both profiles need an Ubuntu Pro token** (USG does the hardening). `bootstrap.sh` prompts for it
+> (hidden input); or drop it out-of-band in `/etc/ubuntu-advantage/pro-token`. See
+> [OPERATIONS.md](OPERATIONS.md#ubuntu-pro-server-usg--ai-stack).
+
+### 🖥️  Development workstation — `deployment_profile: development` (default)
+
+**Target:** a freshly installed **Ubuntu 24.04 Desktop** (a Server base works too — it installs the
+GUI itself), with internet access and a local account whose name matches `dev_tools_user` in
+`group_vars/all.yml` (default `austin_case_adm`). Builds the engineering workstation + a **GNOME
+desktop over RDP**, hardened by USG.
 
 ```bash
+# Development workstation (default profile — no PROFILE needed):
 curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo bash
 ```
 
-It first **prompts (hidden) for the disk encryption password** to enable TPM auto-unlock (type it, or
-press Enter to skip), then installs Ansible + the Lockdown role and runs the full pipeline as a detached
-systemd unit named `stig-build` (detached so the GDM restart during hardening can't kill it). Watch it:
+It also **prompts (hidden) for the disk-encryption password** to enable TPM auto-unlock (type it, or
+press Enter to skip).
+
+### 🧠  AI server — `deployment_profile: ai`
+
+**Target:** a freshly installed **Ubuntu 24.04 Server** with **Ubuntu Pro** selected. **Host prep
+only** — Docker + the NVIDIA GPU stack + USG hardening, and it opens your containers' inbound ports.
+You deploy the AI tools (vLLM / Open WebUI / pgvector / Docling) from your **own** prebuilt images +
+compose files.
+
+```bash
+# AI server — host prep + GPU + USG hardening (note the PROFILE=ai):
+curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo PROFILE=ai bash
+
+# Audit-only first pass — installs USG + writes the report but does NOT apply `usg fix`
+# (validate hardening on a throwaway box before committing to it):
+curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo PROFILE=ai HARDEN=0 bash
+```
+
+> `desktop`/`server` are still accepted as aliases for `development`/`ai`.
+
+### Watch it, then collect the report (both profiles)
 
 ```bash
 journalctl -u stig-build -f
 systemctl status stig-build        # active (exited) = success
 ```
 
-When it finishes, **collect the reports from `/var/log/stig-scan/` while still online**, then
-reboot. The machine comes up to a graphical login showing the DCSA banner.
+When it finishes, **collect the USG compliance report from `/opt/ia/` while still online** (it
+auto-copies there; readable by the admin/`sudo` group), then **reboot** to apply USG (and load the
+GPU driver on `ai`). The development box comes up to a graphical login showing the DCSA banner; on
+`ai`, deploy your prebuilt compose stack. See the **[hardening posture](#hardening-posture-for-your-ia-team)**
+below for exactly what gets fixed vs. what stays a POA&M.
 
 **New to this?** Start with the **[Imaging Guide](docs/imaging-guide.md)** — the complete end-to-end
 runbook (Ubuntu install → setup → run → post-install checklist → troubleshooting). See
@@ -206,7 +239,7 @@ files;** Ansible never renders a compose file, pulls images, or starts container
 
 The server hardens with **Canonical's USG** — `usg fix disa_stig` — the officially supported
 DISA-STIG implementation that ships with Ubuntu Pro, and `usg audit` writes the compliance
-report to `/var/log/stig-scan/` (same place as the development-profile scan). The box must be **Pro-attached**
+report to `/opt/ia/` (auto-copied for the IA team, admin-readable). The box must be **Pro-attached**
 first; the token is a **secret** and is handled exactly like the LUKS passphrase — supplied
 out-of-band, never committed (`bootstrap.sh` prompts for it, or drop it in
 `ubuntu_pro_token_file`).
@@ -241,6 +274,11 @@ The `ai_stack` role prepares the host so your containers can run:
   It's the management plane, not your AI stack; `ai_firewall` opens its port. It mounts the Docker
   socket (root-equivalent) — set a strong admin password on first login and restrict its port to
   admins.
+- **Cockpit** (`cockpit_enabled: true`, default — **both profiles**) — a web server-management
+  console at `https://‹host›:9090` (systemd units, journald logs, storage, networking, updates,
+  in-browser terminal). Log in with a local account. It's a privileged surface, so the firewall
+  opens `cockpit_port` **rate-limited**; set `cockpit_allow_from` to an admin CIDR in production.
+  Set `cockpit_enabled: false` to skip.
 
 It does **not** render a compose file, pull your workload images, generate secrets, or start your AI
 containers — deploy your **prebuilt images + compose files** however you like once the host is prepped.
@@ -254,21 +292,85 @@ takes `port`, `proto` (default `tcp`), `rule` (`allow` default, or `limit`), and
 to restrict to). Default opens Open WebUI on `80/443`; restrict the cross-node ports
 (`8000/8001/5001/5432`) to the peer node's IP with `from:`. SSH is always kept (rate-limited).
 
-### Quick start (ai server)
+### Running it
 
-```bash
-# Host prep + GPU + USG hardening (prompts for the Pro token, hidden):
-curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh \
-  | sudo PROFILE=ai bash
+The `ai` command is in **[Quick start](#-ai-server--deployment_profile-ai)** above
+(`… | sudo PROFILE=ai bash`, plus the `HARDEN=0` audit-only first pass). Then
+`journalctl -u stig-build -f` to watch, collect the report from **`/opt/ia/`**, **reboot** to apply
+USG (and load the GPU driver), and **deploy your prebuilt AI compose stack**. Full runbook +
+operations: **[OPERATIONS.md](OPERATIONS.md#ubuntu-pro-server-usg--ai-stack)** and the design notes in
+**[docs/ai-server-design.md](docs/ai-server-design.md)**.
 
-# Audit-only first pass (validate hardening before applying it):
-curl -fsSL .../bootstrap.sh | sudo PROFILE=ai HARDEN=0 bash
+---
+
+## Hardening posture (for your IA team)
+
+Both profiles apply **Canonical's USG `usg fix disa_stig`** — the officially supported DISA-STIG
+remediation. That closes the large majority of the benchmark automatically. This section is the
+quick reference for your **IA / assessment team**: what the build *additionally* remediates on top of
+`usg fix`, what it treats as an approved deviation, and what stays an **open POA&M**. The authoritative,
+per-rule detail (with rule IDs and rationale) lives in
+**[OPERATIONS.md → POA&M](OPERATIONS.md#poam--findings-not-auto-remediated-by-the-build)** and the
+**[residual-remediation table](OPERATIONS.md#residual-findings-auto-remediated-by-usg_remediate)**.
+
+**The USG audit report auto-copies to `/opt/ia/`** on every run (HTML + XCCDF), readable by the admin
+(`sudo`) group — hand that folder to your assessor. It's regenerated *after* remediation + firewall so
+it reflects the fully-built box, not the mid-build snapshot. Re-run any time:
+`sudo usg audit disa_stig --tailoring-file /etc/usg/managed-tailoring.xml`.
+
+### ✅ Additionally remediated by `usg_remediate` (every run, idempotent)
+
+`usg fix` is stamped run-once and its in-role audit is a mid-build snapshot, so the `usg_remediate`
+role runs **after** USG + the firewall and closes these (none can lose password/SSH login):
+
+| Finding (SSG rule) | STIG ID | What we do |
+| --- | --- | --- |
+| Smart Card Logins in PAM (`smartcard_pam_enabled`) | — | comment `pam_pkcs11.so` out of the auth stack → stops the "no smart card found" spam (this fleet is **password-login only**) |
+| `/var/log` file perms (`file_permissions_var_log_stig`) | UBTU-24-700010 | strip setuid/exec/other bits off log files |
+| `/var/log/audit` mode (`directory_permissions_var_log_audit`) | — | `chmod 0750` |
+| Remote time server (`chronyd_specify_remote_server`, `chronyd_server_directive`) | UBTU-24-600160 | write `server <host> iburst` to `sources.d`, drop `pool` (see **NTP** below) |
+| ufw active (`check_ufw_active`) | UBTU-24-300041 | firewall roles enable ufw; re-asserted here |
+
+### ⚠️ Approved deviations (documented, not "failures")
+
+| Control | Why | Where |
+| --- | --- | --- |
+| Smart Card / CAC + SSSD (`smartcard_pam_enabled`, `service_sssd_enabled`, `sssd_enable_user_cert`) | password-login only; local accounts, no directory/CAC → **de-selected in the USG tailoring** so they don't count against you | `usg_disable_smartcard*` |
+| ufw rate-limit **all** ports (`ufw_rate_limit`, UBTU-24-600200) | on `ai`, rate-limiting the Open WebUI / vLLM / Docling ports would throttle inference — only **management** ports (SSH/RDP/Cockpit/Portainer) are `ufw limit`ed | firewall roles |
+| GNOME login-banner **text**, blank-screensaver, USB→`dta` | mission requirements (DCSA banner, org wallpaper, USB data-transfer) | OPERATIONS.md POA&M |
+
+### ❌ Open POA&M — need a secret, infra, or a kernel swap (NOT auto-applied)
+
+| Finding | To close it |
+| --- | --- |
+| **FIPS mode** (`is_fips_mode_enabled`) | set `usg_enable_fips: true` (swaps the kernel; validate first) + reboot |
+| **UEFI/GRUB boot-loader password** (`grub2_uefi_password`) | provide a hashed password (`grub2-mkpasswd-pbkdf2`) out-of-band |
+| **Audit-log offload** (`auditd_offload_logs`) | point at a remote collector (`stig_audit_remote_server`) |
+| **Full-disk encryption** (`Encrypt Partitions`) | bake LUKS into the Ubuntu autoinstall (pre-install; see OPERATIONS.md) |
+
+### NTP / time source
+
+The chrony remediation defaults `usg_chrony_servers` to **`ntp.ubuntu.com`**. **Change this to your
+enclave's internal NTP server(s)** in `group_vars/all.yml` — the STIG config check passes either way,
+but actual time sync needs a *reachable* server (an isolated/air-gapped net can't reach the public
+pool):
+
+```yaml
+# group_vars/all.yml
+usg_chrony_servers:
+  - 10.0.0.1          # your site time server(s), written as `server <host> iburst`
+  - 10.0.0.2
 ```
 
-Then `journalctl -u stig-build -f` to watch, collect `/var/log/stig-scan/`, **reboot** to apply USG
-(and load the GPU driver), and **deploy your prebuilt AI compose stack**. Full runbook + operations:
-**[OPERATIONS.md](OPERATIONS.md#ubuntu-pro-server-usg--ai-stack)** and the design notes in
-**[docs/ai-server-design.md](docs/ai-server-design.md)**.
+Set `usg_chrony_servers: []` to leave chrony untouched (the finding then stays a POA&M).
+
+### Admin working folders `/opt/ia` and `/opt/it`
+
+The `managed_dirs` role creates both on every box, owned `root:{{ ia_it_group }}` (default `sudo`),
+mode `2770` + a default ACL. **Only admins (the `sudo` group) can enter them, and they don't need a
+`sudo` prefix** to create/edit files or run commands inside — files created there stay group-shared
+even under the STIG's `umask 077`. `/opt/ia` doubles as the USG report drop. Change the owning group
+with `ia_it_group`, or set `managed_dirs_enabled: false` to skip.
 
 ---
 
@@ -288,6 +390,16 @@ Everything is toggled from **[`group_vars/all.yml`](group_vars/all.yml)**:
   this** to close the two GRUB findings.
 - `dev_tools_user`, `eng_venv_path`, `powershell_version` — dev-tooling settings
 - `scap_profile`, `ssg_content_version` — which compliance content to scan against
+- **USG hardening** — `usg_profile` (`disa_stig`), `usg_fix_enabled`, `usg_enable_fips`,
+  `usg_force_fix`, `usg_tailoring_file`; smartcard opt-out `usg_disable_smartcard` (+ `_rules`)
+- **USG residual remediation** — `usg_remediate_enabled`, `usg_cleanup_pam_pkcs11`,
+  `usg_fix_log_permissions`, **`usg_chrony_servers`** (your NTP — see
+  [Hardening posture → NTP](#ntp--time-source)), `usg_remediate_reaudit`
+- **Report drop / admin folders** — `usg_report_dir` (default `/opt/ia`), `ia_it_group` (default
+  `sudo`), `ia_dir` / `it_dir`, `managed_dirs_enabled`
+- **Cockpit** (both profiles) — `cockpit_enabled`, `cockpit_port`, `cockpit_allow_from`
+- **AI server** — `docker_ce_min_version`, `gpu_install_driver`, `nvidia_*`, `portainer_enabled`,
+  `ai_firewall_allow_ports`
 
 Package and VS Code extension lists live in `roles/dev_tools/defaults/main.yml`. The dev-tooling
 layer is documented in [docs/dev-tools-design.md](docs/dev-tools-design.md).

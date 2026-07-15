@@ -111,6 +111,17 @@
     comment: "code-server (rate-limited)"
   when: dev_code_server_enabled | default(false) | bool
 
+- name: "FW | Open Cockpit ({{ cockpit_port | default(9090) }}/tcp, rate-limited) when enabled"
+  # Privileged management surface (root-capable). Rate-limited; restrict it to an
+  # admin subnet by setting cockpit_allow_from (else it's opened to any source).
+  community.general.ufw:
+    rule: limit
+    port: "{{ cockpit_port | default(9090) | string }}"
+    proto: tcp
+    from_ip: "{{ cockpit_allow_from | default('any', true) }}"
+    comment: "Cockpit web console (rate-limited)"
+  when: cockpit_enabled | default(true) | bool
+
 - name: "FW | Enable ufw and persist across reboot"
   community.general.ufw:
     state: enabled

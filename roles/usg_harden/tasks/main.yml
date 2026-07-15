@@ -127,18 +127,68 @@
         - _fips_enable is defined
         - _fips_enable.rc == 0
 
-    # ---- Optional tailoring -------------------------------------------------
-    - name: "USG | Validate the tailoring file exists (if one was configured)"
+    # ---- Smart-card (CAC) opt-out via a generated tailoring file ------------
+    # This image is password-login only (smartcard POA&M'd), but disa_stig's
+    # "Enable Smart Card Logins in PAM" rule (smartcard_pam_enabled) wires
+    # pam_pkcs11.so into the auth stack -> "no suitable token / No smart card
+    # found" on every auth when no CAC reader is present. When usg_disable_smartcard
+    # is set (and the operator hasn't supplied their OWN tailoring file), generate a
+    # tailoring file from USG's own content and DE-SELECT those rules, so `usg fix`
+    # never wires up pam_pkcs11 and `usg audit` doesn't flag them. Generating the
+    # file (rather than hand-authoring XML) keeps the benchmark href / profile id /
+    # namespaces correct by construction.
+    - name: "USG | Generate + patch a smartcard-opt-out tailoring file"
+      when:
+        - usg_disable_smartcard | default(true) | bool
+        - (usg_tailoring_file | default('') | length) == 0
+        - (usg_disable_smartcard_rules | default([]) | length) > 0
+      block:
+        - name: "USG | Ensure the tailoring dir exists"
+          ansible.builtin.file:
+            path: "{{ usg_managed_tailoring_file | dirname }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: "USG | Generate a tailoring file from the {{ usg_profile }} profile"
+          ansible.builtin.command:
+            cmd: "usg generate-tailoring {{ usg_profile }} {{ usg_managed_tailoring_file }}"
+            creates: "{{ usg_managed_tailoring_file }}"
+
+        - name: "USG | De-select the smartcard/PKCS11 rules in the tailoring file"
+          # Flip selected="true" -> "false" on each smartcard rule's <xccdf:select>.
+          # idref may or may not carry the ssgproject prefix, hence the optional group.
+          ansible.builtin.replace:
+            path: "{{ usg_managed_tailoring_file }}"
+            regexp: '(idref="(?:xccdf_org\.ssgproject\.content_rule_)?{{ item | regex_escape }}"[^>]*\bselected=")true(")'
+            replace: '\1false\2'
+          loop: "{{ usg_disable_smartcard_rules }}"
+
+        - name: "USG | Mark the generated tailoring file as in play"
+          ansible.builtin.set_fact:
+            _managed_tailoring_used: true
+
+    # ---- Resolve the effective tailoring file ------------------------------
+    # Operator's own file wins; otherwise the generated smartcard opt-out (if any).
+    - name: "USG | Pick the effective tailoring file"
+      ansible.builtin.set_fact:
+        _effective_tailoring_file: >-
+          {{ usg_tailoring_file
+             if (usg_tailoring_file | default('') | length) > 0
+             else (usg_managed_tailoring_file if (_managed_tailoring_used | default(false)) else '') }}
+
+    - name: "USG | Validate the tailoring file exists (if one is in play)"
       ansible.builtin.stat:
-        path: "{{ usg_tailoring_file }}"
+        path: "{{ _effective_tailoring_file }}"
       register: _usg_tailoring_stat
-      when: (usg_tailoring_file | default('') | length) > 0
+      when: (_effective_tailoring_file | length) > 0
 
     - name: "USG | Compute the tailoring CLI fragment"
       ansible.builtin.set_fact:
         _usg_tailoring_arg: >-
-          {{ ('--tailoring-file ' ~ usg_tailoring_file)
-             if ((usg_tailoring_file | default('') | length) > 0
+          {{ ('--tailoring-file ' ~ _effective_tailoring_file)
+             if ((_effective_tailoring_file | length) > 0
                   and _usg_tailoring_stat.stat.exists | default(false))
              else '' }}
 
@@ -222,9 +272,9 @@
       ansible.builtin.file:
         path: "{{ usg_report_dir }}"
         state: directory
-        owner: root
-        group: root
-        mode: "0750"
+        owner: "{{ usg_report_dir_owner | default('root') }}"
+        group: "{{ usg_report_dir_group | default('root') }}"
+        mode: "{{ usg_report_dir_mode | default('0750') }}"
 
     - name: "USG | Run `usg audit {{ usg_profile }}` -> compliance report"
       # usg audit writes its HTML + XCCDF results into /var/lib/usg/ by default
@@ -249,9 +299,9 @@
         src: "{{ item.path }}"
         dest: "{{ usg_report_dir }}/"
         remote_src: true
-        owner: root
-        group: root
-        mode: "0640"
+        owner: "{{ usg_report_dir_owner | default('root') }}"
+        group: "{{ usg_report_file_group | default('root') }}"
+        mode: "{{ usg_report_file_mode | default('0640') }}"
       loop: "{{ _usg_artifacts.files | default([]) }}"
       loop_control:
         label: "{{ item.path | basename }}"

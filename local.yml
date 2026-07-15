@@ -62,6 +62,10 @@
     # -------------------------------------------------------------------------
     - role: local_accounts          # org users/groups, ACL'd shared folders, USB->dta policy
       when: local_accounts_enabled | default(true)
+    - role: managed_dirs            # /opt/ia (USG report drop) + /opt/it, admin-only (sudo group)
+      when: managed_dirs_enabled | default(true)
+    - role: cockpit                 # web server-management console (9090); firewall opened post-USG
+      when: cockpit_enabled | default(true)
 
     # -------------------------------------------------------------------------
     # DEVELOPMENT-ONLY PROVISIONING  (GUI engineering box, RDP-accessible)
@@ -91,6 +95,15 @@
       when: is_development
     - role: ai_firewall             # ai: open the prebuilt AI stack's inbound ports AFTER USG's default-deny
       when: is_ai
+
+    # -------------------------------------------------------------------------
+    # RESIDUAL REMEDIATION  (both profiles) -- runs AFTER USG + the firewall
+    # roles. Closes the reasonable findings `usg fix` leaves open (pam_pkcs11
+    # cleanup, /var/log perms, chrony server directive, ufw active), then
+    # re-runs `usg audit` so the report reflects the fully-built box.
+    # -------------------------------------------------------------------------
+    - role: usg_remediate           # idempotent residual STIG fixes + smartcard/pam_pkcs11 cleanup + re-audit
+      when: usg_remediate_enabled | default(true)
 
     # -------------------------------------------------------------------------
     # POST-HARDENING  (desktop branding, optional TPM)

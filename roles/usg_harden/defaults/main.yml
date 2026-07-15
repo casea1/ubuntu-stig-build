@@ -7,3 +7,8 @@
 # usg_force_fix is set) rather than on every ansible-pull.
 usg_stamp_dir: /var/lib/usg-harden
 usg_stamp_file: "{{ usg_stamp_dir }}/applied-profile"
+
+# Auto-generated USG tailoring file used to opt OUT of the disa_stig smartcard/CAC
+# PAM rules when usg_disable_smartcard is set (see group_vars/all.yml). Written
+# root-only; regenerated only if absent (idempotent via `creates`).
+usg_managed_tailoring_file: /etc/usg/managed-tailoring.xml
