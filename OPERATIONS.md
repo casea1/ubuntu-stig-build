@@ -141,6 +141,27 @@ doesn't have. Document each as a POA&M for your assessor:
 - **Smartcard / CAC + SSSD** (opensc, pam_pkcs11, SSSD enable / cert-mapping / OCSP / cache,
   "Enable Smart Card Logins in PAM") — this image is **password-login only** by decision. The
   one harmless smartcard-adjacent control (GNOME *lock-on-smartcard-removal*) IS set.
+
+  The DISA profile's *Enable Smart Card Logins in PAM* rule (`smartcard_pam_enabled`) would
+  otherwise wire `pam_pkcs11.so` into the auth stack, which on a box with **no CAC reader/card**
+  logs `ERROR:pam_pkcs11.c:365: no suitable token available` / `Error 2308: No smart card found`
+  on **every login, sudo, and screen-unlock**. To avoid that, `usg_harden` auto-generates a USG
+  tailoring file (`usg generate-tailoring`, written to `/etc/usg/managed-tailoring.xml`) and
+  **de-selects** those rules before `usg fix`, so `pam_pkcs11` is never wired in and the audit
+  won't flag it. Controlled by `usg_disable_smartcard` (default **true**) and
+  `usg_disable_smartcard_rules` in `group_vars/all.yml`; set the toggle `false` (or supply your
+  own `usg_tailoring_file`) once you deploy CAC readers + certs and actually want CAC login.
+
+  > **Already-hardened boxes:** the opt-out only affects a *fresh* `usg fix`. On a machine that
+  > was hardened **before** this was enabled, `pam_pkcs11` is already in the stack and the fix is
+  > stamped run-once, so re-running ansible-pull won't undo it. Either **rebuild**, or clean it up
+  > by hand (keep a second root session open as a safety net):
+  > ```bash
+  > sudo grep -rn pkcs11 /etc/pam.d/ /usr/share/pam-configs/
+  > # if it's a pam-auth-update profile: sudo pam-auth-update  (untick PKCS#11), else:
+  > sudo sed -ri.bak 's/^(auth.*pam_pkcs11\.so.*)/# \1/' /etc/pam.d/common-auth
+  > sudo -k; sudo true    # verify password auth still works, no pkcs11 error
+  > ```
 - **GUI login-banner TEXT (`Set the GNOME3 Login Warning Banner Text`)** — the SSG OVAL
   pattern-matches the configured text against the **DoD Standard Mandatory Notice**; this
   image displays the **DCSA Authorized Warning Banner** by requirement, so the text rule

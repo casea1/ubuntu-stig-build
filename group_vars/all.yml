@@ -640,7 +640,28 @@ usg_profile: "disa_stig"              # `usg fix/audit <profile>`: disa_stig | c
 usg_force_fix: false
 # Optional USG tailoring file (customize/relax specific rules). Empty = stock
 # profile. Point at a path on the box (e.g. dropped by your seed) to use one.
+# NOTE: if you set this, it takes full control of rule selection and the smartcard
+# opt-out below is skipped (you decide what to de-select yourself).
 usg_tailoring_file: ""
+
+# ---- Smart card / CAC ------------------------------------------------------
+# This build is PASSWORD-LOGIN ONLY (smartcard is a documented POA&M). The
+# disa_stig profile's "Enable Smart Card Logins in PAM" rule wires pam_pkcs11.so
+# into the auth stack, so on a box with NO CAC reader/card every login, sudo, and
+# screen-unlock logs:
+#     ERROR:pam_pkcs11.c:365: no suitable token available
+#     Error 2308: No smart card found.
+# Leaving this true makes usg_harden auto-GENERATE a tailoring file from USG's own
+# content (`usg generate-tailoring`) and DE-SELECT the rules listed below, so
+# `usg fix` never wires up pam_pkcs11 and `usg audit` won't flag them. Set false to
+# keep the stock STIG smartcard control (e.g. once you deploy CAC readers + certs).
+# IGNORED when usg_tailoring_file is set -- then you control rule selection.
+# NOTE: this only affects FRESH `usg fix` runs. On a box already hardened before
+# this was enabled, the pam_pkcs11 line is already in the stack (and the fix is
+# stamped run-once) -- clean it up manually or rebuild. See OPERATIONS.md.
+usg_disable_smartcard: true
+usg_disable_smartcard_rules:
+  - smartcard_pam_enabled            # "Enable Smart Card Logins in PAM" (adds pam_pkcs11.so to the auth stack)
 # USG reports land alongside the desktop scan reports for a single collection
 # point. Reuses scap_report_dir (/var/log/stig-scan) defined in the SCAP section.
 usg_report_dir: "{{ scap_report_dir }}"
