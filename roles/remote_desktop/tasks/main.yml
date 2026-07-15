@@ -1,0 +1,21 @@
+---
+# =============================================================================
+# remote_desktop -- give the DEVELOPMENT box a GUI that users reach over RDP.
+# Runs on the development profile only (gated in local.yml), AFTER dev_tools and
+# BEFORE hardening -- so it needs internet, and the STIG run then locks the box
+# (incl. the RDP service's PAM stack) down around it.
+#
+#   gui.yml  -- install the GNOME desktop + GDM (so a headless server base gets a
+#               GUI), boot to graphical.target, disable Wayland (xrdp needs Xorg)
+#   xrdp.yml -- install + configure xrdp for GNOME-over-Xorg, with the Ubuntu
+#               24.04 gotchas handled (ssl-cert key access, colord polkit prompt),
+#               rate-limited on the host firewall
+# =============================================================================
+
+- name: "Install the GNOME desktop environment"
+  ansible.builtin.import_tasks: gui.yml
+  when: dev_install_gnome | default(true) | bool
+
+- name: "Install and configure xrdp (RDP into the GNOME GUI)"
+  ansible.builtin.import_tasks: xrdp.yml
+  when: dev_rdp_enabled | default(true) | bool

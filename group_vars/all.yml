@@ -8,19 +8,24 @@
 # ---- Deployment profile ----------------------------------------------------
 # Selects WHICH build this box gets. The pipeline (local.yml) runs a different
 # role set per profile:
-#   desktop -> the original GNOME engineering workstation: base apps, dev_tools,
-#              classification banner, ansible-lockdown DISA STIG, wallpaper,
-#              OpenSCAP/SSG scan. (Everything documented in the rest of this file.)
-#   server  -> a headless Ubuntu Pro SERVER: a lean baseline, the selectable AI
-#              tool stack (ai_stack role -> Docker Compose: vLLM / Open WebUI /
-#              pgvector / Docling), and hardening via Canonical's Ubuntu Security
-#              Guide (USG -> `usg fix disa_stig`) instead of the lockdown role.
+#   development -> an engineering workstation: base apps, dev_tools, a GNOME
+#                  desktop + xrdp (so users RDP in for a GUI, even on a headless
+#                  server base), classification banner, hardening via Canonical's
+#                  USG (`usg fix disa_stig`) + GUI/GNOME/USB desktop fixups
+#                  (desktop_hardening role), and a wallpaper. Needs an Ubuntu Pro
+#                  token, same as ai.
+#   ai          -> a headless Ubuntu Pro AI server: a lean baseline, the
+#                  selectable AI tool stack (ai_stack role -> Docker Compose:
+#                  vLLM / Open WebUI / pgvector / Docling), and hardening via
+#                  Canonical's Ubuntu Security Guide (USG -> `usg fix disa_stig`).
 #
-# Default is 'desktop' so existing images build byte-identically. Override
-# per-machine at deploy WITHOUT editing this file:
-#   ansible-pull ... -e deployment_profile=server
-# (bootstrap.sh accepts PROFILE=server and passes this for you.)
-deployment_profile: desktop        # options: desktop | server
+# Default is 'development'. Override per-machine at deploy WITHOUT editing this
+# file:
+#   ansible-pull ... -e deployment_profile=ai
+# (bootstrap.sh accepts PROFILE=ai and passes this for you.)
+# Back-compat: the first release used 'desktop'/'server'; those are still
+# accepted as aliases for 'development'/'ai'.
+deployment_profile: development    # options: development | ai  (aliases: desktop, server)
 
 # ---- Users who need to run packet captures (Wireshark) ---------------------
 # STIG restricts raw packet capture to authorized users. These users get added
@@ -40,8 +45,16 @@ clamav_freshclam_enabled: true
 clamav_freshclam_checks_per_day: 12
 
 # =============================================================================
-# STIG HARDENING TOGGLES (passed through to ansible-lockdown/UBUNTU24-STIG)
+# STIG HARDENING TOGGLES (LEGACY -- ansible-lockdown/UBUNTU24-STIG)
 # =============================================================================
+# NOTE: as of the USG switch, BOTH profiles harden with Canonical's USG, not the
+# ansible-lockdown role -- so the ubtu24stig_* toggles and GNOME-bug workarounds
+# in THIS section are no longer consumed. They're kept for reference / rollback
+# (re-add the UBUNTU24-STIG role to requirements.yml and the import to
+# desktop_hardening if you ever revert). USG settings live in the USG HARDENING
+# section near the bottom of this file; the GNOME dconf tunables further down
+# (gnome_idle_delay_seconds, etc.) ARE still used by desktop_hardening/gnome.yml.
+#
 # CAT I = high severity, CAT II = medium, CAT III = low.
 # Default: apply CAT I + II, leave CAT III off until you've validated it
 # doesn't break your desktop workflow. Flip cat3 on once you're confident.
@@ -128,6 +141,34 @@ dotnet_sdk_package: dotnet-sdk-8.0      # .NET SDK from the Ubuntu archive (LTS)
 powershell_version: "7.4.16"
 
 # =============================================================================
+# REMOTE DESKTOP  (development profile -> remote_desktop role)
+# =============================================================================
+# The development profile can run on HEADLESS SERVER hardware that users RDP into.
+# This role installs the GNOME desktop (so a server base gets a GUI) and xrdp (the
+# RDP server), configured for the GNOME-over-Xorg path with the Ubuntu 24.04
+# gotchas handled (Wayland off, ssl-cert key access, colord polkit prompt).
+
+# Install the GNOME desktop environment. Idempotent no-op on a box that already
+# has it (e.g. an Ubuntu Desktop base). ubuntu-desktop-minimal = GNOME Shell +
+# GDM3 + core apps without the full application suite; use "ubuntu-desktop" for
+# the complete set, or "" to skip installing GNOME (assume it's already present).
+dev_install_gnome: true
+dev_gnome_package: ubuntu-desktop-minimal   # or: ubuntu-desktop
+
+# Install + configure xrdp so users can RDP into the GNOME session. xrdp logins
+# go through PAM, so the STIG faillock/faildelay hardening applies to them too.
+dev_rdp_enabled: true
+dev_rdp_port: 3389
+# TLS security layer for RDP: xrdp presents the system snakeoil cert and is added
+# to the ssl-cert group so it can read the key. Set false only if a client truly
+# can't negotiate TLS (then RDP falls back to negotiate/RDP security).
+dev_rdp_use_tls: true
+# OPTIONAL: restrict RDP logins to members of this group (enforced in PAM). Empty
+# = any local account with a password may RDP (still password- + faillock-gated).
+# Set e.g. "rdpusers" to gate it; the role creates the group and adds the check.
+dev_rdp_allowed_group: ""
+
+# =============================================================================
 # CLASSIFICATION BANNER (persistent top + bottom on-screen bars)
 # =============================================================================
 # NOT a STIG requirement -- this is a classified-system / accreditation control.
@@ -146,11 +187,12 @@ classification_banner_force_xorg: true
 # =============================================================================
 # STIG GAP-REMEDIATION TUNABLES
 # =============================================================================
-# Consumed by the per-category task files in roles/stig_harden/tasks/*.yml
-# (audit/pam/sessions/gnome/ssh/services/filesystem/grub). These close the SSG /
-# ComplianceAsCode "stig" profile findings that the ansible-lockdown role skips
-# under disruption_high:false / cat3:false. Defaults are STIG/SSG-aligned and
-# desktop-safe; override here. See OPERATIONS.md for the POA&M list.
+# MOSTLY LEGACY: these fed the deleted SSG gap files (audit/pam/sessions/ssh/
+# filesystem/grub) that USG now supersedes -- so the audit/pam/sessions/ssh/
+# filesystem/grub tunables below are no longer consumed. STILL LIVE and used by
+# desktop_hardening: the GNOME dconf tunables (gnome_idle_delay_seconds,
+# gnome_lock_delay_seconds), the ufw list (stig_firewall_limit_ports), and
+# usb_storage_enabled. The rest are kept for reference / rollback to lockdown.
 
 # =============================================================================
 # AUDIT (auditd) TUNABLES  -- consumed by roles/stig_harden/tasks/audit.yml
@@ -235,6 +277,8 @@ ssh_banner_path: /etc/issue.net
 # - To run a fully closed box (no inbound at all), set this to [] -- but then
 #   the rate-limit rule has no opened port to demonstrate on; track it as POA&M
 #   (see services category POA&M). Each entry: port (name or number) + proto.
+# NOTE: now consumed by desktop_hardening/tasks/main.yml (the FW block), which
+# `ufw limit`s each entry here and adds RDP (dev_rdp_port) when dev_rdp_enabled.
 stig_firewall_limit_ports:
   - { port: ssh, proto: tcp }      # OpenSSH; rate-limited brute-force throttle
 
@@ -533,10 +577,12 @@ docling_port: 5001                    # host port -> docling-serve API
 # =============================================================================
 # USG HARDENING  (usg_harden role -> Ubuntu Security Guide / DISA-STIG)
 # =============================================================================
-# On the server profile the box is hardened by Canonical's Ubuntu Security Guide
-# (`usg`) applying the DISA-STIG profile, NOT the ansible-lockdown role. USG ships
-# with Ubuntu Pro, so the box must be Pro-ATTACHED first. USG then produces the
-# same style of compliance report the desktop's OpenSCAP scan does.
+# BOTH profiles (development and ai) are hardened by Canonical's Ubuntu Security
+# Guide (`usg`) applying the DISA-STIG profile. USG ships with Ubuntu Pro, so the
+# box must be Pro-ATTACHED first (development needs a Pro token now, just like ai).
+# `usg audit` is the compliance report for both. On development, the
+# desktop_hardening role runs AFTER USG to re-assert the GUI/RDP and add the
+# GNOME/GDM/USB carve-outs USG doesn't cover.
 #
 # WORKFLOW (all handled by the role, in order):
 #   pro attach <token>  ->  pro enable usg [+ fips-updates]  ->  apt install usg

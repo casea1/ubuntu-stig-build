@@ -1,0 +1,49 @@
+---
+# =============================================================================
+# remote_desktop :: gui.yml -- ensure a GNOME desktop + GDM are present so the
+# development box has a GUI even on a headless server base. Idempotent: a no-op
+# where GNOME is already installed (e.g. an Ubuntu Desktop base image).
+# =============================================================================
+
+- name: "GUI | Install the GNOME desktop ({{ dev_gnome_package }})"
+  # ubuntu-desktop-minimal pulls GNOME Shell + GDM3 + core apps. This is a large
+  # download on a server base; on a desktop base it's already satisfied.
+  ansible.builtin.apt:
+    name: "{{ dev_gnome_package }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: (dev_gnome_package | default('') | length) > 0
+
+- name: "GUI | Ensure GDM3 is installed (display manager)"
+  ansible.builtin.apt:
+    name: gdm3
+    state: present
+
+- name: "GUI | Boot to the graphical target by default"
+  # Equivalent to `systemctl set-default graphical.target`, done as an idempotent
+  # symlink so re-runs report no change. A server base defaults to multi-user.
+  ansible.builtin.file:
+    src: /usr/lib/systemd/system/graphical.target
+    dest: /etc/systemd/system/default.target
+    state: link
+    force: true
+
+- name: "GUI | Ensure /etc/gdm3/custom.conf has a [daemon] section"
+  # On a minimal/server base the file may not exist yet; create it with the
+  # section so the WaylandEnable edit below has an anchor.
+  ansible.builtin.copy:
+    dest: /etc/gdm3/custom.conf
+    content: "[daemon]\n"
+    mode: "0644"
+    force: false          # never clobber an existing config
+
+- name: "GUI | Disable Wayland in GDM (xrdp needs Xorg; also what the banner wants)"
+  # Ubuntu 24.04 defaults GDM to Wayland, which xrdp can't drive -> black screen.
+  # Force Xorg. This is idempotent and aligns with classification_banner_force_xorg.
+  ansible.builtin.lineinfile:
+    path: /etc/gdm3/custom.conf
+    regexp: '^\s*#?\s*WaylandEnable\s*='
+    line: "WaylandEnable=false"
+    insertafter: '^\[daemon\]'
+    state: present

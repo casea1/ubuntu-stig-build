@@ -2,86 +2,89 @@
 # ansible-pull entrypoint. ansible-pull runs local.yml by default.
 #
 # TWO PROFILES, selected by `deployment_profile` (group_vars/all.yml, overridable
-# with `-e deployment_profile=server`):
+# with `-e deployment_profile=ai`). Both can run on headless server hardware, and
+# BOTH now harden with Canonical's USG (`usg fix disa_stig`); `usg audit` is the
+# compliance report for both.
 #
-#   desktop (default) -- the original GNOME engineering workstation. Run order is
-#     deliberate: install + configure apps FIRST, harden SECOND, scan LAST.
-#     Hardening (umask, noexec /tmp, PAM) can break installs/pip if applied first,
-#     and we want internet available for the SCAP content download before the box
-#     goes air-gapped.
+#   development (default) -- an engineering workstation. Installs the dev
+#     toolchain, then a GNOME desktop + xrdp so users REMOTE IN over RDP for a
+#     full GUI (works on a server base with no display). Hardened by USG, then a
+#     small desktop_hardening role re-asserts the GUI/RDP and adds the GNOME/GDM
+#     and USB carve-outs USG doesn't do. (Needs an Ubuntu Pro token, like ai.)
 #
-#   server  -- a headless Ubuntu Pro server. Same install-then-harden ordering:
-#     the AI tool stack (ai_stack) is installed while online and BEFORE the USG
-#     DISA-STIG hardening (usg_harden) tightens the box. USG replaces the
-#     ansible-lockdown role; `usg audit` produces the compliance report, so the
-#     desktop-oriented OpenSCAP/SSG scan role is not run on servers.
+#   ai          -- a headless Ubuntu Pro AI server: the selectable container AI
+#     stack (ai_stack) installed while online, then hardened by USG.
+#
+# Run order is deliberate for BOTH: install + configure FIRST, harden SECOND.
+# Hardening (umask, noexec /tmp, PAM) can break installs/pip if applied first, and
+# the AI images / USG content must download while the box is still online.
 
-- name: Build and harden Ubuntu 24.04 (DoD STIG)
+- name: Build and harden Ubuntu 24.04 (DoD STIG via USG)
   hosts: localhost
   connection: local
   become: true
 
   # Profile switches, derived once so every role/when below reads cleanly.
-  # deployment_profile defaults to 'desktop' (see group_vars) so existing images
-  # keep building exactly as before.
+  # deployment_profile defaults to 'development'. The first release shipped the
+  # names 'desktop'/'server'; they are accepted here as aliases for continuity.
   vars:
-    _deployment_profile: "{{ deployment_profile | default('desktop') }}"
-    is_desktop: "{{ _deployment_profile == 'desktop' }}"
-    is_server: "{{ _deployment_profile == 'server' }}"
+    _raw_profile: "{{ deployment_profile | default('development') }}"
+    _deployment_profile: "{{ {'desktop': 'development', 'server': 'ai'}.get(_raw_profile, _raw_profile) }}"
+    is_development: "{{ _deployment_profile == 'development' }}"
+    is_ai: "{{ _deployment_profile == 'ai' }}"
 
   # Fail fast on a typo'd profile rather than silently building nothing.
   pre_tasks:
-    - name: "Validate deployment_profile is desktop or server"
+    - name: "Validate deployment_profile is development or ai"
       ansible.builtin.assert:
         that:
-          - _deployment_profile in ['desktop', 'server']
+          - _deployment_profile in ['development', 'ai']
         fail_msg: >-
-          deployment_profile must be 'desktop' or 'server'
-          (got '{{ _deployment_profile }}').
+          deployment_profile must be 'development' or 'ai'
+          (aliases: 'desktop'->development, 'server'->ai). Got '{{ _raw_profile }}'.
         quiet: true
 
   roles:
     # -------------------------------------------------------------------------
     # BASELINE  -- base_packages runs for both profiles; internally it installs
-    # the desktop app set (when is_desktop) or a lean server baseline (when
-    # is_server). See roles/base_packages/tasks/main.yml.
+    # the development app set (when is_development) or a lean AI-server baseline
+    # (when is_ai). See roles/base_packages/tasks/main.yml.
     # -------------------------------------------------------------------------
-    - role: base_packages    # desktop: clamav/wireshark/python/editor/putty; server: lean baseline
+    - role: base_packages    # development: clamav/wireshark/python/editor/putty; ai: lean baseline
 
     # -------------------------------------------------------------------------
-    # DESKTOP-ONLY PROVISIONING  (GNOME engineering workstation)
+    # DEVELOPMENT-ONLY PROVISIONING  (GUI engineering box, RDP-accessible)
     # -------------------------------------------------------------------------
     - role: app_config              # clamav daemon/freshclam, wireshark group, etc.
-      when: is_desktop
+      when: is_development
     - role: local_accounts          # org users/groups, ACL'd shared folders, USB->dta policy
-      when: is_desktop
+      when: is_development
     - role: dev_tools               # compilers/SDKs, /opt/eng-venv, VS Code extensions, docker.io
-      when: is_desktop
+      when: is_development
+    - role: remote_desktop          # GNOME desktop + xrdp (RDP into the dev GUI); runs before hardening
+      when: is_development
     - role: classification_banner   # top/bottom security-classification bars (optional)
-      when: is_desktop and (classification_banner_enabled | default(false))
+      when: is_development and (classification_banner_enabled | default(false))
 
     # -------------------------------------------------------------------------
-    # SERVER-ONLY PROVISIONING  (Ubuntu Pro AI server)
+    # AI-SERVER-ONLY PROVISIONING  (Ubuntu Pro AI server)
     # Runs BEFORE hardening: needs internet (pulls images) and must finish before
     # USG locks the box down.
     # -------------------------------------------------------------------------
     - role: ai_stack                # docker-ce + NVIDIA + selectable Compose stack (vLLM/WebUI/pgvector/Docling)
-      when: is_server
+      when: is_ai
 
     # -------------------------------------------------------------------------
-    # HARDENING  (one backend per profile)
+    # HARDENING  -- BOTH profiles harden with Canonical USG.
     # -------------------------------------------------------------------------
-    - role: stig_harden             # desktop: ansible-lockdown Ubuntu 24.04 DISA STIG + GNOME fixups
-      when: is_desktop
-    - role: usg_harden              # server: Canonical USG (`usg fix disa_stig`) + audit report
-      when: is_server
+    - role: usg_harden              # Ubuntu Pro attach + `usg fix disa_stig` + `usg audit` -> report
+    - role: desktop_hardening       # development: GUI-preserving fixups AFTER USG (GNOME/GDM banner, USB, firewall)
+      when: is_development
 
     # -------------------------------------------------------------------------
-    # POST-HARDENING  (desktop branding, optional TPM, compliance report)
+    # POST-HARDENING  (desktop branding, optional TPM)
     # -------------------------------------------------------------------------
-    - role: desktop_branding        # system-wide wallpaper (desktop + lock screen), runs after STIG
-      when: is_desktop
+    - role: desktop_branding        # system-wide wallpaper (desktop + lock screen), runs after hardening
+      when: is_development
     - role: tpm_luks_unlock         # OPT-IN: bind LUKS to the TPM2 (works on either profile if encrypted)
       when: tpm_luks_enabled | default(false)
-    - role: scap_scan               # desktop: OpenSCAP/SSG eval -> HTML/ARF report (server uses `usg audit`)
-      when: is_desktop

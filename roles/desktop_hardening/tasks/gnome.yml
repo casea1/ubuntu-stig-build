@@ -110,7 +110,7 @@
     group: root
     mode: "0644"
     content: |
-      # Managed by stig_harden/tasks/gnome.yml -- do not edit by hand.
+      # Managed by desktop_hardening/tasks/gnome.yml -- do not edit by hand.
       # Keys + GVariant spellings match the SSG ubuntu2404 "stig" profile OVALs
       # (ComplianceAsCode v0.1.81). See gnome.yml header for the regex rationale.
 
@@ -178,7 +178,7 @@
     group: root
     mode: "0644"
     content: |
-      # Managed by stig_harden/tasks/gnome.yml -- do not edit by hand.
+      # Managed by desktop_hardening/tasks/gnome.yml -- do not edit by hand.
       # One lock per key set in ../00-stig-gnome so users cannot override them.
       /org/gnome/desktop/session/idle-delay
       /org/gnome/desktop/screensaver/lock-enabled
@@ -223,7 +223,7 @@
     group: root
     mode: "0644"
     content: |
-      # Managed by stig_harden/tasks/gnome.yml -- do not edit by hand.
+      # Managed by desktop_hardening/tasks/gnome.yml -- do not edit by hand.
       # Login-screen warning banner, checked by SSG against the gdm dconf db.
       [org/gnome/login-screen]
       banner-message-enable=true
@@ -241,7 +241,7 @@
     group: root
     mode: "0644"
     content: |
-      # Managed by stig_harden/tasks/gnome.yml -- do not edit by hand.
+      # Managed by desktop_hardening/tasks/gnome.yml -- do not edit by hand.
       /org/gnome/login-screen/banner-message-enable
       /org/gnome/login-screen/banner-message-text
   notify: dconf update

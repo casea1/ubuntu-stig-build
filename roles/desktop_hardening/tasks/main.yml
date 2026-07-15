@@ -1,0 +1,166 @@
+---
+# =============================================================================
+# desktop_hardening -- the GUI-specific hardening that USG does NOT do.
+#
+# The development profile is hardened by Canonical's USG (usg_harden role, which
+# runs BEFORE this role). USG applies the DISA STIG's SERVER controls (auditd,
+# PAM faillock, sshd, ufw, AIDE, GRUB, file perms, ...), so this role no longer
+# imports the ansible-lockdown role or the SSG gap files -- USG owns all of that.
+#
+# What USG does NOT know about is GNOME/GDM and this fleet's desktop carve-outs,
+# and it may lock down the box in ways that break the remote GUI. So this role,
+# running AFTER USG, does only the desktop-specific pieces:
+#   1. RE-ASSERT the GUI so USG can't leave the box headless/unreachable:
+#      graphical target, GDM, xrdp, Wayland-off, and the RDP/SSH firewall openings.
+#   2. GDM login-screen DCSA banner (greeter.dconf-defaults).
+#   3. GNOME desktop dconf hardening + login banner (gnome.yml -- screensaver
+#      lock/idle, automount off, Ctrl-Alt-Del off, smartcard-removal lock).
+#   4. The usb-storage carve-out (the DISA "disable USB mass storage" control
+#      blacklists the module; re-enable it so the dta group policy can govern USB).
+#
+# NOTE: because USG applies the real STIG, do NOT also run the old SSG pam/audit
+# gap files here -- double-configuring PAM/auditd on top of USG risks lockout.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# 0) SAFETY: don't ship a FAKE-hardened development image.
+# This role stamps the DCSA banner + branding regardless of USG. If USG SKIPPED
+# (box not Pro-attached) the box would boot with a DoD warning banner but ZERO
+# DISA controls -- looking hardened while being wide open. Fail loudly unless the
+# operator DELIBERATELY built an unhardened box (usg_fix_enabled=false / HARDEN=0).
+# (_usg_active is set by usg_harden, which runs immediately before this role.)
+# ---------------------------------------------------------------------------
+- name: "SAFETY | Refuse to ship an unhardened development box that looks hardened"
+  ansible.builtin.assert:
+    that:
+      - (not (usg_fix_enabled | default(true) | bool)) or (_usg_active | default(false) | bool)
+    fail_msg: >-
+      This development box is NOT Ubuntu Pro-attached, so USG hardening was
+      SKIPPED -- but the profile still applies the DCSA banner + branding, which
+      would make an UNHARDENED box masquerade as hardened. Supply a Pro token
+      (bootstrap.sh prompt, or {{ ubuntu_pro_token_file }}), or set
+      usg_fix_enabled=false (HARDEN=0) to deliberately build an unhardened box.
+    quiet: true
+
+# ---------------------------------------------------------------------------
+# 1) RE-ASSERT THE REMOTE GUI  (undo anything USG's server hardening tightened)
+# ---------------------------------------------------------------------------
+- name: "GUI | Keep booting to the graphical target (USG server hardening may set multi-user)"
+  ansible.builtin.file:
+    src: /usr/lib/systemd/system/graphical.target
+    dest: /etc/systemd/system/default.target
+    state: link
+    force: true
+
+- name: "GUI | Ensure the display manager + RDP services stay enabled"
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+  loop:
+    - gdm3
+    - xrdp
+    - xrdp-sesman
+  # xrdp units are absent if dev_rdp_enabled was false; don't fail on that.
+  register: _dh_svc
+  failed_when:
+    - _dh_svc is failed
+    - "'Could not find the requested service' not in (_dh_svc.msg | default(''))"
+
+- name: "GUI | Re-assert Wayland disabled in GDM (xrdp needs Xorg)"
+  ansible.builtin.lineinfile:
+    path: /etc/gdm3/custom.conf
+    regexp: '^\s*#?\s*WaylandEnable\s*='
+    line: "WaylandEnable=false"
+    insertafter: '^\[daemon\]'
+    state: present
+  failed_when: false        # custom.conf is created by remote_desktop; tolerate absence
+
+# Host firewall: GUARANTEE it is active (never leave a dev box wide open) and
+# re-open the rate-limited inbound services. USG normally enables ufw, but on an
+# audit-only build (usg_fix_enabled=false) USG doesn't, so we set default-deny +
+# enable it here too -- idempotent if USG already did. Driven from the shared
+# stig_firewall_limit_ports tunable (so operator-added ports are honoured), plus
+# RDP when enabled.
+- name: "FW | Default policy: deny inbound"
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+
+- name: "FW | Default policy: allow outbound"
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+
+- name: "FW | Rate-limit each configured inbound service (+ RDP)"
+  community.general.ufw:
+    rule: limit
+    port: "{{ item.port }}"
+    proto: "{{ item.proto | default('tcp') }}"
+    comment: "STIG rate-limited inbound ({{ item.port }})"
+  loop: "{{ (stig_firewall_limit_ports | default([{'port': 'ssh', 'proto': 'tcp'}])) + _rdp_fw }}"
+  vars:
+    _rdp_fw: "{{ [{'port': dev_rdp_port | default(3389), 'proto': 'tcp'}] if (dev_rdp_enabled | default(true) | bool) else [] }}"
+  loop_control:
+    label: "{{ item.port }}/{{ item.proto | default('tcp') }}"
+
+- name: "FW | Enable ufw and persist across reboot"
+  community.general.ufw:
+    state: enabled
+
+# ---------------------------------------------------------------------------
+# 2) GDM LOGIN-SCREEN DCSA BANNER  (Ubuntu's greeter.dconf-defaults)
+# ---------------------------------------------------------------------------
+# GDM reads the greeter banner from /etc/gdm3/greeter.dconf-defaults, which gdm's
+# generate-config bakes into the gdm dconf db at startup. The string value MUST be
+# wrapped in GVariant single quotes ('...') or generate-config rejects the keyfile.
+- name: "BANNER | Set the GDM login-screen DCSA banner (greeter.dconf-defaults)"
+  community.general.ini_file:
+    path: /etc/gdm3/greeter.dconf-defaults
+    section: org/gnome/login-screen
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    mode: 'go-wx'
+  loop:
+    - { option: banner-message-enable, value: "true" }
+    - { option: banner-message-text, value: "'{{ dcsa_gui_banner }}'" }
+
+# ---------------------------------------------------------------------------
+# 3) GNOME desktop dconf hardening + login banner (dconf keyfiles + locks)
+# ---------------------------------------------------------------------------
+- name: "Apply GNOME dconf hardening (screensaver/automount/ctrl-alt-del + banner)"
+  ansible.builtin.include_tasks: gnome.yml
+
+# ---------------------------------------------------------------------------
+# 4) USB MASS STORAGE -- reconcile the STIG control with the dta carve-out.
+# The DISA STIG "disable USB mass storage" control (applied by USG) blacklists the
+# usb-storage kernel module, which disables USB storage for EVERYONE and would
+# defeat the local_accounts dta carve-out (no /dev/sdX ever appears). This fleet
+# REQUIRES USB for data-transfer agents, so -- when usb_storage_enabled (default)
+# -- we strip that blacklist AFTER USG and load the module; the dta udev + polkit
+# policy then governs WHO may mount. Documented removable-media deviation (POA&M).
+# Set usb_storage_enabled: false to keep USB storage fully disabled.
+# ---------------------------------------------------------------------------
+- name: "USB | Find modprobe.d files that disable usb-storage (STIG control)"
+  ansible.builtin.find:
+    paths: /etc/modprobe.d
+    patterns: "*.conf"
+    contains: '(install|blacklist)\s+usb[-_]?storage'
+  register: stig_usb_blacklist
+  when: usb_storage_enabled | default(true) | bool
+
+- name: "USB | Strip the usb-storage install/blacklist lines (re-enable for the dta carve-out)"
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '(?m)^[ \t]*(install[ \t]+usb[-_]?storage[ \t]+.*|blacklist[ \t]+usb[-_]?storage)[ \t]*$'
+    replace: ''
+  loop: "{{ stig_usb_blacklist.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: usb_storage_enabled | default(true) | bool
+
+- name: "USB | Load the usb-storage module now (no reboot needed)"
+  community.general.modprobe:
+    name: usb-storage
+    state: present
+  failed_when: false
+  when: usb_storage_enabled | default(true) | bool

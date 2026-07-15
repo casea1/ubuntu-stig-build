@@ -1,6 +1,6 @@
 ---
-# SERVER profile baseline -- a deliberately LEAN headless set.
-# Included from main.yml only when is_server. We install just what a bare Ubuntu
+# AI-server profile baseline -- a deliberately LEAN headless set.
+# Included from main.yml only when is_ai. We install just what a bare Ubuntu
 # Pro server needs before the two big roles take over:
 #   - the ai_stack role installs docker-ce + the NVIDIA stack + the containers
 #   - the usg_harden role installs `usg` (via Ubuntu Pro) and runs it

@@ -25,17 +25,20 @@ runs.
 
 ## Scope
 
-**In:** a `deployment_profile: desktop | server` switch; a lean server baseline; the
+**In:** a `deployment_profile: development | ai` switch; a lean AI-server baseline; the
 `ai_stack` role (docker-ce ≥ 29.5.2, NVIDIA driver + container toolkit, a rendered
 Docker Compose stack with only the selected services); the `usg_harden` role (Ubuntu
 Pro attach, USG install, `usg fix`, `usg audit`); bootstrap + docs.
 
 **Out:** multi-node/orchestrated inference (single-host Compose only); model
 lifecycle management (vLLM serves one configured model); Kubernetes; non-NVIDIA
-accelerators; converting the desktop to USG.
+accelerators; converting the development profile to USG.
 
-**Unchanged:** the entire desktop path is byte-identical — `deployment_profile`
-defaults to `desktop`, and the desktop roles are gated `when: is_desktop`.
+**Naming:** this doc predates the `development`/`ai` profile names — the first release
+called them `desktop`/`server` (still accepted as aliases). Read `desktop`→`development`,
+`server`→`ai`, `is_desktop`→`is_development`, `is_server`→`is_ai` throughout. The
+development path is unchanged; `deployment_profile` defaults to `development`, and the
+development roles are gated `when: is_development`.
 
 ## Decisions (recorded from requirements)
 

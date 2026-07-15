@@ -1,9 +1,9 @@
 ---
-# DESKTOP profile baseline -- the full engineering-workstation app set.
-# Included from main.yml only when is_desktop. Unchanged from the original
-# base_packages content (the apt-cache refresh now lives in main.yml, which runs
-# for both profiles). Runs BEFORE hardening so that umask/mount restrictions
-# don't interfere with package and pip operations.
+# DEVELOPMENT profile baseline -- the full engineering-workstation app set.
+# Included from main.yml only when is_development. The GNOME desktop + xrdp are
+# added separately by the remote_desktop role; this file is the CLI/app tooling.
+# The apt-cache refresh lives in main.yml (runs for both profiles). Runs BEFORE
+# hardening so that umask/mount restrictions don't interfere with package/pip ops.
 
 - name: Install core packages
   ansible.builtin.apt:

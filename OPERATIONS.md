@@ -9,6 +9,13 @@ still has internet, before it's moved to an air-gapped network.
 
 ## What it does, in order
 
+> **Profiles + USG.** There are now two profiles, `development` (default) and `ai` (old names
+> `desktop`/`server` still work). **Both harden with Canonical's USG** (`usg fix disa_stig`), not the
+> ansible-lockdown role — see [Ubuntu Pro Server (USG + AI stack)](#ubuntu-pro-server-usg--ai-stack)
+> and [Remote desktop](#remote-desktop-development-profile--gnome-over-rdp). The steps below describe
+> the legacy `development` pipeline (ansible-lockdown + OpenSCAP); the hardening/scan steps (3, 4) are
+> superseded by `usg_harden` + `desktop_hardening` and `usg audit`.
+
 1. **base_packages** — ClamAV, Wireshark/tshark, Python3 (+pip/venv), PuTTY (GUI) and
    putty-tools (plink/pscp/psftp), OpenSSH client, git, OpenSCAP, and your editor
    (VS Code by default; vim/neovim selectable).
@@ -323,19 +330,63 @@ your passphrase as recovery. If you've forgotten the passphrase but the box stil
 TPM, a new one can still be added from the running (unlocked) system — a more involved procedure; ask
 before attempting.
 
+## Remote desktop (development profile — GNOME over RDP)
+
+The `development` profile installs a GNOME desktop and **xrdp** (via the `remote_desktop` role) so
+the box can run on headless server hardware that users reach over RDP. Driven from the
+**`REMOTE DESKTOP`** block in `group_vars/all.yml`.
+
+> **Hardening interaction.** `development` is hardened by **USG** (`usg fix disa_stig`, needs an
+> Ubuntu Pro token — same as `ai`). USG's DISA profile targets Ubuntu Server, so the `desktop_hardening`
+> role runs **after** USG to re-assert the graphical target, GDM, xrdp, Wayland-off, and the SSH+RDP
+> ufw openings, then applies the GNOME/GDM banner + dconf locks + USB carve-out. **Validate on a
+> throwaway VM first** — after `usg fix` + reboot, confirm RDP still connects and lands in a GNOME
+> session. If USG disabled something, the fix belongs in `desktop_hardening` (re-assert it there).
+
+**Connecting.** Point any RDP client (Windows `mstsc`, Remmina, FreeRDP) at `‹host›:3389`. The
+session is TLS-secured; accept the self-signed cert on first connect (or set `rdp_tls_cert` /
+`rdp_tls_key` to a trusted pair). Log in as a **local account** — accounts ship locked, so set a
+password first (`sudo passwd <user>`). RDP auth goes through PAM, so the STIG faillock lockout
+applies (3 bad tries → locked; `sudo faillock --user <name> --reset` to recover).
+
+**What the role does (and the 24.04 gotchas it handles):**
+- Installs `{{ dev_gnome_package }}` (default `ubuntu-desktop-minimal`) + `gdm3`, sets the default
+  boot target to graphical.
+- Installs `xrdp` + `xorgxrdp`, and **disables Wayland** (`WaylandEnable=false` in
+  `/etc/gdm3/custom.conf`) — Wayland can't be driven by xrdp and yields a black screen.
+- Adds the `xrdp` user to **`ssl-cert`** so it can read the TLS key, and points `xrdp.ini` at the
+  snakeoil cert with `security_layer=tls`, `crypt_level=high`.
+- Drops a **polkit rule** (`/etc/polkit-1/rules.d/02-allow-colord-packagekit.rules`) so the
+  colord "authentication required" prompt and repo-refresh prompt don't block/crash the session.
+- **Rate-limits RDP** on ufw (`ufw limit 3389/tcp`); the rule is added here and enforced once
+  `stig_harden` enables ufw (default-deny inbound).
+
+**Security notes / POA&M.** RDP (3389) is an inbound remote-access service and a STIG-relevant
+exposure. It's TLS-wrapped, rate-limited, and PAM/faillock-gated, but for a real deployment prefer
+**tunnelling RDP over SSH** or restricting the ufw rule to source subnets, and consider setting
+`dev_rdp_allowed_group` to gate RDP to a named group. Set `dev_rdp_enabled: false` to omit xrdp
+entirely (GUI stays, reachable only at the physical console).
+
+**Troubleshooting a black screen / instant disconnect:**
+- Confirm Wayland is off: `grep WaylandEnable /etc/gdm3/custom.conf` → `false`; reboot after a change.
+- Confirm xrdp can read the key: `id xrdp` includes `ssl-cert`; `sudo systemctl status xrdp`.
+- Don't be logged into the same account on the physical console (tty) at the same time — GDM's
+  console session holds D-Bus names the RDP session needs.
+- Logs: `sudo journalctl -u xrdp -u xrdp-sesman` and `~/.xorgxrdp.*.log`.
+
 ## Ubuntu Pro Server (USG + AI stack)
 
-The `server` profile (`deployment_profile: server`, or `PROFILE=server` to `bootstrap.sh`)
+The `ai` profile (`deployment_profile: ai`, or `PROFILE=ai` to `bootstrap.sh`)
 builds a headless Ubuntu Pro AI box. Role order: `base_packages` (lean) → `ai_stack` →
-`usg_harden` → optional `tpm_luks_unlock`. Same rule as the desktop: **install online, harden
-last.** Design rationale is in [docs/ai-server-design.md](docs/ai-server-design.md).
+`usg_harden` → optional `tpm_luks_unlock`. Same rule as the development profile: **install online,
+harden last.** Design rationale is in [docs/ai-server-design.md](docs/ai-server-design.md).
 
 ### Running it on the server (online)
 
 ```bash
 # All tools, GPU, hardening. Prompts (hidden) for the Ubuntu Pro token:
 curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh \
-  | sudo PROFILE=server bash
+  | sudo PROFILE=ai bash
 
 # Env-var options (piped bash can't take flags):
 #   TOOLS=docker,vllm,open_webui,pgvector,docling   which AI tools (default: all)
