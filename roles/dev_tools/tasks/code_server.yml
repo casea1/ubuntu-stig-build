@@ -1,0 +1,63 @@
+---
+# =============================================================================
+# code-server -- VS Code in the browser, for the development profile. Installed
+# here (online, before hardening) and run as a per-user systemd service so users
+# can reach a full VS Code from a browser in addition to RDP.
+#
+# Served over self-signed TLS with a generated password (kept root-only); the
+# desktop_hardening role opens dev_code_server_port on the firewall after USG.
+# =============================================================================
+
+- name: "CODE-SERVER | Install code-server (coder's official installer)"
+  # coder's upstream installer adds their apt repo and installs the .deb (same
+  # curl|sh pattern as bootstrap.sh). Pin a version with dev_code_server_version for
+  # frozen images; empty = latest. Idempotent via `creates` (skips once installed).
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://code-server.dev/install.sh | sh -s -- {{ ('--version ' ~ dev_code_server_version) if (dev_code_server_version | default('') | length > 0) else '' }}
+    executable: /bin/bash
+    creates: /usr/bin/code-server
+
+- name: "CODE-SERVER | Resolve the service user's home directory"
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ dev_tools_user }}"
+
+- name: "CODE-SERVER | Configure + enable the service for {{ dev_tools_user }}"
+  # Only when the account exists (the installer account is hand-created; the
+  # playbook must not invent it).
+  when: dev_tools_user in ansible_facts.getent_passwd
+  vars:
+    _cs_home: "{{ ansible_facts.getent_passwd[dev_tools_user][4] }}"
+    # Generated once, persisted root-only, stable across re-runs.
+    _cs_password: "{{ lookup('ansible.builtin.password', '/etc/code-server/' ~ dev_tools_user ~ '.password chars=ascii_letters,digits length=24') }}"
+  block:
+    - name: "CODE-SERVER | Ensure the user's config dir exists"
+      ansible.builtin.file:
+        path: "{{ _cs_home }}/.config/code-server"
+        state: directory
+        owner: "{{ dev_tools_user }}"
+        group: "{{ dev_tools_user }}"
+        mode: "0700"
+
+    - name: "CODE-SERVER | Write the user's config.yaml (bind, auth, TLS)"
+      ansible.builtin.copy:
+        dest: "{{ _cs_home }}/.config/code-server/config.yaml"
+        owner: "{{ dev_tools_user }}"
+        group: "{{ dev_tools_user }}"
+        mode: "0600"
+        content: |
+          # Managed by ansible (dev_tools/code_server.yml) -- do not edit by hand.
+          bind-addr: {{ dev_code_server_bind_addr }}:{{ dev_code_server_port }}
+          auth: password
+          password: {{ _cs_password }}
+          cert: {{ (dev_code_server_tls | default(true) | bool) | lower }}
+      no_log: true
+
+    - name: "CODE-SERVER | Enable + start the per-user service"
+      ansible.builtin.systemd:
+        name: "code-server@{{ dev_tools_user }}"
+        enabled: true
+        state: started
+        daemon_reload: true

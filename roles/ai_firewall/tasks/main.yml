@@ -51,6 +51,18 @@
   loop_control:
     label: "{{ item.port }}/{{ item.proto | default('tcp') }} from {{ item.from | default('any', true) }}"
 
+- name: "AI FW | Open Portainer's web UI ({{ portainer_https_port | default(9443) }}/tcp, rate-limited)"
+  # Portainer mounts the Docker socket (root-equivalent), so this is a privileged
+  # surface -- rate-limit it, and ideally restrict it to an admin subnet by adding
+  # a matching entry to ai_firewall_allow_ports with `from:` instead of leaving it
+  # open here. (This opens it to any source; tighten for production.)
+  community.general.ufw:
+    rule: limit
+    port: "{{ portainer_https_port | default(9443) | string }}"
+    proto: tcp
+    comment: "Portainer web UI (rate-limited)"
+  when: portainer_enabled | default(false) | bool
+
 - name: "AI FW | Enable ufw and persist across reboot"
   community.general.ufw:
     state: enabled
