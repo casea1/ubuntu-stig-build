@@ -1,30 +1,68 @@
 # ubuntu-stig-build
 
-Ansible-pull project that STIG-hardens a fresh Ubuntu 24.04 LTS install in a single run — all
-while the machine still has internet, before it is moved to an air-gapped network. It ships **two
-deployment profiles**, selected by `deployment_profile` (default `development`). Both can run on
-headless server hardware:
+A one-command **imaging / configuration tool** for Ubuntu 24.04 LTS. On a freshly installed
+machine — while it still has internet, before it's air-gapped — it installs the software for the
+machine's role, **DoD-STIG-hardens it** with Canonical's Ubuntu Security Guide (`usg fix disa_stig`),
+and writes the compliance report. You pick a **profile**, run one `curl | sudo bash`, reboot, and
+collect the report from `/opt/ia`.
 
-- **`development`** — a **DoD-STIG-hardened engineering workstation**: installs the dev toolchain,
-  a **GNOME desktop + xrdp** so users **RDP in for a full GUI** (it installs the GUI, so a server
-  base works too), then hardens with **Canonical's Ubuntu Security Guide** (`usg fix disa_stig`)
-  plus a small `desktop_hardening` role that re-asserts the GUI/RDP and adds the GNOME/GDM and USB
-  carve-outs USG doesn't cover. `usg audit` is the compliance report. Needs an **Ubuntu Pro** token.
-- **`ai`** — turns a **Ubuntu Pro 24.04 Server** into a hardened **host for a local-AI inference
-  stack**: installs **Docker + the NVIDIA GPU stack**, hardens with the same **USG**
-  (`usg fix disa_stig`), and **opens the inbound ports** your containers need. You deploy the AI
-  tools (vLLM / Open WebUI / pgvector / Docling) from your **own prebuilt images + compose files** —
-  Ansible does host prep, not container management. See **[the `ai` server profile](#ai-server-profile)**.
+## Profiles
 
-> **Both profiles now harden with Canonical's USG** (they need an Ubuntu Pro token), not the
-> community ansible-lockdown role. The first release named the profiles `desktop`/`server` and used
-> ansible-lockdown + an OpenSCAP scan on the desktop; those names are still accepted as aliases.
+Pick one with `deployment_profile` (or `PROFILE=` on `bootstrap.sh`). Default: **`development`**.
 
-You install Ubuntu, run one command, reboot, and collect the report.
+| Profile | For | What it builds |
+|---|---|---|
+| **`development`** | Engineering **workstation** | Dev toolchain + a **GNOME desktop reached over RDP** (it installs the GUI, so a server base works too) + browser VS Code (code-server) + Cockpit. |
+| **`ai`** | Local-AI **inference server** | **Host prep only** — Docker + the NVIDIA GPU stack + Cockpit + Portainer, with your containers' inbound ports opened. You deploy the AI tools (vLLM / Open WebUI / pgvector / Docling) from your **own** prebuilt images + compose files. |
+
+**Both** profiles harden with **USG** (so both need an **Ubuntu Pro** token), create the org
+accounts/groups and the `/opt/ia` + `/opt/it` admin folders, and drop the USG compliance report in
+**`/opt/ia`**. `desktop`/`server` are accepted as aliases for `development`/`ai`.
+
+## Get started
+
+**1 — Prerequisites.** A fresh Ubuntu 24.04 install with internet access:
+
+- **`development`** — Ubuntu **Desktop** (or Server), plus a local account whose name matches
+  `dev_tools_user` in `group_vars/all.yml` (default `austin_case_adm`).
+- **`ai`** — Ubuntu **Server**, with **Ubuntu Pro** selected during install.
+- **Both** need an **Ubuntu Pro token** — `bootstrap.sh` prompts for it (hidden), or drop it in
+  `/etc/ubuntu-advantage/pro-token` beforehand.
+
+**2 — Run one command** on the target machine:
+
+```bash
+# Development workstation (default profile):
+curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo bash
+
+# AI server:
+curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo PROFILE=ai bash
+
+# AI server, audit-only first pass (installs USG + writes the report, but does NOT apply `usg fix` yet):
+curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo PROFILE=ai HARDEN=0 bash
+```
+
+The pipeline runs as a detached systemd unit named `stig-build`. The `development` run also prompts
+(hidden) for the disk-encryption password to enable TPM auto-unlock (press Enter to skip).
+
+**3 — Watch it, then collect the report:**
+
+```bash
+journalctl -u stig-build -f
+systemctl status stig-build        # active (exited) = success
+```
+
+When it finishes, grab the USG compliance report from **`/opt/ia/`** (admin-readable) **while still
+online**, then **reboot** to apply USG (and load the GPU driver on `ai`). The `development` box boots
+to a graphical login with the DCSA banner; on `ai`, deploy your prebuilt compose stack.
+
+> **More detail below:** [How it works](#how-it-works) · [Development profile](#development-profile--gui-over-rdp) ·
+> [AI server profile](#ai-server-profile) · [Hardening posture (for IA)](#hardening-posture-for-your-ia-team) ·
+> [Configuration](#configuration). New to this? Start with the **[Imaging Guide](docs/imaging-guide.md)**.
 
 ---
 
-## What it does
+## How it works
 
 The work is split into Ansible roles that run in a **deliberate order** —
 install → configure → dev tools → harden → scan. Order matters: hardening tightens `umask`, sets
@@ -125,68 +163,6 @@ compliance content must be downloaded while the box is still online.
   - `stig-report-<date>.html` — human-readable report
   - `stig-viewer-<date>.xml` — importable into DISA STIG Viewer
   - `stig-arf-<date>.xml` — full ARF results
-
----
-
-## Quick start
-
-Two profiles, **one command each** — they differ only by the `PROFILE` variable. Both run the same
-`bootstrap.sh`, install Ansible, and run the full pipeline as a detached systemd unit named
-`stig-build` (detached so the GDM/network restarts during hardening can't kill it).
-
-> **Both profiles need an Ubuntu Pro token** (USG does the hardening). `bootstrap.sh` prompts for it
-> (hidden input); or drop it out-of-band in `/etc/ubuntu-advantage/pro-token`. See
-> [OPERATIONS.md](OPERATIONS.md#ubuntu-pro-server-usg--ai-stack).
-
-### 🖥️  Development workstation — `deployment_profile: development` (default)
-
-**Target:** a freshly installed **Ubuntu 24.04 Desktop** (a Server base works too — it installs the
-GUI itself), with internet access and a local account whose name matches `dev_tools_user` in
-`group_vars/all.yml` (default `austin_case_adm`). Builds the engineering workstation + a **GNOME
-desktop over RDP**, hardened by USG.
-
-```bash
-# Development workstation (default profile — no PROFILE needed):
-curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo bash
-```
-
-It also **prompts (hidden) for the disk-encryption password** to enable TPM auto-unlock (type it, or
-press Enter to skip).
-
-### 🧠  AI server — `deployment_profile: ai`
-
-**Target:** a freshly installed **Ubuntu 24.04 Server** with **Ubuntu Pro** selected. **Host prep
-only** — Docker + the NVIDIA GPU stack + USG hardening, and it opens your containers' inbound ports.
-You deploy the AI tools (vLLM / Open WebUI / pgvector / Docling) from your **own** prebuilt images +
-compose files.
-
-```bash
-# AI server — host prep + GPU + USG hardening (note the PROFILE=ai):
-curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo PROFILE=ai bash
-
-# Audit-only first pass — installs USG + writes the report but does NOT apply `usg fix`
-# (validate hardening on a throwaway box before committing to it):
-curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo PROFILE=ai HARDEN=0 bash
-```
-
-> `desktop`/`server` are still accepted as aliases for `development`/`ai`.
-
-### Watch it, then collect the report (both profiles)
-
-```bash
-journalctl -u stig-build -f
-systemctl status stig-build        # active (exited) = success
-```
-
-When it finishes, **collect the USG compliance report from `/opt/ia/` while still online** (it
-auto-copies there; readable by the admin/`sudo` group), then **reboot** to apply USG (and load the
-GPU driver on `ai`). The development box comes up to a graphical login showing the DCSA banner; on
-`ai`, deploy your prebuilt compose stack. See the **[hardening posture](#hardening-posture-for-your-ia-team)**
-below for exactly what gets fixed vs. what stays a POA&M.
-
-**New to this?** Start with the **[Imaging Guide](docs/imaging-guide.md)** — the complete end-to-end
-runbook (Ubuntu install → setup → run → post-install checklist → troubleshooting). See
-**[OPERATIONS.md](OPERATIONS.md)** for subsystem deep-dives and gotchas.
 
 ---
 
