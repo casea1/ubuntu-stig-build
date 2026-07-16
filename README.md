@@ -315,14 +315,18 @@ role runs **after** USG + the firewall and closes these (none can lose password/
 | ufw rate-limit **all** ports (`ufw_rate_limit`, UBTU-24-600200) | on `ai`, rate-limiting the Open WebUI / vLLM / Docling ports would throttle inference — only **management** ports (SSH/RDP/Cockpit/Portainer) are `ufw limit`ed | firewall roles |
 | GNOME login-banner **text**, blank-screensaver, USB→`dta` | mission requirements (DCSA banner, org wallpaper, USB data-transfer) | OPERATIONS.md POA&M |
 
-### ❌ Open POA&M — need a secret, infra, or a kernel swap (NOT auto-applied)
+### ❌ Open POA&M — need a secret or infra (NOT auto-applied)
 
 | Finding | To close it |
 | --- | --- |
-| **FIPS mode** (`is_fips_mode_enabled`) | set `usg_enable_fips: true` (swaps the kernel; validate first) + reboot |
 | **UEFI/GRUB boot-loader password** (`grub2_uefi_password`) | provide a hashed password (`grub2-mkpasswd-pbkdf2`) out-of-band |
 | **Audit-log offload** (`auditd_offload_logs`) | point at a remote collector (`stig_audit_remote_server`) |
 | **Full-disk encryption** (`Encrypt Partitions`) | bake LUKS into the Ubuntu autoinstall (pre-install; see OPERATIONS.md) |
+
+> **FIPS mode (`is_fips_mode_enabled`) is now ENABLED** (`usg_enable_fips: true`). `usg_harden` runs
+> `pro enable fips-updates` (installs the FIPS kernel/modules) and flags a reboot — the check passes
+> **after that reboot**. It swaps the running kernel, so validate on a throwaway box if you run
+> unusual crypto/dev tooling; set `usg_enable_fips: false` to defer it (POA&M).
 
 ### NTP / time source
 

@@ -137,8 +137,10 @@ doesn't have. Document each as a POA&M for your assessor:
 
 - **Disk encryption (`Encrypt Partitions`)** — LUKS happens in the installer, before
   ansible-pull runs. See *Full-disk encryption at install time* below.
-- **FIPS mode (`/proc/sys/crypto/fips_enabled`)** — requires an Ubuntu Pro token
-  (`pro enable fips-updates`) + reboot. Not enabled on this image.
+- **FIPS mode (`/proc/sys/crypto/fips_enabled`)** — **ENABLED** (`usg_enable_fips: true`).
+  `usg_harden` runs `pro enable fips-updates` (installs the FIPS kernel/modules) and flags a reboot;
+  the `is_fips_mode_enabled` check passes **only after that reboot**. Swaps the running kernel — set
+  `usg_enable_fips: false` to defer it (then it's a POA&M).
 - **Smartcard / CAC + SSSD** (opensc, pam_pkcs11, SSSD enable / cert-mapping / OCSP / cache,
   "Enable Smart Card Logins in PAM") — this image is **password-login only** by decision. The
   one harmless smartcard-adjacent control (GNOME *lock-on-smartcard-removal*) IS set.
@@ -474,8 +476,9 @@ post-reboot numbers.
   `sudo passwd <admin>` and re-run.
 - **Run-once.** The fix is stamped at `/var/lib/usg-harden/applied-profile`, so re-running the
   build doesn't re-apply it. Force a re-fix with `-e usg_force_fix=true`.
-- **FIPS.** Off by default (`usg_enable_fips`) — it swaps the kernel via `pro enable
-  fips-updates` and needs a reboot. Validate on a throwaway box first; otherwise it's a POA&M.
+- **FIPS.** **On** (`usg_enable_fips: true`) — the role runs `pro enable fips-updates` (swaps to the
+  FIPS kernel) and flags a reboot; `is_fips_mode_enabled` passes only **after** that reboot. Validate
+  on a throwaway box if you run unusual crypto/dev tooling; set `usg_enable_fips: false` to defer (POA&M).
 - **Manual audit any time:** `sudo usg audit disa_stig --tailoring-file /etc/usg/managed-tailoring.xml`
   (USG writes its results under `/var/lib/usg/`; the build copies them to `/opt/ia/`). To
   customize/relax rules further, generate your own tailoring file (`usg generate-tailoring …`) and

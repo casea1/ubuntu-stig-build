@@ -621,10 +621,13 @@ ubuntu_pro_token_file: /etc/ubuntu-advantage/pro-token
 
 # ---- FIPS ------------------------------------------------------------------
 # DISA-STIG formally requires FIPS-validated crypto. true => the role runs
-# `pro enable fips-updates` (installs the FIPS kernel/modules; needs a REBOOT).
-# Off by default because it swaps the kernel -- validate on a throwaway box first,
-# then flip true. Left off, FIPS is a documented POA&M.
-usg_enable_fips: false
+# `pro enable fips-updates` (installs the FIPS kernel/modules) and flags a REBOOT.
+# ENABLED by fleet decision (closes is_fips_mode_enabled / UBTU-24-600030).
+# IMPORTANT: this swaps the running kernel to the FIPS kernel, so:
+#   - the `is_fips_mode_enabled` check only passes AFTER a reboot;
+#   - validate on a throwaway box first if you run unusual crypto/dev tooling.
+# Set false to defer it (then FIPS is a documented POA&M).
+usg_enable_fips: true
 
 # ---- USG fix (the disruptive remediation) ----------------------------------
 # Mirrors the desktop's `ubtu24stig_disruption_high` safety philosophy. When
