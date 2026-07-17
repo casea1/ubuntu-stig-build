@@ -292,7 +292,7 @@ per-rule detail (with rule IDs and rationale) lives in
 **The USG audit report auto-copies to `/opt/ia/`** on every run (HTML + XCCDF), readable by the admin
 (`sudo`) group — hand that folder to your assessor. It's regenerated *after* remediation + firewall so
 it reflects the fully-built box, not the mid-build snapshot. Re-run any time:
-`sudo usg audit disa_stig --tailoring-file /etc/usg/managed-tailoring.xml`.
+`sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml`.
 
 ### ✅ Additionally remediated by `usg_remediate` (every run, idempotent)
 

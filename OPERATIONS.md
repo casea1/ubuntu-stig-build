@@ -188,7 +188,7 @@ every pull (nothing here can lose password/SSH login):
 After remediation the role **re-runs `usg audit`** (Pro-attached boxes; `usg_remediate_reaudit`)
 so the report in `usg_report_dir` reflects the fully-built box, not the mid-build snapshot.
 Re-run manually any time with
-`sudo usg audit disa_stig --tailoring-file /etc/usg/managed-tailoring.xml`.
+`sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml`.
 
 > **`ufw` rate-limit (`ufw_rate_limit`, UBTU-24-600200)** stays a **documented deviation on the
 > `ai` profile**: the STIG check wants *every* listening port rate-limited, but rate-limiting the
@@ -461,7 +461,7 @@ curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/boots
 Watch: `journalctl -u stig-build -f`. The `usg audit` report (HTML + XCCDF) auto-copies to
 **`/opt/ia/`** (admin-readable — `usg_remediate` re-runs the audit at the end so it reflects the
 fully-built box). **Reboot** afterwards to apply USG controls and load the NVIDIA driver,
-then re-run `sudo usg audit disa_stig --tailoring-file /etc/usg/managed-tailoring.xml` for accurate
+then re-run `sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml` for accurate
 post-reboot numbers.
 
 ### USG hardening
@@ -479,7 +479,7 @@ post-reboot numbers.
 - **FIPS.** **On** (`usg_enable_fips: true`) — the role runs `pro enable fips-updates` (swaps to the
   FIPS kernel) and flags a reboot; `is_fips_mode_enabled` passes only **after** that reboot. Validate
   on a throwaway box if you run unusual crypto/dev tooling; set `usg_enable_fips: false` to defer (POA&M).
-- **Manual audit any time:** `sudo usg audit disa_stig --tailoring-file /etc/usg/managed-tailoring.xml`
+- **Manual audit any time:** `sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml`
   (USG writes its results under `/var/lib/usg/`; the build copies them to `/opt/ia/`). To
   customize/relax rules further, generate your own tailoring file (`usg generate-tailoring …`) and
   point `usg_tailoring_file` at it.
