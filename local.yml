@@ -91,6 +91,11 @@
     # HARDENING  -- BOTH profiles harden with Canonical USG.
     # -------------------------------------------------------------------------
     - role: usg_harden              # Ubuntu Pro attach + `usg fix disa_stig` + `usg audit` -> report
+    - role: gpu_fips_module         # ai+FIPS: stage the fips-flavour NVIDIA module so GPUs survive the FIPS kernel swap
+      when:
+        - is_ai
+        - gpu_enabled | default(true)
+        - usg_enable_fips | default(false)
     - role: desktop_hardening       # development: GUI-preserving fixups AFTER USG (GNOME/GDM banner, USB, firewall)
       when: is_development
     - role: ai_firewall             # ai: open the prebuilt AI stack's inbound ports AFTER USG's default-deny

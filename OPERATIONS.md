@@ -500,6 +500,19 @@ prebuilt images + compose files**.
   require NVIDIA's CUDA apt repo / the graphics-drivers PPA); the role **asserts** the active driver
   ≥ `nvidia_driver_min_version` after reboot. Verify: `docker --version`, `docker model version`,
   `docker info | grep -i runtime`, `nvidia-smi`.  `ai_stack_user` is added to the `docker` group.
+- **GPU + FIPS (`gpu_fips_module`, runs after `usg_harden`):** Canonical's prebuilt NVIDIA modules
+  (`linux-modules-nvidia-<branch>-<variant>-<kernel>`) are **flavour-locked to the generic kernel**, so
+  when `usg_enable_fips` swaps in the FIPS kernel, `nvidia.ko` is missing after the reboot and
+  `nvidia-smi` fails ("couldn't communicate with the NVIDIA driver"). This role detects the installed
+  NVIDIA flavour + the installed FIPS kernel and **stages the matching `linux-modules-nvidia-*-fips`
+  module** (from the `esm.ubuntu.com/fips-updates` repo) for that kernel *before* the reboot — apt
+  installs modules for any installed kernel ABI, not just the running one — so the single FIPS reboot
+  brings up FIPS **and** working GPUs with no manual DKMS/driver rebuild. Prefers the flavour
+  metapackage (`…-fips`) so future FIPS-kernel updates keep the module in step; falls back to the
+  version-locked package. If the driver was installed via `.run`/DKMS (no prebuilt `-generic` package),
+  it logs a POA&M note instead. Gated `is_ai` + `gpu_enabled` + `usg_enable_fips`.
+  **Recovering a box where FIPS was enabled before this existed:** boot the `-fips` kernel, then
+  `sudo apt-get install -y linux-modules-nvidia-<branch>-<variant>-$(uname -r)` and `sudo modprobe nvidia`.
 - **Portainer (`ai_stack`, `portainer_enabled`):** a container-management web UI on
   `https://‹host›:9443` (opened by `ai_firewall`, rate-limited). **Set a strong admin password on
   first login** — Portainer locks itself out if left unconfigured for a few minutes. It mounts the

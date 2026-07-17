@@ -5,6 +5,12 @@
 #   2. install the nvidia-container-toolkit
 #   3. wire the `nvidia` runtime into Docker so containers can request GPUs
 # Runs before your container deploy, so restarting Docker here bounces nothing.
+#
+# NOTE (FIPS): the driver installed here uses Canonical's prebuilt modules for the
+# GENERIC kernel. When usg_enable_fips is set, usg_harden later swaps in the FIPS
+# kernel -- which those modules don't cover. The `gpu_fips_module` role (runs after
+# usg_harden, see local.yml) stages the matching fips-flavour NVIDIA module so the
+# GPU keeps working across the FIPS reboot with no manual rebuild.
 # =============================================================================
 
 # ---- 1. Host driver (optional) ---------------------------------------------
