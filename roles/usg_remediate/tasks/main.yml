@@ -187,7 +187,7 @@
 # ---------------------------------------------------------------------------
 # 5) RE-AUDIT -- regenerate the USG report so it reflects the fully-built,
 # remediated box rather than the mid-build snapshot. Pro-attached boxes only.
-# (_usg_active / _usg_tailoring_arg are facts set by usg_harden earlier in this play.)
+# (_usg_active / _usg_target are facts set by usg_harden earlier in this play.)
 # ---------------------------------------------------------------------------
 - name: "REMED | Regenerate the USG compliance report (post-build)"
   when:
@@ -195,7 +195,7 @@
     - _usg_active | default(false) | bool
   block:
     - name: "REMED | Re-run `usg audit {{ usg_profile }}` after remediation"
-      ansible.builtin.command: "usg audit {{ usg_profile }} {{ _usg_tailoring_arg | default('') }}"
+      ansible.builtin.command: "usg audit {{ _usg_target | default(usg_profile) }}"
       register: _reaudit
       changed_when: false
       failed_when: false

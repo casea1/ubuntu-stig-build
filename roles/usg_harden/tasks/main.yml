@@ -184,13 +184,17 @@
       register: _usg_tailoring_stat
       when: (_effective_tailoring_file | length) > 0
 
-    - name: "USG | Compute the tailoring CLI fragment"
+    - name: "USG | Compute the fix/audit target (tailoring file OR profile -- never both)"
+      # `usg fix|audit` rejects a profile AND a tailoring file together
+      # ("You cannot provide both a tailoring file and a profile!"). A tailoring
+      # file already declares the profile it extends, so when one is in play we pass
+      # ONLY `--tailoring-file <path>`; otherwise we pass the bare profile name.
       ansible.builtin.set_fact:
-        _usg_tailoring_arg: >-
+        _usg_target: >-
           {{ ('--tailoring-file ' ~ _effective_tailoring_file)
              if ((_effective_tailoring_file | length) > 0
                   and _usg_tailoring_stat.stat.exists | default(false))
-             else '' }}
+             else usg_profile }}
 
     # ---- Lockout backstop ---------------------------------------------------
     # `usg fix disa_stig` (and the DISA profile) require a usable password on an
@@ -235,7 +239,7 @@
       failed_when: false
 
     - name: "USG | Apply `usg fix {{ usg_profile }}` (disruptive; reboot after)"
-      ansible.builtin.command: "usg fix {{ usg_profile }} {{ _usg_tailoring_arg }}"
+      ansible.builtin.command: "usg fix {{ _usg_target }}"
       register: _usg_fix
       changed_when: _usg_fix.rc == 0
       when:
@@ -276,11 +280,22 @@
         group: "{{ usg_report_dir_group | default('root') }}"
         mode: "{{ usg_report_dir_mode | default('0750') }}"
 
+    - name: "USG | Snapshot the report set before the audit (to detect a fresh one)"
+      # usg audit returns rc=2 BOTH for a normal scan with failing rules AND for a
+      # usage error (e.g. profile+tailoring together) that produces no report, so rc
+      # alone can't tell success from failure. A successful run writes a NEW
+      # timestamped file, so we compare the file count before/after instead.
+      ansible.builtin.find:
+        paths: /var/lib/usg
+        patterns: ["*.html", "*.xml"]
+        file_type: file
+      register: _usg_reports_before
+
     - name: "USG | Run `usg audit {{ usg_profile }}` -> compliance report"
       # usg audit writes its HTML + XCCDF results into /var/lib/usg/ by default
       # (no output-path flags in the stock CLI). We run it plainly for maximum
       # version compatibility, then copy the artifacts into the collection dir.
-      ansible.builtin.command: "usg audit {{ usg_profile }} {{ _usg_tailoring_arg }}"
+      ansible.builtin.command: "usg audit {{ _usg_target }}"
       register: _usg_audit
       changed_when: false
       # A non-zero rc here just means "some rules failed" or a version quirk --
@@ -307,17 +322,21 @@
         label: "{{ item.path | basename }}"
 
     - name: "USG | Audit result"
+      # A fresh audit adds a new timestamped report, so the count grows; if it did
+      # NOT grow, the audit produced nothing (usage error / quirk) -- surface that
+      # loudly instead of pointing at stale reports.
       ansible.builtin.debug:
         msg: >-
-          {{ 'usg audit complete; reports in ' ~ usg_report_dir ~ ' (and /var/lib/usg).'
-             if (_usg_artifacts.files | default([]) | length) > 0
-             else 'usg audit produced no report (rc=' ~ _usg_audit.rc ~ '); run `sudo usg audit '
-                  ~ usg_profile ~ '` manually. stderr: ' ~ (_usg_audit.stderr | default('')) }}
+          {{ 'usg audit complete; fresh report in ' ~ usg_report_dir ~ ' (and /var/lib/usg).'
+             if ((_usg_artifacts.files | default([]) | length) > (_usg_reports_before.files | default([]) | length))
+             else 'usg audit produced NO new report (rc=' ~ _usg_audit.rc ~ '). stderr: '
+                  ~ (_usg_audit.stderr | default('') | trim)
+                  ~ ' | Run manually: sudo usg audit ' ~ (_usg_target | default(usg_profile)) }}
 
 - name: "USG | Reboot reminder"
   ansible.builtin.debug:
     msg: >-
       USG hardening applied. REBOOT this box now so all controls
       {{ '(including the FIPS kernel) ' if usg_enable_fips | default(false) | bool else '' }}take
-      effect, then re-run `sudo usg audit {{ usg_profile }}` for accurate post-reboot results.
+      effect, then re-run `sudo usg audit {{ _usg_target | default(usg_profile) }}` for accurate post-reboot results.
   when: usg_reboot_required | default(false) | bool
