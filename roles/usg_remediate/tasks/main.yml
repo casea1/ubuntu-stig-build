@@ -116,10 +116,15 @@
         - _audit_dir.stat.isdir | default(false)
 
 # ---------------------------------------------------------------------------
-# 3) CHRONY -- remote time source configured with the `server` directive (STIG
-# wants `server`, not `pool`). chronyd_specify_remote_server + chronyd_server_directive
+# 3) CHRONY -- remote time source, configured DIRECTLY IN /etc/chrony/chrony.conf.
+# The SSG OVAL reads chrony.conf (and its confdir includes) but NOT sourcedir/
+# *.sources, so the directives must live in chrony.conf to satisfy:
+#   chronyd_specify_remote_server  -> a `server` line
+#   chronyd_server_directive       -> `server` (not `pool`)
+#   chronyd_or_ntpd_set_maxpoll    -> `maxpoll <N>` on each server line
+#   chronyd_sync_clock             -> a `makestep` line
 # ---------------------------------------------------------------------------
-- name: "REMED | Chrony remote time server (server directive)"
+- name: "REMED | Chrony remote time source (STIG server directive)"
   when: (usg_chrony_servers | default([]) | length) > 0
   block:
     - name: "REMED | Is chrony configured on this box?"
@@ -127,52 +132,39 @@
         path: /etc/chrony/chrony.conf
       register: _chrony_conf
 
-    - name: "REMED | Configure chrony server directives"
+    - name: "REMED | Configure chrony directives in chrony.conf"
       when: _chrony_conf.stat.exists | default(false)
       block:
-        - name: "REMED | Ensure /etc/chrony/sources.d exists"
-          ansible.builtin.file:
-            path: /etc/chrony/sources.d
-            state: directory
-            owner: root
-            group: root
-            mode: "0755"
-
-        - name: "REMED | Write the STIG time sources (server + iburst)"
-          ansible.builtin.copy:
-            dest: /etc/chrony/sources.d/stig.sources
-            owner: root
-            group: root
-            mode: "0644"
-            content: |
-              # Managed by ansible (usg_remediate) -- DISA-STIG remote time source.
-              {% for s in usg_chrony_servers %}
-              server {{ s }} iburst
-              {% endfor %}
-          notify: Restart chrony
-
-        - name: "REMED | Ensure chrony reads sources.d"
-          ansible.builtin.lineinfile:
-            path: /etc/chrony/chrony.conf
-            regexp: '^\s*#?\s*sourcedir\s+/etc/chrony/sources\.d\s*$'
-            line: "sourcedir /etc/chrony/sources.d"
-            state: present
-          notify: Restart chrony
-
-        - name: "REMED | Comment out `pool` directives (STIG: server-only)"
+        - name: "REMED | Comment out `pool` directives (STIG wants server-only)"
           ansible.builtin.replace:
             path: /etc/chrony/chrony.conf
             regexp: '(?m)^(?!\s*#)(\s*)(pool\s+.*)$'
             replace: '\1# \2  # disabled by usg_remediate (STIG: server directive)'
           notify: Restart chrony
 
-        - name: "REMED | Set makestep (sync large offsets at start)"
+        - name: "REMED | Write the STIG time servers into chrony.conf (server + iburst + maxpoll)"
+          ansible.builtin.blockinfile:
+            path: /etc/chrony/chrony.conf
+            marker: "# {mark} ANSIBLE MANAGED -- usg_remediate DISA-STIG time source"
+            block: |
+              {% for s in usg_chrony_servers %}
+              server {{ s }} iburst maxpoll {{ usg_chrony_maxpoll | default(16) }}
+              {% endfor %}
+          notify: Restart chrony
+
+        - name: "REMED | Ensure a makestep directive is present (chronyd_sync_clock)"
           ansible.builtin.lineinfile:
             path: /etc/chrony/chrony.conf
             regexp: '^\s*#?\s*makestep\b.*$'
             line: "{{ usg_chrony_makestep }}"
             state: present
           when: (usg_chrony_makestep | default('') | length) > 0
+          notify: Restart chrony
+
+        - name: "REMED | Remove the stale sources.d drop-in from the old approach"
+          ansible.builtin.file:
+            path: /etc/chrony/sources.d/stig.sources
+            state: absent
           notify: Restart chrony
 
 # ---------------------------------------------------------------------------

@@ -715,8 +715,11 @@ usg_fix_log_permissions: true
 # still passes. Empty list = leave chrony untouched (finding stays a POA&M).
 usg_chrony_servers:
   - ntp.ubuntu.com
-# makestep line the STIG wants (sync big offsets on start); only applied when
-# usg_chrony_servers is non-empty.
+# Max polling interval the STIG requires on each server line (chronyd_or_ntpd_set_maxpoll,
+# UBTU-24-600160/600170): written as `server <host> iburst maxpoll <N>`.
+usg_chrony_maxpoll: 16
+# makestep line the STIG wants (chronyd_sync_clock, UBTU-24-600180); only applied
+# when usg_chrony_servers is non-empty.
 usg_chrony_makestep: "makestep 1 1"
 
 # Re-run `usg audit` at the very end (after remediation + firewall) so the report
