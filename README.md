@@ -327,6 +327,11 @@ role runs **after** USG + the firewall and closes these (none can lose password/
 > `pro enable fips-updates` (installs the FIPS kernel/modules) and flags a reboot — the check passes
 > **after that reboot**. It swaps the running kernel, so validate on a throwaway box if you run
 > unusual crypto/dev tooling; set `usg_enable_fips: false` to defer it (POA&M).
+>
+> **GPUs + FIPS:** Canonical's prebuilt NVIDIA modules are kernel-flavour-locked, so the FIPS kernel
+> swap would otherwise break `nvidia-smi`. On the `ai` profile the **`gpu_fips_module`** role stages
+> the matching `linux-modules-nvidia-*-fips` module (from the `fips-updates` repo) in the same run, so
+> the GPU comes back automatically on the single FIPS reboot — no manual DKMS/driver rebuild.
 
 ### NTP / time source
 

@@ -1,0 +1,126 @@
+---
+# =============================================================================
+# gpu_fips_module -- keep the GPU working across the FIPS kernel swap.
+#
+# THE PROBLEM: Canonical's prebuilt NVIDIA kernel modules
+# (linux-modules-nvidia-<branch>-<variant>-<kernel>) are FLAVOUR-LOCKED. The ones
+# `ubuntu-drivers` installs are built for the *generic* kernel. When `usg_harden`
+# runs `pro enable fips-updates`, the box switches to the *fips* kernel on the next
+# reboot -- and there is no matching module, so `nvidia.ko` is missing and
+# `nvidia-smi` fails ("couldn't communicate with the NVIDIA driver").
+#
+# THE FIX (single pass, no mid-pipeline reboot): this role runs AFTER usg_harden
+# (so the fips kernel package is installed, even though we're still running the
+# generic kernel) and STAGES the fips-flavour NVIDIA module for that kernel. apt
+# installs kernel-module packages for any *installed* kernel ABI regardless of
+# which kernel is running, so after the FIPS reboot the driver loads with zero
+# manual DKMS/driver rebuild.
+#
+# Gated is_ai + gpu_enabled + usg_enable_fips in local.yml. Safe/graceful: if the
+# fips kernel isn't installed yet (e.g. `pro enable fips-updates` didn't finish) or
+# the driver was installed some non-prebuilt way, it logs a POA&M note and moves on
+# rather than failing the build.
+# =============================================================================
+
+- name: "GPU-FIPS | Find the newest installed FIPS kernel version"
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    dpkg-query -W -f '${Package}\n' 2>/dev/null
+    | grep -E '^linux-image-[0-9].*-fips$'
+    | sed 's/^linux-image-//' | sort -V | tail -1
+  args:
+    executable: /bin/bash
+  register: _fips_kernel
+  changed_when: false
+  failed_when: false
+
+- name: "GPU-FIPS | Detect the installed NVIDIA prebuilt-module flavour metapackage"
+  # e.g. 'linux-modules-nvidia-595-open-generic' (the flavour-tracking metapackage,
+  # NOT the version-locked '...-6.8.0-134-generic'). Anchored so the kernel-version
+  # variant -- which has dots/digits before -generic -- does not match.
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    dpkg-query -W -f '${Package}\n' 2>/dev/null
+    | grep -E '^linux-modules-nvidia-[0-9]+(-[a-z]+)?-generic$' | head -1
+  args:
+    executable: /bin/bash
+  register: _nv_generic_meta
+  changed_when: false
+  failed_when: false
+
+- name: "GPU-FIPS | Resolve the target package names"
+  ansible.builtin.set_fact:
+    _fips_kver: "{{ _fips_kernel.stdout | trim }}"
+    _nv_meta: "{{ _nv_generic_meta.stdout | trim }}"
+
+- name: "GPU-FIPS | POA&M note -- prerequisites missing, skipping"
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'No FIPS kernel installed yet (did `pro enable fips-updates` finish?)'
+         if (_fips_kver | length) == 0
+         else 'No prebuilt NVIDIA -generic flavour package found (driver via .run/DKMS?)' }}
+      -- skipping FIPS GPU-module staging. Once on the fips kernel, the driver needs
+      a manual rebuild: install linux-headers for that kernel + rebuild via DKMS, or
+      install the matching linux-modules-nvidia-*-fips package.
+  when: (_fips_kver | length) == 0 or (_nv_meta | length) == 0
+
+- name: "GPU-FIPS | Stage the FIPS-flavour NVIDIA module for the fips kernel"
+  when:
+    - (_fips_kver | length) > 0
+    - (_nv_meta | length) > 0
+  vars:
+    # linux-modules-nvidia-595-open-generic -> linux-modules-nvidia-595-open-fips
+    _nv_fips_meta: "{{ _nv_meta | regex_replace('-generic$', '-fips') }}"
+    # version-specific fallback: linux-modules-nvidia-595-open-6.8.0-134-fips
+    _nv_fips_versioned: "{{ _nv_meta | regex_replace('-generic$', '') }}-{{ _fips_kver }}"
+  block:
+    - name: "GPU-FIPS | Ensure the fips kernel headers are present (for any DKMS modules)"
+      ansible.builtin.apt:
+        name: "linux-headers-{{ _fips_kver }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      failed_when: false
+
+    - name: "GPU-FIPS | Install the flavour-tracking fips NVIDIA module ({{ _nv_fips_meta }})"
+      # Preferred: the flavour metapackage tracks the fips kernel ABI, so future
+      # fips-kernel updates auto-pull the right module (no recurrence of this bug).
+      ansible.builtin.apt:
+        name: "{{ _nv_fips_meta }}"
+        state: present
+        update_cache: true
+      register: _nv_fips_install
+      ignore_errors: true
+
+    - name: "GPU-FIPS | Fallback -- version-specific module for the installed fips kernel"
+      # If the flavour metapackage isn't published for this branch, pin the exact
+      # kernel-version module (this is what we KNOW exists in the fips-updates repo).
+      ansible.builtin.apt:
+        name: "{{ _nv_fips_versioned }}"
+        state: present
+      register: _nv_fips_versioned_install
+      when: _nv_fips_install is failed
+      ignore_errors: true
+
+    - name: "GPU-FIPS | Did a fips NVIDIA module install cleanly?"
+      ansible.builtin.set_fact:
+        _nv_fips_ok: >-
+          {{ (_nv_fips_install is not failed)
+             or (_nv_fips_versioned_install is defined
+                 and not (_nv_fips_versioned_install is skipped)
+                 and _nv_fips_versioned_install is not failed) }}
+
+    - name: "GPU-FIPS | Staging result"
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'FIPS NVIDIA module staged for ' ~ _fips_kver ~ '; the GPU loads with no'
+             ~ ' manual rebuild after the FIPS reboot.'
+             if (_nv_fips_ok | bool)
+             else 'POA&M: could not install a fips NVIDIA module (' ~ _nv_fips_meta
+             ~ ' / ' ~ _nv_fips_versioned ~ '). After the FIPS reboot, install it by'
+             ~ ' hand or rebuild via DKMS.' }}
+
+    - name: "GPU-FIPS | The pending FIPS reboot will activate the staged module"
+      ansible.builtin.set_fact:
+        gpu_fips_reboot_required: true
+      when: _nv_fips_ok | bool
