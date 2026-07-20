@@ -410,6 +410,14 @@ local_users:
 local_users_common_groups:
   - sentry
 
+# Accounts created OUTSIDE the playbook (the OS-install operator/admin account)
+# that should ALSO join local_users_common_groups (e.g. sentry). These are added
+# with APPEND -- their existing groups (sudo, adm, ...) are preserved -- and ONLY
+# if the account already exists; the playbook never CREATES them. Add more names
+# (or change the default) if your operator account differs per box.
+local_operator_accounts:
+  - "{{ dev_tools_user }}"
+
 # Group-shared directories: setgid 2770 (others denied) + a POSIX default ACL so
 # group members get full access to everything created inside even under the STIG
 # umask 077 (which would otherwise strip group bits off new files).
