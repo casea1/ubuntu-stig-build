@@ -62,6 +62,26 @@
   loop_control:
     label: "{{ item.name }} (groups: {{ (item.groups | default([]) + (local_users_common_groups | default([]))) | unique | join(',') }})"
 
+# The OS-install operator/admin account (dev_tools_user) is created by the Ubuntu
+# installer, not this playbook, so it's not in local_users. Add it (and any other
+# local_operator_accounts) to the common groups too -- with APPEND so its existing
+# groups (sudo/adm/...) are preserved, and ONLY if it already exists (never create).
+- name: ACCOUNTS | Enumerate existing accounts (to guard the operator-group append)
+  ansible.builtin.getent:
+    database: passwd
+
+- name: ACCOUNTS | Add existing operator account(s) to the common groups (append; never create)
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: "{{ local_users_common_groups | default([]) }}"
+    append: true
+  loop: "{{ local_operator_accounts | default([]) }}"
+  when:
+    - (local_users_common_groups | default([]) | length) > 0
+    - item in ansible_facts.getent_passwd
+  loop_control:
+    label: "{{ item }} += {{ local_users_common_groups | default([]) | join(',') }}"
+
 # ---------------------------------------------------------------------------
 # 3) GROUP-SHARED FOLDERS.
 #    mode 2770 = setgid (new entries inherit the dir's group) + rwx for
