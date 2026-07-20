@@ -142,7 +142,7 @@ systemd-run --unit=stig-build --collect \
 
 echo
 echo "[✓] Build started in the background as systemd unit 'stig-build'."
-echo "    Watch it:     journalctl -u stig-build -f"
+echo "    Watch it:     sudo journalctl -u stig-build -f"
 echo "    Result:       systemctl status stig-build   (active(exited) = success)"
 if [[ "${PROFILE}" == "ai" ]]; then
   echo "    Reports:      /var/log/stig-scan/  — 'usg audit' output (collect BEFORE air-gapping)."
