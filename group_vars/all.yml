@@ -404,6 +404,12 @@ local_users:
   - { name: zac_mccamant_aud, groups: [audit, sudo] }
   - { name: zac_mccamant_dta, groups: [dta] }
 
+# Groups EVERY standing account above ALSO joins, merged into each account's own
+# `groups` list. All initial accounts get `sentry` (the shared /home/shared
+# workspace) in addition to their role groups. Set to [] to disable.
+local_users_common_groups:
+  - sentry
+
 # Group-shared directories: setgid 2770 (others denied) + a POSIX default ACL so
 # group members get full access to everything created inside even under the STIG
 # umask 077 (which would otherwise strip group bits off new files).
