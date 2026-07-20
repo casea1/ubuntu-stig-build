@@ -49,14 +49,18 @@
     name: "{{ item.name }}"
     shell: /bin/bash
     create_home: true
-    groups: "{{ item.groups | default([]) }}"
+    # Per-account groups PLUS the common groups every standing account gets
+    # (local_users_common_groups, e.g. sentry). append:false => the merged set is
+    # authoritative, so a re-run also back-fills the common group onto accounts
+    # created before it was added.
+    groups: "{{ (item.groups | default([]) + (local_users_common_groups | default([]))) | unique }}"
     append: false
     password: "!"               # locked: account exists, no valid password yet
     update_password: on_create  # never re-lock a password an admin sets later
     state: present
   loop: "{{ local_users }}"
   loop_control:
-    label: "{{ item.name }} (groups: {{ item.groups | default([]) | join(',') }})"
+    label: "{{ item.name }} (groups: {{ (item.groups | default([]) + (local_users_common_groups | default([]))) | unique | join(',') }})"
 
 # ---------------------------------------------------------------------------
 # 3) GROUP-SHARED FOLDERS.
