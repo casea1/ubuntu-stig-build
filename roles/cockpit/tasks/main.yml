@@ -11,9 +11,12 @@
 # provisioning phase because it needs the network to install.
 # =============================================================================
 
-- name: "COCKPIT | Install the cockpit console (+ any extras)"
+- name: "COCKPIT | Install the cockpit console (+ sscg for the self-signed cert + any extras)"
+  # sscg is what cockpit-certificate-helper uses to generate its TLS cert; without
+  # it the helper logs "sscg: command not found" and falls back to a weaker openssl
+  # self-signed cert. Installing sscg gives cockpit a proper, FIPS-friendly cert.
   ansible.builtin.apt:
-    name: "{{ ['cockpit'] + (cockpit_extra_packages | default([])) }}"
+    name: "{{ ['cockpit', 'sscg'] + (cockpit_extra_packages | default([])) }}"
     state: present
     update_cache: true
     cache_valid_time: 3600
