@@ -162,7 +162,7 @@ internet (`--fetch-remote-resources`) before you air-gap.
 ## 7. Watch & confirm
 
 ```bash
-journalctl -u stig-build -f          # live log
+sudo journalctl -u stig-build -f          # live log
 systemctl status stig-build          # "active (exited)" = success
 ```
 
@@ -337,7 +337,7 @@ All operator-facing knobs. Values with a **cap** will *fail the scan* if exceede
 ```bash
 # Run / watch
 curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo bash
-journalctl -u stig-build -f ; systemctl status stig-build
+sudo journalctl -u stig-build -f ; systemctl status stig-build
 sudo systemctl stop stig-build           # abort a run (then re-run; it's idempotent)
 
 # Recover a locked-out account

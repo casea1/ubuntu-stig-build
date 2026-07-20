@@ -50,7 +50,7 @@ sudo ansible-galaxy install -r /tmp/requirements.yml
 # kill a foreground job launched from the GUI session. systemd-run survives it:
 sudo systemd-run --unit=stig-build --collect \
   ansible-pull -U https://github.com/casea1/ubuntu-stig-build.git -C main -i localhost, local.yml
-# Watch:  journalctl -u stig-build -f      Result: systemctl status stig-build
+# Watch:  sudo journalctl -u stig-build -f      Result: systemctl status stig-build
 ```
 
 Or just run `bootstrap.sh` (below), which does all of that — and also **prompts (hidden) for the disk
@@ -458,7 +458,7 @@ curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/boots
 > Ansible installs Docker + NVIDIA, hardens with USG, and opens the container ports — it does not
 > manage the containers. There is no `TOOLS`/`HF_TOKEN` anymore.
 
-Watch: `journalctl -u stig-build -f`. The `usg audit` report (HTML + XCCDF) auto-copies to
+Watch: `sudo journalctl -u stig-build -f`. The `usg audit` report (HTML + XCCDF) auto-copies to
 **`/opt/ia/`** (admin-readable — `usg_remediate` re-runs the audit at the end so it reflects the
 fully-built box). **Reboot** afterwards to apply USG controls and load the NVIDIA driver,
 then re-run `sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml` for accurate

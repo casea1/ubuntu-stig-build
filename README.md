@@ -48,7 +48,7 @@ The pipeline runs as a detached systemd unit named `stig-build`. The `developmen
 **3 — Watch it, then collect the report:**
 
 ```bash
-journalctl -u stig-build -f
+sudo journalctl -u stig-build -f
 systemctl status stig-build        # active (exited) = success
 ```
 
@@ -272,7 +272,7 @@ to restrict to). Default opens Open WebUI on `80/443`; restrict the cross-node p
 
 The `ai` command is in **[Quick start](#-ai-server--deployment_profile-ai)** above
 (`… | sudo PROFILE=ai bash`, plus the `HARDEN=0` audit-only first pass). Then
-`journalctl -u stig-build -f` to watch, collect the report from **`/opt/ia/`**, **reboot** to apply
+`sudo journalctl -u stig-build -f` to watch, collect the report from **`/opt/ia/`**, **reboot** to apply
 USG (and load the GPU driver), and **deploy your prebuilt AI compose stack**. Full runbook +
 operations: **[OPERATIONS.md](OPERATIONS.md#ubuntu-pro-server-usg--ai-stack)** and the design notes in
 **[docs/ai-server-design.md](docs/ai-server-design.md)**.
