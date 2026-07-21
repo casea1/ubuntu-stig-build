@@ -13,13 +13,15 @@
 # ai_compose_deploy=true once the model is staged to have Ansible run it too.
 # =============================================================================
 
-- name: "AI-COMPOSE | Validate ai_node_role"
+- name: "AI-COMPOSE | Validate ai_node_role (auto-derived from hostname)"
   ansible.builtin.assert:
     that:
       - ai_node_role in ['system1', 'system2']
     fail_msg: >-
-      ai_compose_enabled is true but ai_node_role is '{{ ai_node_role | default("") }}'.
-      Set ai_node_role: system1 | system2 in this node's /etc/stig-build/site.yml.
+      Could not auto-select an AI node role for hostname '{{ ansible_hostname }}'
+      (got '{{ ai_node_role | default("") | trim }}'). Name the box dev-ai1/dev-ai2,
+      add it to ai_node_role_by_hostname, or set ai_node_role: system1|system2 in
+      this node's /etc/stig-build/site.yml.
     quiet: true
 
 - name: "AI-COMPOSE | Ensure the compose dir exists ({{ ai_compose_dir }})"
@@ -38,8 +40,20 @@
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "0640"
 
+- name: "AI-COMPOSE | Lock down the secrets dir (holds the auto-generated DB password)"
+  # The pgvector password is auto-generated + persisted here on first render of
+  # .env; 0700 root keeps it root-only regardless of the lookup's file perms.
+  ansible.builtin.file:
+    path: "{{ ai_pgvector_password_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: ai_node_role == 'system1'
+
 - name: "AI-COMPOSE | Render the root-only .env (secrets/site values)"
-  # Only System 1 needs the DB password + peer IP; render it for both harmlessly.
+  # Only System 1 needs the DB password + peer IP. Rendering evaluates the
+  # password lookup, which generates + persists it on first run (stable after).
   ansible.builtin.template:
     src: env.j2
     dest: "{{ ai_compose_dir }}/.env"

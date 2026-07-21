@@ -610,24 +610,43 @@ ai_firewall_allow_ports:
 # OPTIONALLY bring the stack up. Two node roles share one image set but get
 # different compose files:
 #   system1 = UI/text-gen   (vLLM 120B + Open WebUI + pgvector + LGTM)
-#   system2 = extraction    (Docling)
+#   system2 = extraction    (Docling + embed/vision vLLM)
 #
-# Turn it on and pick the role PER NODE in /etc/stig-build/site.yml, e.g.:
-#   ai_compose_enabled: true
-#   ai_node_role: system1            # or system2
-#   ai_pgvector_password: "<db pw>"  # system1 only; out-of-band, never in repo
-#   ai_system2_ip: "192.168.1.106"   # system1 only; where Docling lives
+# HANDS-OFF IMAGING: everything below auto-derives, so a freshly-imaged box
+# needs NO site.yml editing -- just give it the right hostname:
+#   * enabled by default on the ai profile (every ai box is an AI node);
+#   * ai_node_role is picked FROM THE HOSTNAME (dev-ai1->system1, dev-ai2->
+#     system2, plus an *ai1*/*ai2* fallback);
+#   * the pgvector password is auto-generated + persisted root-only (it's only
+#     used between two containers on the same box, never by a human);
+#   * ai_system2_ip defaults to the `dev-ai2` hostname.
+# site.yml is now only for EXCEPTIONS (a differently-named box, a pinned DB
+# password for an already-initialised DB, an IP instead of a resolvable name).
 #
 # By default the role only PLACES files + creates the (empty) volumes -- it does
 # NOT pull/`up`, because the vLLM volume must be loaded with the 120B model first
 # (see OPERATIONS.md "Gathering the models"). Flip ai_compose_deploy=true once the
 # model is staged to let Ansible pull + `up -d` too.
-ai_compose_enabled: false
-ai_node_role: ""                 # system1 | system2  (set per node in site.yml)
+ai_compose_enabled: true         # every ai-profile box is an AI node
+# Hostname -> role map. Name a box dev-ai1/dev-ai2 and it images correctly with
+# no per-node config. Extend for more nodes (e.g. dev-ai3: system1).
+ai_node_role_by_hostname:
+  dev-ai1: system1
+  dev-ai2: system2
+# Auto-select the role: exact hostname match, else an *ai1*/*ai2* pattern, else
+# '' (the role then asserts + tells you to set ai_node_role in site.yml).
+ai_node_role: >-
+  {{ (ai_node_role_by_hostname[ansible_hostname]
+      | default('system1' if ('ai1' in ansible_hostname)
+                else ('system2' if ('ai2' in ansible_hostname) else ''))) | trim }}
 ai_compose_dir: /opt/it/docker
 ai_compose_deploy: false         # true = also `docker compose pull && up -d`
-ai_pgvector_password: ""         # system1 only; set out-of-band in site.yml
-ai_system2_ip: ""                # system1 only; Docling+embed+vision node IP
+# DB password (System 1 only). Auto-generated + persisted root-only on first
+# run, so nothing to type and no secret in the repo. Pin it in site.yml ONLY to
+# match an already-initialised pgvector-data volume (e.g. an existing box).
+ai_pgvector_password_file: /etc/stig-build/pgvector.pw
+ai_pgvector_password: "{{ lookup('ansible.builtin.password', ai_pgvector_password_file + ' length=32 chars=ascii_letters,digits') }}"
+ai_system2_ip: "dev-ai2"         # System 1 reaches embed/vision/Docling here; set an IP in site.yml if the name doesn't resolve
 # External named volumes each role owns (kept out of compose's lifecycle so the
 # model weights / DB survive `down -v`). Empty list = role creates none.
 ai_compose_volumes:
