@@ -705,6 +705,11 @@ ai_compose_build_by_role:        # which images each node builds
 ai_vllm_image: "vllm/vllm-openai:v0.22.1-cu129-ubuntu2404"   # image used by the auto-fetch (has huggingface-cli)
 ai_model_fetch: false            # opt-in: download the models below into their volumes (needs internet + disk)
 ai_hf_token: ""                  # optional; out-of-band in site.yml, never in repo
+# gpt-oss's harmony tokenizer needs these tiktoken files in the `encodings`
+# volume, or vLLM crashes building the tokenizer. Fetched alongside the models
+# (same ai_model_fetch toggle) for any node whose volumes include `encodings`.
+ai_encodings_base_url: "https://openaipublic.blob.core.windows.net/encodings"
+ai_encodings_files: ["o200k_base.tiktoken", "cl100k_base.tiktoken"]
 ai_models:
   system1:
     - { volume: vllm, repo: "openai/gpt-oss-120b" }

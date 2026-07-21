@@ -627,6 +627,11 @@ The fetch is **idempotent** — a volume that already holds a `config.json` is s
 
 - **No HF token needed.** `openai/gpt-oss-120b` (and the Granite repos) are Apache-2.0 / ungated. Set
   `ai_hf_token` in `site.yml` **only** to dodge anonymous rate-limits on the big gpt-oss pull.
+- **Tiktoken encodings are fetched too.** gpt-oss's *harmony* tokenizer reads `o200k_base.tiktoken` /
+  `cl100k_base.tiktoken` from the `encodings` volume; without them vLLM loads the model fine but crashes
+  building the tokenizer (`invalid tiktoken vocab file`). `ai_model_fetch` downloads them into the
+  `encodings` volume automatically (idempotent) for any node that has that volume. Both the model and the
+  encodings fetch mount `fips_off` — on a FIPS host this image's OpenSSL can't do TLS without it.
 - **Size/time.** gpt-oss-120b is ~200 GB; the first fetch is long and runs synchronously during the play —
   run it when the box has internet and disk headroom, then flip `ai_compose_deploy: true` (or `up` by hand).
 

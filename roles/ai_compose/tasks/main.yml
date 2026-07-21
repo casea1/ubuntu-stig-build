@@ -145,12 +145,14 @@
 - name: "AI-COMPOSE | Fetch models into their volumes (opt-in; needs internet + disk)"
   # Downloads each repo into its volume via the vLLM image's huggingface-cli.
   # Idempotent: skips a volume that already holds a config.json. no_log because
-  # the HF token (if any) is on the command line.
+  # the HF token (if any) is on the command line. The fips_off mount is required
+  # -- on a FIPS host this image's OpenSSL can't do TLS without it (see below).
   ansible.builtin.command:
     cmd: >-
       docker run --rm
       {{ ('-e HF_TOKEN=' ~ ai_hf_token) if (ai_hf_token | default('') | length > 0) else '' }}
       -v {{ item.volume }}:/model
+      -v {{ ai_compose_dir }}/fips_off:/proc/sys/crypto/fips_enabled:ro
       --entrypoint sh
       {{ ai_vllm_image }}
       -c "test -f /model/config.json && echo SKIP ||
@@ -162,6 +164,30 @@
   loop_control:
     label: "{{ item.repo }} -> {{ item.volume }}"
   when: ai_model_fetch | default(false) | bool
+
+- name: "AI-COMPOSE | Fetch the tiktoken/harmony encodings into the `encodings` volume"
+  # gpt-oss's harmony tokenizer reads these from the `encodings` volume; without
+  # them vLLM loads the model fine but crashes building the tokenizer ("invalid
+  # tiktoken vocab file: No such file or directory"). Idempotent (skips files
+  # already present). The fips_off mount is REQUIRED: on the FIPS host this
+  # image's OpenSSL fails to init TLS (ssl.SSLError [CRYPTO]) without it.
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm
+      -v encodings:/etc/encodings
+      -v {{ ai_compose_dir }}/fips_off:/proc/sys/crypto/fips_enabled:ro
+      --entrypoint python3
+      {{ ai_vllm_image }}
+      -c "import urllib.request, os;
+          base='{{ ai_encodings_base_url }}';
+          todo=[f for f in {{ ai_encodings_files }} if not os.path.exists('/etc/encodings/'+f)];
+          [urllib.request.urlretrieve(base+'/'+f, '/etc/encodings/'+f) for f in todo];
+          print('FETCHED' if todo else 'SKIP')"
+  register: _enc_fetch
+  changed_when: "'FETCHED' in (_enc_fetch.stdout | default(''))"
+  when:
+    - ai_model_fetch | default(false) | bool
+    - "'encodings' in (ai_compose_volumes[ai_node_role] | default([]))"
 
 - name: "AI-COMPOSE | Deploy the stack (opt-in; needs the model staged + internet for pull)"
   when: ai_compose_deploy | default(false) | bool
