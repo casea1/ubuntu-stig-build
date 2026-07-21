@@ -27,6 +27,18 @@
 # accepted as aliases for 'development'/'ai'.
 deployment_profile: development    # options: development | ai  (aliases: desktop, server)
 
+# ---- Root disk auto-expand (disk_expand role, runs first) ------------------
+# Ubuntu autoinstall often creates a small root LV (e.g. 100G) on a large disk,
+# leaving most of the volume group unallocated -- which fills fast once the AI
+# model volumes land under /var/lib/docker. This grows the root LV + filesystem
+# to use all free VG space, ONLINE (no reboot). Grow-only + idempotent; a no-op
+# on non-LVM boxes or a fully-allocated VG. Set false if you deliberately keep
+# separate partitions for /var, /home, ... The VG/LV names are Ubuntu's
+# autoinstall defaults; override per box in site.yml if yours differ.
+disk_autoexpand: true
+disk_root_vg: ubuntu-vg
+disk_root_lv: ubuntu-lv
+
 # ---- Users who need to run packet captures (Wireshark) ---------------------
 # STIG restricts raw packet capture to authorized users. These users get added
 # to the 'wireshark' group instead of running dumpcap as root.

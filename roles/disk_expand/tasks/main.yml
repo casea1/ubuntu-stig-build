@@ -1,0 +1,42 @@
+---
+# =============================================================================
+# disk_expand -- grow the root logical volume to use free space left in its
+# volume group. Ubuntu's autoinstall commonly creates a SMALL root LV (e.g.
+# 100G) even on a large disk, leaving most of the volume group unallocated --
+# which then fills up fast once the AI model volumes land under /var/lib/docker
+# (gpt-oss-120b alone is ~200G). This claims that free space ONLINE (no reboot).
+#
+# Grow-only + idempotent, and safe as a no-op when: disk_autoexpand is false,
+# the box isn't LVM / the named VG doesn't exist, or the VG has no free space
+# (already fully allocated). Runs FIRST (before base_packages / any download).
+#
+# LVM-on-LUKS is fine: the LV is resized within the VG; the encryption layer
+# underneath is untouched. Disable with disk_autoexpand: false (e.g. if you
+# deliberately keep separate partitions for /var, /home, ...).
+# =============================================================================
+
+- name: "DISK | Check the root volume group's free space (skips cleanly if no LVM)"
+  ansible.builtin.command: "vgs --noheadings --nosuffix --units b -o vg_free {{ disk_root_vg }}"
+  register: _disk_vg_free
+  changed_when: false
+  failed_when: false
+
+- name: "DISK | Grow the root LV + filesystem to consume all free VG space"
+  community.general.lvol:
+    vg: "{{ disk_root_vg }}"
+    lv: "{{ disk_root_lv }}"
+    size: +100%FREE
+    resizefs: true          # module resizes ext4 (resize2fs) / xfs (xfs_growfs) too
+  register: _disk_grow
+  when:
+    - disk_autoexpand | default(true) | bool
+    - _disk_vg_free.rc == 0
+    - (_disk_vg_free.stdout | trim | default('0') | float) > 0
+
+- name: "DISK | Result"
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('Grew ' ~ disk_root_vg ~ '/' ~ disk_root_lv ~ ' to consume all free VG space.')
+         if (_disk_grow is defined and (_disk_grow is changed))
+         else ('No change -- ' ~ ('auto-expand disabled' if not (disk_autoexpand | default(true) | bool)
+               else ('no ' ~ disk_root_vg ~ ' volume group, or it is already fully allocated'))) }}
