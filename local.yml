@@ -65,6 +65,13 @@
 
   roles:
     # -------------------------------------------------------------------------
+    # STORAGE  -- runs FIRST so the full disk is available before anything
+    # downloads. Ubuntu autoinstall often makes a small root LV (e.g. 100G) on a
+    # big disk; this grows it to use the rest of the volume group (online).
+    # -------------------------------------------------------------------------
+    - role: disk_expand      # grow root LV + fs to all free VG space (idempotent; disk_autoexpand)
+
+    # -------------------------------------------------------------------------
     # BASELINE  -- base_packages runs for both profiles; internally it installs
     # the development app set (when is_development) or a lean AI-server baseline
     # (when is_ai). See roles/base_packages/tasks/main.yml.

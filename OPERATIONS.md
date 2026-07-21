@@ -66,6 +66,12 @@ it auto-skips on an unencrypted or already-bound disk). See *TPM2 LUKS auto-unlo
 - **Order is load-bearing.** Packages first, harden second, scan last. Hardening sets
   `noexec` on /tmp, tightens umask, and locks down PAM — doing it before installs can
   break pip and apt.
+- **Root disk auto-grows first.** Ubuntu autoinstall often leaves a small root LV (e.g. 100G)
+  on a large disk, which fills once the AI model volumes land under `/var/lib/docker`. The
+  `disk_expand` role runs **first** and grows the root LV + filesystem to all free VG space
+  (online, idempotent; no-op if not LVM / already full). Disable with `disk_autoexpand: false`
+  (e.g. if you keep separate `/var` `/home` partitions); override `disk_root_vg`/`disk_root_lv`
+  in `site.yml` if your names differ from `ubuntu-vg`/`ubuntu-lv`.
 - **The role/content versions are pinned.** `requirements.yml` pins `UBUNTU24-STIG` to `v1.3.0`
   and the SSG datastream to `0.1.81`, so every machine you image is identical. Bump deliberately
   and re-test.
