@@ -543,6 +543,13 @@ prebuilt images + compose files**.
   also **enables ufw itself**, so an ai box is never left with an inactive firewall even if USG was
   skipped. Check: `sudo ufw status verbose`.
 
+  > **Per-node values without editing the public repo.** Every box pulls the same repo, so putting
+  > `ai_firewall_allow_ports` (and internal IPs) in `group_vars/all.yml` makes them global. For
+  > **per-node** settings, drop a root-only **`/etc/stig-build/site.yml`** on each box — the playbook
+  > auto-loads it and it **overrides** `group_vars`. That's where System 1's and System 2's different
+  > firewall rules (and NTP, the Docling peer IP, a Cockpit cert, …) live, out of git. See
+  > **[`docs/site.yml.example`](docs/site.yml.example)**. Override the path with `-e site_overrides_file=…`.
+
 **Deploying your stack** (your process, not Ansible's): once the host is prepped and rebooted, drop
 your compose files on the box and `docker compose up -d`. For air-gap, mirror your images into an
 internal registry or `docker load` them from tarballs. Nothing in this repo pulls, builds, or starts

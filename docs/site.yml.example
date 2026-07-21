@@ -1,0 +1,46 @@
+# =============================================================================
+# EXAMPLE per-node / site override file.
+#
+# Copy this to  /etc/stig-build/site.yml  ON THE BOX (root-only), one per node,
+# with values for THAT machine. The playbook (local.yml) auto-loads it and its
+# values BEAT group_vars/all.yml -- so per-node settings and anything you don't
+# want in the public repo (internal IPs, certs) stay on the box, out of git.
+#
+#   sudo install -d -m 0755 /etc/stig-build
+#   sudo cp site.yml /etc/stig-build/site.yml && sudo chmod 0644 /etc/stig-build/site.yml
+#   # then re-run the pull (or bootstrap) and it takes effect.
+#
+# Override any group_vars/all.yml variable here. Common ones below.
+# =============================================================================
+
+# ---- Host firewall openings (ai profile) ------------------------------------
+# USG leaves ufw default-deny inbound; open exactly what THIS node serves, and
+# restrict cross-node ports to the peer's IP with `from:`.
+#
+# --- System 1 (UI/text-gen, e.g. 192.168.1.102): Open WebUI + Grafana ---
+# ai_firewall_allow_ports:
+#   - { port: 3000, proto: tcp, rule: allow }                          # Open WebUI (users)
+#   - { port: 3001, proto: tcp, rule: allow, from: "192.168.1.0/24" }  # Grafana (admins)
+#
+# --- System 2 (extraction, e.g. 192.168.1.106): Docling from System 1 only ---
+# ai_firewall_allow_ports:
+#   - { port: 5001, proto: tcp, rule: allow, from: "192.168.1.102" }   # Docling <- System 1
+
+# ---- Time source (your enclave NTP) -----------------------------------------
+# usg_chrony_servers:
+#   - 10.10.99.100
+
+# ---- Cockpit TLS cert (org-CA signed, so it passes TLS inspection) -----------
+# Paste the PEM contents (out-of-band; never commit). The role installs them and
+# clients that trust your CA get no warning.
+# cockpit_tls_cert: |
+#   -----BEGIN CERTIFICATE-----
+#   ...
+#   -----END CERTIFICATE-----
+# cockpit_tls_key: |
+#   -----BEGIN PRIVATE KEY-----
+#   ...
+#   -----END PRIVATE KEY-----
+
+# ---- Anything else from group_vars/all.yml is fair game too -----------------
+# e.g. cockpit_allow_from: "192.168.1.0/24"
