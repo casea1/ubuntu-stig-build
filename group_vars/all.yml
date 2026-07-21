@@ -722,13 +722,13 @@ usg_cleanup_pam_pkcs11: "{{ usg_disable_smartcard }}"
 usg_fix_log_permissions: true
 
 # Chrony: the STIG requires a remote time source configured with the `server`
-# directive (not `pool`). We write these as `server <host> iburst` into a
-# sources.d drop-in and comment out any `pool` lines. Set to your enclave's
-# internal NTP servers; on an isolated net chrony just won't reach them, but the
-# STIG config check (chronyd_specify_remote_server / chronyd_server_directive)
-# still passes. Empty list = leave chrony untouched (finding stays a POA&M).
+# directive (not `pool`). We write these as `server <host> iburst maxpoll <N>`
+# directly into /etc/chrony/chrony.conf and comment out any `pool` lines. Set to
+# your enclave's internal NTP server(s); on an isolated net chrony still won't
+# reach a public pool, so this MUST be a reachable/approved server. Empty list =
+# leave chrony untouched (finding stays a POA&M).
 usg_chrony_servers:
-  - ntp.ubuntu.com
+  - 10.10.99.100          # enclave NTP server
 # Max polling interval the STIG requires on each server line (chronyd_or_ntpd_set_maxpoll,
 # UBTU-24-600160/600170): written as `server <host> iburst maxpoll <N>`.
 usg_chrony_maxpoll: 16
