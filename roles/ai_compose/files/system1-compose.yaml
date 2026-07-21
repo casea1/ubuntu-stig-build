@@ -1,9 +1,17 @@
 # =============================================================================
-# System 1 -- UI / TEXT-GENERATION node   (vLLM 120B + Open WebUI + pgvector + LGTM)
+# System 1 (dev-ai1) -- UI / TEXT-GENERATION node
+#   vLLM gpt-oss-120B  +  vLLM Granite-4.0-H-Small (32B)  +  Open WebUI
+#   +  pgvector  +  LGTM
 # Managed by ansible (ai_compose role); placed in {{ ai_compose_dir }}.
-# Secrets/site values come from the sibling `.env` (rendered from site.yml,
-# root-only) -- this file holds NO secrets so it's safe in the repo.
+# Secrets/site values come from the sibling root-only `.env` (rendered from
+# site.yml) -- this file holds NO secrets so it's safe in the repo.
 #   Run:   cd /opt/it/docker && docker compose up -d
+#
+# GPU / VRAM: both vLLM servers use tensor-parallel-size=2 and SHARE the two
+# GPUs, so their --gpu-memory-utilization must sum to < ~0.95. Defaults below
+# assume 2x 96GB (RTX PRO 6000 Blackwell = 192GB total): gpt-oss 0.55, granite
+# 0.35. On 2x 48GB (RTX 6000 Ada = 96GB) both bf16 models will NOT co-reside --
+# lower the utils and/or serve Granite quantized, or move Granite to Ollama.
 # =============================================================================
 name: ai-system1
 
@@ -12,8 +20,9 @@ networks:
     driver: bridge
 
 volumes:
-  vllm: { external: true }            # <-- 120B model weights (populate BEFORE up)
-  encodings: { external: true }
+  vllm: { external: true }            # <-- gpt-oss-120B weights (populate BEFORE up)
+  granite32b: { external: true }      # <-- Granite-4.0-H-Small weights
+  encodings: { external: true }       # <-- gpt-oss harmony/tiktoken encodings
   pgvector-data: { external: true }
   open-webui: { external: true }
   lgtm-data: {}
@@ -33,12 +42,38 @@ services:
       TIKTOKEN_RS_CACHE_DIR: "/etc/encodings"
     command:
       - --model=/gpt120b
-      - --gpu-memory-utilization=0.90
+      - --served-model-name=gpt-oss-120b
+      - --gpu-memory-utilization=0.55     # shares both GPUs with vllm-granite
       - --tensor-parallel-size=2
       - --max-model-len=32768
       - --port=8000
       - --enable-auto-tool-choice
       - --tool-call-parser=openai
+    networks: [oi]
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+
+  vllm-granite:
+    image: vllm/vllm-openai:v0.22.1-cu129-ubuntu2404
+    container_name: vllm-granite
+    ipc: host
+    ports:
+      - "8001:8001"
+    volumes:
+      - granite32b:/granite32b
+    command:
+      - --model=/granite32b
+      - --served-model-name=granite-4.0-h-small
+      - --gpu-memory-utilization=0.35     # shares both GPUs with vllm (gpt-oss)
+      - --tensor-parallel-size=2
+      - --max-model-len=32768
+      - --port=8001
+      - --enable-auto-tool-choice
+      - --tool-call-parser=hermes         # Granite 4 tool calls
     networks: [oi]
     restart: unless-stopped
     deploy:
@@ -74,7 +109,7 @@ services:
   open-webui:
     image: ghcr.io/open-webui/open-webui:v0.10.2
     container_name: open-webui
-    depends_on: [pgvector, vllm, lgtm]
+    depends_on: [pgvector, vllm, vllm-granite, lgtm]
     ports:
       - "3000:8080"
     volumes:
@@ -85,10 +120,19 @@ services:
       VECTOR_DB: "pgvector"
       VECTOR_DB_URL: "postgresql://postgres:${POSTGRES_PASSWORD:?set in .env}@pgvector:5432/openwebui"
       ENV: "dev"
-      # cross-node document extraction: Docling on System 2 (SYSTEM2_IP from .env)
+      # ---- Chat models: both local vLLM servers (OpenAI-compatible) ----
+      # Semicolon-separated; keys are dummies (vLLM ignores auth).
+      OPENAI_API_BASE_URLS: "http://vllm:8000/v1;http://vllm-granite:8001/v1"
+      OPENAI_API_KEYS: "sk-noauth;sk-noauth"
+      # ---- Embeddings: Granite embedding vLLM on System 2 (SYSTEM2_IP from .env) ----
+      RAG_EMBEDDING_ENGINE: "openai"
+      RAG_EMBEDDING_MODEL: "granite-embedding-small-english-r2"
+      RAG_OPENAI_API_BASE_URL: "http://${SYSTEM2_IP:?set in .env}:8002/v1"
+      RAG_OPENAI_API_KEY: "sk-noauth"
+      # ---- Document extraction: Docling on System 2 ----
       CONTENT_EXTRACTION_ENGINE: "docling"
       DOCLING_SERVER_URL: "http://${SYSTEM2_IP:?set in .env}:5001"
-      # observability -- LGTM co-located on this node
+      # ---- Observability: LGTM co-located on this node ----
       ENABLE_OTEL: "true"
       ENABLE_OTEL_TRACES: "true"
       ENABLE_OTEL_METRICS: "true"

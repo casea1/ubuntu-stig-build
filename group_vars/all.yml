@@ -627,12 +627,28 @@ ai_node_role: ""                 # system1 | system2  (set per node in site.yml)
 ai_compose_dir: /opt/it/docker
 ai_compose_deploy: false         # true = also `docker compose pull && up -d`
 ai_pgvector_password: ""         # system1 only; set out-of-band in site.yml
-ai_system2_ip: ""                # system1 only; Docling node IP for Open WebUI
+ai_system2_ip: ""                # system1 only; Docling+embed+vision node IP
 # External named volumes each role owns (kept out of compose's lifecycle so the
 # model weights / DB survive `down -v`). Empty list = role creates none.
 ai_compose_volumes:
-  system1: [vllm, encodings, pgvector-data, open-webui]
-  system2: []
+  system1: [vllm, granite32b, encodings, pgvector-data, open-webui]
+  system2: [granite-embed, granite-vision]
+
+# ---- Model auto-fetch (ai_compose) ------------------------------------------
+# Which HuggingFace repo lands in which volume, per node role. The role can
+# download these into the (external) volumes so vLLM serves them from disk.
+# All four are Apache-2.0 / ungated -- no HF token required (ai_hf_token only
+# helps dodge anonymous rate-limits on the big gpt-oss pull).
+ai_vllm_image: "vllm/vllm-openai:v0.22.1-cu129-ubuntu2404"   # image used to fetch (has huggingface-cli)
+ai_model_fetch: false            # opt-in: download the models below into their volumes (needs internet + disk)
+ai_hf_token: ""                  # optional; out-of-band in site.yml, never in repo
+ai_models:
+  system1:
+    - { volume: vllm,       repo: "openai/gpt-oss-120b" }
+    - { volume: granite32b, repo: "ibm-granite/granite-4.0-h-small" }
+  system2:
+    - { volume: granite-embed,  repo: "ibm-granite/granite-embedding-small-english-r2" }
+    - { volume: granite-vision, repo: "ibm-granite/granite-vision-4.1-4b" }
 
 # =============================================================================
 # USG HARDENING  (usg_harden role -> Ubuntu Security Guide / DISA-STIG)

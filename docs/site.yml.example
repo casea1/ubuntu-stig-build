@@ -22,25 +22,30 @@
 #   - { port: 3000, proto: tcp, rule: allow }                          # Open WebUI (users)
 #   - { port: 3001, proto: tcp, rule: allow, from: "192.168.1.0/24" }  # Grafana (admins)
 #
-# --- System 2 (extraction, e.g. 192.168.1.106): Docling from System 1 only ---
+# --- System 2 (extraction, e.g. 192.168.1.106): serves System 1 only ---
 # ai_firewall_allow_ports:
-#   - { port: 5001, proto: tcp, rule: allow, from: "192.168.1.102" }   # Docling <- System 1
+#   - { port: 8002, proto: tcp, rule: allow, from: "192.168.1.102" }   # Granite embedding <- System 1
+#   - { port: 8003, proto: tcp, rule: allow, from: "192.168.1.102" }   # Granite vision    <- System 1
+#   - { port: 5001, proto: tcp, rule: allow, from: "192.168.1.102" }   # Docling           <- System 1
 
 # ---- AI docker-compose stack (ai profile) -----------------------------------
 # Bake the node's compose file + a root-only .env into ai_compose_dir
 # (default /opt/it/docker) and create the named volumes. Pick the role per node.
 #
-# --- System 1 (UI/text-gen) ---
+# --- System 1 (UI/text-gen): gpt-oss-120B + Granite-32B + WebUI/pgvector/LGTM ---
 # ai_compose_enabled: true
 # ai_node_role: system1
 # ai_pgvector_password: "CHANGE_ME"        # DB password; out-of-band, never in repo
-# ai_system2_ip: "192.168.1.106"           # where Docling (System 2) lives
-# # ai_compose_deploy: true                # uncomment ONLY after the model is staged
+# ai_system2_ip: "192.168.1.106"           # System 2 (embed/vision/Docling) IP
+# ai_model_fetch: true                     # auto-download the models into their volumes
+# # ai_hf_token: "hf_..."                  # OPTIONAL; models are open, token only dodges rate limits
+# # ai_compose_deploy: true                # uncomment ONLY after the models are staged
 #
-# --- System 2 (extraction) ---
+# --- System 2 (embeddings/extraction): Granite embed + Granite vision + Docling ---
 # ai_compose_enabled: true
 # ai_node_role: system2
-# # ai_compose_deploy: true                # System 2 has no model dep; safe to deploy
+# ai_model_fetch: true                     # auto-download embed + vision into their volumes
+# # ai_compose_deploy: true                # safe once models are staged
 
 # ---- Time source (your enclave NTP) -----------------------------------------
 # usg_chrony_servers:
