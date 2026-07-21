@@ -550,10 +550,82 @@ prebuilt images + compose files**.
   > firewall rules (and NTP, the Docling peer IP, a Cockpit cert, …) live, out of git. See
   > **[`docs/site.yml.example`](docs/site.yml.example)**. Override the path with `-e site_overrides_file=…`.
 
-**Deploying your stack** (your process, not Ansible's): once the host is prepped and rebooted, drop
-your compose files on the box and `docker compose up -d`. For air-gap, mirror your images into an
-internal registry or `docker load` them from tarballs. Nothing in this repo pulls, builds, or starts
-those containers.
+### Baking in the AI stack (`ai_compose`)
+
+The two-node stack is baked into the image so a fielded box comes up with its compose file already in
+place. The **`ai_compose`** role (ai profile, `ai_compose_enabled: true`) drops the node's
+`docker-compose.yaml` + a root-only `.env` into **`ai_compose_dir`** (default **`/opt/it/docker`**),
+creates the named volumes, and — opt-in — pulls + `up -d`. One image set, two compose files chosen by
+**`ai_node_role`**:
+
+| role | services | serves |
+|------|----------|--------|
+| `system1` | vLLM (120B) + Open WebUI + pgvector + LGTM | UI / text generation |
+| `system2` | Docling | document extraction (called by System 1) |
+
+Turn it on **per node** in `/etc/stig-build/site.yml` (never in the public repo — the DB password and
+peer IP live here, out of git):
+
+```yaml
+# --- System 1 (192.168.1.102) ---
+ai_compose_enabled: true
+ai_node_role: system1
+ai_pgvector_password: "‹db password›"   # rendered into the root-only .env, no_log
+ai_system2_ip: "192.168.1.106"          # where Open WebUI reaches Docling
+# ai_compose_deploy: true               # add ONLY after the model is staged (below)
+
+# --- System 2 (192.168.1.106) ---
+ai_compose_enabled: true
+ai_node_role: system2
+# ai_compose_deploy: true               # no model dep; safe to deploy on prep
+```
+
+By default the role **only places files + creates the (empty) volumes** — it does *not* pull or `up`,
+because System 1's `vllm` volume must be loaded with the model first (next section). Once staged, set
+`ai_compose_deploy: true` (Ansible runs `docker compose pull && up -d`) or just:
+
+```bash
+cd /opt/it/docker && sudo docker compose up -d
+```
+
+The compose files in the repo (`roles/ai_compose/files/system{1,2}-compose.yaml`) hold **no secrets** —
+the DB password and Docling IP are `${VAR}` refs resolved from the root-only `.env`.
+
+### Gathering the models (System 1)
+
+vLLM serves the 120B model from a **named docker volume** (`vllm`) mounted at `/gpt120b`, kept
+*external* so it survives `docker compose down -v`. `ai_compose` creates the empty volume; you load the
+weights into it once, while the box still has internet. Use the vLLM image itself (it already has
+`huggingface-cli`) so nothing extra is installed:
+
+```bash
+# One-time, on System 1, online. Downloads straight into the `vllm` volume.
+sudo docker run --rm \
+  -e HF_TOKEN="‹your HuggingFace token›" \
+  -v vllm:/gpt120b \
+  --entrypoint huggingface-cli \
+  vllm/vllm-openai:v0.22.1-cu129-ubuntu2404 \
+  download openai/gpt-oss-120b --local-dir /gpt120b
+```
+
+- Swap `openai/gpt-oss-120b` for the exact HF repo ID you're standing up. Gated repos need `HF_TOKEN`
+  (get one at huggingface.co → Settings → Access Tokens); open repos can drop the `-e HF_TOKEN` line.
+- The `tiktoken` encodings the compose file expects in the `encodings` volume are fetched by vLLM on
+  first start if the box is online; for **air-gap**, pre-stage them the same way (`-v encodings:/etc/encodings`).
+- **Air-gap** (no internet on the fielded box): run the download on any online machine, then move the
+  weights over — either `docker run --rm -v vllm:/gpt120b -v /mnt/usb:/src alpine cp -a /src/. /gpt120b`
+  from a USB copy of the download, or push through your internal mirror.
+
+Verify before first `up`: `sudo docker run --rm -v vllm:/gpt120b alpine ls /gpt120b` should list the
+model's `config.json` + weight shards. Then `docker compose up -d` (or flip `ai_compose_deploy`).
+
+> **Automating the fetch.** The download is left as a deliberate manual/one-time step (it needs your HF
+> token and moves ~200 GB). If you want it baked in too, give me the exact HF repo ID(s) and I'll add an
+> optional `ai_model_fetch` task to `ai_compose` (guarded on the volume being empty) so a
+> token-in-`site.yml` node self-stages on first pull.
+
+**Air-gap note for the images themselves:** mirror them into an internal registry or `docker load` from
+tarballs before `ai_compose_deploy`/`up`; `ai_compose` never builds images, only pulls the pinned tags.
 
 ## Windows servers
 

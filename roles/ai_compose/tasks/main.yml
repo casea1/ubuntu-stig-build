@@ -1,0 +1,87 @@
+---
+# =============================================================================
+# ai_compose -- place the AI stack's docker-compose into {{ ai_compose_dir }}
+# (default /opt/it/docker) for the node's role, render a root-only .env for the
+# secrets/site values, create the named volumes, and OPTIONALLY bring the stack up.
+#
+# Gated is_ai + ai_compose_enabled in local.yml. Which stack a box gets is chosen
+# by `ai_node_role` (system1 | system2), set per node in /etc/stig-build/site.yml.
+#
+# HOST-PREP-FRIENDLY: by default this only PLACES the files + creates the (empty)
+# external volumes; it does NOT pull images or `up` (ai_compose_deploy=false),
+# because the vLLM volume must be populated with the model first (see docs). Flip
+# ai_compose_deploy=true once the model is staged to have Ansible run it too.
+# =============================================================================
+
+- name: "AI-COMPOSE | Validate ai_node_role"
+  ansible.builtin.assert:
+    that:
+      - ai_node_role in ['system1', 'system2']
+    fail_msg: >-
+      ai_compose_enabled is true but ai_node_role is '{{ ai_node_role | default("") }}'.
+      Set ai_node_role: system1 | system2 in this node's /etc/stig-build/site.yml.
+    quiet: true
+
+- name: "AI-COMPOSE | Ensure the compose dir exists ({{ ai_compose_dir }})"
+  ansible.builtin.file:
+    path: "{{ ai_compose_dir }}"
+    state: directory
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "2750"          # admins (sudo group) can read/manage; others denied
+
+- name: "AI-COMPOSE | Place the compose file for role {{ ai_node_role }}"
+  ansible.builtin.copy:
+    src: "{{ ai_node_role }}-compose.yaml"
+    dest: "{{ ai_compose_dir }}/docker-compose.yaml"
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "0640"
+
+- name: "AI-COMPOSE | Render the root-only .env (secrets/site values)"
+  # Only System 1 needs the DB password + peer IP; render it for both harmlessly.
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ ai_compose_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: ai_node_role == 'system1'
+
+- name: "AI-COMPOSE | Create the external named volumes (empty; populate the model separately)"
+  ansible.builtin.command: "docker volume create {{ item }}"
+  register: _vol
+  changed_when: "'already exists' not in (_vol.stderr | default(''))"
+  failed_when:
+    - _vol.rc != 0
+    - "'already exists' not in (_vol.stderr | default(''))"
+  loop: "{{ ai_compose_volumes[ai_node_role] | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: "AI-COMPOSE | Deploy the stack (opt-in; needs the model staged + internet for pull)"
+  when: ai_compose_deploy | default(false) | bool
+  block:
+    - name: "AI-COMPOSE | docker compose pull"
+      ansible.builtin.command:
+        cmd: docker compose pull
+        chdir: "{{ ai_compose_dir }}"
+      changed_when: true
+
+    - name: "AI-COMPOSE | docker compose up -d"
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ ai_compose_dir }}"
+      register: _compose_up
+      changed_when: "'Started' in (_compose_up.stderr | default('')) or 'Created' in (_compose_up.stderr | default(''))"
+
+- name: "AI-COMPOSE | Where the stack lives"
+  ansible.builtin.debug:
+    msg: >-
+      {{ ai_node_role }} compose placed at {{ ai_compose_dir }}/docker-compose.yaml.
+      {{ 'Deployed (docker compose up -d).' if (ai_compose_deploy | default(false) | bool)
+         else ('Not deployed. Populate the model into the `vllm` volume, then `cd '
+               ~ ai_compose_dir ~ ' && docker compose up -d` (or set ai_compose_deploy=true).')
+         if ai_node_role == 'system1'
+         else ('Not deployed. `cd ' ~ ai_compose_dir ~ ' && docker compose up -d`.') }}

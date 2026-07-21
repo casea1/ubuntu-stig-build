@@ -117,6 +117,10 @@
       when: is_development
     - role: ai_firewall             # ai: open the prebuilt AI stack's inbound ports AFTER USG's default-deny
       when: is_ai
+    - role: ai_compose              # ai: bake the node's docker-compose + .env into /opt/it/docker (opt-in `up`)
+      when:
+        - is_ai
+        - ai_compose_enabled | default(false)
 
     # -------------------------------------------------------------------------
     # RESIDUAL REMEDIATION  (both profiles) -- runs AFTER USG + the firewall
