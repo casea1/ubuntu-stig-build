@@ -1,0 +1,105 @@
+# =============================================================================
+# System 1 -- UI / TEXT-GENERATION node   (vLLM 120B + Open WebUI + pgvector + LGTM)
+# Managed by ansible (ai_compose role); placed in {{ ai_compose_dir }}.
+# Secrets/site values come from the sibling `.env` (rendered from site.yml,
+# root-only) -- this file holds NO secrets so it's safe in the repo.
+#   Run:   cd /opt/it/docker && docker compose up -d
+# =============================================================================
+name: ai-system1
+
+networks:
+  oi:
+    driver: bridge
+
+volumes:
+  vllm: { external: true }            # <-- 120B model weights (populate BEFORE up)
+  encodings: { external: true }
+  pgvector-data: { external: true }
+  open-webui: { external: true }
+  lgtm-data: {}
+
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.22.1-cu129-ubuntu2404
+    container_name: vllm-server
+    ipc: host
+    ports:
+      - "8000:8000"
+    volumes:
+      - vllm:/gpt120b
+      - encodings:/etc/encodings
+    environment:
+      TIKTOKEN_ENCODINGS_BASE: "/etc/encodings"
+      TIKTOKEN_RS_CACHE_DIR: "/etc/encodings"
+    command:
+      - --model=/gpt120b
+      - --gpu-memory-utilization=0.90
+      - --tensor-parallel-size=2
+      - --max-model-len=32768
+      - --port=8000
+      - --enable-auto-tool-choice
+      - --tool-call-parser=openai
+    networks: [oi]
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+
+  pgvector:
+    image: pgvector/pgvector:pg16-trixie
+    container_name: pgvector
+    environment:
+      POSTGRES_DB: "openwebui"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set in .env}"
+    volumes:
+      - pgvector-data:/var/lib/postgresql/data
+    networks: [oi]
+    restart: unless-stopped
+
+  lgtm:
+    image: grafana/otel-lgtm:0.29.0
+    container_name: lgtm
+    ports:
+      - "3001:3000"        # Grafana UI
+      - "4317:4317"        # OTLP gRPC
+      - "4318:4318"        # OTLP HTTP
+    volumes:
+      - lgtm-data:/data
+    networks: [oi]
+    restart: unless-stopped
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.10.2
+    container_name: open-webui
+    depends_on: [pgvector, vllm, lgtm]
+    ports:
+      - "3000:8080"
+    volumes:
+      - open-webui:/app/backend/data
+    environment:
+      DATABASE_URL: "postgresql://postgres:${POSTGRES_PASSWORD:?set in .env}@pgvector:5432/openwebui"
+      AIOHTTP_CLIENT_TIMEOUT: "6000"
+      VECTOR_DB: "pgvector"
+      VECTOR_DB_URL: "postgresql://postgres:${POSTGRES_PASSWORD:?set in .env}@pgvector:5432/openwebui"
+      ENV: "dev"
+      # cross-node document extraction: Docling on System 2 (SYSTEM2_IP from .env)
+      CONTENT_EXTRACTION_ENGINE: "docling"
+      DOCLING_SERVER_URL: "http://${SYSTEM2_IP:?set in .env}:5001"
+      # observability -- LGTM co-located on this node
+      ENABLE_OTEL: "true"
+      ENABLE_OTEL_TRACES: "true"
+      ENABLE_OTEL_METRICS: "true"
+      ENABLE_OTEL_LOGS: "true"
+      OTEL_SERVICE_NAME: "open-webui"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://lgtm:4317"
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_METRICS_EXPORTER_ENDPOINT: "http://lgtm:4317"
+      OTEL_METRICS_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_LOGS_EXPORTER_OTLP: "http://lgtm:4317"
+      OTEL_LOGS_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_METRICS_EXPORT_INTERVAL_MILLIS: "10000"
+    networks: [oi]
+    restart: unless-stopped

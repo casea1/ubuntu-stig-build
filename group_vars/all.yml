@@ -603,6 +603,38 @@ ai_firewall_allow_ports:
   # - { port: 5001, proto: tcp, rule: allow, from: "10.0.0.10/32" }  # Docling
 
 # =============================================================================
+# AI DOCKER COMPOSE  (ai_compose role -> bakes the stack into /opt/it/docker)
+# =============================================================================
+# ai profile only. Places the node's docker-compose.yaml (+ a root-only .env for
+# secrets/site values) under ai_compose_dir, creates the named volumes, and can
+# OPTIONALLY bring the stack up. Two node roles share one image set but get
+# different compose files:
+#   system1 = UI/text-gen   (vLLM 120B + Open WebUI + pgvector + LGTM)
+#   system2 = extraction    (Docling)
+#
+# Turn it on and pick the role PER NODE in /etc/stig-build/site.yml, e.g.:
+#   ai_compose_enabled: true
+#   ai_node_role: system1            # or system2
+#   ai_pgvector_password: "<db pw>"  # system1 only; out-of-band, never in repo
+#   ai_system2_ip: "192.168.1.106"   # system1 only; where Docling lives
+#
+# By default the role only PLACES files + creates the (empty) volumes -- it does
+# NOT pull/`up`, because the vLLM volume must be loaded with the 120B model first
+# (see OPERATIONS.md "Gathering the models"). Flip ai_compose_deploy=true once the
+# model is staged to let Ansible pull + `up -d` too.
+ai_compose_enabled: false
+ai_node_role: ""                 # system1 | system2  (set per node in site.yml)
+ai_compose_dir: /opt/it/docker
+ai_compose_deploy: false         # true = also `docker compose pull && up -d`
+ai_pgvector_password: ""         # system1 only; set out-of-band in site.yml
+ai_system2_ip: ""                # system1 only; Docling node IP for Open WebUI
+# External named volumes each role owns (kept out of compose's lifecycle so the
+# model weights / DB survive `down -v`). Empty list = role creates none.
+ai_compose_volumes:
+  system1: [vllm, encodings, pgvector-data, open-webui]
+  system2: []
+
+# =============================================================================
 # USG HARDENING  (usg_harden role -> Ubuntu Security Guide / DISA-STIG)
 # =============================================================================
 # BOTH profiles (development and ai) are hardened by Canonical's Ubuntu Security

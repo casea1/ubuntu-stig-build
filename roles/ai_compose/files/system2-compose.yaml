@@ -1,0 +1,28 @@
+# =============================================================================
+# System 2 -- EMBEDDINGS / EXTRACTION node   (Docling)
+# Managed by ansible (ai_compose role); placed in {{ ai_compose_dir }}.
+# Reached from System 1's Open WebUI at  http://<THIS_NODE_IP>:5001
+#   Run:   cd /opt/it/docker && docker compose up -d
+#
+# If an embeddings/vision vLLM is added for this node later, add it as a second
+# service here (it shares these two GPUs with Docling -- tune --gpu-memory-utilization).
+# =============================================================================
+name: ai-system2
+
+services:
+  docling-serve:
+    image: ghcr.io/docling-project/docling-serve-cu128:v1.24.0
+    container_name: docling-serve
+    ports:
+      - "5001:5001"
+    environment:
+      - DOCLING_SERVE_MAX_SYNC_WAIT=6000
+      - DOCLING_SERVE_ENABLE_UI=false
+      - OMP_NUM_THREADS=4
+      - UVICORN_WORKERS=1
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
