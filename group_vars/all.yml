@@ -733,8 +733,9 @@ usg_chrony_servers:
 # UBTU-24-600160/600170): written as `server <host> iburst maxpoll <N>`.
 usg_chrony_maxpoll: 16
 # makestep line the STIG wants (chronyd_sync_clock, UBTU-24-600180); only applied
-# when usg_chrony_servers is non-empty.
-usg_chrony_makestep: "makestep 1 1"
+# when usg_chrony_servers is non-empty. The DISA remediation inserts exactly
+# `makestep 1 -1` (step the clock for any offset, unlimited updates), so match it.
+usg_chrony_makestep: "makestep 1 -1"
 
 # Re-run `usg audit` at the very end (after remediation + firewall) so the report
 # in usg_report_dir reflects the fully-built, remediated box rather than the
