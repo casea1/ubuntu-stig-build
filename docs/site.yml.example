@@ -29,23 +29,32 @@
 #   - { port: 5001, proto: tcp, rule: allow, from: "192.168.1.102" }   # Docling           <- System 1
 
 # ---- AI docker-compose stack (ai profile) -----------------------------------
-# Bake the node's compose file + a root-only .env into ai_compose_dir
-# (default /opt/it/docker) and create the named volumes. Pick the role per node.
+# HANDS-OFF BY DEFAULT: on the ai profile the stack is enabled automatically and
+# the node role is picked from the HOSTNAME (dev-ai1->system1, dev-ai2->system2),
+# the DB password is auto-generated, and System 1 reaches System 2 by the name
+# `dev-ai2`. So a freshly-imaged, correctly-named box needs NOTHING here.
 #
-# --- System 1 (UI/text-gen): gpt-oss-120B + Granite-32B + WebUI/pgvector/LGTM ---
-# ai_compose_enabled: true
-# ai_node_role: system1
-# ai_pgvector_password: "CHANGE_ME"        # DB password; out-of-band, never in repo
-# ai_system2_ip: "192.168.1.106"           # System 2 (embed/vision/Docling) IP
-# ai_model_fetch: true                     # auto-download the models into their volumes
+# Use the lines below ONLY for exceptions:
+#
+# --- Box not named dev-ai1/dev-ai2 -> pick the role explicitly ---
+# ai_node_role: system1                    # or system2
+#
+# --- Already-initialised pgvector DB -> pin its existing password ---
+# (Otherwise the auto-generated one won't match the DB and Open WebUI can't log in.)
+# ai_pgvector_password: "gelab_24"
+#
+# --- `dev-ai2` doesn't resolve -> give System 1 an IP for System 2 ---
+# ai_system2_ip: "192.168.1.106"
+#
+# --- Auto-download the models on this box (needs internet + disk) ---
+# ai_model_fetch: true
 # # ai_hf_token: "hf_..."                  # OPTIONAL; models are open, token only dodges rate limits
-# # ai_compose_deploy: true                # uncomment ONLY after the models are staged
 #
-# --- System 2 (embeddings/extraction): Granite embed + Granite vision + Docling ---
-# ai_compose_enabled: true
-# ai_node_role: system2
-# ai_model_fetch: true                     # auto-download embed + vision into their volumes
-# # ai_compose_deploy: true                # safe once models are staged
+# --- Start the stack from Ansible (only after the models are staged) ---
+# ai_compose_deploy: true
+#
+# --- Turn the whole stack OFF on an ai box ---
+# ai_compose_enabled: false
 
 # ---- Time source (your enclave NTP) -----------------------------------------
 # usg_chrony_servers:

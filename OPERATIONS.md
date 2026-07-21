@@ -571,27 +571,34 @@ models share the two GPUs (`--tensor-parallel-size=2`), so their `--gpu-memory-u
 **2× 96 GB (RTX PRO 6000 Blackwell)**; on 2× 48 GB (RTX 6000 Ada) the two bf16 models won't co-reside,
 so lower the utils and/or serve Granite quantized.
 
-Turn it on **per node** in `/etc/stig-build/site.yml` (never in the public repo — the DB password and
-peer IP live here, out of git):
+**Hands-off imaging — normally NOTHING to edit per box.** On the ai profile the stack is enabled
+automatically and everything per-node auto-derives, so a freshly-imaged, correctly-named box comes up
+configured with no `site.yml` editing:
+
+- **`ai_node_role` is picked from the hostname** — `dev-ai1`→`system1`, `dev-ai2`→`system2` (plus an
+  `*ai1*`/`*ai2*` pattern fallback). Extend `ai_node_role_by_hostname` in `group_vars` for more nodes.
+- **The pgvector password is auto-generated** and persisted root-only (`/etc/stig-build/pgvector.pw`) on
+  first run — it's only used between two containers on the same box, never by a human, so there's
+  nothing to type and no secret in the repo.
+- **System 1 reaches System 2 by the name `dev-ai2`** (`ai_system2_ip` default).
+
+So the imaging workflow is just: **name the box `dev-ai1`/`dev-ai2` → run the pull.** `site.yml` is now
+only for *exceptions*, dropped root-only on the box (out of git):
 
 ```yaml
-# --- System 1 (192.168.1.102) ---
-ai_compose_enabled: true
-ai_node_role: system1
-ai_pgvector_password: "‹db password›"   # rendered into the root-only .env, no_log
-ai_system2_ip: "192.168.1.106"          # where WebUI reaches embed/vision/Docling
-ai_model_fetch: true                    # auto-download the models into their volumes
-# ai_compose_deploy: true               # add ONLY after the models are staged
-
-# --- System 2 (192.168.1.106) ---
-ai_compose_enabled: true
-ai_node_role: system2
-ai_model_fetch: true
-# ai_compose_deploy: true
+# Only if the box ISN'T named dev-ai1/dev-ai2:
+ai_node_role: system1                 # or system2
+# Only for an ALREADY-INITIALISED DB (pin its existing password so WebUI still logs in):
+ai_pgvector_password: "‹existing db password›"
+# Only if `dev-ai2` doesn't resolve from System 1:
+ai_system2_ip: "192.168.1.106"
+# Opt in to the heavy steps when ready:
+ai_model_fetch: true                  # download the models into their volumes
+ai_compose_deploy: true               # start the stack (after models are staged)
 ```
 
 Also open System 2's cross-node ports **to System 1 only** (`ai_firewall_allow_ports` in `site.yml`):
-`8002` (embed), `8003` (vision), `5001` (Docling), each `from: "192.168.1.102"`.
+`8002` (embed), `8003` (vision), `5001` (Docling), each `from: "‹System 1 IP›"`.
 
 ### Gathering the models (automated)
 
