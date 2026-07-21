@@ -37,6 +37,23 @@
 
   # Fail fast on a typo'd profile rather than silently building nothing.
   pre_tasks:
+    # -------------------------------------------------------------------------
+    # PER-NODE / SITE OVERRIDES. Everything pulls the SAME public repo, so
+    # per-machine settings (firewall ports, NTP, the peer node's IP, a Cockpit
+    # cert, ...) and anything you don't want in a public repo live in a LOCAL file
+    # on the box: /etc/stig-build/site.yml (override with -e site_overrides_file=).
+    # Dropped out-of-band per node; loaded here so it beats group_vars/all.yml.
+    # Example (System 2): ai_firewall_allow_ports: [{port: 5001, proto: tcp, ...}]
+    # -------------------------------------------------------------------------
+    - name: "Look for a local site-override file"
+      ansible.builtin.stat:
+        path: "{{ site_overrides_file | default('/etc/stig-build/site.yml') }}"
+      register: _site_overrides
+
+    - name: "Load local site/per-node overrides (beats group_vars)"
+      ansible.builtin.include_vars: "{{ site_overrides_file | default('/etc/stig-build/site.yml') }}"
+      when: _site_overrides.stat.exists
+
     - name: "Validate deployment_profile is development or ai"
       ansible.builtin.assert:
         that:
