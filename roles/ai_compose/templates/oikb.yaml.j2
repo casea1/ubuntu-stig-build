@@ -1,0 +1,16 @@
+# oikb configuration -- links Open WebUI knowledge bases to external data sources.
+# Rendered once by ansible (ai_compose) and NOT overwritten on re-runs, so your
+# edits persist. Docs: https://github.com/open-webui/oikb
+#
+# Auth comes from the sibling .env (OPEN_WEBUI_URL / OPEN_WEBUI_API_KEY, and
+# GITLAB_URL / GITLAB_TOKEN for a GitLab source). Fill in the knowledge bases /
+# sources below to match what you've created in Open WebUI, then:
+#   docker compose restart oikb
+#
+# Example (adjust to your oikb version's schema):
+# knowledge_bases:
+#   - name: "my-repo-kb"           # must match a KB created in Open WebUI
+#     source:
+#       type: gitlab
+#       project: "group/project"
+#       ref: main

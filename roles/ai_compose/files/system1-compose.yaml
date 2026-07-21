@@ -1,17 +1,18 @@
 # =============================================================================
-# System 1 (dev-ai1) -- UI / TEXT-GENERATION node
-#   vLLM gpt-oss-120B  +  vLLM Granite-4.0-H-Small (32B)  +  Open WebUI
-#   +  pgvector  +  LGTM
+# System 1 (dev-ai1) -- UI / TEXT-GENERATION / KNOWLEDGE node
+#   vLLM gpt-oss-120B  +  Open WebUI (+ Redis, pgvector)  +  LGTM  +  oikb
 # Managed by ansible (ai_compose role); placed in {{ ai_compose_dir }}.
-# Secrets/site values come from the sibling root-only `.env` (rendered from
-# site.yml) -- this file holds NO secrets so it's safe in the repo.
-#   Run:   cd /opt/it/docker && docker compose up -d
 #
-# GPU / VRAM: both vLLM servers use tensor-parallel-size=2 and SHARE the two
-# GPUs, so their --gpu-memory-utilization must sum to < ~0.95. Defaults below
-# assume 2x 96GB (RTX PRO 6000 Blackwell = 192GB total): gpt-oss 0.55, granite
-# 0.35. On 2x 48GB (RTX 6000 Ada = 96GB) both bf16 models will NOT co-reside --
-# lower the utils and/or serve Granite quantized, or move Granite to Ollama.
+# Consolidated from the per-service compose files. ONE file per node is used on
+# purpose: cross-service `depends_on` (health-gated) only works inside a single
+# compose project, so Open WebUI can wait for pgvector + redis to be HEALTHY
+# before it starts -- the ordering the split files couldn't actually enforce.
+#
+# Secrets/site values come from the sibling root-only `.env` (rendered from
+# site.yml, no_log) -- this file holds NO secrets, so it's safe in the repo.
+#   Run:   cd /opt/it/docker && docker compose up -d
+# Utility container (hfcli) is under the `tools` profile so it doesn't auto-start;
+# use it on demand:  docker compose run --rm hfcli hf download <repo> --local-dir /llm/<dir>
 # =============================================================================
 name: ai-system1
 
@@ -20,12 +21,12 @@ networks:
     driver: bridge
 
 volumes:
-  vllm: { external: true }            # <-- gpt-oss-120B weights (populate BEFORE up)
-  granite32b: { external: true }      # <-- Granite-4.0-H-Small weights
-  encodings: { external: true }       # <-- gpt-oss harmony/tiktoken encodings
+  vllm: { external: true }            # gpt-oss-120B weights (populate BEFORE up)
+  encodings: { external: true }       # tiktoken/harmony encodings
   pgvector-data: { external: true }
   open-webui: { external: true }
-  lgtm-data: {}
+  redis-data: { external: true }
+  lgtm-data: { external: true }
 
 services:
   vllm:
@@ -42,38 +43,12 @@ services:
       TIKTOKEN_RS_CACHE_DIR: "/etc/encodings"
     command:
       - --model=/gpt120b
-      - --served-model-name=gpt-oss-120b
-      - --gpu-memory-utilization=0.55     # shares both GPUs with vllm-granite
+      - --gpu-memory-utilization=0.90
       - --tensor-parallel-size=2
       - --max-model-len=32768
       - --port=8000
       - --enable-auto-tool-choice
       - --tool-call-parser=openai
-    networks: [oi]
-    restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - { driver: nvidia, count: all, capabilities: [gpu] }
-
-  vllm-granite:
-    image: vllm/vllm-openai:v0.22.1-cu129-ubuntu2404
-    container_name: vllm-granite
-    ipc: host
-    ports:
-      - "8001:8001"
-    volumes:
-      - granite32b:/granite32b
-    command:
-      - --model=/granite32b
-      - --served-model-name=granite-4.0-h-small
-      - --gpu-memory-utilization=0.35     # shares both GPUs with vllm (gpt-oss)
-      - --tensor-parallel-size=2
-      - --max-model-len=32768
-      - --port=8001
-      - --enable-auto-tool-choice
-      - --tool-call-parser=hermes         # Granite 4 tool calls
     networks: [oi]
     restart: unless-stopped
     deploy:
@@ -91,14 +66,43 @@ services:
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set in .env}"
     volumes:
       - pgvector-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d openwebui"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks: [oi]
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.2.14-bookworm
+    container_name: redis
+    entrypoint: ["redis-server"]
+    command: "--save 30 1 --appendonly yes --maxclients 10000 --timeout 1800 --maxmemory-policy noeviction"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    cap_drop: [ALL]
+    cap_add: [SETGID, SETUID, DAC_OVERRIDE]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+        max-file: "1"
     networks: [oi]
     restart: unless-stopped
 
   lgtm:
     image: grafana/otel-lgtm:0.29.0
-    container_name: lgtm
+    container_name: open-webui-lgtm
     ports:
-      - "3001:3000"        # Grafana UI
+      - "3001:3000"        # Grafana UI (was 3000; moved to avoid Open WebUI's 3000)
       - "4317:4317"        # OTLP gRPC
       - "4318:4318"        # OTLP HTTP
     volumes:
@@ -109,9 +113,10 @@ services:
   open-webui:
     image: ghcr.io/open-webui/open-webui:v0.10.2
     container_name: open-webui
-    depends_on: [pgvector, vllm, vllm-granite, lgtm]
-    ports:
-      - "3000:8080"
+    depends_on:
+      pgvector: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      lgtm: { condition: service_started }
     volumes:
       - open-webui:/app/backend/data
     environment:
@@ -120,30 +125,70 @@ services:
       VECTOR_DB: "pgvector"
       VECTOR_DB_URL: "postgresql://postgres:${POSTGRES_PASSWORD:?set in .env}@pgvector:5432/openwebui"
       ENV: "dev"
-      # ---- Chat models: both local vLLM servers (OpenAI-compatible) ----
-      # Semicolon-separated; keys are dummies (vLLM ignores auth).
-      OPENAI_API_BASE_URLS: "http://vllm:8000/v1;http://vllm-granite:8001/v1"
-      OPENAI_API_KEYS: "sk-noauth;sk-noauth"
-      # ---- Embeddings: Granite embedding vLLM on System 2 (SYSTEM2_IP from .env) ----
-      RAG_EMBEDDING_ENGINE: "openai"
-      RAG_EMBEDDING_MODEL: "granite-embedding-small-english-r2"
-      RAG_OPENAI_API_BASE_URL: "http://${SYSTEM2_IP:?set in .env}:8002/v1"
-      RAG_OPENAI_API_KEY: "sk-noauth"
-      # ---- Document extraction: Docling on System 2 ----
-      CONTENT_EXTRACTION_ENGINE: "docling"
-      DOCLING_SERVER_URL: "http://${SYSTEM2_IP:?set in .env}:5001"
-      # ---- Observability: LGTM co-located on this node ----
+      # Model/extraction/embedding connections are configured in the Open WebUI
+      # admin UI (kept out of env by choice), so they aren't wired here.
       ENABLE_OTEL: "true"
       ENABLE_OTEL_TRACES: "true"
       ENABLE_OTEL_METRICS: "true"
       ENABLE_OTEL_LOGS: "true"
       OTEL_SERVICE_NAME: "open-webui"
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://lgtm:4317"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://open-webui-lgtm:4317"
       OTEL_EXPORTER_OTLP_INSECURE: "true"
-      OTEL_METRICS_EXPORTER_ENDPOINT: "http://lgtm:4317"
+      OTEL_METRICS_EXPORTER_ENDPOINT: "http://open-webui-lgtm:4317"
       OTEL_METRICS_EXPORTER_OTLP_INSECURE: "true"
-      OTEL_LOGS_EXPORTER_OTLP: "http://lgtm:4317"
+      OTEL_LOGS_EXPORTER_OTLP: "http://open-webui-lgtm:4317"
       OTEL_LOGS_EXPORTER_OTLP_INSECURE: "true"
       OTEL_METRICS_EXPORT_INTERVAL_MILLIS: "10000"
+      DATABASE_POOL_SIZE: "15"
+      DATABASE_POOL_MAX_OVERFLOW: "20"
+      DATABASE_ENABLE_SESSION_SHARING: "true"
+      DATABASE_POOL_TIMEOUT: "60"
+      WEBUI_SECRET_KEY: "${WEBUI_SECRET_KEY:?set in .env}"
+      REDIS_URL: "redis://redis:6379/0"
+      ENABLE_WEBSOCKET_SUPPORT: "true"
+      WEBSOCKET_MANAGER: "redis"
+      WEBSOCKET_REDIS_URL: "redis://redis:6379/1"
+      UVICORN_WORKERS: "9"
+      CORS_ALLOW_ORIGIN: "${OI_ORIGIN:-*}"
+      REDIS_SOCKET_KEEPALIVE: "true"
+    ports:
+      - "3000:8080"
     networks: [oi]
     restart: unless-stopped
+
+  oikb:
+    image: oikb:latest          # built on the box by ansible (ai_compose)
+    container_name: oikb
+    working_dir: /app
+    depends_on:
+      open-webui: { condition: service_started }
+    ports:
+      - "8081:8080"
+    environment:
+      OPEN_WEBUI_URL: "${OPEN_WEBUI_URL:-http://open-webui:8080}"
+      OPEN_WEBUI_API_KEY: "${OPEN_WEBUI_API_KEY:-}"
+      GITLAB_URL: "${GITLAB_URL:-}"
+      GITLAB_TOKEN: "${GITLAB_TOKEN:-}"
+      LOG_FORMAT: "json"
+    command: oikb daemon
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://0.0.0.0:8080/health/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    volumes:
+      - ./.oikb.yaml:/app/.oikb.yaml
+    networks: [oi]
+    restart: unless-stopped
+
+  # ---- Utility container: model downloads (does NOT auto-start) ----
+  # docker compose run --rm hfcli hf download <repo> --local-dir /llm/<dir>
+  hfcli:
+    image: hfcli:latest         # built on the box by ansible (ai_compose)
+    container_name: hfcli
+    profiles: ["tools"]
+    volumes:
+      - vllm:/llm
+      - encodings:/encodings
+    networks: [oi]

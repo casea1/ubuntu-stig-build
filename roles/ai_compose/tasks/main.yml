@@ -1,16 +1,19 @@
 ---
 # =============================================================================
-# ai_compose -- place the AI stack's docker-compose into {{ ai_compose_dir }}
-# (default /opt/it/docker) for the node's role, render a root-only .env for the
-# secrets/site values, create the named volumes, and OPTIONALLY bring the stack up.
+# ai_compose -- stage the AI stack into {{ ai_compose_dir }} (default
+# /opt/it/docker) for the node's role. It: places the consolidated
+# docker-compose.yaml; builds the custom images the stack needs (oikb/hfcli/
+# repomix, not on any registry); renders a root-only .env (auto-generated DB +
+# WebUI secrets) and the oikb config skeleton; creates the external named
+# volumes; and OPTIONALLY fetches models + brings the stack up.
 #
-# Gated is_ai + ai_compose_enabled in local.yml. Which stack a box gets is chosen
-# by `ai_node_role` (system1 | system2), set per node in /etc/stig-build/site.yml.
+# Gated is_ai + ai_compose_enabled in local.yml. The node's role (system1 |
+# system2) is auto-derived from the hostname (see group_vars).
 #
-# HOST-PREP-FRIENDLY: by default this only PLACES the files + creates the (empty)
-# external volumes; it does NOT pull images or `up` (ai_compose_deploy=false),
-# because the vLLM volume must be populated with the model first (see docs). Flip
-# ai_compose_deploy=true once the model is staged to have Ansible run it too.
+# HOST-PREP-FRIENDLY: by default it PLACES files + builds images + creates the
+# (empty) volumes, but does NOT `up` (ai_compose_deploy=false), because System
+# 1's vLLM volume must be populated with the model first (see OPERATIONS.md).
+# Flip ai_compose_deploy=true once the model is staged to have Ansible run it.
 # =============================================================================
 
 - name: "AI-COMPOSE | Validate ai_node_role (auto-derived from hostname)"
@@ -40,6 +43,46 @@
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "0640"
 
+# ---- Custom images (not on a registry) -> built on the box ----------------
+- name: "AI-COMPOSE | Copy custom-image build contexts"
+  ansible.builtin.copy:
+    src: "images/{{ item }}/"
+    dest: "{{ ai_compose_dir }}/build/{{ item }}/"
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "0640"
+    directory_mode: "0750"
+  loop: "{{ ai_compose_build_by_role[ai_node_role] | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
+  when: ai_compose_build_images | default(true) | bool
+
+- name: "AI-COMPOSE | Check which custom images already exist"
+  ansible.builtin.command: "docker image inspect {{ ai_compose_images[item].tag }}"
+  register: _img_check
+  changed_when: false
+  failed_when: false
+  loop: "{{ ai_compose_build_by_role[ai_node_role] | default([]) }}"
+  loop_control:
+    label: "{{ ai_compose_images[item].tag }}"
+  when: ai_compose_build_images | default(true) | bool
+
+- name: "AI-COMPOSE | Build custom images (missing, or force)"
+  # oikb's Dockerfile git-clones from github.com at build time -> needs internet.
+  ansible.builtin.command:
+    cmd: >-
+      docker build -t {{ ai_compose_images[item.0].tag }}
+      -f {{ ai_compose_dir }}/build/{{ item.0 }}/{{ ai_compose_images[item.0].dockerfile }}
+      {{ ai_compose_dir }}/build/{{ item.0 }}
+  register: _img_build
+  changed_when: true
+  loop: "{{ (ai_compose_build_by_role[ai_node_role] | default([])) | zip(_img_check.results | default([])) | list }}"
+  loop_control:
+    label: "{{ ai_compose_images[item.0].tag }}"
+  when:
+    - ai_compose_build_images | default(true) | bool
+    - (ai_compose_build_force | default(false) | bool) or ((item.1.rc | default(1)) != 0)
+
 - name: "AI-COMPOSE | Lock down the secrets dir (holds the auto-generated DB password)"
   # The pgvector password is auto-generated + persisted here on first render of
   # .env; 0700 root keeps it root-only regardless of the lookup's file perms.
@@ -61,6 +104,18 @@
     group: root
     mode: "0600"
   no_log: true
+  when: ai_node_role == 'system1'
+
+- name: "AI-COMPOSE | Render the oikb config skeleton (System 1; not overwritten on re-run)"
+  # oikb bind-mounts ./.oikb.yaml, so the file must exist before `up` (else Docker
+  # creates a directory there). force:false keeps your edits across re-runs.
+  ansible.builtin.template:
+    src: oikb.yaml.j2
+    dest: "{{ ai_compose_dir }}/.oikb.yaml"
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "0640"
+    force: false
   when: ai_node_role == 'system1'
 
 - name: "AI-COMPOSE | Create the external named volumes (empty; populate the model separately)"
@@ -98,9 +153,11 @@
 - name: "AI-COMPOSE | Deploy the stack (opt-in; needs the model staged + internet for pull)"
   when: ai_compose_deploy | default(false) | bool
   block:
-    - name: "AI-COMPOSE | docker compose pull"
+    - name: "AI-COMPOSE | docker compose pull (ignore local-only custom images)"
+      # oikb/hfcli/repomix aren't on a registry (built on the box), so their pull
+      # would fail -- ignore that; `up` uses the locally-built tags.
       ansible.builtin.command:
-        cmd: docker compose pull
+        cmd: docker compose pull --ignore-pull-failures
         chdir: "{{ ai_compose_dir }}"
       changed_when: true
 
