@@ -4,3 +4,11 @@
     name: cockpit.socket
     state: restarted
     daemon_reload: true
+
+# cockpit.service (cockpit-tls) is socket-activated; restart it so a new TLS cert
+# is picked up immediately. Tolerate it being inactive.
+- name: Restart cockpit
+  ansible.builtin.systemd:
+    name: cockpit.service
+    state: restarted
+  failed_when: false

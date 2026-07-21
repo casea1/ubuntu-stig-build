@@ -758,6 +758,18 @@ cockpit_allow_from: ""
 # Extra cockpit add-on packages to install alongside the base console. Leave as-is
 # for the standard set; cockpit-pcp adds historical metrics.
 cockpit_extra_packages: []
+# TLS cert. Cockpit's built-in cert only covers localhost, so browsing to the box
+# by hostname/IP fails cert validation. The role installs a cert covering this
+# host's real name + IP:
+#   - cockpit_generate_cert (default true): generate a SAN-correct self-signed cert
+#     so the browser "proceed anyway" works and the session WebSocket connects.
+#   - cockpit_tls_cert / cockpit_tls_key: OPTIONAL org-CA cert (PEM content) dropped
+#     in out-of-band (never commit it here) -- clients that trust your CA get NO
+#     warning. When set, these take precedence over the generated cert.
+cockpit_generate_cert: true
+cockpit_cert_days: 825
+cockpit_tls_cert: ""
+cockpit_tls_key: ""
 
 # =============================================================================
 # IA/IT MANAGED DIRECTORIES  (managed_dirs role -> BOTH profiles)

@@ -11,15 +11,81 @@
 # provisioning phase because it needs the network to install.
 # =============================================================================
 
-- name: "COCKPIT | Install the cockpit console (+ sscg for the self-signed cert + any extras)"
-  # sscg is what cockpit-certificate-helper uses to generate its TLS cert; without
-  # it the helper logs "sscg: command not found" and falls back to a weaker openssl
-  # self-signed cert. Installing sscg gives cockpit a proper, FIPS-friendly cert.
+- name: "COCKPIT | Install the cockpit console (+ sscg + any extras)"
+  # sscg is cockpit-certificate-helper's preferred cert generator (else it logs
+  # "sscg: command not found"). NOTE: cockpit's built-in cert only lists
+  # localhost/127.0.0.1 in the SAN, so remote access by hostname/IP fails cert
+  # validation -- the SAN-correct cert task below fixes that.
   ansible.builtin.apt:
     name: "{{ ['cockpit', 'sscg'] + (cockpit_extra_packages | default([])) }}"
     state: present
     update_cache: true
     cache_valid_time: 3600
+
+# ---------------------------------------------------------------------------
+# TLS cert. Cockpit's own cert covers only localhost, so browsing to the box by
+# HOSTNAME or IP fails validation (browsers check the SAN, not the CN). Install a
+# cert that covers this host's real name + IP. Cockpit uses the alphabetically-LAST
+# *.cert in ws-certs.d, so 10-<host> overrides the default 0-self-signed.
+#   * provide an org-CA cert out-of-band (cockpit_tls_cert/_key) -> clients that
+#     trust your CA get NO warning; OR
+#   * let the role generate a self-signed cert with the correct SAN so the browser
+#     "proceed anyway" works and the session WebSocket connects.
+# ---------------------------------------------------------------------------
+- name: "COCKPIT | Install a provided org-CA TLS cert (out-of-band)"
+  when:
+    - (cockpit_tls_cert | default('') | length) > 0
+    - (cockpit_tls_key | default('') | length) > 0
+  block:
+    - name: "COCKPIT | Write the provided cert + key"
+      ansible.builtin.copy:
+        dest: "/etc/cockpit/ws-certs.d/10-{{ ansible_hostname }}.{{ item.ext }}"
+        content: "{{ item.content }}"
+        owner: root
+        group: cockpit-ws
+        mode: "0640"
+      loop:
+        - { ext: cert, content: "{{ cockpit_tls_cert }}" }
+        - { ext: key, content: "{{ cockpit_tls_key }}" }
+      loop_control:
+        label: "10-{{ ansible_hostname }}.{{ item.ext }}"
+      no_log: true
+      notify: Restart cockpit
+
+- name: "COCKPIT | Generate a self-signed cert with the real hostname/IP in the SAN"
+  when:
+    - cockpit_generate_cert | default(true) | bool
+    - (cockpit_tls_cert | default('') | length) == 0
+  block:
+    - name: "COCKPIT | Build the SAN list for this host"
+      ansible.builtin.set_fact:
+        _cockpit_san: >-
+          {{ (['DNS:' ~ ansible_hostname]
+              + (['DNS:' ~ ansible_fqdn] if (ansible_fqdn | default('') | length > 0 and ansible_fqdn != ansible_hostname) else [])
+              + ['DNS:localhost', 'IP:127.0.0.1']
+              + (['IP:' ~ ansible_default_ipv4.address] if (ansible_default_ipv4.address is defined) else []))
+             | unique | join(',') }}
+
+    - name: "COCKPIT | Generate the self-signed cert (RSA-2048, SAN-correct)"
+      ansible.builtin.command:
+        cmd: >-
+          openssl req -x509 -newkey rsa:2048 -nodes
+          -days {{ cockpit_cert_days | default(825) }}
+          -keyout /etc/cockpit/ws-certs.d/10-{{ ansible_hostname }}.key
+          -out    /etc/cockpit/ws-certs.d/10-{{ ansible_hostname }}.cert
+          -subj "/CN={{ ansible_hostname }}"
+          -addext "subjectAltName={{ _cockpit_san }}"
+        creates: "/etc/cockpit/ws-certs.d/10-{{ ansible_hostname }}.cert"
+      notify: Restart cockpit
+
+    - name: "COCKPIT | Lock down the generated cert + key (cockpit-ws readable)"
+      ansible.builtin.file:
+        path: "/etc/cockpit/ws-certs.d/10-{{ ansible_hostname }}.{{ item }}"
+        owner: root
+        group: cockpit-ws
+        mode: "0640"
+      loop: [cert, key]
+      failed_when: false
 
 # cockpit listens on 9090 by default via the socket unit. Only when a custom port
 # is requested do we drop in a socket override so ListenStream matches cockpit_port.
