@@ -8,6 +8,11 @@
 #
 # The embed/vision vLLM servers are NOT here yet (models can be pre-staged with
 # hfcli; add the servers when ready) -- matching the provided compose set.
+# NOTE: when you add a vLLM service here, give it the same FIPS carve-out the
+# System 1 vLLM uses (host runs FIPS, the image has no FIPS provider):
+#   volumes:
+#     - ./fips_off:/proc/sys/crypto/fips_enabled:ro
+# The ai_compose role already drops a `fips_off` file (content "0") in this dir.
 # Utility container (hfcli) is under the `tools` profile (does not auto-start):
 #   docker compose run --rm hfcli hf download <repo> --local-dir /llm/<dir>
 # =============================================================================
