@@ -20,38 +20,45 @@
 # --- System 1 (UI/text-gen, e.g. 192.168.1.102): Open WebUI + Grafana ---
 # ai_firewall_allow_ports:
 #   - { port: 3000, proto: tcp, rule: allow }                          # Open WebUI (users)
-#   - { port: 3001, proto: tcp, rule: allow, from: "192.168.1.0/24" }  # Grafana (admins)
+#   - { port: 3001, proto: tcp, rule: allow, from: "192.168.1.0/24" }  # Grafana/LGTM (admins)
+#   - { port: 8081, proto: tcp, rule: allow, from: "192.168.1.0/24" }  # oikb (admins)
 #
 # --- System 2 (extraction, e.g. 192.168.1.106): serves System 1 only ---
 # ai_firewall_allow_ports:
-#   - { port: 8002, proto: tcp, rule: allow, from: "192.168.1.102" }   # Granite embedding <- System 1
-#   - { port: 8003, proto: tcp, rule: allow, from: "192.168.1.102" }   # Granite vision    <- System 1
-#   - { port: 5001, proto: tcp, rule: allow, from: "192.168.1.102" }   # Docling           <- System 1
+#   - { port: 5001, proto: tcp, rule: allow, from: "192.168.1.102" }   # Docling <- System 1
+#   - { port: 9998, proto: tcp, rule: allow, from: "192.168.1.102" }   # Tika    <- System 1
 
 # ---- AI docker-compose stack (ai profile) -----------------------------------
-# HANDS-OFF BY DEFAULT: on the ai profile the stack is enabled automatically and
-# the node role is picked from the HOSTNAME (dev-ai1->system1, dev-ai2->system2),
-# the DB password is auto-generated, and System 1 reaches System 2 by the name
-# `dev-ai2`. So a freshly-imaged, correctly-named box needs NOTHING here.
-#
-# Use the lines below ONLY for exceptions:
+# HANDS-OFF BY DEFAULT: on the ai profile the stack is enabled automatically, the
+# node role is picked from the HOSTNAME (dev-ai1->system1, dev-ai2->system2), the
+# DB password + Open WebUI secret key are auto-generated, and the custom images
+# (oikb/hfcli/repomix) are built on the box. A correctly-named box needs NOTHING
+# here. Use the lines below ONLY for exceptions:
 #
 # --- Box not named dev-ai1/dev-ai2 -> pick the role explicitly ---
 # ai_node_role: system1                    # or system2
 #
 # --- Already-initialised pgvector DB -> pin its existing password ---
 # (Otherwise the auto-generated one won't match the DB and Open WebUI can't log in.)
-# ai_pgvector_password: "gelab_24"
+# ai_pgvector_password: "<the DB's existing password>"
 #
-# --- `dev-ai2` doesn't resolve -> give System 1 an IP for System 2 ---
-# ai_system2_ip: "192.168.1.106"
+# --- Lock Open WebUI's CORS to your domain (default is '*') ---
+# ai_webui_cors_origin: "https://oi.yourlab"
 #
-# --- Auto-download the models on this box (needs internet + disk) ---
+# --- oikb data-source secrets (knowledge-base sync; empty = oikb stays idle) ---
+# ai_oikb_openwebui_api_key: "<Open WebUI API key>"   # created in the Open WebUI UI
+# ai_oikb_gitlab_url: "https://gitlab.yourlab"
+# ai_oikb_gitlab_token: "<GitLab PAT>"
+#
+# --- Auto-download the served model on this box (needs internet + disk) ---
 # ai_model_fetch: true
 # # ai_hf_token: "hf_..."                  # OPTIONAL; models are open, token only dodges rate limits
 #
-# --- Start the stack from Ansible (only after the models are staged) ---
+# --- Start the stack from Ansible (only after the model is staged) ---
 # ai_compose_deploy: true
+#
+# --- Skip building custom images (e.g. you push them from a registry) ---
+# ai_compose_build_images: false
 #
 # --- Turn the whole stack OFF on an ai box ---
 # ai_compose_enabled: false

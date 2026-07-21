@@ -610,18 +610,17 @@ ai_firewall_allow_ports:
 # OPTIONALLY bring the stack up. Two node roles share one image set but get
 # different compose files:
 #   system1 = UI/text-gen   (vLLM 120B + Open WebUI + pgvector + LGTM)
-#   system2 = extraction    (Docling + embed/vision vLLM)
+#   system2 = extraction    (Docling + Tika)
 #
 # HANDS-OFF IMAGING: everything below auto-derives, so a freshly-imaged box
 # needs NO site.yml editing -- just give it the right hostname:
 #   * enabled by default on the ai profile (every ai box is an AI node);
 #   * ai_node_role is picked FROM THE HOSTNAME (dev-ai1->system1, dev-ai2->
 #     system2, plus an *ai1*/*ai2* fallback);
-#   * the pgvector password is auto-generated + persisted root-only (it's only
-#     used between two containers on the same box, never by a human);
-#   * ai_system2_ip defaults to the `dev-ai2` hostname.
+#   * the pgvector password + Open WebUI secret key are auto-generated +
+#     persisted root-only (used only inside the box, never by a human).
 # site.yml is now only for EXCEPTIONS (a differently-named box, a pinned DB
-# password for an already-initialised DB, an IP instead of a resolvable name).
+# password for an already-initialised DB, oikb data-source secrets, etc.).
 #
 # By default the role only PLACES files + creates the (empty) volumes -- it does
 # NOT pull/`up`, because the vLLM volume must be loaded with the 120B model first
@@ -646,28 +645,63 @@ ai_compose_deploy: false         # true = also `docker compose pull && up -d`
 # match an already-initialised pgvector-data volume (e.g. an existing box).
 ai_pgvector_password_file: /etc/stig-build/pgvector.pw
 ai_pgvector_password: "{{ lookup('ansible.builtin.password', ai_pgvector_password_file + ' length=32 chars=ascii_letters,digits') }}"
-ai_system2_ip: "dev-ai2"         # System 1 reaches embed/vision/Docling here; set an IP in site.yml if the name doesn't resolve
+# (Open WebUI's connections to System 2's Docling/Tika/embeddings are configured
+#  in the Open WebUI admin UI, so no peer IP is needed in the compose/.env.)
+# Open WebUI session-signing key (System 1). Auto-generated + persisted root-only
+# too -- stable so logins survive re-runs; nothing to type, no secret in the repo.
+ai_webui_secret_key_file: /etc/stig-build/webui_secret.key
+ai_webui_secret_key: "{{ lookup('ansible.builtin.password', ai_webui_secret_key_file + ' length=64 chars=hexdigits') }}"
+# Open WebUI CORS origin (its browser URL). Defaults to '*'; set your domain in
+# site.yml (e.g. https://oi.yourlab) to lock it down -- kept out of the repo.
+ai_webui_cors_origin: "*"
+# oikb (knowledge-base sync) -> Open WebUI + a data source. URL is internal; the
+# API key + GitLab token are TRUE secrets, set out-of-band in site.yml (empty =
+# oikb stays idle until configured).
+ai_oikb_openwebui_url: "http://open-webui:8080"
+ai_oikb_openwebui_api_key: ""
+ai_oikb_gitlab_url: ""
+ai_oikb_gitlab_token: ""
 # External named volumes each role owns (kept out of compose's lifecycle so the
 # model weights / DB survive `down -v`). Empty list = role creates none.
 ai_compose_volumes:
-  system1: [vllm, granite32b, encodings, pgvector-data, open-webui]
-  system2: [granite-embed, granite-vision]
+  system1: [vllm, encodings, pgvector-data, open-webui, redis-data, lgtm-data]
+  system2: [vllm, encodings]     # vllm/encodings hold embed/vision weights when staged (via hfcli)
+
+# ---- Custom image builds (ai_compose) ---------------------------------------
+# Three services use images not on any registry, so ansible builds them ON THE
+# BOX during imaging (needs internet: the oikb Dockerfile git-clones at build).
+# Set ai_compose_build_images: false to skip (e.g. you push them from a registry).
+ai_compose_build_images: true
+ai_compose_build_force: false    # true = rebuild even if the tag already exists
+ai_compose_images:               # name -> tag + Dockerfile (context copied from the role)
+  oikb:    { tag: "oikb:latest",    dockerfile: "oikb.dockerfile" }
+  hfcli:   { tag: "hfcli:latest",   dockerfile: "Dockerfile" }
+  repomix: { tag: "repomix:latest", dockerfile: "Dockerfile" }
+ai_compose_build_by_role:        # which images each node builds
+  system1: [oikb, hfcli, repomix]
+  system2: [hfcli]
 
 # ---- Model auto-fetch (ai_compose) ------------------------------------------
 # Which HuggingFace repo lands in which volume, per node role. The role can
 # download these into the (external) volumes so vLLM serves them from disk.
-# All four are Apache-2.0 / ungated -- no HF token required (ai_hf_token only
-# helps dodge anonymous rate-limits on the big gpt-oss pull).
-ai_vllm_image: "vllm/vllm-openai:v0.22.1-cu129-ubuntu2404"   # image used to fetch (has huggingface-cli)
+# Only the CURRENTLY-SERVED model is listed (gpt-oss on System 1); the Granite
+# chat / embed / vision models are downloaded when you add their vLLM servers --
+# stage them any time with the hfcli utility (see OPERATIONS.md), e.g.
+#   docker compose run --rm hfcli hf download ibm-granite/granite-4.1-30b --local-dir /llm/granite
+# All repos are Apache-2.0 / ungated -- no HF token needed (ai_hf_token only
+# dodges anonymous rate-limits on the big gpt-oss pull).
+ai_vllm_image: "vllm/vllm-openai:v0.22.1-cu129-ubuntu2404"   # image used by the auto-fetch (has huggingface-cli)
 ai_model_fetch: false            # opt-in: download the models below into their volumes (needs internet + disk)
 ai_hf_token: ""                  # optional; out-of-band in site.yml, never in repo
 ai_models:
   system1:
-    - { volume: vllm,       repo: "openai/gpt-oss-120b" }
-    - { volume: granite32b, repo: "ibm-granite/granite-4.0-h-small" }
-  system2:
-    - { volume: granite-embed,  repo: "ibm-granite/granite-embedding-small-english-r2" }
-    - { volume: granite-vision, repo: "ibm-granite/granite-vision-4.1-4b" }
+    - { volume: vllm, repo: "openai/gpt-oss-120b" }
+    # Add when you stand up the Granite chat vLLM on System 1:
+    # - { volume: granite32b, repo: "ibm-granite/granite-4.1-30b" }
+  system2: []
+    # Add when you stand up the embed/vision vLLM on System 2:
+    # - { volume: granite-embed,  repo: "ibm-granite/granite-embedding-small-english-r2" }
+    # - { volume: granite-vision, repo: "ibm-granite/granite-vision-4.1-4b" }
 
 # =============================================================================
 # USG HARDENING  (usg_harden role -> Ubuntu Security Guide / DISA-STIG)
