@@ -60,6 +60,27 @@
   loop_control:
     label: "{{ item }}"
 
+- name: "AI-COMPOSE | Fetch models into their volumes (opt-in; needs internet + disk)"
+  # Downloads each repo into its volume via the vLLM image's huggingface-cli.
+  # Idempotent: skips a volume that already holds a config.json. no_log because
+  # the HF token (if any) is on the command line.
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm
+      {{ ('-e HF_TOKEN=' ~ ai_hf_token) if (ai_hf_token | default('') | length > 0) else '' }}
+      -v {{ item.volume }}:/model
+      --entrypoint sh
+      {{ ai_vllm_image }}
+      -c "test -f /model/config.json && echo SKIP ||
+          (huggingface-cli download {{ item.repo }} --local-dir /model && echo FETCHED)"
+  register: _fetch
+  changed_when: "'FETCHED' in (_fetch.stdout | default(''))"
+  no_log: true
+  loop: "{{ ai_models[ai_node_role] | default([]) }}"
+  loop_control:
+    label: "{{ item.repo }} -> {{ item.volume }}"
+  when: ai_model_fetch | default(false) | bool
+
 - name: "AI-COMPOSE | Deploy the stack (opt-in; needs the model staged + internet for pull)"
   when: ai_compose_deploy | default(false) | bool
   block:

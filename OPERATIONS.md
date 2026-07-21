@@ -555,13 +555,21 @@ prebuilt images + compose files**.
 The two-node stack is baked into the image so a fielded box comes up with its compose file already in
 place. The **`ai_compose`** role (ai profile, `ai_compose_enabled: true`) drops the node's
 `docker-compose.yaml` + a root-only `.env` into **`ai_compose_dir`** (default **`/opt/it/docker`**),
-creates the named volumes, and — opt-in — pulls + `up -d`. One image set, two compose files chosen by
-**`ai_node_role`**:
+creates the named volumes, optionally auto-fetches the models into them, and — opt-in — pulls + `up -d`.
+One image set (`ai_vllm_image` + Docling/pgvector/LGTM/WebUI), two compose files chosen by
+**`ai_node_role`**. Every model is served by **vLLM** (one container per model), OpenAI-compatible:
 
-| role | services | serves |
-|------|----------|--------|
-| `system1` | vLLM (120B) + Open WebUI + pgvector + LGTM | UI / text generation |
-| `system2` | Docling | document extraction (called by System 1) |
+| role (node) | vLLM models | other services | serves |
+|------|------|------|------|
+| `system1` (dev-ai1) | `gpt-oss-120b` (:8000) + `granite-4.0-h-small` 32B (:8001) | Open WebUI, pgvector, LGTM | UI / text generation |
+| `system2` (dev-ai2) | `granite-embedding-small-english-r2` (:8002) + `granite-vision-4.1-4b` (:8003) | Docling (:5001) | embeddings, vision, extraction |
+
+Open WebUI (System 1) wires both chat models as OpenAI endpoints, points RAG embeddings at System 2's
+`:8002`, vision at `:8003`, and extraction at Docling `:5001`. **GPU/VRAM:** on System 1 both large
+models share the two GPUs (`--tensor-parallel-size=2`), so their `--gpu-memory-utilization` values in
+`system1-compose.yaml` must sum to `< ~0.95` — the defaults (gpt-oss `0.55` / granite `0.35`) assume
+**2× 96 GB (RTX PRO 6000 Blackwell)**; on 2× 48 GB (RTX 6000 Ada) the two bf16 models won't co-reside,
+so lower the utils and/or serve Granite quantized.
 
 Turn it on **per node** in `/etc/stig-build/site.yml` (never in the public repo — the DB password and
 peer IP live here, out of git):
@@ -571,61 +579,58 @@ peer IP live here, out of git):
 ai_compose_enabled: true
 ai_node_role: system1
 ai_pgvector_password: "‹db password›"   # rendered into the root-only .env, no_log
-ai_system2_ip: "192.168.1.106"          # where Open WebUI reaches Docling
-# ai_compose_deploy: true               # add ONLY after the model is staged (below)
+ai_system2_ip: "192.168.1.106"          # where WebUI reaches embed/vision/Docling
+ai_model_fetch: true                    # auto-download the models into their volumes
+# ai_compose_deploy: true               # add ONLY after the models are staged
 
 # --- System 2 (192.168.1.106) ---
 ai_compose_enabled: true
 ai_node_role: system2
-# ai_compose_deploy: true               # no model dep; safe to deploy on prep
+ai_model_fetch: true
+# ai_compose_deploy: true
 ```
 
-By default the role **only places files + creates the (empty) volumes** — it does *not* pull or `up`,
-because System 1's `vllm` volume must be loaded with the model first (next section). Once staged, set
-`ai_compose_deploy: true` (Ansible runs `docker compose pull && up -d`) or just:
+Also open System 2's cross-node ports **to System 1 only** (`ai_firewall_allow_ports` in `site.yml`):
+`8002` (embed), `8003` (vision), `5001` (Docling), each `from: "192.168.1.102"`.
+
+### Gathering the models (automated)
+
+Each model lives in its own **external** docker volume (survives `docker compose down -v`). Which repo
+lands in which volume is declared in **`ai_models`** (`group_vars/all.yml`), per node role — already set
+to the four models above. `ai_compose` creates the empty volumes; with **`ai_model_fetch: true`** it also
+downloads each repo into its volume, using the vLLM image's own `huggingface-cli` (nothing extra
+installed). The fetch is **idempotent** — a volume that already holds a `config.json` is skipped — so
+re-running the pull is safe.
+
+- **No HF token needed.** All four repos (`openai/gpt-oss-120b`, `ibm-granite/granite-4.0-h-small`,
+  `ibm-granite/granite-embedding-small-english-r2`, `ibm-granite/granite-vision-4.1-4b`) are Apache-2.0
+  and ungated. Set `ai_hf_token` in `site.yml` **only** to dodge anonymous rate-limits on the big
+  gpt-oss pull (out-of-band, never in the repo).
+- **Size/time.** gpt-oss-120b is ~200 GB; the first fetch is long. It runs synchronously during the
+  play — run the pull when the box has internet and disk headroom, then flip `ai_compose_deploy: true`
+  (or `up` by hand) once staged.
+
+Do it by hand instead (equivalent to what the role runs), e.g. gpt-oss on System 1:
 
 ```bash
-cd /opt/it/docker && sudo docker compose up -d
-```
-
-The compose files in the repo (`roles/ai_compose/files/system{1,2}-compose.yaml`) hold **no secrets** —
-the DB password and Docling IP are `${VAR}` refs resolved from the root-only `.env`.
-
-### Gathering the models (System 1)
-
-vLLM serves the 120B model from a **named docker volume** (`vllm`) mounted at `/gpt120b`, kept
-*external* so it survives `docker compose down -v`. `ai_compose` creates the empty volume; you load the
-weights into it once, while the box still has internet. Use the vLLM image itself (it already has
-`huggingface-cli`) so nothing extra is installed:
-
-```bash
-# One-time, on System 1, online. Downloads straight into the `vllm` volume.
 sudo docker run --rm \
-  -e HF_TOKEN="‹your HuggingFace token›" \
-  -v vllm:/gpt120b \
-  --entrypoint huggingface-cli \
+  -v vllm:/model --entrypoint huggingface-cli \
   vllm/vllm-openai:v0.22.1-cu129-ubuntu2404 \
-  download openai/gpt-oss-120b --local-dir /gpt120b
+  download openai/gpt-oss-120b --local-dir /model
 ```
 
-- Swap `openai/gpt-oss-120b` for the exact HF repo ID you're standing up. Gated repos need `HF_TOKEN`
-  (get one at huggingface.co → Settings → Access Tokens); open repos can drop the `-e HF_TOKEN` line.
-- The `tiktoken` encodings the compose file expects in the `encodings` volume are fetched by vLLM on
-  first start if the box is online; for **air-gap**, pre-stage them the same way (`-v encodings:/etc/encodings`).
-- **Air-gap** (no internet on the fielded box): run the download on any online machine, then move the
-  weights over — either `docker run --rm -v vllm:/gpt120b -v /mnt/usb:/src alpine cp -a /src/. /gpt120b`
-  from a USB copy of the download, or push through your internal mirror.
+(swap `-v vllm:/model` + the repo for `granite32b`/`granite-embed`/`granite-vision` as needed; add
+`-e HF_TOKEN=…` only if you set one). The `tiktoken`/harmony encodings vLLM expects in the `encodings`
+volume are fetched by gpt-oss on first start when online; pre-stage them the same way for air-gap.
 
-Verify before first `up`: `sudo docker run --rm -v vllm:/gpt120b alpine ls /gpt120b` should list the
-model's `config.json` + weight shards. Then `docker compose up -d` (or flip `ai_compose_deploy`).
+Verify before first `up`:
+`sudo docker run --rm -v vllm:/model alpine ls /model` should list `config.json` + weight shards. Then
+`cd /opt/it/docker && sudo docker compose up -d` (or flip `ai_compose_deploy`).
 
-> **Automating the fetch.** The download is left as a deliberate manual/one-time step (it needs your HF
-> token and moves ~200 GB). If you want it baked in too, give me the exact HF repo ID(s) and I'll add an
-> optional `ai_model_fetch` task to `ai_compose` (guarded on the volume being empty) so a
-> token-in-`site.yml` node self-stages on first pull.
-
-**Air-gap note for the images themselves:** mirror them into an internal registry or `docker load` from
-tarballs before `ai_compose_deploy`/`up`; `ai_compose` never builds images, only pulls the pinned tags.
+**Air-gap** (no internet on the fielded box): fetch on any online machine, then move each volume over —
+`docker run --rm -v ‹vol›:/model -v /mnt/usb:/src alpine cp -a /src/. /model` from a USB copy — and
+mirror the container images into an internal registry or `docker load` them from tarballs before
+`up`. `ai_compose` never builds images, only pulls the pinned tags.
 
 ## Windows servers
 

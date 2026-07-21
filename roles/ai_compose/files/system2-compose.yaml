@@ -1,15 +1,66 @@
 # =============================================================================
-# System 2 -- EMBEDDINGS / EXTRACTION node   (Docling)
+# System 2 (dev-ai2) -- EMBEDDINGS / EXTRACTION node
+#   vLLM Granite embedding  +  vLLM Granite vision  +  Docling
 # Managed by ansible (ai_compose role); placed in {{ ai_compose_dir }}.
-# Reached from System 1's Open WebUI at  http://<THIS_NODE_IP>:5001
+# Reached from System 1 (Open WebUI) at http://<THIS_NODE_IP>:{8002,8003,5001}.
 #   Run:   cd /opt/it/docker && docker compose up -d
 #
-# If an embeddings/vision vLLM is added for this node later, add it as a second
-# service here (it shares these two GPUs with Docling -- tune --gpu-memory-utilization).
+# GPU / VRAM: all three are small (embed 47M, vision ~4B, Docling) and share the
+# two GPUs comfortably. Utils are low so they co-reside on 48GB cards too.
 # =============================================================================
 name: ai-system2
 
+volumes:
+  granite-embed: { external: true }    # <-- granite-embedding-small-english-r2
+  granite-vision: { external: true }   # <-- granite-vision-4.1-4b
+
 services:
+  vllm-embed:
+    image: vllm/vllm-openai:v0.22.1-cu129-ubuntu2404
+    container_name: vllm-embed
+    ipc: host
+    ports:
+      - "8002:8002"
+    volumes:
+      - granite-embed:/granite-embed
+    command:
+      - --model=/granite-embed
+      - --served-model-name=granite-embedding-small-english-r2
+      - --task=embed
+      - --gpu-memory-utilization=0.10
+      - --port=8002
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+
+  vllm-vision:
+    image: vllm/vllm-openai:v0.22.1-cu129-ubuntu2404
+    container_name: vllm-vision
+    ipc: host
+    ports:
+      - "8003:8003"
+    volumes:
+      - granite-vision:/granite-vision
+    command:
+      - --model=/granite-vision
+      - --served-model-name=granite-vision-4.1-4b
+      - --gpu-memory-utilization=0.35
+      - --max-model-len=16384
+      - --port=8003
+      # NOTE: granite-vision-4.1-4b ships as a LoRA adapter on Granite-4.1-3B.
+      # If vLLM won't serve the adapter repo directly, either add
+      # `--enable-lora --lora-modules ...` with the 3B base, or swap the model
+      # for the merged `ibm-granite/granite-4.0-3b-vision` (full multimodal).
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+
   docling-serve:
     image: ghcr.io/docling-project/docling-serve-cu128:v1.24.0
     container_name: docling-serve
