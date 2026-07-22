@@ -19,7 +19,7 @@ collect the report from `/opt/ia`.
 - [Repo layout](#repo-layout)
 - [Notes](#notes)
 
-**More docs:** [Operations reference](OPERATIONS.md) · [AI stack quick reference](docs/ai-stack-kb.md) · [Software list / BOM](docs/software-list.md) · [DCSA/DoD compliance](docs/dcsa-compliance.md) · [Docker compliance](docs/docker-compliance.md) · [Per-node overrides](docs/site.yml.example)
+**More docs:** [Operations reference](OPERATIONS.md) · [AI setup guide](docs/ai-setup-guide.md) · [AI architecture](docs/ai-architecture.md) · [AI stack quick reference](docs/ai-stack-kb.md) · [Software list / BOM](docs/software-list.md) · [DCSA/DoD compliance](docs/dcsa-compliance.md) · [Docker compliance](docs/docker-compliance.md) · [Per-node overrides](docs/site.yml.example)
 
 ## Profiles
 
