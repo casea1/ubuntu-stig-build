@@ -1,10 +1,12 @@
 # ubuntu-stig-build
 
-A one-command **imaging / configuration tool** for Ubuntu 24.04 LTS. On a freshly installed
-machine — while it still has internet, before it's air-gapped — it installs the software for the
-machine's role, **DoD-STIG-hardens it** with Canonical's Ubuntu Security Guide (`usg fix disa_stig`),
-and writes the compliance report. You pick a **profile**, run one `curl | sudo bash`, reboot, and
-collect the report from `/opt/ia`.
+One-command imaging / config tool for Ubuntu 24.04 LTS. Run it on a fresh install while it still has internet, before air-gap. It:
+
+- Installs the software for the machine's role.
+- DoD-STIG-hardens with Canonical USG (`usg fix disa_stig`).
+- Writes the compliance report.
+
+Pick a profile, run one `curl | sudo bash`, reboot, collect the report from `/opt/ia`.
 
 ## Contents
 
@@ -18,13 +20,13 @@ collect the report from `/opt/ia`.
 
 ## Documentation
 
-This README is the orientation. The detail lives in three guides under [`docs/`](docs/):
+This README is orientation. Detail lives in three guides under [`docs/`](docs/):
 
 | Guide | What's in it |
 |---|---|
-| **[Build & Imaging Guide](docs/build.md)** | Step-by-step build of a box from bare metal — **Track A** (development workstation) and **Track B** (two-node AI servers). |
-| **[Operations & Reference](docs/operate.md)** | The operator manual: run steps, gotchas, STIG-gap remediation, accounts, TPM/LUKS, RDP, the AI-stack quick reference + deep ops, USG/SCAP scans. |
-| **[Security & Compliance](docs/compliance.md)** | For the IA team / DCSA: hardening posture, NIST 800-53 mapping, POA&M, "why no Docker STIG," and the software BOM. |
+| **[Build & Imaging Guide](docs/build.md)** | Bare-metal build steps: **Track A** (dev workstation), **Track B** (two-node AI servers). |
+| **[Operations & Reference](docs/operate.md)** | Operator manual: run steps, gotchas, STIG-gap remediation, accounts, TPM/LUKS, RDP, AI-stack quick reference + deep ops, USG/SCAP scans. |
+| **[Security & Compliance](docs/compliance.md)** | For IA / DCSA: hardening posture, NIST 800-53 mapping, POA&M, "why no Docker STIG," software BOM. |
 
 Per-node config template: **[`docs/site.yml.example`](docs/site.yml.example)**.
 
@@ -34,24 +36,20 @@ Pick one with `deployment_profile` (or `PROFILE=` on `bootstrap.sh`). Default: *
 
 | Profile | For | What it builds |
 |---|---|---|
-| **`development`** | Engineering **workstation** | Dev toolchain + a **GNOME desktop reached over RDP** (it installs the GUI, so a server base works too) + browser VS Code (code-server) + Cockpit. |
-| **`ai`** | Local-AI **inference server** | **Host prep only** — Docker + the NVIDIA GPU stack + Cockpit + Portainer, with your containers' inbound ports opened. You deploy the AI tools (vLLM / Open WebUI / pgvector / Docling) from your **own** prebuilt images + compose files. |
+| **`development`** | Engineering **workstation** | Dev toolchain + **GNOME desktop over RDP** (installs the GUI, so a server base works too) + browser VS Code (code-server) + Cockpit. |
+| **`ai`** | Local-AI **inference server** | **Host prep only**: Docker + NVIDIA GPU stack + Cockpit + Portainer, with container inbound ports opened. Deploy the AI tools (vLLM / Open WebUI / pgvector / Docling) from your own prebuilt images + compose files. |
 
-**Both** profiles harden with **USG** (so both need an **Ubuntu Pro** token), create the org
-accounts/groups and the `/opt/ia` + `/opt/it` admin folders, and drop the USG compliance report in
-**`/opt/ia`**. `desktop`/`server` are accepted as aliases for `development`/`ai`.
+Both profiles harden with USG (both need an **Ubuntu Pro** token), create the org accounts/groups and the `/opt/ia` + `/opt/it` admin folders, and drop the USG report in **`/opt/ia`**. `desktop`/`server` are aliases for `development`/`ai`.
 
 ## Quick start
 
-**1 — Prerequisites.** A fresh Ubuntu 24.04 install with internet access:
+**1. Prerequisites.** Fresh Ubuntu 24.04 install with internet:
 
-- **`development`** — Ubuntu **Desktop** (or Server), plus a local account whose name matches
-  `dev_tools_user` in `group_vars/all.yml` (default `austin_case_adm`).
-- **`ai`** — Ubuntu **Server**, with **Ubuntu Pro** selected during install.
-- **Both** need an **Ubuntu Pro token** — `bootstrap.sh` prompts for it (hidden), or drop it in
-  `/etc/ubuntu-advantage/pro-token` beforehand.
+- **`development`**: Ubuntu **Desktop** (or Server), plus a local account whose name matches `dev_tools_user` in `group_vars/all.yml` (default `austin_case_adm`).
+- **`ai`**: Ubuntu **Server**, with **Ubuntu Pro** selected during install.
+- **Both** need an **Ubuntu Pro token**. `bootstrap.sh` prompts for it (hidden), or drop it in `/etc/ubuntu-advantage/pro-token` beforehand.
 
-**2 — Run one command** on the target machine:
+**2. Run one command** on the target:
 
 ```bash
 # Development workstation (default profile):
@@ -64,29 +62,22 @@ curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/boots
 curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo PROFILE=ai HARDEN=0 bash
 ```
 
-The pipeline runs as a detached systemd unit named `stig-build`. The `development` run also prompts
-(hidden) for the disk-encryption password to enable TPM auto-unlock (press Enter to skip).
+Pipeline runs as detached systemd unit `stig-build`. The `development` run also prompts (hidden) for the disk-encryption password to enable TPM auto-unlock (Enter to skip).
 
-**3 — Watch it, then collect the report:**
+**3. Watch it, then collect the report:**
 
 ```bash
 sudo journalctl -u stig-build -f
 systemctl status stig-build        # active (exited) = success
 ```
 
-When it finishes, grab the USG compliance report from **`/opt/ia/`** (admin-readable) **while still
-online**, then **reboot** to apply USG (and load the GPU driver on `ai`). The `development` box boots
-to a graphical login with the DCSA banner; on `ai`, deploy your prebuilt compose stack.
+On finish, grab the USG report from **`/opt/ia/`** (admin-readable) **while still online**, then **reboot** to apply USG (and load the GPU driver on `ai`). The `development` box boots to a graphical login with the DCSA banner; on `ai`, deploy your prebuilt compose stack.
 
-> New to this? Start with the **[Build & Imaging Guide](docs/build.md)** — it walks the whole process
-> for either profile.
+> New to this? Start with the **[Build & Imaging Guide](docs/build.md)**.
 
 ## How it works
 
-The work is split into Ansible roles that run in a **deliberate order** —
-install → configure → dev tools → harden → scan. Order matters: hardening tightens `umask`, sets
-`noexec` on `/tmp`, and locks down PAM, which breaks package/pip installs if it runs first; and the
-compliance content must be downloaded while the box is still online.
+Ansible roles run in a deliberate order: install → configure → dev tools → harden → scan. Order matters: hardening tightens `umask`, sets `noexec` on `/tmp`, and locks down PAM (breaks package/pip installs if it runs first), and compliance content must download while online.
 
 | Stage | Role | What it does |
 |-------|------|--------------|
@@ -98,21 +89,13 @@ compliance content must be downloaded while the box is still online.
 | 5. Harden | `usg_harden` → `desktop_hardening`/`ai_firewall` → `usg_remediate` | `usg fix disa_stig` + FIPS, then GUI/USB/firewall re-assert, then idempotent residual fixes |
 | 6. Report | `usg audit` (re-run by `usg_remediate`) | Compliance report → `/opt/ia` |
 
-The full role-by-role detail, the STIG-gap coverage table, and every documented deviation/POA&M are
-in **[Operations & Reference](docs/operate.md)** and **[Security & Compliance](docs/compliance.md)**.
+Full role-by-role detail, the STIG-gap coverage table, and every documented deviation/POA&M are in **[Operations & Reference](docs/operate.md)** and **[Security & Compliance](docs/compliance.md)**.
 
 ## Configuration
 
-Everything is toggled from **[`group_vars/all.yml`](group_vars/all.yml)** — profile selection,
-editor choice, STIG tunables (lockout counts, timeouts, audit retention), the DCSA banner text, USG
-options (`usg_profile`, `usg_fix_enabled`, `usg_enable_fips`), NTP servers (`usg_chrony_servers`),
-Cockpit, and the AI-server settings (`nvidia_*`, `portainer_enabled`, `ai_firewall_allow_ports`).
+Toggle everything from **[`group_vars/all.yml`](group_vars/all.yml)**: profile selection, editor choice, STIG tunables (lockout counts, timeouts, audit retention), DCSA banner text, USG options (`usg_profile`, `usg_fix_enabled`, `usg_enable_fips`), NTP servers (`usg_chrony_servers`), Cockpit, and AI-server settings (`nvidia_*`, `portainer_enabled`, `ai_firewall_allow_ports`).
 
-Per-node / per-site overrides (internal IPs, an existing DB password, oikb secrets, firewall port
-openings) go in **`/etc/stig-build/site.yml`** on the box — see
-**[`docs/site.yml.example`](docs/site.yml.example)**. Package and VS Code extension lists live in
-`roles/dev_tools/defaults/main.yml`. The full configuration reference is in the
-**[Build Guide](docs/build.md)** and **[Operations & Reference](docs/operate.md)**.
+Per-node / per-site overrides (internal IPs, existing DB password, oikb secrets, firewall port openings) go in **`/etc/stig-build/site.yml`** on the box, see **[`docs/site.yml.example`](docs/site.yml.example)**. Package and VS Code extension lists live in `roles/dev_tools/defaults/main.yml`. Full config reference: **[Build Guide](docs/build.md)** and **[Operations & Reference](docs/operate.md)**.
 
 ## Repo layout
 
@@ -141,12 +124,7 @@ ubuntu-stig-build/
 
 ## Notes
 
-- **Run while online, then air-gap.** The build needs internet (apt, USG content). Collect the
-  reports before disconnecting.
-- **Reboot after hardening** for all controls (PAM, mounts, GRUB, banner, FIPS) to take effect, then
-  re-run the audit for accurate post-reboot results.
-- **Validate on a throwaway VM** before imaging production hardware — USG's DISA profile can make
-  breaking changes; confirm you can still log in / RDP after `usg fix` + reboot.
-- **Re-running is safe and idempotent.** After changing a setting or adding software, push and
-  re-run the same `stig-build` command on the machine — Ansible applies only the *delta*. Use the
-  detached run method (hardening restarts GDM), and reboot afterward for settings that need it.
+- **Run while online, then air-gap.** Build needs internet (apt, USG content). Collect reports before disconnecting.
+- **Reboot after hardening** so all controls (PAM, mounts, GRUB, banner, FIPS) take effect, then re-run the audit for accurate post-reboot results.
+- **Validate on a throwaway VM** before imaging production hardware. USG's DISA profile can make breaking changes; confirm you can still log in / RDP after `usg fix` + reboot.
+- **Re-running is safe and idempotent.** After changing a setting or adding software, push and re-run the same `stig-build` command; Ansible applies only the *delta*. Use the detached run method (hardening restarts GDM), and reboot afterward for settings that need it.
