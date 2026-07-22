@@ -66,6 +66,12 @@ it auto-skips on an unencrypted or already-bound disk). See *TPM2 LUKS auto-unlo
 - **Order is load-bearing.** Packages first, harden second, scan last. Hardening sets
   `noexec` on /tmp, tightens umask, and locks down PAM — doing it before installs can
   break pip and apt.
+- **Base OS patching is opt-in.** The build refreshes the apt cache and installs the packages it
+  needs, but does **not** `apt full-upgrade` the whole OS by default (an unattended upgrade can pull a
+  kernel/library that conflicts with the pinned NVIDIA driver / FIPS kernel). Set
+  **`base_packages_full_upgrade: true`** to run `apt full-upgrade` early in the build (on the ai profile a
+  kernel bump means re-checking `nvidia-smi` + FIPS after reboot), or patch the fresh install by hand
+  before running it. Ongoing security patches come via Ubuntu Pro (ESM + `canonical-livepatch`).
 - **Root disk auto-grows first.** Ubuntu autoinstall often leaves a small root LV (e.g. 100G)
   on a large disk, which fills once the AI model volumes land under `/var/lib/docker`. The
   `disk_expand` role runs **first** and grows the root LV + filesystem to all free VG space

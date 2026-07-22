@@ -50,6 +50,17 @@ wireshark_users:
 # Set to "vim" or "neovim" if you want to stay fully in-distro.
 editor_choice: vscode        # options: vscode | vim | neovim
 
+# ---- Base OS patching ------------------------------------------------------
+# The build always refreshes the apt cache and installs the packages it needs,
+# but does NOT upgrade the whole OS by default (an unattended full-upgrade can
+# pull a kernel/library that conflicts with the pinned NVIDIA driver / FIPS
+# kernel and hurts reproducibility). Set true to run `apt full-upgrade` early in
+# the build (before hardening + GPU installs) so the box is patched on a current
+# base. On the ai profile a kernel bump means re-checking nvidia-smi + FIPS after
+# the reboot. Ongoing security patches otherwise come via Ubuntu Pro (ESM +
+# livepatch). Override per box in site.yml.
+base_packages_full_upgrade: false
+
 # ---- ClamAV ----------------------------------------------------------------
 clamav_run_daemon: true       # enable clamav-daemon (on-access/scheduled scans)
 clamav_freshclam_enabled: true
