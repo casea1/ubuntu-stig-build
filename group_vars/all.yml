@@ -698,6 +698,11 @@ ai_pgvector_password: "{{ lookup('ansible.builtin.password', ai_pgvector_passwor
 # hostnames -- set IPs in site.yml if names don't resolve across the two boxes.
 ai_system1_addr: "dev-ai1"
 ai_system2_addr: "dev-ai2"
+# When the peer address above is an IP, ai_compose auto-maps the peer's canonical
+# hostname -> that IP in the host's /etc/hosts, and the cross-node containers get the
+# same mapping via extra_hosts (from .env) -- so a box needs NO working DNS or manual
+# /etc/hosts editing to reach the other node. Set false to manage resolution yourself.
+ai_hosts_manage: true
 # Open WebUI session-signing key (System 1). Auto-generated + persisted root-only
 # too -- stable so logins survive re-runs; nothing to type, no secret in the repo.
 ai_webui_secret_key_file: /etc/stig-build/webui_secret.key

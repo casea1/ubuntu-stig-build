@@ -125,6 +125,10 @@ services:
     working_dir: /app
     ports:
       - "8081:8080"
+    # Resolve System 1 (dev-ai1) by name without host DNS: when ai_system1_addr is an
+    # IP, .env sets SYSTEM1_HOSTS_ENTRY=dev-ai1:<ip>; otherwise a harmless no-op.
+    extra_hosts:
+      - "${SYSTEM1_HOSTS_ENTRY:-localhost:127.0.0.1}"
     environment:
       OPEN_WEBUI_URL: "${OPEN_WEBUI_URL:-http://dev-ai1:3000}"   # System 1, cross-node
       OPEN_WEBUI_API_KEY: "${OPEN_WEBUI_API_KEY:-}"
