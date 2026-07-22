@@ -6,6 +6,21 @@ machine's role, **DoD-STIG-hardens it** with Canonical's Ubuntu Security Guide (
 and writes the compliance report. You pick a **profile**, run one `curl | sudo bash`, reboot, and
 collect the report from `/opt/ia`.
 
+## Contents
+
+- [Profiles](#profiles)
+- [Get started](#get-started)
+- [How it works](#how-it-works)
+- [Development profile — GUI over RDP](#development-profile--gui-over-rdp)
+- [AI server profile](#ai-server-profile)
+- [Hardening posture (for your IA team)](#hardening-posture-for-your-ia-team)
+- [Configuration](#configuration)
+- [Known issues & exceptions](#known-issues--exceptions)
+- [Repo layout](#repo-layout)
+- [Notes](#notes)
+
+**More docs:** [Operations reference](OPERATIONS.md) · [AI stack quick reference](docs/ai-stack-kb.md) · [Software list / BOM](docs/software-list.md) · [DCSA/DoD compliance](docs/dcsa-compliance.md) · [Per-node overrides](docs/site.yml.example)
+
 ## Profiles
 
 Pick one with `deployment_profile` (or `PROFILE=` on `bootstrap.sh`). Default: **`development`**.

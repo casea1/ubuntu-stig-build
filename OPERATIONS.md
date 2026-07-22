@@ -499,6 +499,47 @@ post-reboot numbers.
   `{{ ia_it_group }}`/`sudo`, `0640`) — the admin-only IA collection point created by `managed_dirs`.
   Override with `usg_report_dir`.
 
+### Running a USG / SCAP compliance scan & getting the report
+
+USG (`usg audit`) *is* the SCAP scan — it runs OpenSCAP under the hood against the DISA STIG
+benchmark and writes standard XCCDF results plus an HTML report. Three ways to run it:
+
+**1. Automatically (every build).** The build runs `usg audit` at the end (`usg_remediate_reaudit`) so
+a freshly imaged/re-pulled box always has a current report in `/opt/ia`. Nothing to do.
+
+**2. On demand (any time, on the box).** As an admin:
+
+```bash
+# Use the SAME target the build uses (tailoring file if present, else the stock profile):
+sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml    # if that file exists
+sudo usg audit disa_stig                                          # otherwise, stock DISA STIG profile
+
+# Copy the fresh results to the IA drop with the others:
+sudo cp /var/lib/usg/usg-report-*.{html,xml} /opt/ia/ 2>/dev/null || true
+```
+
+- **Tailoring vs. profile — pick ONE, never both** (USG errors if you pass a profile *and* a tailoring
+  file). This build de-selects the smart-card/SSSD rules via a tailoring file, so use the tailoring form
+  above when that file exists; `ls /etc/usg/managed-tailoring.xml` to check.
+- Re-running via the tool: a normal `ansible-pull`/`bootstrap.sh` re-runs the audit through
+  `usg_remediate` and re-drops the report — no separate step needed.
+
+**3. Where to get it — `/opt/ia/` on each box:**
+
+```bash
+ls -lt /opt/ia/                       # newest report first
+#   usg-report-YYYYMMDD.HHMM.html     <- human-readable, open in a browser
+#   usg-report-YYYYMMDD.HHMM.xml      <- XCCDF results (import into DISA STIG Viewer / eMASS)
+```
+
+`/opt/ia` is admin-only (group `sudo`/`ia_it_group`, mode `2770`). **Collect the report while the box is
+still online / before air-gapping.** To read it from your workstation: `sudo cp /opt/ia/usg-report-*.html
+~/ && chown $USER ~/usg-report-*.html`, or pull it over your admin channel (Cockpit's file browser, `scp`).
+
+- **Score / findings:** open the HTML for the pass/fail summary; the XCCDF `.xml` is the machine-readable
+  evidence for the A&A package. Open findings that remain are the documented POA&Ms (see below).
+- **Override the drop location** with `usg_report_dir` (e.g. back to `/var/log/stig-scan`).
+
 ### Host prep + firewall (Ansible), then bring your own compose
 
 Ansible does **host prep only** on the ai profile; the AI containers are deployed from **your own

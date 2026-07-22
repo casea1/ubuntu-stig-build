@@ -448,6 +448,14 @@ local_shared_dirs:
   - { path: /opt/_AuditFiles, group: audit,  mode: "2770" }
   - { path: /home/shared,     group: sentry, mode: "2770" }
 
+# USB DATA-TRANSFER carve-out -- development profile only.
+# The `dta` group, the data-transfer accounts, and the USB mount policy exist for
+# engineering WORKSTATIONS that move files on removable media. The AI SERVERS
+# never do USB transfers, so on the ai profile the dta group + dta accounts + USB
+# polkit/udev rules are NOT created (and USG keeps usb-storage disabled there).
+# Defaults to on for development, off for ai; force with true/false per box.
+local_usb_transfer_enabled: "{{ is_development | default(true) | bool }}"
+
 # USB storage is restricted to members of this group (udisks2 polkit + udev).
 usb_access_group: dta
 

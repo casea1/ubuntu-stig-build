@@ -36,6 +36,10 @@
     name: "{{ item }}"
     state: present
   loop: "{{ local_groups }}"
+  # `dta` (USB data-transfer) is only created where USB transfer is used --
+  # development workstations. The AI servers never do USB transfers, so dta is
+  # skipped there (local_usb_transfer_enabled defaults to is_development).
+  when: (local_usb_transfer_enabled | default(true) | bool) or (item != 'dta')
 
 # ---------------------------------------------------------------------------
 # 2) USERS. Each account: own primary group (implicit), /bin/bash, a home dir,
@@ -61,6 +65,9 @@
   loop: "{{ local_users }}"
   loop_control:
     label: "{{ item.name }} (groups: {{ (item.groups | default([]) + (local_users_common_groups | default([]))) | unique | join(',') }})"
+  # Skip the data-transfer (dta) accounts where USB transfer isn't used (AI
+  # servers) -- they'd have no group/purpose there. Their only role group is dta.
+  when: (local_usb_transfer_enabled | default(true) | bool) or ('dta' not in (item.groups | default([])))
 
 # The OS-install operator/admin account (dev_tools_user) is created by the Ubuntu
 # installer, not this playbook, so it's not in local_users. Add it (and any other
@@ -146,6 +153,9 @@
     owner: root
     group: root
     mode: "0750"
+  # USB data-transfer policy is development-only; the AI servers never do USB
+  # transfers (USG keeps usb-storage disabled there), so skip the dta USB rules.
+  when: local_usb_transfer_enabled | default(true) | bool
 
 - name: ACCOUNTS | polkit -- allow udisks2 (USB) mounting only for the '{{ usb_access_group }}' group
   ansible.builtin.copy:
@@ -180,6 +190,7 @@
               return polkit.Result.NO;
           }
       });
+  when: local_usb_transfer_enabled | default(true) | bool
 
 - name: ACCOUNTS | udev -- raw USB block devices owned root:{{ usb_access_group }} 0660
   ansible.builtin.copy:
@@ -194,6 +205,7 @@
       # {{ usb_access_group }} members can read/write it directly (mount/dd).
       ACTION=="add|change", SUBSYSTEM=="block", SUBSYSTEMS=="usb", GROUP="{{ usb_access_group }}", MODE="0660"
   notify: reload udev
+  when: local_usb_transfer_enabled | default(true) | bool
 
 # ---------------------------------------------------------------------------
 # 5) PURGE BASE-BOX DEFAULT ACCOUNTS (vagrant, etc.)
