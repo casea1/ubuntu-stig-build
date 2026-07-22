@@ -148,6 +148,12 @@ services:
     depends_on:
       pgvector: { condition: service_healthy }
       redis: { condition: service_healthy }
+    # Resolve System 2 by its canonical name inside the container without host DNS:
+    # when SYSTEM2_ADDR is an IP, .env sets SYSTEM2_HOSTS_ENTRY=dev-ai2:<ip>; if it's
+    # already a name, this is a harmless localhost:127.0.0.1 no-op. (URLs below use
+    # ${SYSTEM2_ADDR} directly, so an IP address works with or without this line.)
+    extra_hosts:
+      - "${SYSTEM2_HOSTS_ENTRY:-localhost:127.0.0.1}"
     volumes:
       - open-webui:/app/backend/data
     environment:

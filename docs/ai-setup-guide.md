@@ -110,6 +110,6 @@ online. Re-run on demand: `sudo usg audit --tailoring-file /etc/usg/managed-tail
 | A vLLM container crash-loops on `fips.so` / `FIPS SELFTEST` | Host FIPS vs the image's OpenSSL — the `fips_off` mount handles it; ensure it's present (`grep fips_off docker-compose.yaml`). |
 | Model loads but no model in Open WebUI | tiktoken/harmony encodings missing (auto-fetched now) **and/or** add the `http://chat-llm:8000/v1` connection. |
 | vLLM `Up` seconds then restarts | still loading (120B takes minutes) or OOM — check `docker logs vllm-server` + `nvidia-smi`. |
-| Open WebUI can't reach System 2 (embed/vision/Docling) | check `ai_system2_addr` resolves + the System 2 firewall opened 8002/8003/5001 from System 1. |
+| Open WebUI can't reach System 2 (embed/vision/Docling) | set `ai_system2_addr` to dev-ai2's **IP** in `site.yml` (containers use their own DNS, not the host's `/etc/hosts`). With an IP set, the build auto-maps the name in the host `/etc/hosts` **and** the containers' `extra_hosts` — no manual editing. Also confirm the System 2 firewall opened 8002/8003/5001 from System 1. |
 
 More detail for every subsystem: [`../OPERATIONS.md`](../OPERATIONS.md).

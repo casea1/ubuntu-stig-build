@@ -43,6 +43,25 @@
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "0640"
 
+- name: "AI-COMPOSE | Resolve the peer node via /etc/hosts (only when its addr is an IP)"
+  # Hands-off cross-node name resolution: if this node's peer address is an IP (set
+  # in site.yml as ai_system2_addr / ai_system1_addr), map the peer's canonical
+  # hostname -> that IP in the HOST's /etc/hosts, so admin tooling on the box resolves
+  # it with no DNS. (Containers get the same mapping via extra_hosts from .env; the
+  # host file does not reach into containers.) Skipped when the addr is already a name.
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^[0-9.]+[[:space:]]+{{ _ai_peer_host }}[[:space:]]*$'
+    line: "{{ _ai_peer_addr }} {{ _ai_peer_host }}"
+    state: present
+  vars:
+    _ai_peer_host: "{{ 'dev-ai2' if ai_node_role == 'system1' else 'dev-ai1' }}"
+    _ai_peer_addr: "{{ ai_system2_addr if ai_node_role == 'system1' else ai_system1_addr }}"
+  when:
+    - ai_hosts_manage | default(true) | bool
+    - (_ai_peer_addr | default('')) | length > 0
+    - (_ai_peer_addr | string)[0] in '0123456789'
+
 - name: "AI-COMPOSE | Drop the non-FIPS override file for inference containers"
   # The host runs FIPS (kernel fips_enabled=1), but the vLLM image ships no FIPS
   # OpenSSL provider, so its DRBG can't init and the container crash-loops
