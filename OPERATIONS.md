@@ -465,7 +465,7 @@ entirely (GUI stays, reachable only at the physical console).
 The `ai` profile (`deployment_profile: ai`, or `PROFILE=ai` to `bootstrap.sh`)
 builds a headless Ubuntu Pro AI box. Role order: `base_packages` (lean) → `ai_stack` →
 `usg_harden` → optional `tpm_luks_unlock`. Same rule as the development profile: **install online,
-harden last.** Design rationale is in [docs/ai-server-design.md](docs/ai-server-design.md).
+harden last.**
 
 ### Running it on the server (online)
 

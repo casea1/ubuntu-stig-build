@@ -1,8 +1,7 @@
 # AI Stack — Setup & Configuration Guide
 
 Step-by-step for a technician to build and configure the two AI servers from bare metal to a working chat
-system. Assumes the `ubuntu-stig-build` repo. For the design see [`ai-architecture.md`](ai-architecture.md);
-for subsystem detail see [`../OPERATIONS.md`](../OPERATIONS.md).
+system. Assumes the `ubuntu-stig-build` repo. For subsystem detail see [`../OPERATIONS.md`](../OPERATIONS.md).
 
 ## Contents
 

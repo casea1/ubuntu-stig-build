@@ -7,8 +7,8 @@
     cache_valid_time: 3600
 
 - name: Add the developer user to the docker group
-  # The docker group is root-equivalent — documented dev-workstation exception
-  # (see docs/dev-tools-design.md). Justify + access-control on the real image.
+  # The docker group is root-equivalent — documented dev-workstation exception.
+  # Justify + access-control on the real image.
   ansible.builtin.user:
     name: "{{ dev_tools_user }}"
     groups: docker

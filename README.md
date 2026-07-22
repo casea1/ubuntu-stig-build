@@ -19,7 +19,7 @@ collect the report from `/opt/ia`.
 - [Repo layout](#repo-layout)
 - [Notes](#notes)
 
-**More docs:** [Operations reference](OPERATIONS.md) · [AI setup guide](docs/ai-setup-guide.md) · [AI architecture](docs/ai-architecture.md) · [AI stack quick reference](docs/ai-stack-kb.md) · [Software list / BOM](docs/software-list.md) · [DCSA/DoD compliance](docs/dcsa-compliance.md) · [Docker compliance](docs/docker-compliance.md) · [Per-node overrides](docs/site.yml.example)
+**More docs:** [Operations reference](OPERATIONS.md) · [AI setup guide](docs/ai-setup-guide.md) · [AI stack quick reference](docs/ai-stack-kb.md) · [Software list / BOM](docs/software-list.md) · [DCSA/DoD compliance](docs/dcsa-compliance.md) · [Docker compliance](docs/docker-compliance.md) · [Per-node overrides](docs/site.yml.example)
 
 ## Profiles
 
@@ -289,8 +289,7 @@ The `ai` command is in **[Quick start](#-ai-server--deployment_profile-ai)** abo
 (`… | sudo PROFILE=ai bash`, plus the `HARDEN=0` audit-only first pass). Then
 `sudo journalctl -u stig-build -f` to watch, collect the report from **`/opt/ia/`**, **reboot** to apply
 USG (and load the GPU driver), and **deploy your prebuilt AI compose stack**. Full runbook +
-operations: **[OPERATIONS.md](OPERATIONS.md#ubuntu-pro-server-usg--ai-stack)** and the design notes in
-**[docs/ai-server-design.md](docs/ai-server-design.md)**.
+operations: **[OPERATIONS.md](OPERATIONS.md#ubuntu-pro-server-usg--ai-stack)**.
 
 ---
 
@@ -401,8 +400,7 @@ Everything is toggled from **[`group_vars/all.yml`](group_vars/all.yml)**:
 - **AI server** — `docker_ce_min_version`, `gpu_install_driver`, `nvidia_*`, `portainer_enabled`,
   `ai_firewall_allow_ports`
 
-Package and VS Code extension lists live in `roles/dev_tools/defaults/main.yml`. The dev-tooling
-layer is documented in [docs/dev-tools-design.md](docs/dev-tools-design.md).
+Package and VS Code extension lists live in `roles/dev_tools/defaults/main.yml`.
 
 ### Classification banner
 
@@ -452,7 +450,7 @@ ubuntu-stig-build/
 ├── local.yml              # ansible-pull entrypoint (role run order)
 ├── requirements.yml       # pulls ansible-lockdown/UBUNTU24-STIG @ 1.3.0
 ├── group_vars/all.yml     # all toggles
-├── docs/                  # design + implementation notes
+├── docs/                  # setup, operations & compliance guides
 └── roles/
     ├── base_packages/     # apt installs + PowerShell + provisioning services
     ├── app_config/        # clamav services, wireshark group
