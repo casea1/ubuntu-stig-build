@@ -210,12 +210,16 @@
         chdir: "{{ ai_compose_dir }}"
       changed_when: true
 
-    - name: "AI-COMPOSE | docker compose up -d"
+    - name: "AI-COMPOSE | docker compose up -d (reconcile: --remove-orphans)"
+      # --remove-orphans drops containers no longer in this node's compose file
+      # (e.g. a service that was re-homed to the other node), so re-running the
+      # tool CONVERGES the running stack to the compose file. Note: it does NOT
+      # remove old named volumes or images (those hold data / are pruned manually).
       ansible.builtin.command:
-        cmd: docker compose up -d
+        cmd: docker compose up -d --remove-orphans
         chdir: "{{ ai_compose_dir }}"
       register: _compose_up
-      changed_when: "'Started' in (_compose_up.stderr | default('')) or 'Created' in (_compose_up.stderr | default(''))"
+      changed_when: "'Started' in (_compose_up.stderr | default('')) or 'Created' in (_compose_up.stderr | default('')) or 'Removing' in (_compose_up.stderr | default(''))"
 
 - name: "AI-COMPOSE | Where the stack lives"
   ansible.builtin.debug:

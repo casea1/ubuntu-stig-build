@@ -10,39 +10,40 @@ STIG-hardened Ubuntu machines and needs no internet once it's set up.
 
 | Machine | Hostname | Job |
 |---------|----------|-----|
-| **System 1** | `dev-ai1` | The **front end + brain** — the chat website and the language model. |
-| **System 2** | `dev-ai2` | The **document reader** — turns PDFs/Office files into clean text for the model. |
+| **System 1** | `dev-ai1` | The **front end + brain** — the chat website and the language model(s). |
+| **System 2** | `dev-ai2` | The **helpers** — reads documents, does embeddings + vision, monitoring, and knowledge sync. |
 
 ```
                  users (browser)
                        │
                        ▼
    ┌──────────── SYSTEM 1 · dev-ai1 ────────────┐
-   │  Open WebUI  ──►  vLLM (the AI model)       │
+   │  Open WebUI  ──►  vLLM (the chat model)     │
    │      ├─► Postgres (chats + search)          │
-   │      ├─► Redis    (logins/live updates)     │
-   │      └─► LGTM     (monitoring dashboards)   │
+   │      └─► Redis    (logins/live updates)     │
    └───────────────────┬─────────────────────────┘
-                       │  reads documents from
-                       ▼
-   ┌──────────── SYSTEM 2 · dev-ai2 ────────────┐
-   │  Docling + Tika  (extract text from files) │
-   └─────────────────────────────────────────────┘
+                       │  uses System 2 for embeddings,
+                       ▼  vision, document reading, monitoring
+   ┌──────────── SYSTEM 2 · dev-ai2 ─────────────────────────┐
+   │  Docling + Tika (read files) · embedding + vision models │
+   │  Grafana (dashboards) · oikb (knowledge sync)            │
+   └───────────────────────────────────────────────────────────┘
 ```
 
 ## What each piece does
 
 | Piece | Where | Plain-English job |
 |-------|-------|-------------------|
-| **vLLM** | 1 | Runs the AI model (gpt-oss-120B) and answers questions. |
+| **vLLM** | 1 | Runs the chat model (gpt-oss-120B, or Granite — switchable) and answers questions. |
 | **Open WebUI** | 1 | The chat website people actually use. |
 | **Postgres (pgvector)** | 1 | Stores chats and the searchable index of your documents. |
 | **Redis** | 1 | Keeps logins and live updates working smoothly. |
-| **LGTM / Grafana** | 1 | Health dashboards and logs for the stack. |
-| **oikb** | 1 | Auto-syncs documents from sources (e.g. GitLab) into the AI's knowledge. |
+| **Embedding + vision models** | 2 | Turn documents into searchable vectors; "read" images/PDFs. |
 | **Docling** | 2 | High-quality text/table extraction from PDFs and Office files. |
 | **Tika** | 2 | Extracts text from a wide range of other file types. |
-| **hfcli / repomix** | 1 & 2 | Helper tools (download models; pack a code repo for the AI). |
+| **LGTM / Grafana** | 2 | Health dashboards and logs for the whole stack. |
+| **oikb** | 2 | Auto-syncs documents from sources (e.g. GitLab) into the AI's knowledge. |
+| **hfcli / repomix** | 2 | Helper tools (download models; pack a code repo for the AI). |
 
 ---
 
@@ -67,7 +68,8 @@ STIG-hardened Ubuntu machines and needs no internet once it's set up.
    Re-run the build. (Or do it by hand: `cd /opt/it/docker && sudo docker compose up -d`.)
 5. **Connect the chat UI to the model** (System 1, one time): Open WebUI →
    **Admin → Settings → Connections** → add an OpenAI connection:
-   URL `http://vllm:8000/v1`, key `sk-noauth`. The model then appears in the chat.
+   URL `http://chat-llm:8000/v1`, key `sk-noauth`. The model then appears in the chat.
+   (`chat-llm` always points at whichever model is running, so switching is seamless.)
 
 ---
 
@@ -76,9 +78,9 @@ STIG-hardened Ubuntu machines and needs no internet once it's set up.
 | Thing | Address |
 |-------|---------|
 | Chat (Open WebUI) | `http://dev-ai1:3000` |
-| Monitoring (Grafana) | `http://dev-ai1:3001` |
-| Container manager (Portainer) | `https://dev-ai1:9443` |
-| Server console (Cockpit) | `https://dev-ai1:9090` |
+| Monitoring (Grafana) | `http://dev-ai2:3001` |
+| Container manager (Portainer) | `https://‹host›:9443` (each box) |
+| Server console (Cockpit) | `https://‹host›:9090` (each box) |
 
 ## Handy commands (run on the machine)
 
