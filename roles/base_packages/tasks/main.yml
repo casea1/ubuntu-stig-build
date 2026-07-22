@@ -14,6 +14,21 @@
     update_cache: true
     cache_valid_time: 3600
 
+- name: "Full system package upgrade (opt-in; base_packages_full_upgrade)"
+  # OFF by default. A full-upgrade can pull a newer kernel or library that
+  # conflicts with the pinned NVIDIA driver / FIPS kernel and makes the image
+  # non-reproducible, so patching is a deliberate choice. Flip
+  # base_packages_full_upgrade: true (per box or fleet-wide) to patch the base
+  # OS during the build. Runs BEFORE hardening + the AI/GPU installs, so those
+  # land on an already-current base. NOTE (ai profile): this can bump the kernel
+  # -- the box reboots for FIPS anyway on the first run; after any kernel change
+  # re-check `nvidia-smi` and `/proc/sys/crypto/fips_enabled`. Ongoing security
+  # patches otherwise come via Ubuntu Pro (ESM + canonical-livepatch).
+  ansible.builtin.apt:
+    upgrade: full
+    update_cache: true
+  when: base_packages_full_upgrade | default(false) | bool
+
 - name: Install the DEVELOPMENT engineering-workstation package set
   ansible.builtin.import_tasks: development.yml
   when: is_development | default(true) | bool
