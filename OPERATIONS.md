@@ -709,7 +709,8 @@ the switch script to change models. (On the already-running dev-ai1, point Open 
 Models live in **external** docker volumes (survive `docker compose down -v`). The served models
 (`gpt-oss-120b` + `granite-4.1-30b` on System 1) are declared in **`ai_models`** (`group_vars/all.yml`);
 `ai_compose` creates the volumes, and with **`ai_model_fetch: true`** downloads each into its volume via
-`huggingface-cli`. The fetch is **idempotent** — a volume that already holds a `config.json` is skipped —
+the `hf` CLI (the vLLM image's Hugging Face downloader; the old `huggingface-cli` entrypoint is deprecated
+and no longer works). The fetch is **idempotent** — a volume that already holds a `config.json` is skipped —
 so re-pulls are safe.
 
 - **No HF token needed.** `openai/gpt-oss-120b` (and the Granite repos) are Apache-2.0 / ungated. Set
@@ -758,20 +759,24 @@ The ai boxes run with **FIPS enabled on the host** (`fips=1`, `/proc/sys/crypto/
 Containers share the host kernel, so a container's OpenSSL sees that flag — but the **vLLM image ships
 no FIPS OpenSSL provider** (`fips.so` / `fipsmodule.cnf` aren't in it). OpenSSL 3.0.13 then *forces*
 FIPS for its DRBG, fails to load the missing module, and the container **crash-loops** (`fips.so: cannot
-open shared object file`, or `FATAL FIPS SELFTEST FAILURE`). Only the vLLM image hits this — Redis,
-pgvector, Open WebUI, and LGTM run fine.
+open shared object file`, or `FATAL FIPS SELFTEST FAILURE`). The **docling-serve** image hits the same
+wall via a *different* library — it bundles OpenCV, whose vendored OpenSSL 1.1.1k (`opencv_python.libs/
+libcrypto-*.so.1.1.1k`) runs a FIPS selftest and `abort()`s (SIGABRT / exit 134) on the FIPS host. Redis,
+pgvector, Open WebUI, LGTM (Go/Java), and Tika run fine — they don't load a FIPS-forcing OpenSSL.
 
-vLLM / PyTorch are **not FIPS-validated** in the first place, so the fix is to let *that container* use
-standard crypto while the **host stays fully FIPS** (kernel + host userspace unchanged — what the STIG
-actually assesses). `ai_compose` drops a `fips_off` file (`0`) in the compose dir and the `vllm` service
-bind-mounts it **read-only over `/proc/sys/crypto/fips_enabled`**, so its OpenSSL sees `0` and uses the
-default provider. Verified: with the mask, `openssl rand` succeeds; without it, it fails.
+vLLM / PyTorch / OpenCV are **not FIPS-validated** in the first place, so the fix is to let *those
+containers* use standard crypto while the **host stays fully FIPS** (kernel + host userspace unchanged —
+what the STIG actually assesses). `ai_compose` drops a `fips_off` file (`0`) in the compose dir and every
+affected service (the vLLM services **and docling-serve**) bind-mounts it **read-only over
+`/proc/sys/crypto/fips_enabled`**, so its OpenSSL sees `0` and uses the default provider. Verified: with
+the mask, `openssl rand` succeeds; without it, it fails.
 
 > **POA&M:** the containerized inference workload runs non-FIPS crypto (localhost/oi-network traffic on a
-> single-tenant, USG-hardened host). The host OS remains FIPS-enabled. Any future vLLM service (embed /
-> vision on System 2) needs the **same** `./fips_off:/proc/sys/crypto/fips_enabled:ro` mount — the file
-> is already staged on both nodes. Alternative if full container FIPS is ever required: rebuild the image
-> with the Ubuntu Pro FIPS OpenSSL module baked in.
+> single-tenant, USG-hardened host). The host OS remains FIPS-enabled. Any container whose image bundles a
+> non-FIPS OpenSSL (the vLLM embed/vision services and docling-serve on System 2) needs the **same**
+> `./fips_off:/proc/sys/crypto/fips_enabled:ro` mount — the file is already staged on both nodes; a new
+> such service that crash-loops with a FIPS selftest abort just needs the mount added. Alternative if full
+> container FIPS is ever required: rebuild the image with the Ubuntu Pro FIPS OpenSSL module baked in.
 
 ## Windows servers
 

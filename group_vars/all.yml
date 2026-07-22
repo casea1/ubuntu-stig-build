@@ -747,7 +747,7 @@ ai_compose_build_by_role:        # which images each node builds
 #   docker compose run --rm hfcli hf download ibm-granite/granite-4.1-30b --local-dir /llm/granite
 # All repos are Apache-2.0 / ungated -- no HF token needed (ai_hf_token only
 # dodges anonymous rate-limits on the big gpt-oss pull).
-ai_vllm_image: "vllm/vllm-openai:v0.22.1-cu129-ubuntu2404"   # image used by the auto-fetch (has huggingface-cli)
+ai_vllm_image: "vllm/vllm-openai:v0.22.1-cu129-ubuntu2404"   # image used by the auto-fetch (has the `hf` CLI)
 ai_model_fetch: false            # opt-in: download the models below into their volumes (needs internet + disk)
 ai_hf_token: ""                  # optional; out-of-band in site.yml, never in repo
 # gpt-oss's harmony tokenizer needs these tiktoken files in the `encodings`

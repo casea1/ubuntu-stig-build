@@ -33,7 +33,7 @@ services:
     command:
       - --model=/granite-embed
       - --served-model-name=granite-embedding-small-english-r2
-      - --task=embed
+      - --runner=pooling                  # embedding mode (replaces the removed --task=embed)
       - --tensor-parallel-size=1          # System 2 has ONE GPU
       - --gpu-memory-utilization=0.10
       - --port=8002
@@ -79,6 +79,11 @@ services:
     container_name: docling-serve
     ports:
       - "5001:5001"
+    volumes:
+      # docling bundles OpenCV, whose vendored OpenSSL 1.1.1k runs a FIPS selftest
+      # and abort()s on the FIPS host (fips_enabled=1) -> SIGABRT/exit 134 crash-loop.
+      # Same host-FIPS carve-out the vLLM services use; the HOST stays FIPS.
+      - ./fips_off:/proc/sys/crypto/fips_enabled:ro
     environment:
       - DOCLING_SERVE_MAX_SYNC_WAIT=6000
       - DOCLING_SERVE_ENABLE_UI=false
