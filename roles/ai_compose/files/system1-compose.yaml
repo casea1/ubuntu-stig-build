@@ -156,6 +156,12 @@ services:
       UVICORN_WORKERS: "9"
       CORS_ALLOW_ORIGIN: "${OI_ORIGIN:-*}"
       REDIS_SOCKET_KEEPALIVE: "true"
+      # User-activity audit trail (AU controls). METADATA = who / endpoint / when
+      # / result, NO prompt/response content -> the log stays unclassified. Raise
+      # to REQUEST / REQUEST_RESPONSE in site.yml to capture prompt/response text
+      # (then the log holds data-at-level and must be protected like the DB).
+      # Writes to /app/backend/data/audit.log -> persisted in the open-webui volume.
+      AUDIT_LOG_LEVEL: "${AUDIT_LOG_LEVEL:-METADATA}"
     ports:
       - "3000:8080"
     networks: [oi]
