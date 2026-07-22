@@ -10,6 +10,16 @@ Status: **superseded in part** · Date: 2026-07-14 · Target: Ubuntu Pro 24.04 L
 > Compose-orchestration design below (server_tools selection, rendered compose, cross-host wiring,
 > secrets) is **retained for historical context only** — that logic was removed.
 
+## Contents
+
+- [Context & goal](#context--goal)
+- [Scope](#scope)
+- [Decisions (recorded from requirements)](#decisions-recorded-from-requirements)
+- [Architecture](#architecture)
+- [Version pins (bump deliberately, re-test)](#version-pins-bump-deliberately-re-test)
+- [STIG impact & documented exceptions (POA&M)](#stig-impact--documented-exceptions-poam)
+- [Verification plan (on a throwaway GPU VM)](#verification-plan-on-a-throwaway-gpu-vm)
+
 ## Context & goal
 
 The project began as a single-purpose imager: turn a fresh Ubuntu 24.04 **Desktop**

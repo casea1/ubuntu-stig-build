@@ -702,7 +702,7 @@ ai_oikb_gitlab_token: ""
 # External named volumes each role owns (kept out of compose's lifecycle so the
 # model weights / DB survive `down -v`). Empty list = role creates none.
 ai_compose_volumes:
-  system1: [vllm, encodings, pgvector-data, open-webui, redis-data, lgtm-data]
+  system1: [vllm, granite32b, encodings, pgvector-data, open-webui, redis-data, lgtm-data]
   system2: [vllm, encodings]     # vllm/encodings hold embed/vision weights when staged (via hfcli)
 
 # ---- Custom image builds (ai_compose) ---------------------------------------
@@ -738,9 +738,8 @@ ai_encodings_base_url: "https://openaipublic.blob.core.windows.net/encodings"
 ai_encodings_files: ["o200k_base.tiktoken", "cl100k_base.tiktoken"]
 ai_models:
   system1:
-    - { volume: vllm, repo: "openai/gpt-oss-120b" }
-    # Add when you stand up the Granite chat vLLM on System 1:
-    # - { volume: granite32b, repo: "ibm-granite/granite-4.1-30b" }
+    - { volume: vllm, repo: "openai/gpt-oss-120b" }          # default chat model
+    - { volume: granite32b, repo: "ibm-granite/granite-4.1-30b" }  # switchable alternate (switch-model.sh)
   system2: []
     # Add when you stand up the embed/vision vLLM on System 2:
     # - { volume: granite-embed,  repo: "ibm-granite/granite-embedding-small-english-r2" }

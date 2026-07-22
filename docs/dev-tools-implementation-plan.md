@@ -12,6 +12,19 @@
 
 ---
 
+## Contents
+
+- [File structure](#file-structure)
+- [Task 1: group_vars toggles + role defaults](#task-1-group_vars-toggles--role-defaults)
+- [Task 2: toolchains.yml](#task-2-toolchainsyml)
+- [Task 3: Python environment](#task-3-python-environment)
+- [Task 4: VS Code extensions + skel wiring](#task-4-vs-code-extensions--skel-wiring)
+- [Task 5: role entrypoint + pipeline wiring](#task-5-role-entrypoint--pipeline-wiring)
+- [Task 6: PowerShell in base_packages](#task-6-powershell-in-base_packages)
+- [Task 7: push + syntax-check on the VM](#task-7-push--syntax-check-on-the-vm)
+- [Task 8: full VM integration run + lockfile](#task-8-full-vm-integration-run--lockfile)
+- [Self-review](#self-review)
+
 ## File structure
 
 | File | Responsibility |

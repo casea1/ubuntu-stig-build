@@ -11,6 +11,21 @@ reference for individual subsystems.
 
 ---
 
+## Contents
+
+- [1. Overview — what this build produces](#1-overview--what-this-build-produces)
+- [2. Before you start — prerequisites & decisions](#2-before-you-start--prerequisites--decisions)
+- [3. Phase 1 — Install Ubuntu 24.04 LTS Desktop](#3-phase-1--install-ubuntu-2404-lts-desktop)
+- [4. One-time repo setup](#4-one-time-repo-setup)
+- [5. Phase 2 — Run the build](#5-phase-2--run-the-build)
+- [6. What runs, in order (and why it's load-bearing)](#6-what-runs-in-order-and-why-its-load-bearing)
+- [7. Watch & confirm](#7-watch--confirm)
+- [8. Collect the SCAP reports — **before air-gapping**](#8-collect-the-scap-reports--before-air-gapping)
+- [9. Phase 3 — After the build (in order)](#9-phase-3--after-the-build-in-order)
+- [10. POA&M & accepted deviations — the assessor checklist](#10-poam--accepted-deviations--the-assessor-checklist)
+- [11. Configuration reference (`group_vars/all.yml`)](#11-configuration-reference-group_varsallyml)
+- [12. Troubleshooting & quick reference](#12-troubleshooting--quick-reference)
+
 ## 1. Overview — what this build produces
 
 A **DISA-STIG-hardened Ubuntu 24.04 LTS Desktop (GNOME)** engineering workstation with the **DCSA
