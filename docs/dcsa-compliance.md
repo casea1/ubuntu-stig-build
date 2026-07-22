@@ -108,7 +108,7 @@ each is documented in `OPERATIONS.md` and `group_vars/all.yml`.
 | **CAC/PIV multifactor (IA-2)** | Currently **password-only** (accounts locked until a password is set). CAC/PIV is the DoD expectation; the build de-selects the smartcard STIG rules as a documented deviation and can re-enable them once CAC readers/certs/SSSD are fielded. **Primary POA&M for the AO discussion.** |
 | **GRUB/UEFI bootloader password (CM/AC)** | Ships as a safe sentinel; set a vaulted PBKDF2 hash to close. |
 | **Audit-log offload (AU-4/AU-6)** | Local audit logging is on; central `audisp-remote` collector not yet configured (needs a log server). POA&M until a collector exists. |
-| **FIPS inside inference containers** | **Host is fully FIPS**; the vLLM container uses standard crypto (the image ships no FIPS provider, and vLLM/PyTorch are not FIPS-validated). Container traffic is host-local/enclave-internal. Documented POA&M; host-level FIPS is what the STIG assesses. |
+| **FIPS inside inference containers** | **Host is fully FIPS**; the inference/extraction containers (vLLM, and docling via its bundled OpenCV/OpenSSL) use standard crypto — those images ship no FIPS provider and aren't FIPS-validated, so on the FIPS host their OpenSSL selftest aborts unless carved out. Container traffic is host-local/enclave-internal. Documented POA&M; host-level FIPS is what the STIG assesses. |
 | **AI/ML software assurance** | vLLM, Open WebUI, Docling, etc. are open-source and not separately accredited; recommend internal image scanning + registry mirroring as part of the SSP. |
 | **USB data-transfer carve-out** | USB mass storage is re-enabled but restricted to an authorized group (mission need); documented deviation from the blanket-disable STIG control. |
 
