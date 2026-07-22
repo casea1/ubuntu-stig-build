@@ -538,7 +538,7 @@ tpm_luks_tpm2_cfg:
 # ##   UBUNTU PRO SERVER PROFILE  (deployment_profile: server)               ##
 # ##                                                                         ##
 # ##   Everything below is consumed ONLY when deployment_profile == server.  ##
-# ##   On a desktop build these vars are inert. See docs/ai-server-design.md ##
+# ##   On a desktop build these vars are inert.                              ##
 # ##                                                                         ##
 # #############################################################################
 # #############################################################################
