@@ -43,9 +43,10 @@ inference run **locally**, with **no external/cloud AI calls at runtime**. All d
 boundary**. The language model performs **inference only** — the static model weights
 are read-only and are **not retrained/updated by user data**.
 
-- **System 1 (`dev-ai1`)** — user chat UI (Open WebUI), the LLM engine (vLLM), database
-  (PostgreSQL/pgvector), session store (Redis), local monitoring (LGTM/Grafana).
-- **System 2 (`dev-ai2`)** — document text extraction (Docling, Apache Tika).
+- **System 1 (`dev-ai1`)** — user chat UI (Open WebUI), the chat LLM engine (vLLM), database
+  (PostgreSQL/pgvector), session store (Redis).
+- **System 2 (`dev-ai2`)** — document extraction (Docling, Apache Tika), embedding + vision models
+  (vLLM), monitoring (LGTM/Grafana), and knowledge-base sync (oikb).
 
 ## 3. Compliance baseline (what the build enforces)
 
@@ -71,7 +72,7 @@ giving a **repeatable, auditable, identical** configuration across the fleet
 | Family | How this baseline supports it |
 |--------|-------------------------------|
 | **AC** Access Control | Least-privilege accounts/groups, sudo control, session limits/timeout, warning banner, restricted admin interfaces. |
-| **AU** Audit & Accountability | `auditd` with STIG ruleset (host); **Open WebUI audit log** (`AUDIT_LOG_LEVEL=METADATA` — attributable user activity: who/endpoint/when/result) plus OpenTelemetry to the local LGTM stack; log-permission hardening. |
+| **AU** Audit & Accountability | `auditd` with STIG ruleset (host); **Open WebUI audit log** (`AUDIT_LOG_LEVEL=METADATA` — attributable user activity: who/endpoint/when/result) plus OpenTelemetry to the LGTM/Grafana stack on System 2; log-permission hardening. |
 | **CM** Configuration Management | Config-as-code (Ansible), pinned package/image versions, reproducible baseline, `usg` compliance scans. |
 | **IA** Identification & Auth | PAM password policy/faillock; FIPS-validated crypto for auth (IA-7). *(CAC/PIV — see POA&M.)* |
 | **SC** System & Comm. Protection | FIPS 140-validated crypto (SC-13), LUKS data-at-rest (SC-28), host firewall/boundary (SC-7), TLS for management. |

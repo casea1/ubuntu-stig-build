@@ -679,9 +679,10 @@ ai_model_fetch: true                  # download gpt-oss into its volume
 ai_compose_deploy: true               # start the stack (after the model is staged)
 ```
 
-Also open System 2's cross-node ports **to System 1 only** (`ai_firewall_allow_ports` in `site.yml`):
-`5001` (Docling) and `9998` (Tika), each `from: "‹System 1 IP›"`. On System 1, restrict `3001` (Grafana)
-and `8081` (oikb) to an admin CIDR.
+Also open **System 2's** cross-node ports **to System 1 only** (`ai_firewall_allow_ports` in `site.yml`):
+`8002` (embed), `8003` (vision), `5001` (Docling), `9998` (Tika), `4317`/`4318` (OTel), each `from: "‹System
+1 IP›"` — and restrict `3001` (Grafana) + `8081` (oikb), which are also on System 2, to an admin CIDR.
+System 1 opens `3000` (Open WebUI, to users + oikb from System 2).
 
 ### Switching System 1's chat model (gpt-oss ↔ Granite-4.1-30B)
 
