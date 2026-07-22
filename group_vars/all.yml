@@ -677,6 +677,13 @@ ai_webui_secret_key: "{{ lookup('ansible.builtin.password', ai_webui_secret_key_
 # Open WebUI CORS origin (its browser URL). Defaults to '*'; set your domain in
 # site.yml (e.g. https://oi.yourlab) to lock it down -- kept out of the repo.
 ai_webui_cors_origin: "*"
+# Open WebUI user-activity audit trail (AU controls). Writes to
+# /app/backend/data/audit.log (persisted in the open-webui volume).
+#   METADATA (default) -- who / endpoint / when / result, NO content (log stays unclassified)
+#   REQUEST           -- + the prompt text          | these hold data-at-level;
+#   REQUEST_RESPONSE  -- + the model's response text | protect the log like the DB
+#   NONE              -- disabled
+ai_webui_audit_log_level: "METADATA"
 # oikb (knowledge-base sync) -> Open WebUI + a data source. URL is internal; the
 # API key + GitLab token are TRUE secrets, set out-of-band in site.yml (empty =
 # oikb stays idle until configured).

@@ -60,7 +60,7 @@ giving a **repeatable, auditable, identical** configuration across the fleet
 | Family | How this baseline supports it |
 |--------|-------------------------------|
 | **AC** Access Control | Least-privilege accounts/groups, sudo control, session limits/timeout, warning banner, restricted admin interfaces. |
-| **AU** Audit & Accountability | `auditd` with STIG ruleset; host + application (Open WebUI/OTel) logging; log-permission hardening. |
+| **AU** Audit & Accountability | `auditd` with STIG ruleset (host); **Open WebUI audit log** (`AUDIT_LOG_LEVEL=METADATA` — attributable user activity: who/endpoint/when/result) plus OpenTelemetry to the local LGTM stack; log-permission hardening. |
 | **CM** Configuration Management | Config-as-code (Ansible), pinned package/image versions, reproducible baseline, `usg` compliance scans. |
 | **IA** Identification & Auth | PAM password policy/faillock; FIPS-validated crypto for auth (IA-7). *(CAC/PIV — see POA&M.)* |
 | **SC** System & Comm. Protection | FIPS 140-validated crypto (SC-13), LUKS data-at-rest (SC-28), host firewall/boundary (SC-7), TLS for management. |
