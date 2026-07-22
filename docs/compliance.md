@@ -78,7 +78,7 @@ sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml
 | --- | --- | --- |
 | Smart Card / CAC + SSSD (`smartcard_pam_enabled`, `service_sssd_enabled`, `sssd_enable_user_cert`) | password-login only; local accounts, no directory/CAC → **de-selected in the USG tailoring** so they don't count against you | `usg_disable_smartcard*` |
 | ufw rate-limit **all** ports (`ufw_rate_limit`, UBTU-24-600200) | on `ai`, rate-limiting the Open WebUI / vLLM / Docling ports throttles inference. Only **management** ports (SSH/RDP/Cockpit/Portainer) are `ufw limit`ed | firewall roles |
-| GNOME login-banner **text**, blank-screensaver, USB→`dta` | mission requirements (DCSA banner, org wallpaper, USB data-transfer) | operate.md POA&M |
+| GNOME login-banner **text**, blank-screensaver, USB→`dta` *(development profile only; the AI nodes disable USB storage)* | mission requirements (DCSA banner, org wallpaper, USB data-transfer) | operate.md POA&M |
 
 ### ❌ Open POA&M: need a secret or infra (NOT auto-applied)
 
@@ -152,7 +152,7 @@ Every box is provisioned by a version-controlled Ansible build: repeatable, audi
 | **Boundary protection** | Host firewall (**ufw default-deny inbound**, rate-limited); only required service ports opened, cross-node ports restricted by source IP. |
 | **Access banner** | **DCSA Authorized Warning Banner** presented at GUI/console/SSH logon. |
 | **Least functionality** | Lean package set; privileged management surfaces (Cockpit, Portainer) restricted to admin subnets. |
-| **Removable media** | USB mass storage restricted to an authorized data-transfer group (udev + polkit). |
+| **Removable media** | USB mass storage disabled on the AI nodes (USG blacklists the `usb-storage` module on a server; no carve-out). The authorized data-transfer group carve-out (udev + polkit) is development-profile only and is not enabled here. |
 | **Continuous monitoring** | `usg audit` re-run at end of build and re-runnable any time; OpenSCAP available offline; Ubuntu Pro **ESM + Livepatch** for ongoing vulnerability/patch management. |
 
 ### NIST SP 800-53 Rev 5 control-family mapping (representative)
@@ -189,7 +189,6 @@ Known deviations to remediate or risk-accept with the AO. None hidden; each is d
 | **Audit-log offload (AU-4/AU-6)** | Local audit logging is on; central `audisp-remote` collector not yet configured (needs a log server). POA&M until a collector exists. |
 | **FIPS inside inference containers** | **Host is fully FIPS**; the inference/extraction containers (vLLM, and docling via its bundled OpenCV/OpenSSL) use standard crypto. Those images ship no FIPS provider and aren't FIPS-validated, so on the FIPS host their OpenSSL selftest aborts unless carved out. Container traffic is host-local/enclave-internal. Documented POA&M; host-level FIPS is what the STIG assesses. |
 | **AI/ML software assurance** | vLLM, Open WebUI, Docling, etc. are open-source and not separately accredited; recommend internal image scanning + registry mirroring as part of the SSP. |
-| **USB data-transfer carve-out** | USB mass storage is re-enabled but restricted to an authorized group (mission need); documented deviation from the blanket-disable STIG control. |
 
 ### Assessment artifacts we can provide
 
@@ -289,6 +288,8 @@ Nodes: **S1** = System 1 (`dev-ai1`), **S2** = System 2 (`dev-ai2`).
 |-----------|---------|---------|
 | Ubuntu | 24.04 LTS (Noble Numbat) | Various (main/universe) |
 | git | distro | GPL-2.0 |
+| cifs-utils | distro | GPL-3.0 |
+| net-tools | distro | GPL-2.0 |
 | NVIDIA GPU driver | ≥ 595.71.05 (proprietary) | NVIDIA proprietary EULA |
 | NVIDIA Container Toolkit | ≥ 1.19.1 | Apache-2.0 |
 

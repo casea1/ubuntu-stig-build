@@ -61,6 +61,15 @@ editor_choice: vscode        # options: vscode | vim | neovim
 # livepatch). Override per box in site.yml.
 base_packages_full_upgrade: false
 
+# ---- Common packages (BOTH profiles) ---------------------------------------
+# Installed on every box regardless of profile, before hardening. Keep this list
+# lean (each package is attack surface + a potential STIG finding).
+#   cifs-utils : mount SMB/CIFS shares (`mount -t cifs //server/share ...`)
+#   net-tools  : ifconfig / route / netstat for network admin
+base_common_packages:
+  - cifs-utils
+  - net-tools
+
 # ---- ClamAV ----------------------------------------------------------------
 clamav_run_daemon: true       # enable clamav-daemon (on-access/scheduled scans)
 clamav_freshclam_enabled: true
