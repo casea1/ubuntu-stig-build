@@ -116,6 +116,7 @@ each is documented in `OPERATIONS.md` and `group_vars/all.yml`.
 - **This repository** (`ubuntu-stig-build`) — the full, reviewable configuration-as-code baseline.
 - **`usg audit` reports** (XCCDF `.xml` + HTML) collected to `/opt/ia` on each box — STIG compliance evidence per host.
 - **`OPERATIONS.md`** — control-by-control subsystem detail and every documented deviation/POA&M.
+- **`docs/docker-compliance.md`** — why there's no docker-ce STIG and how the container layer is secured (CIS Docker Benchmark).
 - **Architecture overview** — `docs/ai-stack-kb.md`.
 - Host inventory, FIPS status, and encryption/TPM binding evidence on request.
 

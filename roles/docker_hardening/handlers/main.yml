@@ -1,0 +1,8 @@
+---
+- name: restart docker
+  # live-restore keeps containers running across daemon restarts, but the FIRST
+  # time hardening is applied (config change) the daemon bounces once; containers
+  # come back via `restart: unless-stopped`.
+  ansible.builtin.systemd:
+    name: docker
+    state: restarted
