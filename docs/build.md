@@ -1,11 +1,8 @@
-# Imaging Guide — Ubuntu 24.04 STIG Workstation
+# Build & Imaging Guide
 
-End-to-end runbook: from a blank machine, through the Ubuntu install, the hardening run, and
-everything you do afterward. This is the single source of truth for building one of these boxes;
-[README.md](../README.md) is the overview and [OPERATIONS.md](../OPERATIONS.md) holds the deep-dive
-reference for individual subsystems.
+End-to-end runbook for building one of these boxes, from bare metal through the hardening run and everything afterward. It covers **two build tracks**: a single **development workstation** (Ubuntu 24.04 LTS Desktop) and a **two-node AI server** pair (`dev-ai1` / `dev-ai2`). Follow the one track that matches your profile — the workstation track is Track A, the AI servers are Track B. [README.md](../README.md) is the overview and [operate.md](operate.md) holds the deep-dive reference for individual subsystems.
 
-> **The one-line model:** install Ubuntu → run one command → it installs tooling, hardens to the
+> **The one-line model (workstation):** install Ubuntu → run one command → it installs tooling, hardens to the
 > DISA STIG, sets the DCSA banner, and scans → you collect the report, do a short post-install
 > checklist, and reboot.
 
@@ -13,20 +10,38 @@ reference for individual subsystems.
 
 ## Contents
 
-- [1. Overview — what this build produces](#1-overview--what-this-build-produces)
-- [2. Before you start — prerequisites & decisions](#2-before-you-start--prerequisites--decisions)
-- [3. Phase 1 — Install Ubuntu 24.04 LTS Desktop](#3-phase-1--install-ubuntu-2404-lts-desktop)
-- [4. One-time repo setup](#4-one-time-repo-setup)
-- [5. Phase 2 — Run the build](#5-phase-2--run-the-build)
-- [6. What runs, in order (and why it's load-bearing)](#6-what-runs-in-order-and-why-its-load-bearing)
-- [7. Watch & confirm](#7-watch--confirm)
-- [8. Collect the SCAP reports — **before air-gapping**](#8-collect-the-scap-reports--before-air-gapping)
-- [9. Phase 3 — After the build (in order)](#9-phase-3--after-the-build-in-order)
-- [10. POA&M & accepted deviations — the assessor checklist](#10-poam--accepted-deviations--the-assessor-checklist)
-- [11. Configuration reference (`group_vars/all.yml`)](#11-configuration-reference-group_varsallyml)
-- [12. Troubleshooting & quick reference](#12-troubleshooting--quick-reference)
+- [Track A — Development Workstation](#track-a--development-workstation)
+  - [1. Overview — what this build produces](#1-overview--what-this-build-produces)
+  - [2. Before you start — prerequisites & decisions](#2-before-you-start--prerequisites--decisions)
+  - [3. Phase 1 — Install Ubuntu 24.04 LTS Desktop](#3-phase-1--install-ubuntu-2404-lts-desktop)
+  - [4. One-time repo setup](#4-one-time-repo-setup)
+  - [5. Phase 2 — Run the build](#5-phase-2--run-the-build)
+  - [6. What runs, in order (and why it's load-bearing)](#6-what-runs-in-order-and-why-its-load-bearing)
+  - [7. Watch & confirm](#7-watch--confirm)
+  - [8. Collect the SCAP reports — **before air-gapping**](#8-collect-the-scap-reports--before-air-gapping)
+  - [9. Phase 3 — After the build (in order)](#9-phase-3--after-the-build-in-order)
+  - [10. POA&M & accepted deviations — the assessor checklist](#10-poam--accepted-deviations--the-assessor-checklist)
+  - [11. Configuration reference (`group_vars/all.yml`)](#11-configuration-reference-group_varsallyml)
+  - [12. Troubleshooting & quick reference](#12-troubleshooting--quick-reference)
+- [Track B — AI Servers (two-node)](#track-b--ai-servers-two-node)
+  - [Before you start](#before-you-start)
+  - [Step 1 — Install Ubuntu 24.04](#step-1--install-ubuntu-2404)
+  - [Step 2 — Per-node config (site.yml, only if needed)](#step-2--per-node-config-siteyml-only-if-needed)
+  - [Step 3 — Run the build](#step-3--run-the-build)
+  - [Step 4 — Fetch models & start the stack](#step-4--fetch-models--start-the-stack)
+  - [Step 5 — Connect & verify](#step-5--connect--verify)
+  - [Step 6 — Optional: oikb knowledge sync](#step-6--optional-oikb-knowledge-sync)
+  - [Switching the System 1 chat model](#switching-the-system-1-chat-model)
+  - [Collect the compliance report](#collect-the-compliance-report)
+  - [Troubleshooting](#troubleshooting)
 
-## 1. Overview — what this build produces
+---
+
+## Track A — Development Workstation
+
+DISA-STIG-hardened Ubuntu 24.04 LTS Desktop engineering workstation. The three phases are **install (manual) → run (one command) → afterward (a checklist)**.
+
+### 1. Overview — what this build produces
 
 A **DISA-STIG-hardened Ubuntu 24.04 LTS Desktop (GNOME)** engineering workstation with the **DCSA
 Authorized Warning Banner**, an OpenSCAP compliance report, org user/group accounts, USB locked to a
@@ -49,7 +64,7 @@ The three phases below are **install (manual) → run (one command) → afterwar
 
 ---
 
-## 2. Before you start — prerequisites & decisions
+### 2. Before you start — prerequisites & decisions
 
 Decide these *before* you install, because several are irreversible:
 
@@ -73,19 +88,19 @@ Decide these *before* you install, because several are irreversible:
 
 ---
 
-## 3. Phase 1 — Install Ubuntu 24.04 LTS Desktop
+### 3. Phase 1 — Install Ubuntu 24.04 LTS Desktop
 
 All manual installer work. None of it is automated, and a few choices can't be fixed later.
 
 **Order:** firmware (UEFI + Secure Boot) → partition layout → encrypt → create `austin_case_adm` →
 hostname → clock.
 
-### 3.1 Media & firmware
+#### 3.1 Media & firmware
 - Install **Ubuntu 24.04.x LTS Desktop (GNOME)**, booted in **UEFI** mode.
 - In firmware, set **Secure Boot = ON** if TPM auto-unlock is in your plans (§9.4). Decide now.
 - Connect to the **internet**.
 
-### 3.2 Disk encryption (LUKS) — install-time only
+#### 3.2 Disk encryption (LUKS) — install-time only
 In the installer choose **"Erase disk and use LVM"** and tick **"Encrypt the new Ubuntu installation
 for security."** Set a strong **LUKS passphrase**.
 
@@ -94,17 +109,17 @@ for security."** Set a strong **LUKS passphrase**.
   §9.4), and that feature *keeps* this passphrase as the recovery keyslot (it never replaces it).
   Losing it = losing your only recovery.
 - Encryption **cannot** be added after install. (For unattended/fleet installs, bake LUKS into an Ubuntu
-  autoinstall seed — see *Full-disk encryption at install time* in [OPERATIONS.md](../OPERATIONS.md);
+  autoinstall seed — see *Full-disk encryption at install time* in [operate.md](operate.md);
   that seed is separate from this repo and the passphrase must be vaulted, never committed.)
 
-### 3.3 STIG partition layout (recommended, install-time only)
+#### 3.3 STIG partition layout (recommended, install-time only)
 DISA STIG wants **separate partitions** for `/home`, `/var`, `/var/log`, `/var/log/audit`, `/tmp`,
 `/var/tmp` with `nodev`/`nosuid`/`noexec` where applicable. **This repo does not create partitions or
 set mount options** — `filesystem.yml` only fixes ownership/permissions/sysctl on existing paths. If you
 install to a single partition, the separate-mount controls remain **open findings** (track as POA&M).
 Use the installer's manual partitioning to lay these out now; it can't be retrofitted cleanly.
 
-### 3.4 Create the operator account — **name must match the playbook**
+#### 3.4 Create the operator account — **name must match the playbook**
 Create the primary admin account named **exactly `austin_case_adm`** (the default value of both
 `dev_tools_user` and the single `wireshark_users` entry in `group_vars/all.yml`).
 
@@ -116,7 +131,7 @@ Create the primary admin account named **exactly `austin_case_adm`** (the defaul
   login. If you want a different login name, edit `dev_tools_user` **and** `wireshark_users` in
   `group_vars/all.yml` before pushing.
 
-### 3.5 Other install settings
+#### 3.5 Other install settings
 - **Hostname:** set a sane, unique hostname (don't leave the default `ubuntu`) — it's tied to log/audit identity.
 - **Clock/UTC:** the hardening sets the RTC to UTC and swaps `systemd-timesyncd` for `chrony`; install with a UTC-aligned clock to avoid surprises.
 
@@ -125,7 +140,7 @@ Desktop, online, with `austin_case_adm` created. Ready to run.
 
 ---
 
-## 4. One-time repo setup
+### 4. One-time repo setup
 
 Before the first run, review **`group_vars/all.yml`** (full reference in §11):
 - `wireshark_users`, `dev_tools_user` — match your operator account (§3.4).
@@ -138,7 +153,7 @@ If you forked the repo, update the URLs (§12) and **push to a public repo**.
 
 ---
 
-## 5. Phase 2 — Run the build
+### 5. Phase 2 — Run the build
 
 On the target box, online:
 
@@ -163,7 +178,7 @@ fail mid-run)**, then `sudo systemd-run --unit=stig-build --collect ansible-pull
 
 ---
 
-## 6. What runs, in order (and why it's load-bearing)
+### 6. What runs, in order (and why it's load-bearing)
 
 `base_packages → app_config → local_accounts → dev_tools → classification_banner` *(if enabled)* `→
 stig_harden → desktop_branding → tpm_luks_unlock` *(if `tpm_luks_enabled`)* `→ scap_scan`
@@ -174,7 +189,7 @@ internet (`--fetch-remote-resources`) before you air-gap.
 
 ---
 
-## 7. Watch & confirm
+### 7. Watch & confirm
 
 ```bash
 sudo journalctl -u stig-build -f          # live log
@@ -190,7 +205,7 @@ systemctl status stig-build          # "active (exited)" = success
 
 ---
 
-## 8. Collect the SCAP reports — **before air-gapping**
+### 8. Collect the SCAP reports — **before air-gapping**
 
 Three artifacts land in **`/var/log/stig-scan/`**:
 - `stig-report-<date>.html` — human-readable
@@ -203,12 +218,12 @@ collected and the post-install checklist is done. To **re-scan later offline**, 
 
 ---
 
-## 9. Phase 3 — After the build (in order)
+### 9. Phase 3 — After the build (in order)
 
 > **Critical ordering:** verify auth **before** the final reboot, with your current admin/root session
 > still open. Collect reports before air-gap. Do GRUB/TPM as *edit → push → re-run → reboot* loops.
 
-### 9.1 Verify auth BEFORE you reboot
+#### 9.1 Verify auth BEFORE you reboot
 `pam.yml` applied account-lockout (faillock). While your **current session stays open**, open a **new**
 terminal / fresh login and confirm:
 ```bash
@@ -219,7 +234,7 @@ sudo faillock --user <name> --reset
 `unlock_time=0` means only an admin reset clears a lockout — discovering a broken PAM stack *after*
 reboot, with no session open, can leave no recovery path. Don't skip this gate.
 
-### 9.2 Set passwords for the locked org accounts (at deploy, per machine)
+#### 9.2 Set passwords for the locked org accounts (at deploy, per machine)
 The standing accounts are created **locked** (they exist but can't log in). On the fielded box:
 ```bash
 sudo passwd overlord
@@ -230,7 +245,7 @@ sudo passwd zac_mccamant_adm # ...and _aud, _dta
 ```
 (10 accounts total, from `local_users`.) This is **deploy-time, per machine** — never baked into a gold image.
 
-### 9.3 GRUB bootloader password (closes 2 high findings)
+#### 9.3 GRUB bootloader password (closes 2 high findings)
 Self-skips on the `CHANGEME` placeholder. To enable:
 ```bash
 grub-mkpasswd-pbkdf2         # type the password twice; copy the grub.pbkdf2.sha512... token
@@ -241,7 +256,7 @@ build, **then reboot**. Normal boot stays password-free (menuentries are `--unre
 is required only to *edit* an entry. Keep `grub_superuser` to letters/underscores only. Test the hash on
 a throwaway VM before a gold image.
 
-### 9.4 TPM2 LUKS auto-unlock (on by default, per machine)
+#### 9.4 TPM2 LUKS auto-unlock (on by default, per machine)
 Passphrase-free boot via the TPM. **Secure Boot must be ON** (§3.1). It's **`tpm_luks_enabled: true` by
 default**, but it only binds once it can read the install passphrase — and **the passphrase is never put
 in this public repo**. Two ways to supply it, pick whichever fits your install style:
@@ -268,7 +283,7 @@ note: TPM-only / no-PIN auto-unlock is a deliberate data-at-rest deviation (§10
 passphrase, and the role **auto-deletes** `luks_passphrase_file` after a successful bind
 (`luks_passphrase_purge_after_bind: true`), so it doesn't linger on the disk — re-drop it only to re-bind.
 
-### 9.5 AIDE builds itself after the first boot
+#### 9.5 AIDE builds itself after the first boot
 AIDE's database is **no longer built during the run** (hashing the whole disk would stall the build).
 Instead a one-shot timer builds it **~5 minutes after this first boot**, at idle priority, in the
 background. Confirm later:
@@ -280,7 +295,7 @@ ls -l /var/lib/aide/aide.db          # exists once built
 Because of this, the build-time scan's *"Build and Test AIDE Database"* rule is a **finding on the first
 scan**; **re-scan offline** (§8) after the DB builds and it passes.
 
-### 9.6 Confirm state & final reboot
+#### 9.6 Confirm state & final reboot
 - **USB storage** works only for `dta`-group members; everyone else (incl. admins) uses `sudo mount`.
 - **Wallpaper** is set system-wide on desktop + lock screen (set `branding_lockscreen_wallpaper: false` to
   keep the STIG blank lock screen).
@@ -290,7 +305,7 @@ scan**; **re-scan offline** (§8) after the DB builds and it passes.
 
 ---
 
-## 10. POA&M & accepted deviations — the assessor checklist
+### 10. POA&M & accepted deviations — the assessor checklist
 
 Hand these to your assessor as documented exceptions:
 
@@ -310,7 +325,7 @@ Hand these to your assessor as documented exceptions:
 
 ---
 
-## 11. Configuration reference (`group_vars/all.yml`)
+### 11. Configuration reference (`group_vars/all.yml`)
 
 All operator-facing knobs. Values with a **cap** will *fail the scan* if exceeded.
 
@@ -346,7 +361,7 @@ All operator-facing knobs. Values with a **cap** will *fail the scan* if exceede
 
 ---
 
-## 12. Troubleshooting & quick reference
+### 12. Troubleshooting & quick reference
 
 **Command cheat-sheet**
 ```bash
@@ -369,7 +384,7 @@ sudo clevis luks bind -d /dev/<part> tpm2 '{"pcr_bank":"sha256","pcr_ids":"7"}'
 sudo update-initramfs -u -k all
 
 # Rotate the LUKS passphrase (independent of TPM unlock; re-vault luks_passphrase after).
-# Full notes: OPERATIONS.md -> "Rotating the LUKS passphrase".
+# Full notes: operate.md -> "Rotating the LUKS passphrase".
 sudo cryptsetup luksChangeKey /dev/<part>      # current passphrase, then new one twice
 
 # Re-scan offline (after air-gap)
@@ -388,5 +403,109 @@ sudo oscap xccdf eval --profile <profile> --report report.html <on-box ssg-ubunt
 **Forked-repo URL checklist** (update every `casea1` reference, then push **public**):
 - `bootstrap.sh` — `REPO_URL=` and the `curl` URL in its header comment
 - `README.md` — the Quick-start `curl` one-liner
-- `OPERATIONS.md` — the run block (the `curl` line and the `ansible-pull -U` line)
-- `docs/imaging-guide.md` — this guide's `curl` URLs (§5 and §12)
+- `docs/operate.md` — the run block (the `curl` line and the `ansible-pull -U` line)
+- `docs/build.md` — this guide's `curl` URLs (§5 and §12)
+
+---
+
+## Track B — AI Servers (two-node)
+
+Step-by-step for a technician to build and configure the two AI servers from bare metal to a working chat
+system. Assumes the `ubuntu-stig-build` repo. For subsystem detail see [operate.md](operate.md).
+
+### Before you start
+
+- **Hardware:** 2× Dell Precision 7960. System 1 (`dev-ai1`) = 2× RTX 6000 Ada (48 GB). System 2 (`dev-ai2`) = 1 GPU.
+- **Network:** the two boxes must reach each other; know their IPs (e.g. `192.168.1.102` / `.106`). An Ubuntu Pro token (for USG/FIPS). Internet during the build (or an internal mirror).
+- **The hostname sets the role:** name the box **`dev-ai1`** or **`dev-ai2`** — everything else auto-derives.
+
+### Step 1 — Install Ubuntu 24.04
+
+Install **Ubuntu 24.04 LTS Server** with the standard **LVM + LUKS full-disk encryption** option. Set the
+hostname to `dev-ai1` or `dev-ai2`. Create the operator/admin account (e.g. `austin_case_adm`). Reboot into the OS.
+
+Optional but recommended — patch the base first:
+```bash
+sudo apt update && sudo apt full-upgrade -y && sudo reboot
+```
+
+### Step 2 — Per-node config (site.yml, only if needed)
+
+A correctly-named box usually needs **nothing** here. Add `/etc/stig-build/site.yml` only for exceptions —
+IPs (if hostnames don't resolve between the boxes), an existing DB password, oikb secrets, model fetch/deploy:
+
+```bash
+sudo install -d -m 0755 /etc/stig-build
+sudo tee /etc/stig-build/site.yml >/dev/null <<'EOF'
+# --- System 1 example ---
+ai_system2_addr: "192.168.1.106"     # if dev-ai2 doesn't resolve by name
+ai_pgvector_password: "gelab_24"     # ONLY if reusing an already-initialised DB
+ai_model_fetch: true                 # download the models during the build
+ai_compose_deploy: true              # start the stack during the build
+# firewall: open the ports this node serves (see docs/site.yml.example)
+EOF
+```
+Full reference: [`site.yml.example`](site.yml.example). On **System 2**, set the cross-node firewall + oikb secrets there.
+
+### Step 3 — Run the build
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | PROFILE=ai bash
+```
+This: grows the disk, installs Docker + NVIDIA + hardens Docker, attaches Ubuntu Pro and STIG-hardens with
+FIPS (**a reboot is required for FIPS** — the build flags it), bakes the node's compose into `/opt/it/docker`,
+builds the custom images (System 2), and — if you set the toggles — fetches models and starts the stack.
+Watch: `sudo journalctl -u stig-build -f`. **Reboot** when it finishes.
+
+### Step 4 — Fetch models & start the stack
+
+If you didn't set `ai_model_fetch`/`ai_compose_deploy` in `site.yml`, do it now on each box:
+
+```bash
+cd /opt/it/docker
+# (models auto-fetch on the build if ai_model_fetch: true; otherwise the build placed the empty volumes)
+sudo docker compose up -d          # start the node's services
+sudo ./switch-model.sh gpt-oss     # System 1 only: load the default chat model
+```
+gpt-oss-120B is ~200 GB — the first fetch is long. System 2's embedding/vision models are small.
+
+### Step 5 — Connect & verify
+
+- **System 2 first** (System 1 depends on it): `docker compose ps` — embed/vision/docling/tika/lgtm/oikb healthy.
+- **System 1:** `docker compose ps` — vllm/open-webui/redis/pgvector healthy; `curl -s http://localhost:8000/v1/models` lists the chat model.
+- **Browse:** Open WebUI at `http://dev-ai1:3000`. Create the first (admin) account. The chat model appears in the dropdown; embeddings/vision/Docling are wired to System 2 via env (or set them in **Admin → Settings → Connections/Documents** if you blanked the env).
+- **Monitoring:** Grafana at `http://dev-ai2:3001` (admins).
+
+### Step 6 — Optional: oikb knowledge sync
+
+oikb (System 2) syncs data sources into Open WebUI knowledge bases. To enable: create an **API key** in Open
+WebUI (Settings → Account), put it + your GitLab URL/token in System 2's `site.yml`
+(`ai_oikb_openwebui_api_key`, `ai_oikb_gitlab_url`, `ai_oikb_gitlab_token`), edit `/opt/it/docker/.oikb.yaml`
+to map sources → KBs, re-run the build (or `docker compose up -d`), then `docker compose restart oikb`.
+
+### Switching the System 1 chat model
+
+gpt-oss-120B and Granite-4.1-30B are **alternates** (only one fits in VRAM):
+```bash
+cd /opt/it/docker
+sudo ./switch-model.sh granite    # or gpt-oss ; or status
+```
+Don't run a bare `docker compose up -d` while on Granite — it would also start gpt-oss and OOM the GPUs.
+
+### Collect the compliance report
+
+After the build, the USG/SCAP report is in **`/opt/ia/`** (`usg-report-*.html` + XCCDF `.xml`). Grab it while
+online. Re-run on demand: `sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml`. See [operate.md](operate.md) →
+"Running a USG / SCAP compliance scan."
+
+### Troubleshooting
+
+| Symptom | Cause / fix |
+|---------|-------------|
+| Disk fills mid-build | `disk_expand` grows root automatically; if it didn't, check it's LVM (`docs` note). |
+| A vLLM container crash-loops on `fips.so` / `FIPS SELFTEST` | Host FIPS vs the image's OpenSSL — the `fips_off` mount handles it; ensure it's present (`grep fips_off docker-compose.yaml`). |
+| Model loads but no model in Open WebUI | tiktoken/harmony encodings missing (auto-fetched now) **and/or** add the `http://chat-llm:8000/v1` connection. |
+| vLLM `Up` seconds then restarts | still loading (120B takes minutes) or OOM — check `docker logs vllm-server` + `nvidia-smi`. |
+| Open WebUI can't reach System 2 (embed/vision/Docling) | set `ai_system2_addr` to dev-ai2's **IP** in `site.yml` (containers use their own DNS, not the host's `/etc/hosts`). With an IP set, the build auto-maps the name in the host `/etc/hosts` **and** the containers' `extra_hosts` — no manual editing. Also confirm the System 2 firewall opened 8002/8003/5001 from System 1. |
+
+More detail for every subsystem: [operate.md](operate.md).

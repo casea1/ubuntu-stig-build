@@ -46,7 +46,7 @@ services:
       # HOST runs FIPS (kernel fips_enabled=1), but this image has no FIPS OpenSSL
       # provider -> its DRBG can't init and the container crash-loops. vLLM isn't
       # FIPS-validated anyway, so mask the flag to 0 for THIS container only (host
-      # stays FIPS). See OPERATIONS.md "FIPS + inference containers". POA&M.
+      # stays FIPS). See docs/operate.md "FIPS + inference containers". POA&M.
       - ./fips_off:/proc/sys/crypto/fips_enabled:ro
     environment:
       TIKTOKEN_ENCODINGS_BASE: "/etc/encodings"
