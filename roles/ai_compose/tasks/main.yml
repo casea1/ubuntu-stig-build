@@ -118,8 +118,9 @@
   when: ai_node_role == 'system1'
 
 - name: "AI-COMPOSE | Render the root-only .env (secrets/site values)"
-  # Only System 1 needs the DB password + peer IP. Rendering evaluates the
-  # password lookup, which generates + persists it on first run (stable after).
+  # Node-aware (env.j2): System 1 gets the DB/WebUI secrets + SYSTEM2_ADDR;
+  # System 2 gets oikb's cross-node URL + data-source secrets. Rendering evaluates
+  # the System-1 password lookups (generate + persist on first run, stable after).
   ansible.builtin.template:
     src: env.j2
     dest: "{{ ai_compose_dir }}/.env"
@@ -127,11 +128,10 @@
     group: root
     mode: "0600"
   no_log: true
-  when: ai_node_role == 'system1'
 
-- name: "AI-COMPOSE | Render the oikb config skeleton (System 1; not overwritten on re-run)"
-  # oikb bind-mounts ./.oikb.yaml, so the file must exist before `up` (else Docker
-  # creates a directory there). force:false keeps your edits across re-runs.
+- name: "AI-COMPOSE | Render the oikb config skeleton (System 2; not overwritten on re-run)"
+  # oikb (System 2) bind-mounts ./.oikb.yaml, so the file must exist before `up`
+  # (else Docker creates a directory there). force:false keeps your edits.
   ansible.builtin.template:
     src: oikb.yaml.j2
     dest: "{{ ai_compose_dir }}/.oikb.yaml"
@@ -139,7 +139,7 @@
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "0640"
     force: false
-  when: ai_node_role == 'system1'
+  when: ai_node_role == 'system2'
 
 - name: "AI-COMPOSE | Create the external named volumes (empty; populate the model separately)"
   ansible.builtin.command: "docker volume create {{ item }}"

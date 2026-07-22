@@ -17,16 +17,21 @@
 # USG leaves ufw default-deny inbound; open exactly what THIS node serves, and
 # restrict cross-node ports to the peer's IP with `from:`.
 #
-# --- System 1 (UI/text-gen, e.g. 192.168.1.102): Open WebUI + Grafana ---
+# --- System 1 (UI/text-gen, e.g. 192.168.1.102) ---
 # ai_firewall_allow_ports:
-#   - { port: 3000, proto: tcp, rule: allow }                          # Open WebUI (users)
-#   - { port: 3001, proto: tcp, rule: allow, from: "192.168.1.0/24" }  # Grafana/LGTM (admins)
-#   - { port: 8081, proto: tcp, rule: allow, from: "192.168.1.0/24" }  # oikb (admins)
+#   - { port: 3000, proto: tcp, rule: allow }                          # Open WebUI (users; also oikb <- System 2)
 #
-# --- System 2 (extraction, e.g. 192.168.1.106): serves System 1 only ---
+# --- System 2 (extraction/embeddings/monitoring, e.g. 192.168.1.106) ---
+# Cross-node services are consumed by System 1, so restrict them to its IP:
 # ai_firewall_allow_ports:
-#   - { port: 5001, proto: tcp, rule: allow, from: "192.168.1.102" }   # Docling <- System 1
-#   - { port: 9998, proto: tcp, rule: allow, from: "192.168.1.102" }   # Tika    <- System 1
+#   - { port: 8002, proto: tcp, rule: allow, from: "192.168.1.102" }   # embeddings vLLM <- System 1
+#   - { port: 8003, proto: tcp, rule: allow, from: "192.168.1.102" }   # vision vLLM     <- System 1
+#   - { port: 5001, proto: tcp, rule: allow, from: "192.168.1.102" }   # Docling         <- System 1
+#   - { port: 9998, proto: tcp, rule: allow, from: "192.168.1.102" }   # Tika            <- System 1
+#   - { port: 4317, proto: tcp, rule: allow, from: "192.168.1.102" }   # OTel/LGTM       <- System 1
+#   - { port: 4318, proto: tcp, rule: allow, from: "192.168.1.102" }   # OTel/LGTM (HTTP)<- System 1
+#   - { port: 3001, proto: tcp, rule: allow, from: "192.168.1.0/24" }  # Grafana UI (admins)
+#   - { port: 8081, proto: tcp, rule: allow, from: "192.168.1.0/24" }  # oikb (admins)
 
 # ---- AI docker-compose stack (ai profile) -----------------------------------
 # HANDS-OFF BY DEFAULT: on the ai profile the stack is enabled automatically, the
@@ -45,7 +50,11 @@
 # --- Lock Open WebUI's CORS to your domain (default is '*') ---
 # ai_webui_cors_origin: "https://oi.yourlab"
 #
-# --- oikb data-source secrets (knowledge-base sync; empty = oikb stays idle) ---
+# --- Cross-node addresses (default to the hostnames; set IPs if names don't resolve) ---
+# ai_system1_addr: "192.168.1.102"        # System 2's oikb reaches System 1 here
+# ai_system2_addr: "192.168.1.106"        # System 1's Open WebUI reaches System 2 here
+#
+# --- oikb data-source secrets (System 2; empty = oikb stays idle) ---
 # ai_oikb_openwebui_api_key: "<Open WebUI API key>"   # created in the Open WebUI UI
 # ai_oikb_gitlab_url: "https://gitlab.yourlab"
 # ai_oikb_gitlab_token: "<GitLab PAT>"

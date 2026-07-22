@@ -676,8 +676,12 @@ ai_compose_deploy: false         # true = also `docker compose pull && up -d`
 # match an already-initialised pgvector-data volume (e.g. an existing box).
 ai_pgvector_password_file: /etc/stig-build/pgvector.pw
 ai_pgvector_password: "{{ lookup('ansible.builtin.password', ai_pgvector_password_file + ' length=32 chars=ascii_letters,digits') }}"
-# (Open WebUI's connections to System 2's Docling/Tika/embeddings are configured
-#  in the Open WebUI admin UI, so no peer IP is needed in the compose/.env.)
+# Cross-node addresses. System 1's Open WebUI reaches System 2 (embeddings :8002,
+# vision :8003, Docling :5001, LGTM :4317) at ai_system2_addr; System 2's oikb
+# reaches System 1's Open WebUI (:3000) at ai_system1_addr. Default to the
+# hostnames -- set IPs in site.yml if names don't resolve across the two boxes.
+ai_system1_addr: "dev-ai1"
+ai_system2_addr: "dev-ai2"
 # Open WebUI session-signing key (System 1). Auto-generated + persisted root-only
 # too -- stable so logins survive re-runs; nothing to type, no secret in the repo.
 ai_webui_secret_key_file: /etc/stig-build/webui_secret.key
@@ -692,18 +696,17 @@ ai_webui_cors_origin: "*"
 #   REQUEST_RESPONSE  -- + the model's response text | protect the log like the DB
 #   NONE              -- disabled
 ai_webui_audit_log_level: "METADATA"
-# oikb (knowledge-base sync) -> Open WebUI + a data source. URL is internal; the
-# API key + GitLab token are TRUE secrets, set out-of-band in site.yml (empty =
-# oikb stays idle until configured).
-ai_oikb_openwebui_url: "http://open-webui:8080"
+# oikb (knowledge-base sync, System 2) -> System 1's Open WebUI API (built from
+# ai_system1_addr) + a data source. API key + GitLab token are TRUE secrets, set
+# out-of-band in site.yml (empty = oikb stays idle until configured).
 ai_oikb_openwebui_api_key: ""
 ai_oikb_gitlab_url: ""
 ai_oikb_gitlab_token: ""
 # External named volumes each role owns (kept out of compose's lifecycle so the
 # model weights / DB survive `down -v`). Empty list = role creates none.
 ai_compose_volumes:
-  system1: [vllm, granite32b, encodings, pgvector-data, open-webui, redis-data, lgtm-data]
-  system2: [vllm, encodings]     # vllm/encodings hold embed/vision weights when staged (via hfcli)
+  system1: [vllm, granite32b, encodings, pgvector-data, open-webui, redis-data]
+  system2: [granite-embed, granite-vision, lgtm-data]
 
 # ---- Custom image builds (ai_compose) ---------------------------------------
 # Three services use images not on any registry, so ansible builds them ON THE
@@ -716,8 +719,8 @@ ai_compose_images:               # name -> tag + Dockerfile (context copied from
   hfcli:   { tag: "hfcli:latest",   dockerfile: "Dockerfile" }
   repomix: { tag: "repomix:latest", dockerfile: "Dockerfile" }
 ai_compose_build_by_role:        # which images each node builds
-  system1: [oikb, hfcli, repomix]
-  system2: [hfcli]
+  system1: []                    # System 1 uses only registry images
+  system2: [oikb, hfcli, repomix]
 
 # ---- Model auto-fetch (ai_compose) ------------------------------------------
 # Which HuggingFace repo lands in which volume, per node role. The role can
@@ -740,10 +743,9 @@ ai_models:
   system1:
     - { volume: vllm, repo: "openai/gpt-oss-120b" }          # default chat model
     - { volume: granite32b, repo: "ibm-granite/granite-4.1-30b" }  # switchable alternate (switch-model.sh)
-  system2: []
-    # Add when you stand up the embed/vision vLLM on System 2:
-    # - { volume: granite-embed,  repo: "ibm-granite/granite-embedding-small-english-r2" }
-    # - { volume: granite-vision, repo: "ibm-granite/granite-vision-4.1-4b" }
+  system2:
+    - { volume: granite-embed,  repo: "ibm-granite/granite-embedding-small-english-r2" }
+    - { volume: granite-vision, repo: "ibm-granite/granite-vision-4.1-4b" }
 
 # =============================================================================
 # USG HARDENING  (usg_harden role -> Ubuntu Security Guide / DISA-STIG)
