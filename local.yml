@@ -110,6 +110,10 @@
     # -------------------------------------------------------------------------
     - role: ai_stack                # docker-ce + NVIDIA + selectable Compose stack (vLLM/WebUI/pgvector/Docling)
       when: is_ai
+    - role: docker_hardening        # ai: CIS-aligned Docker daemon hardening (USG doesn't cover Docker)
+      when:
+        - is_ai
+        - docker_hardening_enabled | default(true)
 
     # -------------------------------------------------------------------------
     # HARDENING  -- BOTH profiles harden with Canonical USG.

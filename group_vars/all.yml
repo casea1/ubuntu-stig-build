@@ -571,6 +571,22 @@ docker_extra_packages:
 # Account added to the `docker` group so it can drive your compose without sudo.
 ai_stack_user: "{{ dev_tools_user }}"
 
+# ---- Docker daemon hardening (docker_hardening role) ------------------------
+# USG hardens the OS but does NOT cover Docker, and there's no DISA STIG for
+# docker-ce, so this applies CIS-Docker-Benchmark-aligned daemon settings
+# (see docs/docker-compliance.md). MERGED into /etc/docker/daemon.json so the
+# NVIDIA runtime is preserved; docker restarts once when first applied. Set
+# false to skip. Add/adjust keys in docker_hardening_daemon_opts.
+docker_hardening_enabled: true
+docker_hardening_daemon_opts:
+  no-new-privileges: true       # CIS 5.25 (daemon-wide): no container gains privileges via setuid
+  live-restore: true            # CIS 2.14: containers survive a daemon restart
+  userland-proxy: false         # CIS 2.15: kernel hairpin NAT instead of docker-proxy
+  log-driver: "json-file"
+  log-opts:
+    max-size: "10m"             # bound container log growth
+    max-file: "3"
+
 # ---- GPU (NVIDIA) ----------------------------------------------------------
 # Your vLLM containers need CUDA. true => install the NVIDIA driver (optional,
 # see gpu_install_driver) AND the nvidia-container-toolkit, and wire the `nvidia`
