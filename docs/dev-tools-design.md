@@ -2,6 +2,19 @@
 
 Status: **proposed** · Date: 2026-06-02 · Target: Ubuntu 24.04 Desktop STIG build
 
+## Contents
+
+- [Context & goal](#context--goal)
+- [Scope](#scope)
+- [Decisions (recorded from brainstorming)](#decisions-recorded-from-brainstorming)
+- [Architecture](#architecture)
+- [Component detail](#component-detail)
+- [VS Code extension ID map](#vs-code-extension-id-map)
+- [group_vars additions](#group_vars-additions)
+- [STIG impact & documented exceptions](#stig-impact--documented-exceptions)
+- [Verification plan (on the test VM)](#verification-plan-on-the-test-vm)
+- [Assumptions (confirmed 2026-06-02)](#assumptions-confirmed-2026-06-02)
+
 ## Context & goal
 
 The base build provisions + STIG-hardens an Ubuntu 24.04 Desktop and scans it with

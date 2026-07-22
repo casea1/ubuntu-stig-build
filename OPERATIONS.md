@@ -7,6 +7,19 @@ still has internet, before it's moved to an air-gapped network.
 > For the full step-by-step lifecycle (Ubuntu install → run → post-install checklist), see the
 > **[Imaging Guide](docs/imaging-guide.md)**. This file is the subsystem-by-subsystem reference.
 
+## Contents
+
+- [What it does, in order](#what-it-does-in-order)
+- [One-time setup](#one-time-setup)
+- [Running it on the Dell (during imaging, online)](#running-it-on-the-dell-during-imaging-online)
+- [Critical gotchas](#critical-gotchas)
+- [STIG gap remediation (SSG scan findings)](#stig-gap-remediation-ssg-scan-findings)
+- [Local accounts, access groups & branding](#local-accounts-access-groups--branding)
+- [TPM2 LUKS auto-unlock (on by default; passphrase supplied out-of-band)](#tpm2-luks-auto-unlock-on-by-default-passphrase-supplied-out-of-band)
+- [Remote desktop (development profile — GNOME over RDP)](#remote-desktop-development-profile--gnome-over-rdp)
+- [Ubuntu Pro Server (USG + AI stack)](#ubuntu-pro-server-usg--ai-stack)
+- [Windows servers](#windows-servers)
+
 ## What it does, in order
 
 > **Profiles + USG.** There are now two profiles, `development` (default) and `ai` (old names
@@ -665,12 +678,33 @@ Also open System 2's cross-node ports **to System 1 only** (`ai_firewall_allow_p
 `5001` (Docling) and `9998` (Tika), each `from: "‹System 1 IP›"`. On System 1, restrict `3001` (Grafana)
 and `8081` (oikb) to an admin CIDR.
 
+### Switching System 1's chat model (gpt-oss ↔ Granite-4.1-30B)
+
+System 1's two 48 GB (RTX 6000 Ada) GPUs can't hold **gpt-oss-120B** and **Granite-4.1-30B** at once, so
+they're **alternates, one at a time.** Both are defined in the compose sharing the `chat-llm` network
+alias; **gpt-oss auto-starts**, Granite is under the `granite` profile. Open WebUI points at
+`http://chat-llm:8000/v1`, so switching needs no UI change — the model just changes in the dropdown.
+Swap with the helper `ai_compose` drops in the compose dir:
+
+```bash
+cd /opt/it/docker
+sudo ./switch-model.sh granite     # stop gpt-oss, start Granite-4.1-30B
+sudo ./switch-model.sh gpt-oss     # back to the 120B (default)
+sudo ./switch-model.sh status      # which one is running
+```
+
+Each switch stops the other model first (so only one holds VRAM) and takes a few minutes to load. **Don't
+run a bare `docker compose up -d` while on Granite** — it would also start gpt-oss and OOM the GPUs; use
+the switch script to change models. (On the already-running dev-ai1, point Open WebUI's connection at
+`http://chat-llm:8000/v1` and remove the old `http://vllm:8000/v1` one so switching is seamless.)
+
 ### Gathering the models (automated + hfcli)
 
-Models live in **external** docker volumes (survive `docker compose down -v`). The served model
-(`gpt-oss-120b` on System 1) is declared in **`ai_models`** (`group_vars/all.yml`); `ai_compose` creates
-the volumes, and with **`ai_model_fetch: true`** downloads it into its volume via `huggingface-cli`.
-The fetch is **idempotent** — a volume that already holds a `config.json` is skipped — so re-pulls are safe.
+Models live in **external** docker volumes (survive `docker compose down -v`). The served models
+(`gpt-oss-120b` + `granite-4.1-30b` on System 1) are declared in **`ai_models`** (`group_vars/all.yml`);
+`ai_compose` creates the volumes, and with **`ai_model_fetch: true`** downloads each into its volume via
+`huggingface-cli`. The fetch is **idempotent** — a volume that already holds a `config.json` is skipped —
+so re-pulls are safe.
 
 - **No HF token needed.** `openai/gpt-oss-120b` (and the Granite repos) are Apache-2.0 / ungated. Set
   `ai_hf_token` in `site.yml` **only** to dodge anonymous rate-limits on the big gpt-oss pull.

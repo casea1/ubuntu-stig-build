@@ -13,6 +13,17 @@ Information System Security Professional (ISSP) / rep.
 
 ---
 
+## Contents
+
+- [1. Authorization context](#1-authorization-context)
+- [2. System description](#2-system-description)
+- [3. Compliance baseline (what the build enforces)](#3-compliance-baseline-what-the-build-enforces)
+- [4. NIST SP 800-53 Rev 5 control-family mapping (representative)](#4-nist-sp-800-53-rev-5-control-family-mapping-representative)
+- [5. AI-specific risk considerations](#5-ai-specific-risk-considerations)
+- [6. Open items / POA&M (stated honestly)](#6-open-items--poam-stated-honestly)
+- [7. Assessment artifacts we can provide](#7-assessment-artifacts-we-can-provide)
+- [8. Talking points for the DCSA meeting](#8-talking-points-for-the-dcsa-meeting)
+
 ## 1. Authorization context
 
 - **Process:** NIST RMF (DoDI 8510.01) as administered by DCSA (DAAPM / NIST SP 800-53

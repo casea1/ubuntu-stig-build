@@ -56,6 +56,16 @@
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "0644"
 
+- name: "AI-COMPOSE | Place the chat-model switch script (System 1)"
+  # System 1 alternates gpt-oss-120b <-> Granite-4.1-30b (only one fits in VRAM).
+  ansible.builtin.copy:
+    src: switch-model.sh
+    dest: "{{ ai_compose_dir }}/switch-model.sh"
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "0750"
+  when: ai_node_role == 'system1'
+
 # ---- Custom images (not on a registry) -> built on the box ----------------
 - name: "AI-COMPOSE | Copy custom-image build contexts"
   ansible.builtin.copy:

@@ -22,6 +22,7 @@ networks:
 
 volumes:
   vllm: { external: true }            # gpt-oss-120B weights (populate BEFORE up)
+  granite32b: { external: true }      # Granite-4.1-30B weights (the switchable 2nd model)
   encodings: { external: true }       # tiktoken/harmony encodings
   pgvector-data: { external: true }
   open-webui: { external: true }
@@ -29,6 +30,12 @@ volumes:
   lgtm-data: { external: true }
 
 services:
+  # ---- Chat models: gpt-oss-120B (default) and Granite-4.1-30B, ONE AT A TIME ----
+  # 2x 48GB (RTX 6000 Ada) can't hold both, so they're alternates: gpt-oss auto-
+  # starts; Granite is under the `granite` profile. Both share the network alias
+  # `chat-llm`, so Open WebUI (-> http://chat-llm:8000/v1) always reaches whichever
+  # is running and the model just changes in its dropdown. Switch with:
+  #   /opt/it/docker/switch-model.sh gpt-oss | granite
   vllm:
     image: vllm/vllm-openai:v0.22.1-cu129-ubuntu2404
     container_name: vllm-server
@@ -48,13 +55,47 @@ services:
       TIKTOKEN_RS_CACHE_DIR: "/etc/encodings"
     command:
       - --model=/gpt120b
+      - --served-model-name=gpt-oss-120b
       - --gpu-memory-utilization=0.90
       - --tensor-parallel-size=2
       - --max-model-len=32768
       - --port=8000
       - --enable-auto-tool-choice
       - --tool-call-parser=openai
-    networks: [oi]
+    networks:
+      oi:
+        aliases: [chat-llm]
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+
+  # Alternate chat model -- NOT started by default (`granite` profile). The switch
+  # script stops gpt-oss before starting this so only one holds VRAM.
+  vllm-granite:
+    image: vllm/vllm-openai:v0.22.1-cu129-ubuntu2404
+    container_name: vllm-granite
+    profiles: ["granite"]
+    ipc: host
+    ports:
+      - "8001:8000"                     # host debug port (Open WebUI uses the alias)
+    volumes:
+      - granite32b:/granite30b
+      - ./fips_off:/proc/sys/crypto/fips_enabled:ro
+    command:
+      - --model=/granite30b
+      - --served-model-name=granite-4.1-30b
+      - --gpu-memory-utilization=0.90
+      - --tensor-parallel-size=2
+      - --max-model-len=32768
+      - --port=8000
+      - --enable-auto-tool-choice
+      - --tool-call-parser=hermes       # Granite 4 tool-call format
+    networks:
+      oi:
+        aliases: [chat-llm]
     restart: unless-stopped
     deploy:
       resources:
@@ -130,8 +171,12 @@ services:
       VECTOR_DB: "pgvector"
       VECTOR_DB_URL: "postgresql://postgres:${POSTGRES_PASSWORD:?set in .env}@pgvector:5432/openwebui"
       ENV: "dev"
-      # Model/extraction/embedding connections are configured in the Open WebUI
-      # admin UI (kept out of env by choice), so they aren't wired here.
+      # Chat model endpoint: the `chat-llm` network alias -> whichever vLLM is
+      # running (gpt-oss or Granite). Switching models needs no UI change; the
+      # dropdown just shows the active model. Embedding/Docling/Tika/vision
+      # connections remain admin-UI-configured.
+      OPENAI_API_BASE_URLS: "http://chat-llm:8000/v1"
+      OPENAI_API_KEYS: "sk-noauth"
       ENABLE_OTEL: "true"
       ENABLE_OTEL_TRACES: "true"
       ENABLE_OTEL_METRICS: "true"
