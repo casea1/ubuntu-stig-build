@@ -33,7 +33,7 @@ services:
     command:
       - --model=/granite-embed
       - --served-model-name=granite-embedding-small-english-r2
-      - --task=embed
+      - --runner=pooling                  # embedding mode (replaces the removed --task=embed)
       - --tensor-parallel-size=1          # System 2 has ONE GPU
       - --gpu-memory-utilization=0.10
       - --port=8002

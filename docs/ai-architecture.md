@@ -54,7 +54,7 @@ overview see [`ai-stack-kb.md`](ai-stack-kb.md); for the operator runbook see
 | S1 | open-webui | `ghcr.io/open-webui/open-webui:v0.10.2` | 3000→8080 | Chat UI | `open-webui` |
 | S1 | pgvector | `pgvector/pgvector:pg16-trixie` | 5432 (internal) | DB + vector store | `pgvector-data` |
 | S1 | redis | `redis:7.2.14-bookworm` | 6379 (internal) | Sessions / websockets | `redis-data` |
-| S2 | vllm-embed | `vllm/vllm-openai:…` | 8002 | RAG embeddings (`--task embed`) | `granite-embed` |
+| S2 | vllm-embed | `vllm/vllm-openai:…` | 8002 | RAG embeddings (`--runner pooling`) | `granite-embed` |
 | S2 | vllm-vision | `vllm/vllm-openai:…` | 8003 | Vision / doc understanding | `granite-vision` |
 | S2 | docling-serve | `ghcr.io/docling-project/docling-serve-cu128:v1.24.0` | 5001 | PDF/office structured extraction | — |
 | S2 | tika | `apache/tika:3.3.1.0` | 9998 | Broad text/metadata extraction | — |

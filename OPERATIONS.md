@@ -709,7 +709,8 @@ the switch script to change models. (On the already-running dev-ai1, point Open 
 Models live in **external** docker volumes (survive `docker compose down -v`). The served models
 (`gpt-oss-120b` + `granite-4.1-30b` on System 1) are declared in **`ai_models`** (`group_vars/all.yml`);
 `ai_compose` creates the volumes, and with **`ai_model_fetch: true`** downloads each into its volume via
-`huggingface-cli`. The fetch is **idempotent** — a volume that already holds a `config.json` is skipped —
+the `hf` CLI (the vLLM image's Hugging Face downloader; the old `huggingface-cli` entrypoint is deprecated
+and no longer works). The fetch is **idempotent** — a volume that already holds a `config.json` is skipped —
 so re-pulls are safe.
 
 - **No HF token needed.** `openai/gpt-oss-120b` (and the Granite repos) are Apache-2.0 / ungated. Set
