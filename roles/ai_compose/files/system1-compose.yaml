@@ -1,18 +1,17 @@
 # =============================================================================
-# System 1 (dev-ai1) -- UI / TEXT-GENERATION / KNOWLEDGE node
-#   vLLM gpt-oss-120B  +  Open WebUI (+ Redis, pgvector)  +  LGTM  +  oikb
+# System 1 (dev-ai1) -- UI / TEXT-GENERATION node
+#   vLLM gpt-oss-120B (+ switchable Granite-4.1-30B) + Open WebUI + Redis + pgvector
 # Managed by ansible (ai_compose role); placed in {{ ai_compose_dir }}.
 #
-# Consolidated from the per-service compose files. ONE file per node is used on
-# purpose: cross-service `depends_on` (health-gated) only works inside a single
-# compose project, so Open WebUI can wait for pgvector + redis to be HEALTHY
-# before it starts -- the ordering the split files couldn't actually enforce.
+# Open WebUI health-gates on pgvector + redis (single compose project). It reaches
+# System 2 (embeddings :8002, vision :8003, Docling :5001, LGTM :4317) by the
+# address in SYSTEM2_ADDR -- monitoring, oikb, and the hfcli/repomix utilities all
+# live on System 2 (see system2-compose.yaml).
 #
 # Secrets/site values come from the sibling root-only `.env` (rendered from
 # site.yml, no_log) -- this file holds NO secrets, so it's safe in the repo.
 #   Run:   cd /opt/it/docker && docker compose up -d
-# Utility container (hfcli) is under the `tools` profile so it doesn't auto-start;
-# use it on demand:  docker compose run --rm hfcli hf download <repo> --local-dir /llm/<dir>
+#   Switch chat model:  ./switch-model.sh gpt-oss | granite
 # =============================================================================
 name: ai-system1
 
@@ -27,7 +26,6 @@ volumes:
   pgvector-data: { external: true }
   open-webui: { external: true }
   redis-data: { external: true }
-  lgtm-data: { external: true }
 
 services:
   # ---- Chat models: gpt-oss-120B (default) and Granite-4.1-30B, ONE AT A TIME ----
@@ -144,25 +142,12 @@ services:
     networks: [oi]
     restart: unless-stopped
 
-  lgtm:
-    image: grafana/otel-lgtm:0.29.0
-    container_name: open-webui-lgtm
-    ports:
-      - "3001:3000"        # Grafana UI (was 3000; moved to avoid Open WebUI's 3000)
-      - "4317:4317"        # OTLP gRPC
-      - "4318:4318"        # OTLP HTTP
-    volumes:
-      - lgtm-data:/data
-    networks: [oi]
-    restart: unless-stopped
-
   open-webui:
     image: ghcr.io/open-webui/open-webui:v0.10.2
     container_name: open-webui
     depends_on:
       pgvector: { condition: service_healthy }
       redis: { condition: service_healthy }
-      lgtm: { condition: service_started }
     volumes:
       - open-webui:/app/backend/data
     environment:
@@ -171,22 +156,31 @@ services:
       VECTOR_DB: "pgvector"
       VECTOR_DB_URL: "postgresql://postgres:${POSTGRES_PASSWORD:?set in .env}@pgvector:5432/openwebui"
       ENV: "dev"
-      # Chat model endpoint: the `chat-llm` network alias -> whichever vLLM is
-      # running (gpt-oss or Granite). Switching models needs no UI change; the
-      # dropdown just shows the active model. Embedding/Docling/Tika/vision
-      # connections remain admin-UI-configured.
-      OPENAI_API_BASE_URLS: "http://chat-llm:8000/v1"
-      OPENAI_API_KEYS: "sk-noauth"
+      # ---- Chat models: local vLLM via the `chat-llm` alias (gpt-oss/Granite,
+      # switchable) + Granite VISION on System 2. Switching the local model needs
+      # no UI change. SYSTEM2_ADDR comes from .env (System 2's hostname/IP). ----
+      OPENAI_API_BASE_URLS: "http://chat-llm:8000/v1;http://${SYSTEM2_ADDR:?set in .env}:8003/v1"
+      OPENAI_API_KEYS: "sk-noauth;sk-noauth"
+      # ---- RAG embeddings: Granite embedding vLLM on System 2 ----
+      RAG_EMBEDDING_ENGINE: "openai"
+      RAG_EMBEDDING_MODEL: "granite-embedding-small-english-r2"
+      RAG_OPENAI_API_BASE_URL: "http://${SYSTEM2_ADDR:?set in .env}:8002/v1"
+      RAG_OPENAI_API_KEY: "sk-noauth"
+      # ---- Document extraction: Docling on System 2 (switch to Tika by setting
+      # CONTENT_EXTRACTION_ENGINE=tika + TIKA_SERVER_URL=http://${SYSTEM2_ADDR}:9998) ----
+      CONTENT_EXTRACTION_ENGINE: "docling"
+      DOCLING_SERVER_URL: "http://${SYSTEM2_ADDR:?set in .env}:5001"
+      # ---- Observability: OTel -> LGTM/Grafana on System 2 ----
       ENABLE_OTEL: "true"
       ENABLE_OTEL_TRACES: "true"
       ENABLE_OTEL_METRICS: "true"
       ENABLE_OTEL_LOGS: "true"
       OTEL_SERVICE_NAME: "open-webui"
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://open-webui-lgtm:4317"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://${SYSTEM2_ADDR:?set in .env}:4317"
       OTEL_EXPORTER_OTLP_INSECURE: "true"
-      OTEL_METRICS_EXPORTER_ENDPOINT: "http://open-webui-lgtm:4317"
+      OTEL_METRICS_EXPORTER_ENDPOINT: "http://${SYSTEM2_ADDR:?set in .env}:4317"
       OTEL_METRICS_EXPORTER_OTLP_INSECURE: "true"
-      OTEL_LOGS_EXPORTER_OTLP: "http://open-webui-lgtm:4317"
+      OTEL_LOGS_EXPORTER_OTLP: "http://${SYSTEM2_ADDR:?set in .env}:4317"
       OTEL_LOGS_EXPORTER_OTLP_INSECURE: "true"
       OTEL_METRICS_EXPORT_INTERVAL_MILLIS: "10000"
       DATABASE_POOL_SIZE: "15"
@@ -211,40 +205,4 @@ services:
       - "3000:8080"
     networks: [oi]
     restart: unless-stopped
-
-  oikb:
-    image: oikb:latest          # built on the box by ansible (ai_compose)
-    container_name: oikb
-    working_dir: /app
-    depends_on:
-      open-webui: { condition: service_started }
-    ports:
-      - "8081:8080"
-    environment:
-      OPEN_WEBUI_URL: "${OPEN_WEBUI_URL:-http://open-webui:8080}"
-      OPEN_WEBUI_API_KEY: "${OPEN_WEBUI_API_KEY:-}"
-      GITLAB_URL: "${GITLAB_URL:-}"
-      GITLAB_TOKEN: "${GITLAB_TOKEN:-}"
-      LOG_FORMAT: "json"
-    command: oikb daemon
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://0.0.0.0:8080/health/ready"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-    volumes:
-      - ./.oikb.yaml:/app/.oikb.yaml
-    networks: [oi]
-    restart: unless-stopped
-
-  # ---- Utility container: model downloads (does NOT auto-start) ----
-  # docker compose run --rm hfcli hf download <repo> --local-dir /llm/<dir>
-  hfcli:
-    image: hfcli:latest         # built on the box by ansible (ai_compose)
-    container_name: hfcli
-    profiles: ["tools"]
-    volumes:
-      - vllm:/llm
-      - encodings:/encodings
-    networks: [oi]
+# (Monitoring/LGTM, oikb, and the hfcli/repomix utilities live on System 2.)

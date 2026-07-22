@@ -626,25 +626,30 @@ model, and — opt-in — `up -d`. Two per-node compose files chosen by **`ai_no
 
 | role (node) | services | serves |
 |------|------|------|
-| `system1` (dev-ai1) | vLLM `gpt-oss-120b` (:8000), Open WebUI (:3000), Redis, pgvector, LGTM (:3001), oikb (:8081) | UI / text generation / knowledge |
-| `system2` (dev-ai2) | Docling (:5001), Tika (:9998) | document extraction |
+| `system1` (dev-ai1) | vLLM `gpt-oss-120b` (:8000) + switchable `granite-4.1-30b`, Open WebUI (:3000), Redis, pgvector | UI / text generation |
+| `system2` (dev-ai2) | vLLM embedding (:8002) + vision (:8003), Docling (:5001), Tika (:9998), LGTM/Grafana (:3001,:4317), oikb (:8081), hfcli/repomix | extraction / embeddings / monitoring / sync |
 
 **One file per node on purpose.** Cross-service `depends_on` only works inside one compose project, so
 consolidating lets Open WebUI **health-gate** its start on pgvector + Redis (`condition: service_healthy`,
-with `pg_isready`/`redis-cli ping` healthchecks) — the ordering the split files couldn't enforce. You keep
-per-service control (`docker compose up -d pgvector redis`, `docker compose restart open-webui`).
+with `pg_isready`/`redis-cli ping` healthchecks). You keep per-service control (`docker compose up -d
+pgvector redis`, `docker compose restart open-webui`).
 
-Notes on the consolidation:
-- **Open WebUI** is reproduced as the engineer runs it (Redis session/websocket backend, connection pool,
-  9 uvicorn workers, OTEL → LGTM). Model / embedding / Docling / Tika **connections are configured in the
-  Open WebUI admin UI**, not in env — so they aren't wired in the compose.
-- **Custom images** `oikb`, `hfcli`, `repomix` aren't on any registry; `ai_compose` **builds them on the
-  box** (`ai_compose_build_images: true`). The `oikb` Dockerfile git-clones at build time → the box needs
-  internet during imaging (or an internal mirror). `hfcli` (model downloads) and `repomix` are utilities;
-  `hfcli` is a compose service under the `tools` profile so it never auto-starts.
-- **Only gpt-oss-120b is served today.** The Granite chat (System 1) and embedding/vision (System 2)
-  models are downloaded when you add their vLLM servers — stage them any time with `hfcli`
-  (see below). This matches the provided compose set.
+Notes:
+- **Cross-node wiring.** System 1's Open WebUI reaches System 2 by **`ai_system2_addr`** (default the
+  hostname `dev-ai2`): chat vision (:8003) as a second OpenAI endpoint, RAG embeddings (:8002), Docling
+  extraction (:5001), and OTel → LGTM (:4317). System 2's **oikb** reaches System 1's Open WebUI (:3000)
+  by **`ai_system1_addr`**. Set IPs in `site.yml` if the hostnames don't resolve across the boxes, and
+  open the cross-node ports restricted to the peer (see `docs/site.yml.example`).
+- **Open WebUI** runs as the engineer tuned it (Redis sessions/websockets, connection pool, 9 uvicorn
+  workers). The model / embedding / Docling / vision **connections are now wired via env** to System 2
+  (override/blank in `site.yml` to configure them in the admin UI instead). Extraction defaults to
+  Docling — set `CONTENT_EXTRACTION_ENGINE=tika` + `TIKA_SERVER_URL` to use Tika.
+- **Custom images** `oikb`, `hfcli`, `repomix` (System 2 only) aren't on any registry; `ai_compose`
+  **builds them on the box** (`ai_compose_build_images: true`). The `oikb` Dockerfile git-clones at build
+  time → the box needs internet during imaging (or an internal mirror). `hfcli` is a `tools`-profile
+  service (never auto-starts); `repomix` is a build-only utility.
+- **Model switching (System 1).** gpt-oss-120b and Granite-4.1-30b are alternates (one at a time) — see
+  "Switching System 1's chat model" below.
 
 **Hands-off imaging — normally NOTHING to edit per box.** On the ai profile the stack is enabled
 automatically and everything per-node auto-derives, so a freshly-imaged, correctly-named box comes up
@@ -716,18 +721,21 @@ so re-pulls are safe.
 - **Size/time.** gpt-oss-120b is ~200 GB; the first fetch is long and runs synchronously during the play —
   run it when the box has internet and disk headroom, then flip `ai_compose_deploy: true` (or `up` by hand).
 
-**Staging the not-yet-served models** (Granite chat on System 1; embedding + vision on System 2) uses the
-**`hfcli`** utility container the stack builds — the engineer's model-download workflow. It doesn't
-auto-start (it's under the `tools` profile); run it on demand:
+`ai_model_fetch` now stages **all** the served models: gpt-oss-120b + Granite-4.1-30b on System 1, and
+the embedding + vision models on System 2 — each into its own volume root (which is what the vLLM
+services serve, e.g. `--model=/granite-embed`).
+
+**Ad-hoc staging** (an extra model, or a re-download) uses the **`hfcli`** utility container on **System 2**
+(`tools` profile, doesn't auto-start). It mounts the model volumes, so download to the volume root:
 
 ```bash
-cd /opt/it/docker
-# System 1 (into the shared model volume, mounted at /llm):
-sudo docker compose run --rm hfcli hf download ibm-granite/granite-4.1-30b   --local-dir /llm/granite-4.1-30b
-# System 2:
-sudo docker compose run --rm hfcli hf download ibm-granite/granite-embedding-small-english-r2 --local-dir /llm/granite-embedding-r2
-sudo docker compose run --rm hfcli hf download ibm-granite/granite-vision-4.1-4b --local-dir /llm/granite-4.1-vision
+cd /opt/it/docker      # on System 2
+sudo docker compose run --rm hfcli hf download ibm-granite/granite-embedding-small-english-r2 --local-dir /granite-embed
+sudo docker compose run --rm hfcli hf download ibm-granite/granite-vision-4.1-4b            --local-dir /granite-vision
 ```
+
+On **System 1** (no hfcli) use the vLLM image directly, e.g. to re-stage Granite chat into its volume:
+`sudo docker run --rm -v granite32b:/m -v /opt/it/docker/fips_off:/proc/sys/crypto/fips_enabled:ro --entrypoint hf vllm/vllm-openai:v0.22.1-cu129-ubuntu2404 download ibm-granite/granite-4.1-30b --local-dir /m`.
 
 When you're ready to serve one, add its vLLM service to the node's compose file and (optionally) its
 `ai_models` entry, then `docker compose up -d`. The `tiktoken`/harmony encodings gpt-oss expects in the

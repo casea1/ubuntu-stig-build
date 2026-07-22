@@ -1,20 +1,12 @@
 # =============================================================================
-# System 2 (dev-ai2) -- EXTRACTION node
-#   Docling (GPU)  +  Apache Tika
+# System 2 (dev-ai2) -- EXTRACTION / EMBEDDINGS / MONITORING / SYNC node
+#   Docling + Tika (extraction) · vLLM embedding + vision · LGTM (monitoring)
+#   · oikb (knowledge-base sync) · hfcli/repomix (utilities)
 # Managed by ansible (ai_compose role); placed in {{ ai_compose_dir }}.
-# Reached from System 1's Open WebUI (configured in its admin UI) at
-#   http://<THIS_NODE_IP>:5001  (Docling)   and   http://<THIS_NODE_IP>:9998  (Tika)
+# System 2 has ONE 48GB GPU shared by Docling + the embed/vision vLLMs (all small).
 #   Run:   cd /opt/it/docker && docker compose up -d
-#
-# The embed/vision vLLM servers are NOT here yet (models can be pre-staged with
-# hfcli; add the servers when ready) -- matching the provided compose set.
-# NOTE: when you add a vLLM service here, give it the same FIPS carve-out the
-# System 1 vLLM uses (host runs FIPS, the image has no FIPS provider):
-#   volumes:
-#     - ./fips_off:/proc/sys/crypto/fips_enabled:ro
-# The ai_compose role already drops a `fips_off` file (content "0") in this dir.
-# Utility container (hfcli) is under the `tools` profile (does not auto-start):
-#   docker compose run --rm hfcli hf download <repo> --local-dir /llm/<dir>
+# Cross-node values (System 1's address, oikb secrets) come from the root-only
+# `.env` (rendered from site.yml). This file holds NO secrets.
 # =============================================================================
 name: ai-system2
 
@@ -23,10 +15,65 @@ networks:
     driver: bridge
 
 volumes:
-  vllm: { external: true }            # holds embed/vision weights when staged
-  encodings: { external: true }
+  granite-embed: { external: true }    # granite-embedding-small-english-r2 weights
+  granite-vision: { external: true }   # granite-vision-4.1-4b weights
+  lgtm-data: { external: true }        # Grafana/LGTM state (dashboards, TSDB)
 
 services:
+  # ---- Embeddings (RAG) -- OpenAI-compatible, reached from System 1 ----
+  vllm-embed:
+    image: vllm/vllm-openai:v0.22.1-cu129-ubuntu2404
+    container_name: vllm-embed
+    ipc: host
+    ports:
+      - "8002:8002"
+    volumes:
+      - granite-embed:/granite-embed
+      - ./fips_off:/proc/sys/crypto/fips_enabled:ro   # host FIPS carve-out (see OPERATIONS.md)
+    command:
+      - --model=/granite-embed
+      - --served-model-name=granite-embedding-small-english-r2
+      - --task=embed
+      - --tensor-parallel-size=1          # System 2 has ONE GPU
+      - --gpu-memory-utilization=0.10
+      - --port=8002
+    networks: [oi]
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+
+  # ---- Vision / document understanding -- OpenAI-compatible, from System 1 ----
+  vllm-vision:
+    image: vllm/vllm-openai:v0.22.1-cu129-ubuntu2404
+    container_name: vllm-vision
+    ipc: host
+    ports:
+      - "8003:8003"
+    volumes:
+      - granite-vision:/granite-vision
+      - ./fips_off:/proc/sys/crypto/fips_enabled:ro
+    command:
+      - --model=/granite-vision
+      - --served-model-name=granite-vision-4.1-4b
+      - --tensor-parallel-size=1
+      - --gpu-memory-utilization=0.35
+      - --max-model-len=16384
+      - --port=8003
+      # granite-vision-4.1-4b ships as a LoRA adapter on Granite-4.1-3B. If vLLM
+      # won't serve the adapter repo directly, use `--enable-lora` with the 3B
+      # base, or swap for the merged `ibm-granite/granite-4.0-3b-vision`.
+    networks: [oi]
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+
+  # ---- Document extraction ----
   docling-serve:
     image: ghcr.io/docling-project/docling-serve-cu128:v1.24.0
     container_name: docling-serve
@@ -53,13 +100,51 @@ services:
     networks: [oi]
     restart: unless-stopped
 
+  # ---- Monitoring: Grafana/LGTM (admin UI :3001, receives OTel from System 1) ----
+  lgtm:
+    image: grafana/otel-lgtm:0.29.0
+    container_name: open-webui-lgtm
+    ports:
+      - "3001:3000"        # Grafana UI (admins)
+      - "4317:4317"        # OTLP gRPC  (from System 1's Open WebUI)
+      - "4318:4318"        # OTLP HTTP
+    volumes:
+      - lgtm-data:/data
+    networks: [oi]
+    restart: unless-stopped
+
+  # ---- Knowledge-base sync: oikb -> System 1's Open WebUI API ----
+  oikb:
+    image: oikb:latest          # built on the box by ansible (ai_compose)
+    container_name: oikb
+    working_dir: /app
+    ports:
+      - "8081:8080"
+    environment:
+      OPEN_WEBUI_URL: "${OPEN_WEBUI_URL:-http://dev-ai1:3000}"   # System 1, cross-node
+      OPEN_WEBUI_API_KEY: "${OPEN_WEBUI_API_KEY:-}"
+      GITLAB_URL: "${GITLAB_URL:-}"
+      GITLAB_TOKEN: "${GITLAB_TOKEN:-}"
+      LOG_FORMAT: "json"
+    command: oikb daemon
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://0.0.0.0:8080/health/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    volumes:
+      - ./.oikb.yaml:/app/.oikb.yaml
+    networks: [oi]
+    restart: unless-stopped
+
   # ---- Utility container: model downloads (does NOT auto-start) ----
-  # docker compose run --rm hfcli hf download <repo> --local-dir /llm/<dir>
+  # docker compose run --rm hfcli hf download <repo> --local-dir /<vol>
   hfcli:
     image: hfcli:latest         # built on the box by ansible (ai_compose)
     container_name: hfcli
     profiles: ["tools"]
     volumes:
-      - vllm:/llm
-      - encodings:/encodings
+      - granite-embed:/granite-embed
+      - granite-vision:/granite-vision
     networks: [oi]
