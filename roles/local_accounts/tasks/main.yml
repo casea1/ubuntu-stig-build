@@ -10,7 +10,7 @@
 # Accounts are created with a LOCKED password: they exist but cannot be logged
 # into until an admin sets a password per-machine at deploy time
 # (`sudo passwd <user>`). A locked account ('!') is NOT an empty password, so it
-# satisfies the STIG no-empty-password control. See OPERATIONS.md.
+# satisfies the STIG no-empty-password control. See docs/operate.md.
 #
 # Runs after app_config (services up) and before hardening, so the accounts
 # exist when PAM/faillock hardening is applied. All tasks are idempotent.

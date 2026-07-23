@@ -29,6 +29,15 @@
     update_cache: true
   when: base_packages_full_upgrade | default(false) | bool
 
+- name: "Install common packages (both profiles)"
+  # cifs-utils (mount SMB/CIFS shares) + net-tools (ifconfig/route/netstat).
+  # Wanted on every box regardless of profile; edit base_common_packages in
+  # group_vars to change the set.
+  ansible.builtin.apt:
+    name: "{{ base_common_packages | default([]) }}"
+    state: present
+  when: (base_common_packages | default([])) | length > 0
+
 - name: Install the DEVELOPMENT engineering-workstation package set
   ansible.builtin.import_tasks: development.yml
   when: is_development | default(true) | bool

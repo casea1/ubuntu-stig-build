@@ -115,7 +115,7 @@ if [[ -n "${LUKS_DEV}" && ! -s "${LUKS_PASS_FILE}" && -r /dev/tty ]] \
     chmod 600 "${LUKS_PASS_FILE}"
     echo "[*] Passphrase saved — the build will bind the TPM, then delete the file."
   else
-    echo "[*] Skipping TPM auto-unlock (enable later per OPERATIONS.md)."
+    echo "[*] Skipping TPM auto-unlock (enable later per docs/operate.md)."
   fi
   unset LUKS_PASS
 fi

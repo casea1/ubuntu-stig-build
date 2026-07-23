@@ -19,7 +19,7 @@
 #
 # SECURITY (accepted deviation): TPM-only, no PIN -> a powered-off stolen disk
 # auto-decrypts on this hardware. Only meaningful with Secure Boot ON (PCR 7);
-# the role warns if Secure Boot is off. Documented in OPERATIONS.md POA&M.
+# the role warns if Secure Boot is off. Documented in docs/operate.md POA&M.
 #
 # PER PHYSICAL MACHINE: the keyslot is sealed to THIS box's TPM. It cannot be
 # captured into a cloned gold image -- this role must execute on each physical

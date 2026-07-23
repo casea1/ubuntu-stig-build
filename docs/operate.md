@@ -1,0 +1,566 @@
+# Operations & Reference
+
+Ansible-pull repo. Provisions and DoD-STIG-hardens an **Ubuntu 24.04 Desktop (GNOME)** box, then produces an OpenSCAP compliance report. One run, while the box still has internet, before it's air-gapped.
+
+> Full lifecycle (Ubuntu install to run to post-install checklist): **[Build Guide](build.md)**. This file is the subsystem reference.
+
+## Contents
+
+- [AI stack: quick reference](#ai-stack-quick-reference)
+- [What it does, in order](#what-it-does-in-order)
+- [One-time setup](#one-time-setup)
+- [Running it on the Dell (during imaging, online)](#running-it-on-the-dell-during-imaging-online)
+- [Critical gotchas](#critical-gotchas)
+- [STIG gap remediation (SSG scan findings)](#stig-gap-remediation-ssg-scan-findings)
+- [Local accounts, access groups & branding](#local-accounts-access-groups--branding)
+- [TPM2 LUKS auto-unlock (on by default; passphrase supplied out-of-band)](#tpm2-luks-auto-unlock-on-by-default-passphrase-supplied-out-of-band)
+- [Remote desktop (development profile, GNOME over RDP)](#remote-desktop-development-profile-gnome-over-rdp)
+- [Ubuntu Pro Server (USG + AI stack)](#ubuntu-pro-server-usg--ai-stack)
+- [Windows servers](#windows-servers)
+
+## AI stack: quick reference
+
+Self-hosted, on-prem AI chat. Users open a browser, chat with an LLM, and query their own documents. Runs on two STIG-hardened Ubuntu boxes. No internet needed once set up.
+
+> This is the day-to-day lookup. Deeper detail (roles, tunables, POA&Ms, air-gap) is in [Ubuntu Pro Server (USG + AI stack)](#ubuntu-pro-server-usg--ai-stack) below.
+
+### The two machines
+
+| Machine | Hostname | Job |
+|---------|----------|-----|
+| **System 1** | `dev-ai1` | Front end + brain. Chat website and the LLM(s). |
+| **System 2** | `dev-ai2` | Helpers. Document reading, embeddings + vision, monitoring, knowledge sync. |
+
+```
+                 users (browser)
+                       │
+                       ▼
+   ┌──────────── SYSTEM 1 · dev-ai1 ────────────┐
+   │  Open WebUI  ──►  vLLM (the chat model)     │
+   │      ├─► Postgres (chats + search)          │
+   │      └─► Redis    (logins/live updates)     │
+   └───────────────────┬─────────────────────────┘
+                       │  uses System 2 for embeddings,
+                       ▼  vision, document reading, monitoring
+   ┌──────────── SYSTEM 2 · dev-ai2 ─────────────────────────┐
+   │  Docling + Tika (read files) · embedding + vision models │
+   │  Grafana (dashboards) · oikb (knowledge sync)            │
+   └───────────────────────────────────────────────────────────┘
+```
+
+### What each piece does
+
+| Piece | Where | Job |
+|-------|-------|-------------------|
+| **vLLM** | 1 | Runs the chat model (gpt-oss-120B or Granite, switchable). |
+| **Open WebUI** | 1 | The chat website. |
+| **Postgres (pgvector)** | 1 | Chats + searchable document index. |
+| **Redis** | 1 | Logins and live updates. |
+| **Embedding + vision models** | 2 | Documents to searchable vectors; read images/PDFs. |
+| **Docling** | 2 | Text/table extraction from PDFs and Office files. |
+| **Tika** | 2 | Text extraction from other file types. |
+| **LGTM / Grafana** | 2 | Health dashboards and logs. |
+| **oikb** | 2 | Syncs documents from sources (e.g. GitLab) into the AI's knowledge. |
+| **hfcli / repomix** | 2 | Helpers (download models; pack a repo for the AI). |
+
+### How to set up a machine (same steps for either)
+
+1. **Install Ubuntu 24.04** with the standard encrypted-disk installer. **Name it `dev-ai1` or `dev-ai2`**: the name decides its job.
+2. **Run the build** (needs internet):
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | PROFILE=ai bash
+   ```
+   Hardens the box, installs Docker + the GPU stack, drops the AI stack into **`/opt/it/docker`**. Auto-grows the disk and builds the helper images.
+3. **(Optional) per-machine settings** go in `/etc/stig-build/site.yml`. Exceptions only (different hostname, existing DB password, oikb secrets). A correctly-named box usually needs nothing.
+4. **Download the model + start the stack.** Add to that machine's `site.yml`:
+   ```yaml
+   ai_model_fetch: true      # download the model (~200 GB, one time)
+   ai_compose_deploy: true   # start the containers
+   ```
+   Re-run the build. (By hand: `cd /opt/it/docker && sudo docker compose up -d`.)
+5. **Connect the chat UI to the model** (System 1, one time): Open WebUI → **Admin → Settings → Connections** → add an OpenAI connection: URL `http://chat-llm:8000/v1`, key `sk-noauth`. `chat-llm` always points at the running model, so switching needs no UI change.
+
+### Where to go
+
+| Thing | Address |
+|-------|---------|
+| Chat (Open WebUI) | `http://dev-ai1:3000` |
+| Monitoring (Grafana) | `http://dev-ai2:3001` |
+| Container manager (Portainer) | `https://‹host›:9443` (each box) |
+| Server console (Cockpit) | `https://‹host›:9090` (each box) |
+
+### Handy commands (run on the machine)
+
+```bash
+cd /opt/it/docker
+sudo docker compose ps                 # what's running / healthy
+sudo docker compose up -d              # start everything
+sudo docker compose restart <name>     # restart one service (e.g. vllm)
+sudo docker logs -f vllm-server        # watch the model start up
+# download an extra model on demand:
+sudo docker compose run --rm hfcli hf download <repo> --local-dir /llm/<name>
+```
+
+### If something's wrong (things we've already handled in the tool)
+
+- **Disk fills up.** The build grows the root disk to the full drive automatically.
+- **Model container keeps restarting.** On a FIPS machine the model container gets a compatibility file (`fips_off`) so its encryption works. Automatic. The *host* stays FIPS-compliant.
+- **Model loads but chat shows no model.** Tokenizer files (encodings) download automatically with the model; and add the Open WebUI connection (step 5).
+
+> Admin detail is below: [Baking in the AI stack](#baking-in-the-ai-stack-ai_compose), [Gathering the models](#gathering-the-models-automated--hfcli), [FIPS + inference containers](#fips--inference-containers-poam).
+
+## What it does, in order
+
+> **Profiles + USG.** Two profiles: `development` (default) and `ai` (old names `desktop`/`server` still work). **Both harden with Canonical's USG** (`usg fix disa_stig`), not the ansible-lockdown role. See [Ubuntu Pro Server (USG + AI stack)](#ubuntu-pro-server-usg--ai-stack) and [Remote desktop](#remote-desktop-development-profile-gnome-over-rdp). Steps below describe the legacy `development` pipeline (ansible-lockdown + OpenSCAP); the hardening/scan steps (3, 4) are superseded by `usg_harden` + `desktop_hardening` and `usg audit`.
+
+1. **base_packages.** ClamAV, Wireshark/tshark, Python3 (+pip/venv), PuTTY (GUI) and putty-tools (plink/pscp/psftp), OpenSSH client, git, OpenSCAP, editor (VS Code default; vim/neovim selectable).
+2. **app_config.** Starts ClamAV daemon + freshclam updates + a weekly scan timer; restricts Wireshark capture to a `wireshark` group (STIG requirement).
+3. **stig_harden.** Runs `ansible-lockdown/UBUNTU24-STIG` remediation (CAT I + II by default, CAT III off), then **SSG gap-remediation task files** (`tasks/*.yml`: audit, pam, sessions, gnome, ssh, services, filesystem, grub) that close the ComplianceAsCode `stig`-profile findings Lockdown skips under `disruption_high: false`. See *STIG gap remediation* below.
+4. **scap_scan.** Runs `oscap` against the DISA STIG profile. Writes an HTML report plus a DISA-STIG-Viewer-importable XML into `/var/log/stig-scan`.
+
+## One-time setup
+
+Edit **`group_vars/all.yml`**:
+- `wireshark_users` → local accounts that need packet capture
+- `editor_choice` → `vscode` | `vim` | `neovim`
+- `ubtu24stig_cat3` → `true` once low-severity controls are validated
+- `stig_skip_tags` → control tags to skip on Desktop (document each as a POA&M)
+
+Push this repo to a **public** GitHub/GitLab repo.
+
+## Running it on the Dell (during imaging, online)
+
+```bash
+sudo apt update && sudo apt install -y ansible git curl
+# Install the pinned Lockdown role from requirements.yml:
+curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/requirements.yml -o /tmp/requirements.yml
+sudo ansible-galaxy install -r /tmp/requirements.yml
+# Run DETACHED as a systemd unit: hardening restarts GDM mid-run, which would
+# kill a foreground job launched from the GUI session. systemd-run survives it:
+sudo systemd-run --unit=stig-build --collect \
+  ansible-pull -U https://github.com/casea1/ubuntu-stig-build.git -C main -i localhost, local.yml
+# Watch:  sudo journalctl -u stig-build -f      Result: systemctl status stig-build
+```
+
+Or run `bootstrap.sh` (below), which does all that. It also **prompts (hidden) for the disk encryption password** to enable TPM auto-unlock before launching the detached build (Enter to skip; auto-skips on an unencrypted or already-bound disk). See *TPM2 LUKS auto-unlock*.
+
+## Critical gotchas
+
+- **Desktop vs Server STIG.** DISA only publishes a *Server* 24.04 STIG. On GNOME you WILL get findings about the display manager / graphical target. `ubtu24stig_gui: true` stops the Lockdown role disabling the GUI. Triage GUI findings into documented exceptions.
+- **Order is load-bearing.** Packages first, harden second, scan last. Hardening sets `noexec` on /tmp, tightens umask, and locks down PAM. Doing it before installs can break pip and apt.
+- **Base OS patching is opt-in.** The build refreshes the apt cache and installs the packages it needs, but does **not** `apt full-upgrade` by default (an unattended upgrade can pull a kernel/library that conflicts with the pinned NVIDIA driver / FIPS kernel). Set **`base_packages_full_upgrade: true`** to run `apt full-upgrade` early (on the ai profile a kernel bump means re-checking `nvidia-smi` + FIPS after reboot), or patch the fresh install by hand first. Ongoing patches come via Ubuntu Pro (ESM + `canonical-livepatch`).
+- **Root disk auto-grows first.** Ubuntu autoinstall often leaves a small root LV (e.g. 100G) on a large disk, which fills once the AI model volumes land under `/var/lib/docker`. The `disk_expand` role runs **first** and grows the root LV + filesystem to all free VG space (online, idempotent; no-op if not LVM / already full). Disable with `disk_autoexpand: false` (e.g. if you keep separate `/var` `/home` partitions); override `disk_root_vg`/`disk_root_lv` in `site.yml` if your names differ from `ubuntu-vg`/`ubuntu-lv`.
+- **Versions are pinned.** `requirements.yml` pins `UBUNTU24-STIG` to `v1.3.0` and the SSG datastream to `0.1.81`, so every imaged box is identical. Bump deliberately and re-test.
+- **Collect reports before air-gapping.** USG audit report lands in `/opt/ia/` (`*.html` + XCCDF `*.xml`); the legacy OpenSCAP `stig-viewer-*.xml` (dev scan, if run) is in `/var/log/stig-scan/`. Grab them while online.
+- **High-impact controls are gated.** `ubtu24stig_disruption_high: false` makes the Lockdown role SKIP its most breaking controls (there is no `ubtu24stig_fullauto` var or interactive pause in 1.3.0). The `stig_harden/tasks/*.yml` gap files remediate the SSG findings those skips leave behind; flip `disruption_high: true` only after a clean, validated pass.
+- **Re-scan after air-gapping.** `oscap` works offline (drop `--fetch-remote-resources`). Keep the SSG datastream on the box for periodic re-checks.
+
+## STIG gap remediation (SSG scan findings)
+
+The box is hardened by `ansible-lockdown/UBUNTU24-STIG`, but the **scan grades it with the SSG / ComplianceAsCode `stig` profile**, a different project whose rules don't map 1:1 to the Lockdown role. With `disruption_high: false` and `cat3: false`, a large set of SSG rules fail out of the box. `stig_harden` includes **idempotent, desktop-safe, SSG-rule-targeted** task files (`roles/stig_harden/tasks/*.yml`) that run after the Lockdown role and close those gaps:
+
+| File | Closes (SSG rule families) |
+|------|----------------------------|
+| `audit.yml` | auditd syscall/watch rules (DAC, file-deletion, unsuccessful-access, kernel-modules, privileged-cmds, sudoers.d/journal/cron), data-retention actions, dispatcher plugins, rules.d perms |
+| `pam.yml` | faillock lockout (deny/interval/unlock/audit/silent), faildelay, password-hashing rounds, no-empty-password |
+| `sessions.yml` | concurrent-login cap, interactive (`TMOUT`) session timeout |
+| `gnome.yml` | screensaver idle/lock/blank, automount off, Ctrl-Alt-Del off, smartcard-removal lock, GDM login-banner enable (all dconf-locked) |
+| `ssh.yml` | `X11Forwarding no`, `PubkeyAuthentication yes`, SSH `/etc/issue.net` banner |
+| `services.yml` | chrony (NTP) + remove timesyncd, ufw enable + rate-limit, AIDE init + daily check, rsyslog remote-access monitoring |
+| `filesystem.yml` | `/lib*` group-owner root, `/var/log` + journal perms, `journalctl` perms, `kernel.dmesg_restrict`, RTC=UTC |
+| `grub.yml` | GRUB2 bootloader password (BIOS + UEFI); **self-guarded, see below** |
+
+All tunables (lockout counts, timeouts, retention, firewall ports, GRUB superuser/hash) live in the **`STIG GAP-REMEDIATION TUNABLES`** section of `group_vars/all.yml`. These files also need the `community.general` collection (pinned in `requirements.yml`).
+
+### Required: set the GRUB bootloader password
+
+`grub.yml` ships a `CHANGEME` placeholder and **self-skips** until you supply a real hash, so a forgotten hash can't brick boot (the two GRUB rules just stay failing). To activate:
+
+```bash
+grub-mkpasswd-pbkdf2          # type the GRUB password twice; copy the grub.pbkdf2.sha512... token
+ansible-vault encrypt_string 'grub.pbkdf2.sha512.10000.<salt>.<hash>' --name 'grub_password_pbkdf2'
+```
+
+- Paste the resulting `!vault` block over `grub_password_pbkdf2` in `group_vars/all.yml`.
+- Keep `grub_superuser` to letters/underscores only (the SSG regex rejects digits/hyphens).
+- Normal boot stays **password-free** (menuentries generated `--unrestricted`); the credential is required only to *edit* an entry or use the GRUB shell.
+- **Test the hash on a throwaway VM before baking a gold image.** Recovery from a bad hash means a GRUB edit from install media.
+
+### Validate PAM on a snapshot first
+
+`pam.yml` edits `common-auth`/`common-account`. It keeps `pam_unix`, never sets `even_deny_root`, and defaults `unlock_time=0` (admin-unlock), so failures are recoverable. But **mis-ordered PAM can lock everyone out**.
+
+On first apply:
+- Keep a root shell open, confirm login works.
+- Fail 3 logins to confirm lockout, then `sudo faillock --user <name> --reset` to recover.
+- The VM snapshot is the real safety net.
+
+The faillock pamd anchors assume a stock 24.04 `common-auth`; re-verify if `pam-auth-update` ran with extra profiles.
+
+### POA&M: findings NOT auto-remediated by the build
+
+These need a secret, a subscription, install-time action, or an environment this image doesn't have. Document each as a POA&M:
+
+- **Disk encryption (`Encrypt Partitions`).** LUKS happens in the installer, before ansible-pull runs. See *Full-disk encryption at install time* below.
+- **FIPS mode (`/proc/sys/crypto/fips_enabled`):** **ENABLED** (`usg_enable_fips: true`). `usg_harden` runs `pro enable fips-updates` (installs the FIPS kernel/modules) and flags a reboot; the `is_fips_mode_enabled` check passes **only after that reboot**. Swaps the running kernel. Set `usg_enable_fips: false` to defer it (then it's a POA&M).
+- **Smartcard / CAC + SSSD** (opensc, pam_pkcs11, SSSD enable / cert-mapping / OCSP / cache, "Enable Smart Card Logins in PAM"). This image is **password-login only** by decision. The one harmless smartcard-adjacent control (GNOME *lock-on-smartcard-removal*) IS set.
+
+  The DISA rule *Enable Smart Card Logins in PAM* (`smartcard_pam_enabled`) would wire `pam_pkcs11.so` into the auth stack, which on a box with **no CAC reader/card** logs `ERROR:pam_pkcs11.c:365: no suitable token available` / `Error 2308: No smart card found` on **every login, sudo, and screen-unlock**. To avoid that, `usg_harden` auto-generates a USG tailoring file (`usg generate-tailoring`, written to `/etc/usg/managed-tailoring.xml`) and **de-selects** those rules before `usg fix`, so `pam_pkcs11` is never wired in and the audit won't flag it. Controlled by `usg_disable_smartcard` (default **true**) and `usg_disable_smartcard_rules` in `group_vars/all.yml`; set the toggle `false` (or supply your own `usg_tailoring_file`) once you deploy CAC readers + certs and want CAC login.
+
+  > **Already-hardened boxes self-heal.** The tailoring opt-out only affects a *fresh* `usg fix`, but the **`usg_remediate`** role (runs every ansible-pull, both profiles) also **strips `pam_pkcs11` back out** of the PAM stack: it comments out any active `pam_pkcs11.so` auth line under `/etc/pam.d/` (never touching `pam_unix`, so password login can't be lost). A box hardened before the opt-out existed is fixed on its next pull, no manual step. Toggle with `usg_cleanup_pam_pkcs11` (defaults to follow `usg_disable_smartcard`). By hand, keep a second root session open and:
+  > ```bash
+  > sudo grep -rn pkcs11 /etc/pam.d/ /usr/share/pam-configs/
+  > sudo sed -ri.bak 's/^(auth.*pam_pkcs11\.so.*)/# \1/' /etc/pam.d/common-auth
+  > sudo -k; sudo true    # verify password auth still works, no pkcs11 error
+  > ```
+
+### Residual findings auto-remediated by `usg_remediate`
+
+`usg fix` is stamped run-once and its in-role `usg audit` is a **mid-build snapshot** (taken before the firewall roles bring ufw up), so the report shows findings open that are transient or that `usg fix` doesn't remediate. The **`usg_remediate`** role runs *after* USG **and** the firewall roles, on **both** profiles, and closes the low-risk ones idempotently every pull (nothing here can lose password/SSH login):
+
+| Finding (SSG rule) | What `usg_remediate` does |
+| --- | --- |
+| Smart Card Logins in PAM (`smartcard_pam_enabled`) | comments out any active `pam_pkcs11.so` line (see above) |
+| `/var/log` file perms (`file_permissions_var_log_stig`, UBTU-24-700010) | `find` over-permissive files, strip `u-xs,g-xws,o-xwrt` (mirrors DISA remediation) |
+| `/var/log/audit` mode (`directory_permissions_var_log_audit`) | `chmod 0750 /var/log/audit` |
+| Remote time server (`chronyd_specify_remote_server`, `chronyd_server_directive`) | write `server <host> iburst` into `/etc/chrony/sources.d/stig.sources`, ensure `sourcedir`, comment out any `pool` line, set `makestep`; set `usg_chrony_servers` to your enclave NTP |
+| ufw active (`check_ufw_active`) | re-assert `ufw` enabled |
+| SSSD service + cert mapping (`service_sssd_enabled`, `sssd_enable_user_cert`) | **de-selected in the tailoring**; no central directory/CAC on this fleet (documented deviation) |
+
+After remediation the role **re-runs `usg audit`** (Pro-attached boxes; `usg_remediate_reaudit`) so the report in `usg_report_dir` reflects the fully-built box, not the mid-build snapshot. Re-run manually with `sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml`.
+
+> **`ufw` rate-limit (`ufw_rate_limit`, UBTU-24-600200)** stays a **documented deviation on the `ai` profile**: the STIG check wants *every* listening port rate-limited, but rate-limiting the Open WebUI / vLLM / Docling ports would throttle legitimate inference traffic. Only the **management** ports (SSH, RDP, Cockpit, Portainer) are `ufw limit`ed; the AI service ports are plain `allow`. On `development` everything exposed is limited, so the rule passes there.
+- **GUI login-banner TEXT (`Set the GNOME3 Login Warning Banner Text`).** The SSG OVAL pattern-matches the configured text against the **DoD Standard Mandatory Notice**; this image displays the **DCSA Authorized Warning Banner** by requirement, so the text rule stays failing as an **approved deviation**. (`banner-message-enable` passes.)
+- **Last-logon PAM notification.** `pam_lastlog` was removed in 24.04 and `pam_lastlog2` is not in `noble` main; `pam.yml` wires it only if present, else POA&M (or backport `libpam-lastlog2` into your mirror).
+- **Audit log offload** (`...Send Logs To Remote Server`, `Offload audit Logs to External Media`). Set `stig_audit_remote_server` to a collector to enable au-remote; external-media offload is operational.
+- **GRUB password.** Failing until you complete the vault step above.
+- **TFTP / DHCP / DNS** provisioning services: installed-but-disabled mission-need exceptions (pre-existing).
+- **Blank screensaver overridden** (`Implement Blank Screensaver`). By requirement the lock screen shows the org wallpaper (`desktop_branding` role) instead of blank, so `org.gnome.desktop.screensaver picture-uri` is non-empty. Approved deviation; the lock *timing* (idle-delay, lock-enabled, lock-delay) is still STIG-enforced.
+- **USB storage re-enabled and restricted to the `dta` group** (not blanket-disabled). Deliberate, more granular than the STIG's "disable USB mass storage." The lockdown role blacklists the `usb-storage` kernel module (`/etc/modprobe.d/usb-storage.conf`), which `stig_harden` then **strips** (when `usb_storage_enabled: true`, the default) so USB works for the data-transfer agents; the `dta` udev + polkit policy governs who may mount. If your benchmark strictly requires USB *disabled*, set `usb_storage_enabled: false` and document the `dta` allowance as the exception only where you enable it.
+- **TPM-only LUKS auto-unlock (opt-in, `tpm_luks_enabled`).** When enabled, the disk auto-decrypts via the TPM with no boot secret (PCR 7 / Secure Boot). A deliberate data-at-rest deviation for operational need, mitigated only by Secure Boot; the install passphrase is retained as a recovery keyslot. See *TPM2 LUKS auto-unlock* below.
+
+### Full-disk encryption at install time (autoinstall)
+
+`Encrypt Partitions` can't be done post-install. Bake LUKS into the **Ubuntu autoinstall** (`user-data`) so fresh images come up encrypted. Simplest is LUKS-on-LVM via the guided layout:
+
+```yaml
+#cloud-config
+autoinstall:
+  version: 1
+  storage:
+    layout:
+      name: lvm
+      password: "REPLACE_WITH_A_STRONG_DISK_PASSPHRASE"   # turns on LUKS full-disk encryption
+  # ... identity / network / late-commands that kick off ansible-pull ...
+```
+
+- `password` is the **disk-unlock passphrase**, prompted at every boot. For unattended reboots on 24.04, enroll a TPM2 key after install (`systemd-cryptenroll --tpm2-device=auto /dev/<luks-part>`) or use 24.04's TPM-backed FDE, then adjust prompting per policy.
+- Vault the passphrase; never commit it in cleartext.
+- This is install-media config, **separate from this ansible-pull repo**. Keep it with your autoinstall seed.
+
+## Local accounts, access groups & branding
+
+The `local_accounts` role provisions the standing users/groups, group-shared folders, and the USB access policy; `desktop_branding` sets the wallpaper. Driven from `group_vars/all.yml` (`local_groups`, `local_users`, `local_shared_dirs`, `usb_access_group`, `branding_*`).
+
+> **Runs on BOTH profiles** (`local_accounts_enabled: true`, default) so org groups/accounts are consistent fleet-wide.
+>
+> - On the **ai** profile the groups, accounts, and ACL'd shared folders all work, but the dta USB *mount* carve-out is **inert**: USG blacklists `usb-storage` on a server and nothing re-enables it there (the `development` profile's `desktop_hardening` does). For USB-for-dta on an ai box, add the re-enable to the ai path.
+> - Set `local_accounts_enabled: false` to skip the role on a box.
+
+**Accounts are created LOCKED.** Each exists but cannot log in until you set a password **per-machine at deploy** (a locked account is not an empty password, so STIG stays satisfied):
+
+```bash
+sudo passwd overlord
+sudo passwd austin_case_dta
+# ... one per account, on the fielded box (not baked into the gold image)
+```
+
+Supplementary groups are **declarative**: a re-run re-asserts exactly the `groups:` list for each user (a manually-added group gets removed on the next `ansible-pull`). `sudo`-group membership grants full sudo. The `audit` group is for `/opt/_AuditFiles` access; sudo is granted to the named auditor accounts individually (their `groups:` include `sudo`), **not** to the whole `audit` group; change `local_users` for group-wide sudo.
+
+**Base-box default accounts are purged.** The role removes any account listed in `purge_default_accounts` (default: `vagrant`) along with its home, insecure SSH key, and any matching `/etc/sudoers.d/` drop-in. Vagrant/Packer base images ship a `vagrant` user with a well-known password + `NOPASSWD` sudo + a publicly-published SSH key (a STIG finding); this build doesn't create it, but cleans it up if your base image had one. Removal is idempotent.
+
+**Never add your operator account or a `local_users` name to `purge_default_accounts`.**
+
+**Access groups & shared folders**
+
+| Group | Grants | Shared folder |
+|-------|--------|---------------|
+| `dta` | USB storage access | (none) |
+| `audit` | `/opt/_AuditFiles` (auditors; sudo per-account) | `/opt/_AuditFiles` → `root:audit 2770` |
+| `sentry` | `/home/shared` | `/home/shared` → `root:sentry 2770` |
+
+The folders are `setgid` **plus a POSIX default ACL** (`g:<group>:rwx`). This matters because STIG `umask 077` would otherwise make new files `0600` and break group sharing; the default ACL bypasses the umask so group members get full access to everything created inside, and others are denied. Needs the `acl` package (installed by the role).
+
+**USB storage → `dta` only.** Out of the box USB was *not* restricted (the STIG work only disabled auto-mounting). This role adds two layers:
+- a **polkit rule** (`/etc/polkit-1/rules.d/49-dta-usb.rules`) allowing udisks2 mount/unmount/eject only for `dta` members (the Files / `udisksctl` desktop path);
+- a **udev rule** (`/etc/udev/rules.d/99-dta-usb.rules`) setting raw USB block devices to `root:dta 0660` (the manual `mount`/`dd` path).
+
+Non-`dta` users (including admins) can't mount USB storage via the desktop; `sudo mount` as root remains a break-glass path. To change the gated group, edit `usb_access_group`.
+
+**Wallpaper.** `desktop_branding` deploys `roles/desktop_branding/files/SHB_Background.jpg` to `/usr/share/backgrounds/` and sets it **system-wide and locked** (users can't change it) on the **desktop background** and the **session lock screen**. The lock-screen part overrides the STIG blank-screensaver control (see POA&M above).
+
+- The **GDM login screen** is best-effort only: Ubuntu's greeter usually renders its themed background and ignores the dconf key; a guaranteed login JPG needs a fragile `gnome-shell` gresource patch that is intentionally not done.
+- Flip `branding_lockscreen_wallpaper: false` to brand only the desktop and keep the STIG blank lock screen.
+
+## TPM2 LUKS auto-unlock (on by default; passphrase supplied out-of-band)
+
+`tpm_luks_unlock` binds a keyslot of the install-time LUKS volume to the machine's **TPM2** so the disk unlocks at boot with **no passphrase**. It uses `clevis`, the path Ubuntu 24.04's stock initramfs auto-unlocks reliably (`systemd-cryptenroll`'s `tpm2-device=` is *not* honoured by Ubuntu's default initramfs).
+
+It is **`tpm_luks_enabled: true` by default**, but only binds once it can read the install passphrase, and that passphrase is **never stored in this public repo**.
+
+**Supply the passphrase out-of-band.** The role reads it from a root-only (`0600`) file, `luks_passphrase_file` (default `/etc/luks/initial-passphrase`). Your **private autoinstall seed** writes that file during install. It already has the passphrase (it sets `storage.layout.password`), so no new secret location is introduced and nothing lands in git:
+```yaml
+# in your autoinstall user-data (PRIVATE install media, NOT this repo):
+late-commands:
+  - install -d -m 700 /target/etc/luks
+  - printf '%s' 'YOUR-INSTALL-PASSPHRASE' > /target/etc/luks/initial-passphrase
+  - chmod 600 /target/etc/luks/initial-passphrase
+```
+- The role consumes it once to authorize the TPM keyslot (never needed at boot afterwards), then **deletes the file** by default (`luks_passphrase_purge_after_bind: true`), so the per-box passphrase doesn't linger on the auto-unlocking disk. Re-drop it only to re-bind.
+- Each box uses its **own** passphrase (the seed writes that box's value), so a stolen booted box can only leak its own.
+- For a **private/offline** repo only, you may instead set an inline/vaulted `luks_passphrase`. **Never** paste a secret into a public repo; the encrypted blob is permanent in git history.
+- The build won't fail without the passphrase; it skips the bind (and says so) until the file is present.
+
+The role installs clevis, binds a **new** keyslot to **PCR 7** (Secure Boot state, stable across *signed* kernel updates), and rebuilds the initramfs. Your **original passphrase keyslot is kept as recovery** and never removed.
+
+**Read before enabling fleet-wide:**
+- **Per physical machine.** The keyslot is sealed to *that* box's TPM; it can't be baked into a cloned gold image; the role must run on each machine (the per-machine ansible-pull does).
+- **Secure Boot must be ON** or PCR 7 is meaningless (the role warns if off). TPM-only / no-PIN is a deliberate data-at-rest deviation: a stolen powered-off disk auto-decrypts on its own hardware.
+- **Test on one box first.** TPM/PCR behaviour is hardware-specific, and the non-interactive bind (passphrase via stdin) should be confirmed once before fleet rollout. Manual equivalent: `sudo apt install -y clevis clevis-luks clevis-initramfs clevis-tpm2 tpm2-tools` (**`clevis-tpm2` is a SEPARATE package on Ubuntu 24.04**, without it the bind errors *"tpm2 is not a valid pin"*), then `sudo clevis luks bind -d /dev/<part> tpm2 '{"pcr_bank":"sha256","pcr_ids":"7"}'` and `sudo update-initramfs -u -k all`.
+- **Recovery:** a firmware/Secure-Boot/shim update that changes the PCRs makes boot fall back to the passphrase prompt (not a brick). Re-bind with `clevis luks unbind` + `clevis luks bind` if needed.
+
+### Rotating the LUKS passphrase
+
+The disk passphrase lives in a LUKS **keyslot** and can change any time **without re-encrypting** the disk. It is **independent of the TPM keyslot**: changing it doesn't disturb auto-unlock, and the box keeps booting via the TPM.
+
+```bash
+sudo blkid -t TYPE=crypto_LUKS -o device       # find the LUKS partition, e.g. /dev/sda3 or /dev/nvme0n1p3
+sudo cryptsetup luksChangeKey /dev/<part>       # prompts: current passphrase, then the new one twice
+# inspect / manage slots:
+sudo cryptsetup luksDump   /dev/<part>          # shows used slots (your passphrase + the clevis/TPM slot)
+sudo cryptsetup luksAddKey /dev/<part>          # ADD another passphrase (authorize with an existing one)
+sudo cryptsetup luksKillSlot /dev/<part> <N>    # remove an old slot by number
+```
+`cryptsetup` operates on the **LUKS partition** (the bottom layer), not the LVM volumes inside it. No reboot needed; it applies to future unlocks immediately.
+
+**Keep the vaulted value in sync.** `luks_passphrase` (group_vars) is used **only once**, to authorize the initial `clevis luks bind`; the role skips it on a box that's already bound, so rotating the passphrase won't break an already-unlocking machine. But re-vault it so a **fresh image** or a **re-bind** (after a PCR/firmware change) still authorizes:
+```bash
+ansible-vault encrypt_string '<new-passphrase>' --name 'luks_passphrase'
+```
+Update the autoinstall seed too if you bake the passphrase there.
+
+**Don't kill your only passphrase slot** and rely solely on the TPM: a firmware/Secure-Boot/shim change alters the PCRs and you'd need a passphrase to get back in. The TPM bind keeps your passphrase as recovery. If you've forgotten the passphrase but the box still auto-unlocks via the TPM, a new one can be added from the running (unlocked) system, a more involved procedure; ask before attempting.
+
+## Remote desktop (development profile, GNOME over RDP)
+
+The `development` profile installs a GNOME desktop and **xrdp** (via the `remote_desktop` role) so the box can run on headless server hardware that users reach over RDP. Driven from the **`REMOTE DESKTOP`** block in `group_vars/all.yml`.
+
+> **Hardening interaction.** `development` is hardened by **USG** (`usg fix disa_stig`, needs an Ubuntu Pro token, same as `ai`). USG's DISA profile targets Ubuntu Server, so the `desktop_hardening` role runs **after** USG to re-assert the graphical target, GDM, xrdp, Wayland-off, and the SSH+RDP ufw openings, then applies the GNOME/GDM banner + dconf locks + USB carve-out.
+>
+> **Validate on a throwaway VM first.** After `usg fix` + reboot, confirm RDP still connects and lands in a GNOME session. If USG disabled something, the fix belongs in `desktop_hardening` (re-assert it there).
+
+**Connecting.** Point any RDP client (Windows `mstsc`, Remmina, FreeRDP) at `‹host›:3389`. The session is TLS-secured; accept the self-signed cert on first connect (or set `rdp_tls_cert` / `rdp_tls_key` to a trusted pair). Log in as a **local account**: accounts ship locked, so set a password first (`sudo passwd <user>`). RDP auth goes through PAM, so the STIG faillock lockout applies (3 bad tries → locked; `sudo faillock --user <name> --reset` to recover).
+
+**What the role does (and the 24.04 gotchas it handles):**
+- Installs `{{ dev_gnome_package }}` (default `ubuntu-desktop-minimal`) + `gdm3`, sets the default boot target to graphical.
+- Installs `xrdp` + `xorgxrdp`, and **disables Wayland** (`WaylandEnable=false` in `/etc/gdm3/custom.conf`). Wayland can't be driven by xrdp and yields a black screen.
+- Adds the `xrdp` user to **`ssl-cert`** so it can read the TLS key, and points `xrdp.ini` at the snakeoil cert with `security_layer=tls`, `crypt_level=high`.
+- Drops a **polkit rule** (`/etc/polkit-1/rules.d/02-allow-colord-packagekit.rules`) so the colord "authentication required" prompt and repo-refresh prompt don't block/crash the session.
+- **Rate-limits RDP** on ufw (`ufw limit 3389/tcp`); the rule is added here and enforced once `stig_harden` enables ufw (default-deny inbound).
+
+**Security notes / POA&M.** RDP (3389) is an inbound remote-access service and a STIG-relevant exposure. It's TLS-wrapped, rate-limited, and PAM/faillock-gated, but for a real deployment prefer **tunnelling RDP over SSH** or restricting the ufw rule to source subnets, and consider setting `dev_rdp_allowed_group` to gate RDP to a named group. Set `dev_rdp_enabled: false` to omit xrdp entirely (GUI stays, reachable only at the physical console).
+
+**Troubleshooting a black screen / instant disconnect:**
+- Confirm Wayland is off: `grep WaylandEnable /etc/gdm3/custom.conf` → `false`; reboot after a change.
+- Confirm xrdp can read the key: `id xrdp` includes `ssl-cert`; `sudo systemctl status xrdp`.
+- Don't be logged into the same account on the physical console (tty) at the same time; GDM's console session holds D-Bus names the RDP session needs.
+- Logs: `sudo journalctl -u xrdp -u xrdp-sesman` and `~/.xorgxrdp.*.log`.
+
+## Ubuntu Pro Server (USG + AI stack)
+
+The `ai` profile (`deployment_profile: ai`, or `PROFILE=ai` to `bootstrap.sh`) builds a headless Ubuntu Pro AI box. Role order: `base_packages` (lean) → `ai_stack` → `usg_harden` → optional `tpm_luks_unlock`. Same rule as development: **install online, harden last.**
+
+### Running it on the server (online)
+
+```bash
+# All tools, GPU, hardening. Prompts (hidden) for the Ubuntu Pro token:
+curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh \
+  | sudo PROFILE=ai bash
+
+# Env-var options (piped bash can't take flags):
+#   PRO_TOKEN=<tok>   supply the Pro token non-interactively (else you're prompted)
+#   HARDEN=0          host prep + `usg audit` only, SKIP the disruptive `usg fix`
+```
+
+> **Ansible does host prep only.** The AI tools ship as your own prebuilt images + compose files; Ansible installs Docker + NVIDIA, hardens with USG, and opens the container ports; it does not manage the containers. There is no `TOOLS`/`HF_TOKEN` anymore.
+
+Watch: `sudo journalctl -u stig-build -f`. The `usg audit` report (HTML + XCCDF) auto-copies to **`/opt/ia/`** (admin-readable; `usg_remediate` re-runs the audit at the end so it reflects the fully-built box). **Reboot** afterwards to apply USG controls and load the NVIDIA driver, then re-run `sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml` for accurate post-reboot numbers.
+
+### USG hardening
+
+- **Pro token (secret).** Never in the repo. `bootstrap.sh` writes it to `/etc/ubuntu-advantage/pro-token` (0600); the `usg_harden` role reads it out-of-band, `pro attach`es, `pro enable usg`, `apt install usg`. Not attachable → USG **self-skips** (POA&M), build still succeeds.
+- **Admin password backstop.** `usg fix disa_stig` (and the DISA profile) lock out password-less admins. The role verifies a `sudo`/`admin` account has a hashed password in `/etc/shadow` before running the fix; if none, it **skips the fix** and warns. Set one with `sudo passwd <admin>` and re-run.
+- **Run-once.** The fix is stamped at `/var/lib/usg-harden/applied-profile`, so re-running the build doesn't re-apply it. Force a re-fix with `-e usg_force_fix=true`.
+- **FIPS.** **On** (`usg_enable_fips: true`). The role runs `pro enable fips-updates` (swaps to the FIPS kernel) and flags a reboot; `is_fips_mode_enabled` passes only **after** that reboot. Validate on a throwaway box if you run unusual crypto/dev tooling; set `usg_enable_fips: false` to defer (POA&M).
+- **Manual audit any time:** `sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml` (USG writes results under `/var/lib/usg/`; the build copies them to `/opt/ia/`). To customize/relax rules further, generate your own tailoring file (`usg generate-tailoring …`) and point `usg_tailoring_file` at it.
+- **Report drop `/opt/ia`.** The audit report auto-copies to `/opt/ia/` (owner `root`, group `{{ ia_it_group }}`/`sudo`, `0640`), the admin-only IA collection point created by `managed_dirs`. Override with `usg_report_dir`.
+
+### Running a USG / SCAP compliance scan & getting the report
+
+USG (`usg audit`) *is* the SCAP scan: it runs OpenSCAP under the hood against the DISA STIG benchmark and writes standard XCCDF results plus an HTML report. Three ways to run it:
+
+**1. Automatically (every build).** The build runs `usg audit` at the end (`usg_remediate_reaudit`) so a freshly imaged/re-pulled box always has a current report in `/opt/ia`. Nothing to do.
+
+**2. On demand (any time, on the box).** As an admin:
+
+```bash
+# Use the SAME target the build uses (tailoring file if present, else the stock profile):
+sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml    # if that file exists
+sudo usg audit disa_stig                                          # otherwise, stock DISA STIG profile
+
+# Copy the fresh results to the IA drop with the others:
+sudo cp /var/lib/usg/usg-report-*.{html,xml} /opt/ia/ 2>/dev/null || true
+```
+
+- **Tailoring vs. profile: pick ONE, never both** (USG errors if you pass a profile *and* a tailoring file). This build de-selects the smart-card/SSSD rules via a tailoring file, so use the tailoring form above when that file exists; `ls /etc/usg/managed-tailoring.xml` to check.
+- Re-running via the tool: a normal `ansible-pull`/`bootstrap.sh` re-runs the audit through `usg_remediate` and re-drops the report; no separate step.
+
+**3. Where to get it (`/opt/ia/` on each box):**
+
+```bash
+ls -lt /opt/ia/                       # newest report first
+#   usg-report-YYYYMMDD.HHMM.html     <- human-readable, open in a browser
+#   usg-report-YYYYMMDD.HHMM.xml      <- XCCDF results (import into DISA STIG Viewer / eMASS)
+```
+
+`/opt/ia` is admin-only (group `sudo`/`ia_it_group`, mode `2770`). **Collect the report while the box is still online / before air-gapping.** To read it from your workstation: `sudo cp /opt/ia/usg-report-*.html ~/ && chown $USER ~/usg-report-*.html`, or pull it over your admin channel (Cockpit's file browser, `scp`).
+
+- **Score / findings:** open the HTML for the pass/fail summary; the XCCDF `.xml` is the machine-readable evidence for the A&A package. Open findings that remain are the documented POA&Ms (see below).
+- **Override the drop location** with `usg_report_dir` (e.g. back to `/var/log/stig-scan`).
+
+### Host prep + firewall (Ansible), then bring your own compose
+
+Ansible does **host prep only** on the ai profile; the AI containers are deployed from **your own prebuilt images + compose files**.
+
+- **Docker + GPU (`ai_stack`):** installs docker-ce (≥29.5.2) + the compose v2 plugin + the extra plugins in `docker_extra_packages` (default `docker-model-plugin`, `docker-sbx`), and (when `gpu_enabled`) the NVIDIA driver + `nvidia-container-toolkit` with the `nvidia` runtime wired into Docker. The driver is autoselected unless you pin `nvidia_driver_package` (needed to reach the 7960 baseline **≥595.71.05**; the RTX PRO 6000 Blackwell cards want the `-open` variant, which may require NVIDIA's CUDA apt repo / the graphics-drivers PPA); the role **asserts** the active driver ≥ `nvidia_driver_min_version` after reboot. Verify: `docker --version`, `docker model version`, `docker info | grep -i runtime`, `nvidia-smi`. `ai_stack_user` is added to the `docker` group.
+- **GPU + FIPS (`gpu_fips_module`, runs after `usg_harden`):** Canonical's prebuilt NVIDIA modules (`linux-modules-nvidia-<branch>-<variant>-<kernel>`) are **flavour-locked to the generic kernel**, so when `usg_enable_fips` swaps in the FIPS kernel, `nvidia.ko` is missing after the reboot and `nvidia-smi` fails ("couldn't communicate with the NVIDIA driver"). This role detects the installed NVIDIA flavour + the installed FIPS kernel and **stages the matching `linux-modules-nvidia-*-fips` module** (from the `esm.ubuntu.com/fips-updates` repo) for that kernel *before* the reboot (apt installs modules for any installed kernel ABI, not just the running one), so the single FIPS reboot brings up FIPS **and** working GPUs with no manual DKMS/driver rebuild. Prefers the flavour metapackage (`…-fips`) so future FIPS-kernel updates keep the module in step; falls back to the version-locked package. If the driver was installed via `.run`/DKMS (no prebuilt `-generic` package), it logs a POA&M note instead. Gated `is_ai` + `gpu_enabled` + `usg_enable_fips`. **Recovering a box where FIPS was enabled before this existed:** boot the `-fips` kernel, then `sudo apt-get install -y linux-modules-nvidia-<branch>-<variant>-$(uname -r)` and `sudo modprobe nvidia`.
+- **Portainer (`ai_stack`, `portainer_enabled`):** a container-management web UI on `https://‹host›:9443` (opened by `ai_firewall`, rate-limited). **Set a strong admin password on first login.** Portainer locks itself out if left unconfigured for a few minutes. It mounts the Docker socket, so restrict its port to admins (add a `from:` entry in `ai_firewall_allow_ports`) or front it with a proxy. Update it later with `docker pull <portainer_image> && docker rm -f portainer` then re-run the play (`portainer_image` in group_vars). Set `portainer_enabled: false` to skip.
+- **Cockpit (`cockpit` role, `cockpit_enabled`, BOTH profiles):** a web server-management console on `https://‹host›:{{ cockpit_port }}` (9090 by default), opened **rate-limited** by the firewall roles after USG. Systemd units, journald, storage, networking, updates, and a browser terminal. Log in with a local account. Privileged surface: set **`cockpit_allow_from`** to an admin CIDR to restrict it (else it's opened to any source). Change the port with `cockpit_port` (writes a `cockpit.socket` override). `cockpit_extra_packages` adds add-ons (e.g. `cockpit-pcp` for historical metrics). Set `cockpit_enabled: false` to skip.
+- **Firewall (`ai_firewall`, after USG):** USG enables ufw with **default-deny inbound**, so the ports your containers publish must be opened here. Edit **`ai_firewall_allow_ports`** in `group_vars/all.yml`:
+
+  ```yaml
+  ai_firewall_allow_ports:
+    - { port: 80,  proto: tcp, rule: allow }                        # Open WebUI (users)
+    - { port: 443, proto: tcp, rule: allow }
+    - { port: 8001, proto: tcp, rule: allow, from: "10.0.0.10/32" } # System 2 vLLM, from System 1 only
+    - { port: 5001, proto: tcp, rule: allow, from: "10.0.0.10/32" } # System 2 Docling, from System 1 only
+  ```
+
+  `rule: limit` rate-limits a port; `from:` restricts it to a source CIDR (use it for the cross-node vLLM/Docling/pgvector ports so they aren't fleet-wide). SSH is always kept (rate-limited). The role also **enables ufw itself**, so an ai box is never left with an inactive firewall even if USG was skipped. Check: `sudo ufw status verbose`.
+
+  > **Per-node values without editing the public repo.** Every box pulls the same repo, so putting `ai_firewall_allow_ports` (and internal IPs) in `group_vars/all.yml` makes them global. For **per-node** settings, drop a root-only **`/etc/stig-build/site.yml`** on each box; the playbook auto-loads it and it **overrides** `group_vars`. That's where System 1's and System 2's different firewall rules (and NTP, the Docling peer IP, a Cockpit cert, …) live, out of git. See **[`site.yml.example`](site.yml.example)**. Override the path with `-e site_overrides_file=…`.
+
+### Baking in the AI stack (`ai_compose`)
+
+The two-node stack is baked into the image so a fielded box comes up with its compose file in place. The **`ai_compose`** role (ai profile, `ai_compose_enabled: true`) drops the node's **consolidated** `docker-compose.yaml` + a root-only `.env` into **`ai_compose_dir`** (default **`/opt/it/docker`**), **builds the custom images** the stack needs, creates the named volumes, optionally auto-fetches the model, and (opt-in) `up -d`. Two per-node compose files chosen by **`ai_node_role`**:
+
+| role (node) | services | serves |
+|------|------|------|
+| `system1` (dev-ai1) | vLLM `gpt-oss-120b` (:8000) + switchable `granite-4.1-30b`, Open WebUI (:3000), Redis, pgvector | UI / text generation |
+| `system2` (dev-ai2) | vLLM embedding (:8002) + vision (:8003), Docling (:5001), Tika (:9998), LGTM/Grafana (:3001,:4317), oikb (:8081), hfcli/repomix | extraction / embeddings / monitoring / sync |
+
+**One file per node on purpose.** Cross-service `depends_on` only works inside one compose project, so consolidating lets Open WebUI **health-gate** its start on pgvector + Redis (`condition: service_healthy`, with `pg_isready`/`redis-cli ping` healthchecks). You keep per-service control (`docker compose up -d pgvector redis`, `docker compose restart open-webui`).
+
+Notes:
+- **Cross-node wiring.** System 1's Open WebUI reaches System 2 by **`ai_system2_addr`** (default the hostname `dev-ai2`): chat vision (:8003) as a second OpenAI endpoint, RAG embeddings (:8002), Docling extraction (:5001), and OTel → LGTM (:4317). System 2's **oikb** reaches System 1's Open WebUI (:3000) by **`ai_system1_addr`**. Set IPs in `site.yml` if the hostnames don't resolve across the boxes, and open the cross-node ports restricted to the peer (see `site.yml.example`).
+- **Open WebUI** runs as the engineer tuned it (Redis sessions/websockets, connection pool, 9 uvicorn workers). The model / embedding / Docling / vision **connections are wired via env** to System 2 (override/blank in `site.yml` to configure them in the admin UI instead). Extraction defaults to Docling; set `CONTENT_EXTRACTION_ENGINE=tika` + `TIKA_SERVER_URL` to use Tika.
+- **Custom images** `oikb`, `hfcli`, `repomix` (System 2 only) aren't on any registry; `ai_compose` **builds them on the box** (`ai_compose_build_images: true`). The `oikb` Dockerfile git-clones at build time → the box needs internet during imaging (or an internal mirror). `hfcli` is a `tools`-profile service (never auto-starts); `repomix` is a build-only utility.
+- **Model switching (System 1).** gpt-oss-120b and Granite-4.1-30b are alternates (one at a time). See "Switching System 1's chat model" below.
+
+**Hands-off imaging: normally NOTHING to edit per box.** On the ai profile the stack is enabled automatically and everything per-node auto-derives, so a freshly-imaged, correctly-named box comes up configured with no `site.yml` editing:
+
+- **`ai_node_role` is picked from the hostname:** `dev-ai1`→`system1`, `dev-ai2`→`system2` (plus an `*ai1*`/`*ai2*` pattern fallback). Extend `ai_node_role_by_hostname` in `group_vars` for more nodes.
+- **The pgvector password is auto-generated** and persisted root-only (`/etc/stig-build/pgvector.pw`) on first run; used only between two containers on the same box, never by a human, so there's nothing to type and no secret in the repo.
+- **System 1 reaches System 2 by the name `dev-ai2`** (`ai_system2_ip` default).
+
+So the imaging workflow is just: **name the box `dev-ai1`/`dev-ai2` → run the pull.** `site.yml` is only for *exceptions*, dropped root-only on the box (out of git):
+
+```yaml
+# Only if the box ISN'T named dev-ai1/dev-ai2:
+ai_node_role: system1                 # or system2
+# Only for an ALREADY-INITIALISED DB (pin its existing password so WebUI still logs in):
+ai_pgvector_password: "‹existing db password›"
+# oikb data-source secrets (empty = oikb idle):
+ai_oikb_openwebui_api_key: "‹Open WebUI API key›"
+ai_oikb_gitlab_url: "https://gitlab.yourlab"
+ai_oikb_gitlab_token: "‹GitLab PAT›"
+# Opt in to the heavy steps when ready:
+ai_model_fetch: true                  # download gpt-oss into its volume
+ai_compose_deploy: true               # start the stack (after the model is staged)
+```
+
+Also open **System 2's** cross-node ports **to System 1 only** (`ai_firewall_allow_ports` in `site.yml`): `8002` (embed), `8003` (vision), `5001` (Docling), `9998` (Tika), `4317`/`4318` (OTel), each `from: "‹System 1 IP›"`. Also restrict `3001` (Grafana) + `8081` (oikb), also on System 2, to an admin CIDR. System 1 opens `3000` (Open WebUI, to users + oikb from System 2).
+
+### Switching System 1's chat model (gpt-oss ↔ Granite-4.1-30B)
+
+System 1's two 48 GB (RTX 6000 Ada) GPUs can't hold **gpt-oss-120B** and **Granite-4.1-30B** at once, so they're **alternates, one at a time.**
+
+- Both are defined in the compose sharing the `chat-llm` network alias; **gpt-oss auto-starts**, Granite is under the `granite` profile.
+- Open WebUI points at `http://chat-llm:8000/v1`, so switching needs no UI change; the model just changes in the dropdown.
+
+Swap with the helper `ai_compose` drops in the compose dir:
+
+```bash
+cd /opt/it/docker
+sudo ./switch-model.sh granite     # stop gpt-oss, start Granite-4.1-30B
+sudo ./switch-model.sh gpt-oss     # back to the 120B (default)
+sudo ./switch-model.sh status      # which one is running
+```
+
+Each switch stops the other model first (so only one holds VRAM) and takes a few minutes to load.
+
+**Don't run a bare `docker compose up -d` while on Granite**: it would also start gpt-oss and OOM the GPUs; use the switch script. (On the already-running dev-ai1, point Open WebUI's connection at `http://chat-llm:8000/v1` and remove the old `http://vllm:8000/v1` one so switching works.)
+
+### Gathering the models (automated + hfcli)
+
+Models live in **external** docker volumes (survive `docker compose down -v`). The served models (`gpt-oss-120b` + `granite-4.1-30b` on System 1) are declared in **`ai_models`** (`group_vars/all.yml`); `ai_compose` creates the volumes, and with **`ai_model_fetch: true`** downloads each into its volume via the `hf` CLI (the vLLM image's Hugging Face downloader; the old `huggingface-cli` entrypoint is deprecated and no longer works). The fetch is **idempotent** (a volume that already holds a `config.json` is skipped), so re-pulls are safe.
+
+- **No HF token needed.** `openai/gpt-oss-120b` (and the Granite repos) are Apache-2.0 / ungated. Set `ai_hf_token` in `site.yml` **only** to dodge anonymous rate-limits on the big gpt-oss pull.
+- **Tiktoken encodings are fetched too.** gpt-oss's *harmony* tokenizer reads `o200k_base.tiktoken` / `cl100k_base.tiktoken` from the `encodings` volume; without them vLLM loads the model fine but crashes building the tokenizer (`invalid tiktoken vocab file`). `ai_model_fetch` downloads them into the `encodings` volume automatically (idempotent) for any node that has that volume. Both the model and the encodings fetch mount `fips_off`; on a FIPS host this image's OpenSSL can't do TLS without it.
+- **Size/time.** gpt-oss-120b is ~200 GB; the first fetch is long and runs synchronously during the play. Run it when the box has internet and disk headroom, then flip `ai_compose_deploy: true` (or `up` by hand).
+
+`ai_model_fetch` stages **all** the served models: gpt-oss-120b + Granite-4.1-30b on System 1, and the embedding + vision models on System 2, each into its own volume root (which is what the vLLM services serve, e.g. `--model=/granite-embed`).
+
+**Ad-hoc staging** (an extra model, or a re-download) uses the **`hfcli`** utility container on **System 2** (`tools` profile, doesn't auto-start). It mounts the model volumes, so download to the volume root:
+
+```bash
+cd /opt/it/docker      # on System 2
+sudo docker compose run --rm hfcli hf download ibm-granite/granite-embedding-small-english-r2 --local-dir /granite-embed
+sudo docker compose run --rm hfcli hf download ibm-granite/granite-vision-4.1-4b            --local-dir /granite-vision
+```
+
+On **System 1** (no hfcli) use the vLLM image directly, e.g. to re-stage Granite chat into its volume: `sudo docker run --rm -v granite32b:/m -v /opt/it/docker/fips_off:/proc/sys/crypto/fips_enabled:ro --entrypoint hf vllm/vllm-openai:v0.22.1-cu129-ubuntu2404 download ibm-granite/granite-4.1-30b --local-dir /m`.
+
+When ready to serve one, add its vLLM service to the node's compose file and (optionally) its `ai_models` entry, then `docker compose up -d`. The `tiktoken`/harmony encodings gpt-oss expects in the `encodings` volume are fetched on first start when online; for air-gap, pre-stage them into that volume too.
+
+Verify before first `up`: `sudo docker run --rm -v vllm:/m alpine ls /m` should list `config.json` + weight shards. Then `cd /opt/it/docker && sudo docker compose up -d` (or flip `ai_compose_deploy`).
+
+**Air-gap** (no internet on the fielded box): fetch on an online machine, move each volume over (`docker run --rm -v ‹vol›:/m -v /mnt/usb:/src alpine cp -a /src/. /m`), and mirror the registry images into an internal registry / `docker load` them. The **custom** images (oikb/hfcli/repomix) are built on the box, and the oikb build git-clones, so an air-gapped box needs those images pre-built and loaded, or set `ai_compose_build_images: false` and push them from your registry.
+
+### FIPS + inference containers (POA&M)
+
+The ai boxes run with **FIPS enabled on the host** (`fips=1`, `/proc/sys/crypto/fips_enabled=1`). Containers share the host kernel, so a container's OpenSSL sees that flag.
+
+- **vLLM** image ships no FIPS OpenSSL provider (`fips.so` / `fipsmodule.cnf` aren't in it). OpenSSL 3.0.13 then *forces* FIPS for its DRBG, fails to load the missing module, and the container **crash-loops** (`fips.so: cannot open shared object file`, or `FATAL FIPS SELFTEST FAILURE`).
+- **docling-serve** hits the same wall via a different library: it bundles OpenCV, whose vendored OpenSSL 1.1.1k (`opencv_python.libs/libcrypto-*.so.1.1.1k`) runs a FIPS selftest and `abort()`s (SIGABRT / exit 134) on the FIPS host.
+- Redis, pgvector, Open WebUI, LGTM (Go/Java), and Tika run fine; they don't load a FIPS-forcing OpenSSL.
+
+vLLM / PyTorch / OpenCV are **not FIPS-validated** in the first place, so the fix is to let *those containers* use standard crypto while the **host stays fully FIPS** (kernel + host userspace unchanged, what the STIG assesses).
+
+`ai_compose` drops a `fips_off` file (`0`) in the compose dir and every affected service (the vLLM services **and docling-serve**) bind-mounts it **read-only over `/proc/sys/crypto/fips_enabled`**, so its OpenSSL sees `0` and uses the default provider. Verified: with the mask, `openssl rand` succeeds; without it, it fails.
+
+> **POA&M:** the containerized inference workload runs non-FIPS crypto (localhost/oi-network traffic on a single-tenant, USG-hardened host). The host OS remains FIPS-enabled. Any container whose image bundles a non-FIPS OpenSSL (the vLLM embed/vision services and docling-serve on System 2) needs the **same** `./fips_off:/proc/sys/crypto/fips_enabled:ro` mount; the file is already staged on both nodes; a new such service that crash-loops with a FIPS selftest abort just needs the mount added. Alternative if full container FIPS is ever required: rebuild the image with the Ubuntu Pro FIPS OpenSSL module baked in.
+
+## Windows servers
+
+This repo is Linux-only. STIG automation for Windows uses a different stack (PowerShell DSC / the DISA-provided GPOs / Ansible `ansible.windows` + `microsoft.iis` etc.). Keep that as a separate playbook.

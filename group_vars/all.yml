@@ -61,6 +61,15 @@ editor_choice: vscode        # options: vscode | vim | neovim
 # livepatch). Override per box in site.yml.
 base_packages_full_upgrade: false
 
+# ---- Common packages (BOTH profiles) ---------------------------------------
+# Installed on every box regardless of profile, before hardening. Keep this list
+# lean (each package is attack surface + a potential STIG finding).
+#   cifs-utils : mount SMB/CIFS shares (`mount -t cifs //server/share ...`)
+#   net-tools  : ifconfig / route / netstat for network admin
+base_common_packages:
+  - cifs-utils
+  - net-tools
+
 # ---- ClamAV ----------------------------------------------------------------
 clamav_run_daemon: true       # enable clamav-daemon (on-access/scheduled scans)
 clamav_freshclam_enabled: true
@@ -465,7 +474,7 @@ usb_access_group: dta
 # above (no block device ever appears). This fleet needs USB for data-transfer
 # agents, so stig_harden strips that blacklist AFTER the lockdown role and loads
 # the module; the dta udev + polkit policy then governs who may mount. Documented
-# deviation (OPERATIONS.md POA&M). Set false to keep USB mass storage fully
+# deviation (docs/operate.md POA&M). Set false to keep USB mass storage fully
 # disabled (the dta carve-out is then moot).
 usb_storage_enabled: true
 
@@ -514,7 +523,7 @@ tpm_luks_enabled: true            # ON by default (fleet standard: TPM auto-unlo
 luks_passphrase: ""
 # Root-only file holding the install passphrase, placed out-of-band (autoinstall
 # late-commands / write_files, or dropped manually). Read once for the bind; never
-# in git. See OPERATIONS.md "TPM2 LUKS auto-unlock".
+# in git. See docs/operate.md "TPM2 LUKS auto-unlock".
 luks_passphrase_file: /etc/luks/initial-passphrase
 # Delete luks_passphrase_file right after a successful TPM bind so the per-box
 # passphrase doesn't persist on the auto-unlocking disk. Re-drop the file only if
@@ -574,7 +583,7 @@ ai_stack_user: "{{ dev_tools_user }}"
 # ---- Docker daemon hardening (docker_hardening role) ------------------------
 # USG hardens the OS but does NOT cover Docker, and there's no DISA STIG for
 # docker-ce, so this applies CIS-Docker-Benchmark-aligned daemon settings
-# (see docs/docker-compliance.md). MERGED into /etc/docker/daemon.json so the
+# (see docs/compliance.md). MERGED into /etc/docker/daemon.json so the
 # NVIDIA runtime is preserved; docker restarts once when first applied. Set
 # false to skip. Add/adjust keys in docker_hardening_daemon_opts.
 docker_hardening_enabled: true
@@ -671,7 +680,7 @@ ai_firewall_allow_ports:
 #
 # By default the role only PLACES files + creates the (empty) volumes -- it does
 # NOT pull/`up`, because the vLLM volume must be loaded with the 120B model first
-# (see OPERATIONS.md "Gathering the models"). Flip ai_compose_deploy=true once the
+# (see docs/operate.md "Gathering the models"). Flip ai_compose_deploy=true once the
 # model is staged to let Ansible pull + `up -d` too.
 ai_compose_enabled: true         # every ai-profile box is an AI node
 # Hostname -> role map. Name a box dev-ai1/dev-ai2 and it images correctly with
@@ -748,7 +757,7 @@ ai_compose_build_by_role:        # which images each node builds
 # download these into the (external) volumes so vLLM serves them from disk.
 # Only the CURRENTLY-SERVED model is listed (gpt-oss on System 1); the Granite
 # chat / embed / vision models are downloaded when you add their vLLM servers --
-# stage them any time with the hfcli utility (see OPERATIONS.md), e.g.
+# stage them any time with the hfcli utility (see docs/operate.md), e.g.
 #   docker compose run --rm hfcli hf download ibm-granite/granite-4.1-30b --local-dir /llm/granite
 # All repos are Apache-2.0 / ungated -- no HF token needed (ai_hf_token only
 # dodges anonymous rate-limits on the big gpt-oss pull).
@@ -882,6 +891,12 @@ usg_remediate_enabled: true
 # password-only decision as usg_disable_smartcard. SAFE: it only comments out the
 # smartcard auth step, never touches pam_unix, so password login cannot be lost.
 usg_cleanup_pam_pkcs11: "{{ usg_disable_smartcard }}"
+
+# Show the DCSA banner (dcsa_gui_banner) at SSH + console login instead of USG's
+# DoD Standard Mandatory Notice. Writes /etc/issue.net + /etc/issue and pins sshd
+# with a 00- drop-in. Same documented banner-text deviation as the GUI banner.
+# Set false to keep USG's DoD banner on the console/SSH.
+usg_ssh_banner_dcsa: true
 
 # Fix /var/log file perms (file_permissions_var_log_stig / UBTU-24-700010) and
 # /var/log/audit dir mode 0750 (directory_permissions_var_log_audit).

@@ -40,7 +40,7 @@
 #                      picture-uri=string '' here is OVERRIDDEN by a site
 #                      lock-screen-wallpaper requirement; the desktop_branding
 #                      role now owns this key. See the screensaver section + the
-#                      deviation note in OPERATIONS.md.)
+#                      deviation note in docs/operate.md.)
 #   * logout        -> the literal text  logout=['']  (a one-element GVariant
 #                      string ARRAY). The OVAL regex is ...logout[\s]*=[\s]*\['']$
 #                      so a bare logout='' does NOT match and the rule FAILS.
@@ -128,7 +128,7 @@
       #  NOT set here. The STIG "Implement Blank Screensaver" control is OVERRIDDEN
       #  by a site requirement to show a lock-screen wallpaper -- the
       #  desktop_branding role owns + locks picture-uri instead. Documented as an
-      #  approved deviation in OPERATIONS.md. (If you ever need the blank lock
+      #  approved deviation in docs/operate.md. (If you ever need the blank lock
       #  screen back, re-add `picture-uri=string ''` here + its lock, and remove
       #  the screensaver keys from desktop_branding.)
       [org/gnome/desktop/screensaver]

@@ -8,7 +8,7 @@
 # Runs AFTER hardening (usg_harden + desktop_hardening). It is the SOLE owner of the screensaver (lock screen)
 # picture-uri key: desktop_hardening/tasks/gnome.yml deliberately no longer sets that
 # key, because showing a lock-screen wallpaper OVERRIDES the STIG "Implement
-# Blank Screensaver" control (documented deviation -- see OPERATIONS.md). The
+# Blank Screensaver" control (documented deviation -- see docs/operate.md). The
 # desktop background key is not touched by STIG at all.
 #
 # dconf mechanics: keyfile under /etc/dconf/db/local.d/ + a matching lock under
@@ -77,7 +77,7 @@
 
       # SESSION LOCK SCREEN. This intentionally OVERRIDES the STIG "Implement
       # Blank Screensaver" control (which wants picture-uri=''); gnome.yml no
-      # longer manages this key. Tracked as an approved deviation in OPERATIONS.md.
+      # longer manages this key. Tracked as an approved deviation in docs/operate.md.
       [org/gnome/desktop/screensaver]
       picture-uri='file://{{ branding_wallpaper_dest }}'
       picture-options='zoom'
@@ -106,7 +106,7 @@
 # background and commonly IGNORES this dconf key; setting it is harmless and
 # costs nothing, but a guaranteed login-screen JPG would require patching the
 # gnome-shell gresource, which breaks on every shell update -- deliberately NOT
-# done. See OPERATIONS.md.
+# done. See docs/operate.md.
 # ---------------------------------------------------------------------------
 - name: BRANDING | Best-effort GDM login-screen background (greeter may ignore it)
   ansible.builtin.copy:

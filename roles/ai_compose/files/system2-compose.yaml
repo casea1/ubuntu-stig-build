@@ -29,7 +29,7 @@ services:
       - "8002:8002"
     volumes:
       - granite-embed:/granite-embed
-      - ./fips_off:/proc/sys/crypto/fips_enabled:ro   # host FIPS carve-out (see OPERATIONS.md)
+      - ./fips_off:/proc/sys/crypto/fips_enabled:ro   # host FIPS carve-out (see docs/operate.md)
     command:
       - --model=/granite-embed
       - --served-model-name=granite-embedding-small-english-r2

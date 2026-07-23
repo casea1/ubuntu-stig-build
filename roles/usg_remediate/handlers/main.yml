@@ -4,3 +4,9 @@
     name: chrony
     state: restarted
   failed_when: false
+
+- name: Restart ssh
+  ansible.builtin.systemd:
+    name: ssh
+    state: restarted
+  failed_when: false
