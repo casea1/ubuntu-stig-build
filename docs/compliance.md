@@ -5,7 +5,7 @@ Security and compliance reference for the IA / assessment team and our DCSA rep.
 - **Hardening posture** the build enforces.
 - **DCSA / DoD RMF control-implementation summary** (authorization context, control baseline, NIST 800-53 mapping, AI-specific risk, POA&M list).
 - **Container-runtime compliance** (why there's no Docker STIG, how the container layer is secured).
-- **Software list** (appendix).
+- **Software inventories** (linked, per profile).
 
 Everything is provisioned by the version-controlled `ubuntu-stig-build` Ansible baseline: repeatable, auditable, identical across the fleet. Operations: [`operate.md`](operate.md). Build/imaging: [`build.md`](build.md). Per-node overrides: [`site.yml.example`](site.yml.example). Overview: [`../README.md`](../README.md).
 
@@ -31,13 +31,7 @@ Everything is provisioned by the version-controlled `ubuntu-stig-build` Ansible 
   - [3. How the container layer is secured (CIS Docker Benchmark alignment)](#3-how-the-container-layer-is-secured-cis-docker-benchmark-alignment)
   - [4. Optional evidence: docker-bench-security](#4-optional-evidence-docker-bench-security)
   - [5. Control mapping (NIST 800-53 Rev 5)](#5-control-mapping-nist-800-53-rev-5)
-- [Appendix: Software list](#appendix-software-list)
-  - [Operating system & host tooling](#operating-system--host-tooling)
-  - [Docker engine & plugins](#docker-engine--plugins)
-  - [Container images (pulled)](#container-images-pulled)
-  - [Container images (built on the box)](#container-images-built-on-the-box)
-  - [AI models (Hugging Face, all Apache-2.0)](#ai-models-hugging-face-all-apache-20)
-  - [Tiktoken encodings (gpt-oss harmony tokenizer)](#tiktoken-encodings-gpt-oss-harmony-tokenizer)
+- [Software inventories](#software-inventories)
 
 ---
 
@@ -259,70 +253,11 @@ sudo docker run --rm --net host --pid host --userns host --cap-add audit_control
 
 ---
 
-## Appendix: Software list
+## Software inventories
 
-Software inventory for the two-node AI platform (IA / DCSA reference). Versions are pinned in the build (`group_vars/all.yml`, the compose files, the image Dockerfiles). Nodes: **S1** = System 1 (`dev-ai1`), **S2** = System 2 (`dev-ai2`).
+Per-profile software lists (Software/Tool, Version, Publisher, Purpose) live with each profile page:
 
-### Operating system & host tooling
+- **[Developer workstation software list](dev-workstation.md#software-list)**
+- **[AI stack software list](ai-stack.md#software-list)**
 
-| Software/Tool | Version | Publisher | Purpose |
-|---|---|---|---|
-| Ubuntu | 24.04 LTS (Noble Numbat) | Canonical | Host operating system |
-| git | distro | Git project | Version control |
-| cifs-utils | distro | Samba team | Mount SMB/CIFS shares |
-| net-tools | distro | net-tools project | `ifconfig`/`route`/`netstat` network admin |
-| NVIDIA GPU driver | ≥ 595.71.05 | NVIDIA | GPU driver |
-| NVIDIA Container Toolkit | ≥ 1.19.1 | NVIDIA | GPU access inside containers |
-
-### Docker engine & plugins
-
-| Software/Tool | Version | Publisher | Purpose |
-|---|---|---|---|
-| docker-ce | 29.6.1 (floor 29.5.2) | Docker Inc. | Container engine |
-| docker-ce-cli | 29.6.1 | Docker Inc. | Docker CLI |
-| containerd.io | 2.2.6 | CNCF / Docker Inc. | Container runtime |
-| docker-buildx-plugin | 0.35.0 | Docker Inc. | Image builder |
-| docker-compose-plugin | 5.3.1 | Docker Inc. | Compose v2 |
-| docker-model-plugin | 1.2.6 | Docker Inc. | Model runner plugin |
-| docker-sbx | 0.35.0 | Docker Inc. | Sandbox plugin |
-
-### Container images (pulled)
-
-| Software/Tool | Version | Publisher | Purpose |
-|---|---|---|---|
-| vllm/vllm-openai | v0.22.1-cu129-ubuntu2404 | vLLM project | LLM inference server (S1, S2) |
-| open-webui | v0.10.2 | Open WebUI | Chat web UI (S1) |
-| pgvector/pgvector | pg16-trixie | pgvector project | Database + vector store (S1) |
-| redis | 7.2.14-bookworm | Redis | Sessions / websockets (S1) |
-| apache/tika | 3.3.1.0 | Apache Software Foundation | Document text/metadata extraction (S2) |
-| docling-serve | v1.24.0 (cu128) | IBM / Docling project | Document structure/OCR extraction (S2) |
-| grafana/otel-lgtm | 0.29.0 | Grafana Labs | Monitoring / telemetry (S2) |
-
-### Container images (built on the box)
-
-| Software/Tool | Version | Publisher | Purpose |
-|---|---|---|---|
-| oikb | latest (base oikb 0.3.6) | Open WebUI (oikb) | Sync data sources into Open WebUI KBs (S2) |
-| hfcli | latest (Python 3.12) | Hugging Face (`huggingface_hub`) | Download models/encodings into volumes (S1, S2) |
-| repomix | latest (Node 22.23.1) | repomix project | Pack a code repo into one file for the LLM (S2) |
-
-### AI models (Hugging Face, all Apache-2.0)
-
-| Software/Tool | Version | Publisher | Purpose |
-|---|---|---|---|
-| gpt-oss-120b | repo main | OpenAI | Primary text generation (S1) |
-| granite-4.1-30b | repo main | IBM | Secondary text generation, 96 GB GPUs (S1) |
-| granite-4.1-8b | repo main | IBM | Secondary text generation, 48 GB GPUs (S1) |
-| granite-embedding-small-english-r2 | repo main | IBM | Text embeddings / RAG (S2) |
-| granite-vision-4.1-4b | repo main | IBM | Vision / document understanding (S2) |
-
-> **System 1 companion model depends on GPU VRAM:** 48 GB cards run gpt-oss-120b + Granite-4.1-**8b**; 96 GB cards run Granite-4.1-**30b**. Check `nvidia-smi --query-gpu=name,memory.total --format=csv` and keep the one that fits.
-
-### Tiktoken encodings (gpt-oss harmony tokenizer)
-
-| Software/Tool | Version | Publisher | Purpose |
-|---|---|---|---|
-| o200k_base.tiktoken, cl100k_base.tiktoken | n/a | OpenAI | Tokenizer vocab for the gpt-oss harmony tokenizer (S1) |
-
----
-*Everything above is pinned/reproducible via the `ubuntu-stig-build` Ansible baseline. Air-gap: all images and model weights can be mirrored to an internal registry / staged offline. External data sources read by oikb (GitLab / Confluence / S3, per `site.yml`) are org services, not installed software.*
+Everything is pinned and reproducible via the `ubuntu-stig-build` baseline, and can be mirrored to an internal registry / staged offline for air-gap. External data sources read by oikb (GitLab / Confluence / S3, per `site.yml`) are org services, not installed software.

@@ -20,13 +20,22 @@ Pick a profile, run one `curl | sudo bash`, reboot, collect the report from `/op
 
 ## Documentation
 
-This README is orientation. Detail lives in three guides under [`docs/`](docs/):
+This README is orientation. Detail lives under [`docs/`](docs/).
+
+**By profile** (what it builds + its software list):
+
+| Profile | Page |
+|---|---|
+| `development` workstation | **[Development Workstation](docs/dev-workstation.md)** |
+| `ai` server | **[AI Server Profile](docs/ai-stack.md)** |
+
+**Shared references** (both profiles):
 
 | Guide | What's in it |
 |---|---|
 | **[Build & Imaging Guide](docs/build.md)** | Bare-metal build steps: **Track A** (dev workstation), **Track B** (two-node AI servers). |
 | **[Operations & Reference](docs/operate.md)** | Operator manual: run steps, gotchas, STIG-gap remediation, accounts, TPM/LUKS, RDP, AI-stack quick reference + deep ops, USG/SCAP scans. |
-| **[Security & Compliance](docs/compliance.md)** | For IA / DCSA: hardening posture, NIST 800-53 mapping, POA&M, "why no Docker STIG," software BOM. |
+| **[Security & Compliance](docs/compliance.md)** | For IA / DCSA: hardening posture, NIST 800-53 mapping, POA&M, "why no Docker STIG." |
 
 Per-node config template: **[`docs/site.yml.example`](docs/site.yml.example)**.
 
