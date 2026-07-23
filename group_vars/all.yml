@@ -892,6 +892,12 @@ usg_remediate_enabled: true
 # smartcard auth step, never touches pam_unix, so password login cannot be lost.
 usg_cleanup_pam_pkcs11: "{{ usg_disable_smartcard }}"
 
+# Show the DCSA banner (dcsa_gui_banner) at SSH + console login instead of USG's
+# DoD Standard Mandatory Notice. Writes /etc/issue.net + /etc/issue and pins sshd
+# with a 00- drop-in. Same documented banner-text deviation as the GUI banner.
+# Set false to keep USG's DoD banner on the console/SSH.
+usg_ssh_banner_dcsa: true
+
 # Fix /var/log file perms (file_permissions_var_log_stig / UBTU-24-700010) and
 # /var/log/audit dir mode 0750 (directory_permissions_var_log_audit).
 usg_fix_log_permissions: true

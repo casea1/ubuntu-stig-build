@@ -72,6 +72,40 @@
       when: (_pkcs11_profile.files | default([]) | length) > 0
 
 # ---------------------------------------------------------------------------
+# 1b) DCSA LOGIN BANNER for console + SSH
+# USG/STIG writes the DoD Standard Mandatory Notice to /etc/issue.net (and points
+# sshd at it), so SSH/console logins show the DoD banner, not our DCSA one. We
+# want the SAME DCSA banner everywhere (GUI already uses dcsa_gui_banner). Write
+# the DCSA text to /etc/issue.net (SSH) + /etc/issue (console) and pin sshd at it
+# with a high-priority drop-in (00- sorts first, so it wins over USG's include).
+# This is the same documented banner-text deviation as the GUI banner.
+# ---------------------------------------------------------------------------
+- name: "REMED | DCSA login banner (console + SSH)"
+  when:
+    - usg_ssh_banner_dcsa | default(true) | bool
+    - (dcsa_gui_banner | default('') | length) > 0
+  block:
+    - name: "REMED | Write the DCSA banner to /etc/issue.net (SSH) + /etc/issue (console)"
+      ansible.builtin.template:
+        src: issue.net.j2
+        dest: "{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - /etc/issue.net
+        - /etc/issue
+
+    - name: "REMED | Pin sshd at the DCSA banner (00- drop-in wins over USG)"
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/00-dcsa-banner.conf
+        content: "Banner /etc/issue.net\n"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart ssh
+
+# ---------------------------------------------------------------------------
 # 2) /var/log FILE PERMS + /var/log/audit DIR MODE
 # file_permissions_var_log_stig (UBTU-24-700010) + directory_permissions_var_log_audit
 # ---------------------------------------------------------------------------
