@@ -70,6 +70,13 @@ base_common_packages:
   - cifs-utils
   - net-tools
 
+# ---- Inventory report (BOTH profiles) --------------------------------------
+# Writes a basic hardware/system inventory (serials, MACs, BIOS, disks, GPU) to
+# /opt/it/inventory-<host>.txt at the end of the build, for cross-referencing
+# with the imaging checklist. Re-run any time: `sudo it-inventory`. Set false to
+# skip (also skips its small tool installs: dmidecode/nvme-cli/smartmontools/mokutil).
+inventory_report_enabled: true
+
 # ---- ClamAV ----------------------------------------------------------------
 clamav_run_daemon: true       # enable clamav-daemon (on-access/scheduled scans)
 clamav_freshclam_enabled: true

@@ -1,0 +1,13 @@
+---
+# inventory_report -- write a basic hardware/system inventory to /opt/it after
+# imaging, for cross-referencing with the imaging checklist.
+inventory_report_enabled: true
+inventory_report_dir: "{{ it_dir | default('/opt/it') }}"
+
+# Tools the script uses for serials / SMART / Secure Boot state. Small, standard
+# admin utilities; installed on both profiles when the role runs.
+inventory_report_packages:
+  - dmidecode       # system/BIOS/DIMM serials (Dell service tag)
+  - nvme-cli        # nvme list
+  - smartmontools   # per-disk model/serial/firmware (smartctl)
+  - mokutil         # Secure Boot state
