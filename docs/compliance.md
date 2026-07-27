@@ -22,6 +22,7 @@ Everything is provisioned by the version-controlled `ubuntu-stig-build` Ansible 
   - [System description](#system-description)
   - [Compliance baseline (what the build enforces)](#compliance-baseline-what-the-build-enforces)
   - [NIST SP 800-53 Rev 5 control-family mapping (representative)](#nist-sp-800-53-rev-5-control-family-mapping-representative)
+  - [Configuration Management (CM family)](#configuration-management-cm-family)
   - [AI-specific risk considerations](#ai-specific-risk-considerations)
   - [Open items / POA&M (stated honestly)](#open-items--poam-stated-honestly)
   - [Assessment artifacts we can provide](#assessment-artifacts-we-can-provide)
@@ -157,6 +158,24 @@ Every box is provisioned by a version-controlled Ansible build: repeatable, audi
 | **SC** System & Comm. Protection | FIPS 140-validated crypto (SC-13), LUKS data-at-rest (SC-28), host firewall/boundary (SC-7), TLS for management. |
 | **SI** System & Info Integrity | ClamAV (dev baseline), Ubuntu Pro patching/ESM/Livepatch, STIG integrity settings. |
 | **SR/SA** Supply Chain / Sys & Svcs Acq. | Pinned open-source component versions; images buildable/mirrorable internally; model weights hash-verifiable and stageable offline. |
+
+### Configuration Management (CM family)
+
+The build is configuration-as-code, so it maps directly onto the CM family. The `ubuntu-stig-build` git repo is the authoritative baseline; every box is provisioned from it, so the fielded configuration equals the documented one.
+
+| Control | How the build meets it |
+|---|---|
+| **CM-2 Baseline Configuration** | The full baseline is version-controlled Ansible (`group_vars/all.yml`, roles, compose files) in git. Commits and tags version the baseline and support rollback. |
+| **CM-2(2) Automation support** | `ansible-pull` is idempotent: a re-run applies only the delta and corrects drift back to baseline. `usg_remediate` re-asserts residual STIG settings every run; `usg audit` regenerates current-state evidence on demand. |
+| **CM-3 Configuration Change Control** | Changes are made in the repo and flow through git commits + pull requests (reviewable diffs, full history). The repo is the change record; a re-pull overwrites ad-hoc box edits, so the baseline stays authoritative. |
+| **CM-4 Impact Analysis** | Validate on a throwaway VM before imaging production (the DISA profile can be breaking). `HARDEN=0` runs an audit-only first pass to assess impact before `usg fix` is applied. |
+| **CM-5 Access Restrictions for Change** | Repo write access gates baseline changes. On the box, config changes need root/sudo; admin folders `/opt/ia` and `/opt/it` are restricted to the `sudo` group (mode `2770` + ACL); secrets (Pro token, LUKS passphrase, DB/API keys) stay out-of-band, root-only, never in the repo. |
+| **CM-6 Configuration Settings** | Mandated settings come from the DISA STIG applied by USG (`usg fix disa_stig`) plus documented tunables in `group_vars/all.yml` (lockout counts, timeouts, audit retention, banner, FIPS). `usg audit` (XCCDF + HTML) is the settings-compliance evidence; deviations are enumerated in [Hardening posture](#hardening-posture). |
+| **CM-7 Least Functionality** | Lean per-profile package sets; provisioning services installed but disabled + stopped; `ufw` default-deny inbound with only required ports opened; Cockpit/Portainer restricted to admin subnets; USB mass storage disabled on the AI nodes. |
+| **CM-8 System Component Inventory** | Component versions pinned across `group_vars`, the compose files, and the Dockerfiles. Per-profile software lists ([dev-workstation](dev-workstation.md#software-list), [ai-stack](ai-stack.md#software-list)) enumerate tool, version, publisher, and purpose; images and model repos are listed with versions. |
+| **CM-9 Configuration Management Plan** | Organizational/procedural control. This repo is the technical baseline the site CM Plan references; the plan itself is a program document. |
+| **CM-10 / CM-11 Software Usage & User-Installed Software** | Components are open-source with tracked licenses (software lists). Standard users are non-privileged; installs require sudo. The `docker` group (root-equivalent) is a documented developer-workstation exception; no unmanaged package channels are enabled. |
+| **CM-14 Signed Components** | Third-party apt repos (Docker, NVIDIA, Microsoft) are added with GPG-key verification; distro packages are apt-signed. Images and model weights are hash-verifiable and mirrorable to an internal registry for provenance. Full SBOM/signing attestation is an SSP/POA&M item. |
 
 ### AI-specific risk considerations
 
