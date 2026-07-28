@@ -1,0 +1,5 @@
+---
+# it_scripts -- drop admin status/health scripts into /opt/it/scripts and expose
+# them as short `it-*` commands. Both profiles.
+it_scripts_enabled: true
+it_scripts_dir: "{{ it_dir | default('/opt/it') }}/scripts"

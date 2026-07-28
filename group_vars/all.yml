@@ -77,6 +77,11 @@ base_common_packages:
 # skip (also skips its small tool installs: dmidecode/nvme-cli/smartmontools/mokutil).
 inventory_report_enabled: true
 
+# ---- Admin status scripts (BOTH profiles) ----------------------------------
+# Drops health/status scripts in /opt/it/scripts and short `it-*` commands
+# (it-status, it-host, it-docker, it-models, it-luks). Set false to skip.
+it_scripts_enabled: true
+
 # ---- ClamAV ----------------------------------------------------------------
 clamav_run_daemon: true       # enable clamav-daemon (on-access/scheduled scans)
 clamav_freshclam_enabled: true
