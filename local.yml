@@ -149,3 +149,11 @@
       when: is_development
     - role: tpm_luks_unlock         # OPT-IN: bind LUKS to the TPM2 (works on either profile if encrypted)
       when: tpm_luks_enabled | default(false)
+
+    # -------------------------------------------------------------------------
+    # INVENTORY  (both profiles) -- runs LAST so it captures the built state.
+    # Writes a basic hardware/system report (serials, MACs, BIOS, disks, GPU) to
+    # /opt/it for post-imaging checklist reference. Re-run: `sudo it-inventory`.
+    # -------------------------------------------------------------------------
+    - role: inventory_report        # both: hardware/system inventory -> /opt/it/inventory-<host>.txt
+      when: inventory_report_enabled | default(true)

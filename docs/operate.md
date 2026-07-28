@@ -118,6 +118,8 @@ sudo docker compose run --rm hfcli hf download <repo> --local-dir /llm/<name>
 3. **stig_harden.** Runs `ansible-lockdown/UBUNTU24-STIG` remediation (CAT I + II by default, CAT III off), then **SSG gap-remediation task files** (`tasks/*.yml`: audit, pam, sessions, gnome, ssh, services, filesystem, grub) that close the ComplianceAsCode `stig`-profile findings Lockdown skips under `disruption_high: false`. See *STIG gap remediation* below.
 4. **scap_scan.** Runs `oscap` against the DISA STIG profile. Writes an HTML report plus a DISA-STIG-Viewer-importable XML into `/var/log/stig-scan`.
 
+**Inventory report.** At the end of the build (both profiles) the `inventory_report` role writes `/opt/it/inventory-<host>.txt`: system/service tag, BIOS, DIMM + SSD models/serials, MAC addresses, GPU, and the LVM/LUKS layout, for cross-referencing with the imaging checklist. Re-run any time with `sudo it-inventory`; re-run after the post-build reboot for final FIPS + GPU state.
+
 ## One-time setup
 
 Edit **`group_vars/all.yml`**:

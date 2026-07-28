@@ -1,0 +1,41 @@
+---
+# =============================================================================
+# inventory_report -- install the `it-inventory` script and generate a
+# hardware/system report at {{ inventory_report_dir }}/inventory-<host>.txt.
+# Runs LAST (both profiles) so it captures the built state. Re-runnable any
+# time with `sudo it-inventory` (re-run after the post-build reboot for the
+# final FIPS + GPU state).
+# =============================================================================
+
+- name: "INVENTORY | Install the tools the report needs (serials/SMART/secure-boot)"
+  ansible.builtin.apt:
+    name: "{{ inventory_report_packages | default([]) }}"
+    state: present
+  when: (inventory_report_packages | default([])) | length > 0
+
+- name: "INVENTORY | Ensure the report dir exists ({{ inventory_report_dir }})"
+  ansible.builtin.file:
+    path: "{{ inventory_report_dir }}"
+    state: directory
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "2770"          # setgid: reports inherit the admin group + stay group-readable
+
+- name: "INVENTORY | Install the it-inventory script (/usr/local/sbin/it-inventory)"
+  ansible.builtin.copy:
+    src: it-inventory.sh
+    dest: /usr/local/sbin/it-inventory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: "INVENTORY | Generate the inventory report now"
+  ansible.builtin.command: "/usr/local/sbin/it-inventory {{ inventory_report_dir }}"
+  register: _inventory
+  changed_when: true
+
+- name: "INVENTORY | Report location"
+  ansible.builtin.debug:
+    msg: >-
+      {{ _inventory.stdout | default('Inventory written to ' ~ inventory_report_dir) }}.
+      Re-run after the reboot with `sudo it-inventory` for final FIPS/GPU state.
