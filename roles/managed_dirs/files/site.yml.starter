@@ -1,0 +1,36 @@
+# =============================================================================
+# Per-node overrides for ubuntu-stig-build  (this box only).
+#
+# This file is loaded automatically on every build/pull, and values here BEAT
+# group_vars/all.yml. A correctly-named box (dev-ai1 / dev-ai2) usually needs
+# nothing here -- uncomment only the exceptions THIS machine needs.
+#
+# Edit in place:   sudo nano /opt/it/site.yml
+# Full reference:  docs/site.yml.example in the repo.
+# (The legacy path /etc/stig-build/site.yml is still honoured if present.)
+# =============================================================================
+
+# ---- AI cross-node addressing --------------------------------------------
+# Containers can't resolve the peer's hostname, so use IPs. Set the OTHER node's
+# IP: on dev-ai1 set ai_system2_addr; on dev-ai2 set ai_system1_addr.
+# ai_system2_addr: "192.168.1.106"     # dev-ai2's IP (set this ON dev-ai1)
+# ai_system1_addr: "192.168.1.102"     # dev-ai1's IP (set this ON dev-ai2)
+
+# ---- Models + stack bring-up ---------------------------------------------
+# ai_model_fetch: true                 # download the models during the build
+# ai_compose_deploy: true              # start the containers during the build (after models staged)
+
+# ---- Host firewall: open the ports THIS node serves ----------------------
+# USG leaves ufw default-deny inbound. Open exactly what this box publishes;
+# restrict cross-node ports to the peer's IP with `from:`. See docs/site.yml.example.
+# ai_firewall_allow_ports:
+#   - { port: 3000, proto: tcp, rule: allow }                        # Open WebUI (dev-ai1)
+#   - { port: 8002, proto: tcp, rule: allow, from: "192.168.1.102" } # embeddings (dev-ai2 <- dev-ai1)
+
+# ---- Exceptions (rarely needed) ------------------------------------------
+# ai_node_role: system1                # only if the box ISN'T named dev-ai1/dev-ai2
+# ai_pgvector_password: "existing-db-password"   # only when reusing an initialised DB
+
+# ---- TPM auto-unlock -------------------------------------------------------
+# On by default, but needs the LUKS passphrase staged at /etc/luks/initial-passphrase
+# (root-only 0600) and Secure Boot ON. See docs/operate.md.

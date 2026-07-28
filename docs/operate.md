@@ -71,7 +71,7 @@ Self-hosted, on-prem AI chat. Users open a browser, chat with an LLM, and query 
    curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | PROFILE=ai bash
    ```
    Hardens the box, installs Docker + the GPU stack, drops the AI stack into **`/opt/it/docker`**. Auto-grows the disk and builds the helper images.
-3. **(Optional) per-machine settings** go in `/etc/stig-build/site.yml`. Exceptions only (different hostname, existing DB password, oikb secrets). A correctly-named box usually needs nothing.
+3. **(Optional) per-machine settings** go in `/opt/it/site.yml` (the build drops an editable template there; legacy `/etc/stig-build/site.yml` still works). Exceptions only (different hostname, existing DB password, oikb secrets). A correctly-named box usually needs nothing.
 4. **Download the model + start the stack.** Add to that machine's `site.yml`:
    ```yaml
    ai_model_fetch: true      # download the model (~200 GB, one time)
@@ -460,7 +460,7 @@ Ansible does **host prep only** on the ai profile; the AI containers are deploye
 
   `rule: limit` rate-limits a port; `from:` restricts it to a source CIDR (use it for the cross-node vLLM/Docling/pgvector ports so they aren't fleet-wide). SSH is always kept (rate-limited). The role also **enables ufw itself**, so an ai box is never left with an inactive firewall even if USG was skipped. Check: `sudo ufw status verbose`.
 
-  > **Per-node values without editing the public repo.** Every box pulls the same repo, so putting `ai_firewall_allow_ports` (and internal IPs) in `group_vars/all.yml` makes them global. For **per-node** settings, drop a root-only **`/etc/stig-build/site.yml`** on each box; the playbook auto-loads it and it **overrides** `group_vars`. That's where System 1's and System 2's different firewall rules (and NTP, the Docling peer IP, a Cockpit cert, …) live, out of git. See **[`site.yml.example`](site.yml.example)**. Override the path with `-e site_overrides_file=…`.
+  > **Per-node values without editing the public repo.** Every box pulls the same repo, so putting `ai_firewall_allow_ports` (and internal IPs) in `group_vars/all.yml` makes them global. For **per-node** settings, edit the **`/opt/it/site.yml`** the build drops on each box (legacy `/etc/stig-build/site.yml` still honoured); the playbook auto-loads it and it **overrides** `group_vars`. That's where System 1's and System 2's different firewall rules (and NTP, the Docling peer IP, a Cockpit cert, …) live, out of git. See **[`site.yml.example`](site.yml.example)**. Override the path with `-e site_overrides_file=…`.
 
 ### Baking in the AI stack (`ai_compose`)
 

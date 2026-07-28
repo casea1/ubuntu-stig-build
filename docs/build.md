@@ -401,11 +401,12 @@ sudo apt update && sudo apt full-upgrade -y && sudo reboot
 
 ### Step 2: Per-node config (site.yml, only if needed)
 
-A correctly-named box usually needs **nothing** here. Add `/etc/stig-build/site.yml` only for exceptions: IPs (if hostnames don't resolve between the boxes), an existing DB password, oikb secrets, model fetch/deploy.
+A correctly-named box usually needs **nothing** here. After the first build the tool drops a ready-to-edit template at **`/opt/it/site.yml`** (the admin folder); just uncomment what this box needs. Add settings only for exceptions: IPs (if hostnames don't resolve between the boxes), an existing DB password, oikb secrets, model fetch/deploy.
 
 ```bash
-sudo install -d -m 0755 /etc/stig-build
-sudo tee /etc/stig-build/site.yml >/dev/null <<'EOF'
+sudo nano /opt/it/site.yml           # edit the template the build placed here
+# or create it before the first build:
+sudo tee /opt/it/site.yml >/dev/null <<'EOF'
 # --- System 1 example ---
 ai_system2_addr: "192.168.1.106"     # if dev-ai2 doesn't resolve by name
 ai_pgvector_password: "gelab_24"     # ONLY if reusing an already-initialised DB
@@ -414,7 +415,7 @@ ai_compose_deploy: true              # start the stack during the build
 # firewall: open the ports this node serves (see docs/site.yml.example)
 EOF
 ```
-Full reference: [`site.yml.example`](site.yml.example). On **System 2**, set the cross-node firewall + oikb secrets there.
+Full reference: [`site.yml.example`](site.yml.example). On **System 2**, set the cross-node firewall + oikb secrets there. (The legacy path `/etc/stig-build/site.yml` still works if you already use it.)
 
 ### Step 3: Run the build
 

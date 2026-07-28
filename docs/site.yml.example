@@ -1,13 +1,14 @@
 # =============================================================================
 # EXAMPLE per-node / site override file.
 #
-# Copy this to  /etc/stig-build/site.yml  ON THE BOX (root-only), one per node,
-# with values for THAT machine. The playbook (local.yml) auto-loads it and its
-# values BEAT group_vars/all.yml -- so per-node settings and anything you don't
-# want in the public repo (internal IPs, certs) stay on the box, out of git.
+# The build drops a ready-to-edit starter at  /opt/it/site.yml  on each box;
+# just edit that. This file is the FULL reference of common overrides. The
+# playbook (local.yml) auto-loads /opt/it/site.yml (and the legacy
+# /etc/stig-build/site.yml if present); values here BEAT group_vars/all.yml, so
+# per-node settings and anything you don't want in the public repo (internal
+# IPs, certs) stay on the box, out of git.
 #
-#   sudo install -d -m 0755 /etc/stig-build
-#   sudo cp site.yml /etc/stig-build/site.yml && sudo chmod 0644 /etc/stig-build/site.yml
+#   sudo nano /opt/it/site.yml       # edit the starter the build placed
 #   # then re-run the pull (or bootstrap) and it takes effect.
 #
 # Override any group_vars/all.yml variable here. Common ones below.

@@ -104,7 +104,7 @@ Full role-by-role detail, the STIG-gap coverage table, and every documented devi
 
 Toggle everything from **[`group_vars/all.yml`](group_vars/all.yml)**: profile selection, editor choice, STIG tunables (lockout counts, timeouts, audit retention), DCSA banner text, USG options (`usg_profile`, `usg_fix_enabled`, `usg_enable_fips`), NTP servers (`usg_chrony_servers`), Cockpit, and AI-server settings (`nvidia_*`, `portainer_enabled`, `ai_firewall_allow_ports`).
 
-Per-node / per-site overrides (internal IPs, existing DB password, oikb secrets, firewall port openings) go in **`/etc/stig-build/site.yml`** on the box, see **[`docs/site.yml.example`](docs/site.yml.example)**. Package and VS Code extension lists live in `roles/dev_tools/defaults/main.yml`. Full config reference: **[Build Guide](docs/build.md)** and **[Operations & Reference](docs/operate.md)**.
+Per-node / per-site overrides (internal IPs, existing DB password, oikb secrets, firewall port openings) go in **`/opt/it/site.yml`** on the box (the build drops an editable template there; legacy `/etc/stig-build/site.yml` still works), see **[`docs/site.yml.example`](docs/site.yml.example)**. Package and VS Code extension lists live in `roles/dev_tools/defaults/main.yml`. Full config reference: **[Build Guide](docs/build.md)** and **[Operations & Reference](docs/operate.md)**.
 
 ## Repo layout
 

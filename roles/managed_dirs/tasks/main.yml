@@ -54,3 +54,16 @@
   loop: "{{ managed_dirs }}"
   loop_control:
     label: "{{ item }} -> default g:{{ ia_it_group }}:rwx"
+
+# Drop a ready-to-edit per-node override template where admins actually look
+# (/opt/it), so site.yml is easy to find. force:false = NEVER clobber a real one.
+# The playbook loads /opt/it/site.yml automatically (see local.yml pre_tasks).
+- name: "DIRS | Drop a starter site.yml override template in {{ it_dir | default('/opt/it') }}"
+  ansible.builtin.copy:
+    src: site.yml.starter
+    dest: "{{ it_dir | default('/opt/it') }}/site.yml"
+    owner: root
+    group: "{{ ia_it_group }}"
+    mode: "0660"
+    force: false
+  when: managed_dirs_site_template | default(true) | bool
