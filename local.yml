@@ -45,14 +45,24 @@
     # Dropped out-of-band per node; loaded here so it beats group_vars/all.yml.
     # Example (System 2): ai_firewall_allow_ports: [{port: 5001, proto: tcp, ...}]
     # -------------------------------------------------------------------------
-    - name: "Look for a local site-override file"
+    # Preferred location is /opt/it/site.yml (the admin folder, easy to find);
+    # /etc/stig-build/site.yml is the legacy path, still honoured. Both are loaded
+    # if present, later wins, so /opt/it beats /etc/stig-build. An explicit
+    # `-e site_overrides_file=...` still works and takes highest precedence.
+    - name: "Discover per-node site-override files"
       ansible.builtin.stat:
-        path: "{{ site_overrides_file | default('/etc/stig-build/site.yml') }}"
+        path: "{{ item }}"
+      loop: >-
+        {{ ['/etc/stig-build/site.yml', (it_dir | default('/opt/it')) ~ '/site.yml']
+           + ([site_overrides_file] if (site_overrides_file is defined) else []) }}
       register: _site_overrides
 
-    - name: "Load local site/per-node overrides (beats group_vars)"
-      ansible.builtin.include_vars: "{{ site_overrides_file | default('/etc/stig-build/site.yml') }}"
-      when: _site_overrides.stat.exists
+    - name: "Load per-node overrides (beats group_vars; later files win)"
+      ansible.builtin.include_vars: "{{ item.item }}"
+      loop: "{{ _site_overrides.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: item.stat.exists | default(false)
 
     - name: "Validate deployment_profile is development or ai"
       ansible.builtin.assert:
