@@ -8,7 +8,15 @@ vols=$(docker volume ls -q 2>/dev/null | grep -E 'vllm|granite|encodings')
 [ -z "$vols" ] && echo "  (none created yet)"
 for v in $vols; do
   mp=$(docker volume inspect -f '{{.Mountpoint}}' "$v" 2>/dev/null)
-  if [ -n "$mp" ] && test -f "$mp/config.json"; then st="POPULATED"; else st="EMPTY"; fi
+  st="EMPTY"
+  if [ -n "$mp" ]; then
+    if [ "$v" = "encodings" ]; then
+      # the encodings volume holds *.tiktoken files, not a config.json
+      ls "$mp"/*.tiktoken >/dev/null 2>&1 && st="POPULATED"
+    else
+      test -f "$mp/config.json" && st="POPULATED"
+    fi
+  fi
   printf '  %-30s %s\n' "$v" "$st"
 done
 
