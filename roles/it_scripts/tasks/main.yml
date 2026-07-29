@@ -26,6 +26,7 @@
     - status-docker.sh
     - status-models.sh
     - status-luks.sh
+    - luks-rebind.sh
 
 - name: "IT-SCRIPTS | Expose short it-* commands in /usr/local/sbin"
   ansible.builtin.file:
@@ -39,6 +40,7 @@
     - { link: it-docker, target: status-docker.sh }
     - { link: it-models, target: status-models.sh }
     - { link: it-luks,   target: status-luks.sh }
+    - { link: it-luks-rebind, target: luks-rebind.sh }
 
 - name: "IT-SCRIPTS | Where the scripts are"
   ansible.builtin.debug:

@@ -18,10 +18,11 @@ printf '  passphrase file  : '; [ -e /etc/luks/initial-passphrase ] && echo "PRE
 echo -n "  VERDICT          : "
 if [ -n "$bind" ] && [ "$init" = YES ] && echo "$sb" | grep -qi enabled; then
   echo "configured. Reboot to confirm it boots WITHOUT a passphrase prompt."
+  echo "                     (If it STILL prompts, the binding is stale for the current PCR 7 -> run it-luks-rebind.)"
 elif [ -n "$bind" ] && ! echo "$sb" | grep -qi enabled; then
-  echo "bound, but SECURE BOOT IS OFF -> PCR7 seal invalid. Enable Secure Boot, then re-bind."
+  echo "bound, but SECURE BOOT IS OFF -> PCR7 seal invalid. Enable Secure Boot, then run it-luks-rebind."
 elif [ -n "$bind" ] && [ "$init" != YES ]; then
   echo "bound, but clevis missing from THIS kernel's initramfs -> run: update-initramfs -u -k all ; reboot"
 else
-  echo "NOT set up (no TPM binding). Stage /etc/luks/initial-passphrase + run the build, or clevis luks bind."
+  echo "NOT set up (no TPM binding). Stage /etc/luks/initial-passphrase + run the build, or run it-luks-rebind."
 fi
