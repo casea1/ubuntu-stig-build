@@ -42,6 +42,8 @@ Full walkthrough: [build.md — Track B](build.md#track-b-ai-servers-two-node) a
 
 **Monitoring.** Grafana (`http://dev-ai2:3001`, first login `admin`/`admin`) ships a pre-provisioned **"Open WebUI (OTel)"** dashboard: request rate, latency percentiles, error rate, and logs, fed by the OTel export from System 1.
 
+**RAG / Documents config + IDE clients.** The Open WebUI Documents panel (Docling extraction, Granite embeddings, hybrid search, chunk 2048/200) is seeded from env vars in System 1's compose — with the caveat that they're `PersistentConfig` (env seeds a fresh DB only; change in the UI on an existing box). Pointing the Continue VS Code extension at the stack (via Open WebUI's API or direct to vLLM) is a client-side setup. Both are documented in [operate.md — Open WebUI RAG defaults](operate.md#open-webui-rag--documents-defaults-and-the-persistentconfig-caveat) and [Connecting an IDE (Continue)](operate.md#connecting-an-ide-continue-vs-code----client-side).
+
 ## Software list
 
 Software inventory for the two-node AI platform (IA / DCSA reference). Versions are pinned in the build (`group_vars/all.yml`, the compose files, the image Dockerfiles). Nodes: **S1** = System 1 (`dev-ai1`), **S2** = System 2 (`dev-ai2`).
