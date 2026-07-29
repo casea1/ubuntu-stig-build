@@ -1,0 +1,47 @@
+---
+# =============================================================================
+# it_scripts -- admin status/health scripts in /opt/it/scripts, plus short
+# `it-*` commands in /usr/local/sbin. Each script self-elevates with sudo, so
+# an admin can just run e.g. `it-status`. Runs on both profiles.
+# =============================================================================
+
+- name: "IT-SCRIPTS | Ensure the scripts dir exists ({{ it_scripts_dir }})"
+  ansible.builtin.file:
+    path: "{{ it_scripts_dir }}"
+    state: directory
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "2750"
+
+- name: "IT-SCRIPTS | Install the status scripts"
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ it_scripts_dir }}/{{ item }}"
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "0750"
+  loop:
+    - status.sh
+    - status-host.sh
+    - status-docker.sh
+    - status-models.sh
+    - status-luks.sh
+
+- name: "IT-SCRIPTS | Expose short it-* commands in /usr/local/sbin"
+  ansible.builtin.file:
+    src: "{{ it_scripts_dir }}/{{ item.target }}"
+    dest: "/usr/local/sbin/{{ item.link }}"
+    state: link
+    force: true
+  loop:
+    - { link: it-status, target: status.sh }
+    - { link: it-host,   target: status-host.sh }
+    - { link: it-docker, target: status-docker.sh }
+    - { link: it-models, target: status-models.sh }
+    - { link: it-luks,   target: status-luks.sh }
+
+- name: "IT-SCRIPTS | Where the scripts are"
+  ansible.builtin.debug:
+    msg: >-
+      Status scripts in {{ it_scripts_dir }}. Run `it-status` (all),
+      or it-host / it-docker / it-models / it-luks. They self-elevate with sudo.
