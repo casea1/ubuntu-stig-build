@@ -20,6 +20,17 @@
 # ai_model_fetch: true                 # download the models during the build
 # ai_compose_deploy: true              # start the containers during the build (after models staged)
 
+# ---- oikb: sync external sources into Open WebUI knowledge bases (dev-ai2) --
+# OPTIONAL. oikb only starts once an API key is set below; leave these commented
+# and oikb stays down (no crash-loop). No GitLab server? Just leave it off --
+# Open WebUI works fully without it (upload docs / build KBs by hand in the UI).
+# 1) In Open WebUI (dev-ai1): Settings -> Account -> API Keys -> create (sk-...).
+# 2) Uncomment + fill the key. Add GitLab only if you actually have a GitLab source.
+# 3) sudo ansible-pull ... --tags ai_compose ; then: cd /opt/it/docker && sudo docker compose up -d
+# ai_oikb_openwebui_api_key: "sk-..."              # from Open WebUI (required to run oikb)
+# ai_oikb_gitlab_url: "https://gitlab.example.com" # omit if you have no GitLab
+# ai_oikb_gitlab_token: "glpat-..."                # read_api + read_repository scope
+
 # ---- Host firewall: open the ports THIS node serves ----------------------
 # USG leaves ufw default-deny inbound. Open exactly what this box publishes;
 # restrict cross-node ports to the peer's IP with `from:`. See docs/site.yml.example.

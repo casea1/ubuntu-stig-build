@@ -1,0 +1,14 @@
+# Grafana dashboard provisioning for the otel-lgtm image (System 2).
+# Mounted at /otel-lgtm/grafana/conf/provisioning/dashboards/custom.yaml; loads
+# every *.json under .../dashboards/custom/ at startup. See docs/operate.md.
+apiVersion: 1
+
+providers:
+  - name: "ubuntu-stig-build"
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    updateIntervalSeconds: 30
+    options:
+      path: /otel-lgtm/grafana/conf/provisioning/dashboards/custom
+      foldersFromFilesStructure: false

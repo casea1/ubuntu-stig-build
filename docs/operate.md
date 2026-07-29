@@ -92,6 +92,14 @@ Self-hosted, on-prem AI chat. Users open a browser, chat with an LLM, and query 
 ### Handy commands (run on the machine)
 
 ```bash
+# Admin status/health scripts (self-elevate with sudo; in /opt/it/scripts):
+it-status                              # everything at a glance (host/docker/models/luks)
+it-docker                              # container health
+it-models                             # model volumes + service endpoints
+it-restart                             # restart ALL AI-stack containers (docker compose restart)
+it-restart --up                        #   ...as `up -d` instead, to apply .env / compose edits
+it-restart oikb                        #   ...restart just one service
+
 cd /opt/it/docker
 sudo docker compose ps                 # what's running / healthy
 sudo docker compose up -d              # start everything
@@ -100,6 +108,8 @@ sudo docker logs -f vllm-server        # watch the model start up
 # download an extra model on demand:
 sudo docker compose run --rm hfcli hf download <repo> --local-dir /llm/<name>
 ```
+
+**Grafana dashboard.** A pre-provisioned **"Open WebUI (OTel)"** dashboard ships in the LGTM stack (request rate by route/status, latency p50/p95/p99, 5xx errors, and the Open WebUI log stream). Open `http://dev-ai2:3001` (first login `admin`/`admin`, then set a password) → **Dashboards → Open WebUI (OTel)**. Panels fill in once Open WebUI serves traffic; if a panel is empty, generate a chat message and wait ~15 s (metric export interval).
 
 ### If something's wrong (things we've already handled in the tool)
 
@@ -492,10 +502,11 @@ So the imaging workflow is just: **name the box `dev-ai1`/`dev-ai2` → run the 
 ai_node_role: system1                 # or system2
 # Only for an ALREADY-INITIALISED DB (pin its existing password so WebUI still logs in):
 ai_pgvector_password: "‹existing db password›"
-# oikb data-source secrets (empty = oikb idle):
+# oikb data-source secrets (OPT-IN: setting the API key flips COMPOSE_PROFILES=oikb
+# in .env so oikb starts; leave it unset and oikb never runs -- no GitLab needed):
 ai_oikb_openwebui_api_key: "‹Open WebUI API key›"
-ai_oikb_gitlab_url: "https://gitlab.yourlab"
-ai_oikb_gitlab_token: "‹GitLab PAT›"
+ai_oikb_gitlab_url: "https://gitlab.yourlab"    # only if you have a GitLab source
+ai_oikb_gitlab_token: "‹GitLab PAT›"            # read_api + read_repository
 # Opt in to the heavy steps when ready:
 ai_model_fetch: true                  # download gpt-oss into its volume
 ai_compose_deploy: true               # start the stack (after the model is staged)

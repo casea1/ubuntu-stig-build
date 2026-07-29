@@ -115,13 +115,22 @@ services:
       - "4318:4318"        # OTLP HTTP
     volumes:
       - lgtm-data:/data
+      # Pre-provisioned Open WebUI dashboard (auto-loaded at startup; edits in the
+      # UI persist to lgtm-data). Placed by ansible (ai_compose) on System 2.
+      - ./grafana/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/ubuntu-stig-build.yaml:ro
+      - ./grafana/openwebui-dashboard.json:/otel-lgtm/grafana/conf/provisioning/dashboards/custom/openwebui-dashboard.json:ro
     networks: [oi]
     restart: unless-stopped
 
   # ---- Knowledge-base sync: oikb -> System 1's Open WebUI API ----
+  # OPT-IN: oikb only starts when the `oikb` compose profile is active. The .env
+  # sets COMPOSE_PROFILES=oikb automatically when an Open WebUI API key is present
+  # (ai_oikb_openwebui_api_key in site.yml); with no key/no source it stays down
+  # instead of crash-looping. Force it on ad hoc with:  docker compose --profile oikb up -d
   oikb:
     image: oikb:latest          # built on the box by ansible (ai_compose)
     container_name: oikb
+    profiles: ["oikb"]
     working_dir: /app
     ports:
       - "8081:8080"
