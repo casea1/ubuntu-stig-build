@@ -11,6 +11,10 @@
 # Placed by ansible (ai_compose) in the compose dir; run from anywhere.
 # =============================================================================
 set -euo pipefail
+# Self-elevate: every action here (and `status`, which reads `docker compose ps`)
+# needs Docker access. Without this, a non-root run silently sees no containers
+# and `status` misreports "none" even while a model is serving.
+[ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 cd "$(dirname "$(readlink -f "$0")")"
 
 usage() { echo "usage: $(basename "$0") gpt-oss|granite|status"; exit 2; }

@@ -172,6 +172,29 @@ services:
       RAG_EMBEDDING_MODEL: "granite-embedding-small-english-r2"
       RAG_OPENAI_API_BASE_URL: "http://${SYSTEM2_ADDR:?set in .env}:8002/v1"
       RAG_OPENAI_API_KEY: "sk-noauth"
+      RAG_EMBEDDING_BATCH_SIZE: "15"
+      # ---- RAG retrieval / chunking (the Admin -> Settings -> Documents panel) ----
+      # NOTE: these are Open WebUI *PersistentConfig* -- the env seeds them on a
+      # FRESH database (first boot) only. On a box whose DB already exists, the
+      # stored value wins and these are ignored; change them in the UI instead.
+      # See docs/operate.md (AI stack -> Open WebUI RAG defaults).
+      ENABLE_RAG_HYBRID_SEARCH: "true"
+      RAG_HYBRID_BM25_WEIGHT: "0.5"
+      RAG_TOP_K: "3"
+      RAG_TOP_K_RERANKER: "3"
+      RAG_RELEVANCE_THRESHOLD: "0.0"
+      CHUNK_SIZE: "2048"
+      CHUNK_OVERLAP: "200"
+      # Optional external reranker (off by default). A cross-encoder reranker is
+      # NOT the embedding model; only enable this if System 2 serves a real rerank
+      # endpoint, then point these at it:
+      # RAG_RERANKING_ENGINE: "external"
+      # RAG_RERANKING_MODEL: "<reranker-served-name>"
+      # RAG_EXTERNAL_RERANKER_URL: "http://${SYSTEM2_ADDR}:8002/v1"
+      # RAG_EXTERNAL_RERANKER_API_KEY: "sk-noauth"
+      # Optional: knowledge-base code execution. Runs code from KB content, so it's
+      # left OFF on a hardened box by default -- enable deliberately if you need it:
+      # ENABLE_KB_EXEC: "true"
       # ---- Document extraction: Docling on System 2 (switch to Tika by setting
       # CONTENT_EXTRACTION_ENGINE=tika + TIKA_SERVER_URL=http://${SYSTEM2_ADDR}:9998) ----
       CONTENT_EXTRACTION_ENGINE: "docling"

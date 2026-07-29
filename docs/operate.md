@@ -514,6 +514,51 @@ ai_compose_deploy: true               # start the stack (after the model is stag
 
 Also open **System 2's** cross-node ports **to System 1 only** (`ai_firewall_allow_ports` in `site.yml`): `8002` (embed), `8003` (vision), `5001` (Docling), `9998` (Tika), `4317`/`4318` (OTel), each `from: "‹System 1 IP›"`. Also restrict `3001` (Grafana) + `8081` (oikb), also on System 2, to an admin CIDR. System 1 opens `3000` (Open WebUI, to users + oikb from System 2).
 
+### Open WebUI RAG / Documents defaults (and the PersistentConfig caveat)
+
+Open WebUI's **Admin -> Settings -> Documents** panel (extraction engine, embeddings, chunking, hybrid search, top-k) is seeded from env vars baked into System 1's compose, so a freshly imaged box comes up with the right RAG config instead of the upstream defaults:
+
+| Setting | Baked value | Env var |
+|---|---|---|
+| Extraction engine | Docling (`:5001` on System 2) | `CONTENT_EXTRACTION_ENGINE`, `DOCLING_SERVER_URL` |
+| Embedding engine / model | OpenAI-compat -> Granite embed (`:8002`) | `RAG_EMBEDDING_ENGINE`, `RAG_EMBEDDING_MODEL`, `RAG_OPENAI_API_BASE_URL` |
+| Embedding batch size | 15 | `RAG_EMBEDDING_BATCH_SIZE` |
+| Hybrid search + BM25 weight | on, 0.5 | `ENABLE_RAG_HYBRID_SEARCH`, `RAG_HYBRID_BM25_WEIGHT` |
+| Top K / Top K reranker | 3 / 3 | `RAG_TOP_K`, `RAG_TOP_K_RERANKER` |
+| Chunk size / overlap | 2048 / 200 | `CHUNK_SIZE`, `CHUNK_OVERLAP` |
+| CORS origin | `${OI_ORIGIN}` (set `ai_webui_cors_origin` in `site.yml`) | `CORS_ALLOW_ORIGIN` |
+
+> **Critical caveat -- these are Open WebUI `PersistentConfig`.** The env var seeds the value into the database **only on first boot (empty DB)**. On a box whose Open WebUI DB already exists, the **stored value wins** and editing the env has no effect -- change it in the UI (Admin -> Settings -> Documents) instead. So: for a **new image** the compose values apply automatically; for an **already-running box** set them in the UI (or reset that config row). The Redis / websocket / `UVICORN_WORKERS` / `CORS_ALLOW_ORIGIN` env vars are *not* PersistentConfig and always apply at start.
+
+Two settings are intentionally left **off** in the baseline and opt-in only: an **external reranker** (a cross-encoder reranker is not the embedding model -- only enable if System 2 actually serves a rerank endpoint) and **`ENABLE_KB_EXEC`** (runs code from knowledge-base content -- a deliberate risk decision on a hardened box). Both are present as commented lines in `system1-compose.yaml`.
+
+### Connecting an IDE (Continue, VS Code) -- client-side
+
+The [Continue](https://continue.dev) VS Code/JetBrains extension is a **developer-laptop** client, not part of the server build, but two ways to point it at this stack are worth recording. Put this in the developer's `~/.continue/config.yaml` (replace the IP with **dev-ai1's real address**; the model name must match the vLLM `--served-model-name`, i.e. `gpt-oss-120b`):
+
+```yaml
+models:
+  # Option A -- through Open WebUI (audited, same routing/logging as the chat UI):
+  - name: gpt-oss-120b (via Open WebUI)
+    provider: openai
+    model: gpt-oss-120b
+    apiBase: http://<dev-ai1-ip>:3000/api      # Open WebUI OpenAI-compatible API
+    apiKey: sk-...                              # create in Open WebUI: Settings -> Account -> API Keys
+    roles: [chat, edit, apply]
+  # Option B -- straight to vLLM (lower overhead, bypasses Open WebUI + its audit log):
+  - name: gpt-oss-120b (direct vLLM)
+    provider: openai
+    model: gpt-oss-120b
+    apiBase: http://<dev-ai1-ip>:8000/v1
+    apiKey: sk-noauth
+    roles: [chat, edit, apply]
+    defaultCompletionOptions: { temperature: 0.0, maxTokens: 8192, contextLength: 65000 }
+```
+
+- **Prefer Option A** where the user activity should hit the Open WebUI audit trail (AU controls). Option B is a direct fast path.
+- **Firewall:** Option A needs `3000` reachable from the developer subnet (already the users' port). Option B needs `8000` opened to that subnet in `ai_firewall_allow_ports` -- by default `8000` is not published to clients, only used locally by Open WebUI. Open it deliberately if you want direct IDE access.
+- The IPs in a handed-over sample config are whatever that author's network used; always substitute this box's real address.
+
 ### Switching System 1's chat model (gpt-oss ↔ Granite-4.1-30B)
 
 System 1's two 48 GB (RTX 6000 Ada) GPUs can't hold **gpt-oss-120B** and **Granite-4.1-30B** at once, so they're **alternates, one at a time.**
