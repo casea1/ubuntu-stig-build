@@ -75,6 +75,18 @@
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "0644"
 
+- name: "AI-COMPOSE | Place the pre-provisioned Grafana dashboards (System 2)"
+  # LGTM bind-mounts ./grafana/*; the files must exist before `up`. Auto-loaded
+  # by Grafana at startup (Open WebUI OTel dashboard). System 2 only (LGTM lives there).
+  ansible.builtin.copy:
+    src: "grafana/"
+    dest: "{{ ai_compose_dir }}/grafana/"
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "0644"
+    directory_mode: "0750"
+  when: ai_node_role == 'system2'
+
 - name: "AI-COMPOSE | Place the chat-model switch script (System 1)"
   # System 1 alternates gpt-oss-120b <-> Granite-4.1-30b (only one fits in VRAM).
   ansible.builtin.copy:
@@ -207,11 +219,13 @@
       -v {{ ai_compose_dir }}/fips_off:/proc/sys/crypto/fips_enabled:ro
       --entrypoint python3
       {{ ai_vllm_image }}
-      -c "import urllib.request, os;
-          base='{{ ai_encodings_base_url }}';
-          todo=[f for f in {{ ai_encodings_files }} if not os.path.exists('/etc/encodings/'+f)];
-          [urllib.request.urlretrieve(base+'/'+f, '/etc/encodings/'+f) for f in todo];
-          print('FETCHED' if todo else 'SKIP')"
+      -c "{{ _enc_py }}"
+  vars:
+    # One physical line: the YAML folded scalar (>-) turns newlines into spaces,
+    # so any indented continuation would reach python3 as an indented line and
+    # raise IndentationError. Keep this a single statement joined by ';'.
+    _enc_py: >-
+      import urllib.request, os; base='{{ ai_encodings_base_url }}'; todo=[f for f in {{ ai_encodings_files }} if not os.path.exists('/etc/encodings/'+f)]; [urllib.request.urlretrieve(base+'/'+f, '/etc/encodings/'+f) for f in todo]; print('FETCHED' if todo else 'SKIP')
   register: _enc_fetch
   changed_when: "'FETCHED' in (_enc_fetch.stdout | default(''))"
   when:

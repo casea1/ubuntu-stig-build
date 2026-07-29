@@ -11,7 +11,6 @@ if [ -f "$DIR/docker-compose.yaml" ]; then
          | grep -iE 'restart|unhealthy|exited' )
   if [ -n "$bad" ]; then
     echo "  ATTENTION (not healthy):"; echo "$bad" | sed 's/^/    /'
-    echo "  (oikb restarting is expected until its API key is set.)"
   else
     echo "  All containers up/healthy."
   fi

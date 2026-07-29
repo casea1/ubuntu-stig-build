@@ -30,6 +30,18 @@ The hostname sets the role (`dev-ai1` -> system1, `dev-ai2` -> system2). Full ar
 
 Firewall openings for these ports go in `site.yml` per node. See [`site.yml.example`](site.yml.example).
 
+## How the two nodes talk (interconnect)
+
+Containers don't resolve the peer's hostname, so cross-node addressing goes through `site.yml` IPs + the rendered root-only `.env`:
+
+- **System 1 → System 2:** Open WebUI reaches embeddings (`:8002`), vision (`:8003`), Docling (`:5001`), and ships OTel telemetry to LGTM (`:4317`) at **`ai_system2_addr`**. Set it to dev-ai2's IP in `site.yml` if the name doesn't resolve; the build then maps the name in both the host `/etc/hosts` and the containers' `extra_hosts` automatically.
+- **System 2 → System 1:** oikb reaches Open WebUI's API (`:3000`) at **`ai_system1_addr`**, authenticating with **`ai_oikb_openwebui_api_key`** (an API key you create in the Open WebUI UI). oikb is **opt-in** — it only starts when that key is set (see [build.md Step 6](build.md#step-6-optional-oikb-knowledge-sync)); no GitLab is required.
+- **Secrets** (`ai_oikb_openwebui_api_key`, GitLab token, DB password) live only in the on-box root-only `site.yml`/`.env`, never in git.
+
+Full walkthrough: [build.md — Track B](build.md#track-b-ai-servers-two-node) and [operate.md — Cross-node wiring](operate.md). Per-node reference: [`site.yml.example`](site.yml.example).
+
+**Monitoring.** Grafana (`http://dev-ai2:3001`, first login `admin`/`admin`) ships a pre-provisioned **"Open WebUI (OTel)"** dashboard: request rate, latency percentiles, error rate, and logs, fed by the OTel export from System 1.
+
 ## Software list
 
 Software inventory for the two-node AI platform (IA / DCSA reference). Versions are pinned in the build (`group_vars/all.yml`, the compose files, the image Dockerfiles). Nodes: **S1** = System 1 (`dev-ai1`), **S2** = System 2 (`dev-ai2`).

@@ -438,14 +438,23 @@ gpt-oss-120B is ~200 GB; the first fetch is long. System 2's embedding/vision mo
 
 ### Step 5: Connect & verify
 
-- **System 2 first** (System 1 depends on it): `docker compose ps`, embed/vision/docling/tika/lgtm/oikb healthy.
+- **System 2 first** (System 1 depends on it): `docker compose ps`, embed/vision/docling/tika/lgtm healthy (oikb only if you enabled it, see Step 6).
 - **System 1:** `docker compose ps`, vllm/open-webui/redis/pgvector healthy; `curl -s http://localhost:8000/v1/models` lists the chat model.
 - **Browse:** Open WebUI at `http://dev-ai1:3000`. Create the first (admin) account. The chat model appears in the dropdown; embeddings/vision/Docling are wired to System 2 via env (or set them in **Admin → Settings → Connections/Documents** if you blanked the env).
-- **Monitoring:** Grafana at `http://dev-ai2:3001` (admins).
+- **Monitoring:** Grafana at `http://dev-ai2:3001` (admins; first login `admin`/`admin`, set a new password). A pre-provisioned **"Open WebUI (OTel)"** dashboard (request rate, latency p50/p95/p99, errors, logs) is under Dashboards; it fills in once Open WebUI has served some traffic.
 
 ### Step 6: Optional oikb knowledge sync
 
-oikb (System 2) syncs data sources into Open WebUI knowledge bases. To enable: create an **API key** in Open WebUI (Settings → Account), put it + your GitLab URL/token in System 2's `site.yml` (`ai_oikb_openwebui_api_key`, `ai_oikb_gitlab_url`, `ai_oikb_gitlab_token`), edit `/opt/it/docker/.oikb.yaml` to map sources → KBs, re-run the build (or `docker compose up -d`), then `docker compose restart oikb`.
+oikb (System 2) syncs external data sources into Open WebUI knowledge bases. **It is opt-in and off by default** — it sits behind the `oikb` compose profile and only starts once you set an Open WebUI API key, so a box with no source never runs (or crash-loops) it. **No GitLab? Skip it entirely** — Open WebUI works fully without oikb (upload docs / build KBs by hand in the UI).
+
+To enable: create an **API key** in Open WebUI (Settings → Account → API Keys), put it in System 2's `site.yml` as `ai_oikb_openwebui_api_key` (the starter template has this commented out). Add `ai_oikb_gitlab_url` + `ai_oikb_gitlab_token` **only if** you actually have a GitLab source. Then re-render + start:
+
+```bash
+sudo ansible-pull ... --tags ai_compose      # writes COMPOSE_PROFILES=oikb into .env
+cd /opt/it/docker && sudo docker compose up -d
+```
+
+Finally edit `/opt/it/docker/.oikb.yaml` to map sources → KBs and `docker compose restart oikb`. To start it ad hoc without the key in `.env`: `docker compose --profile oikb up -d`.
 
 ### Switching the System 1 chat model
 
