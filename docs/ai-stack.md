@@ -98,12 +98,11 @@ Software inventory for the two-node AI platform (IA / DCSA reference). Versions 
 | Software/Tool | Version | Publisher | Purpose |
 |---|---|---|---|
 | gpt-oss-120b | repo main | OpenAI | Primary text generation (S1) |
-| granite-4.1-30b | repo main | IBM | Secondary text generation, 96 GB GPUs (S1) |
-| granite-4.1-8b | repo main | IBM | Secondary text generation, 48 GB GPUs (S1) |
+| granite-4.1-30b | repo main | IBM | Secondary text generation, switchable alternate (S1) |
 | granite-embedding-small-english-r2 | repo main | IBM | Text embeddings / RAG (S2) |
 | granite-vision-4.1-4b | repo main | IBM | Vision / document understanding (S2) |
 
-> **System 1 companion model depends on GPU VRAM:** 48 GB cards run gpt-oss-120b + Granite-4.1-**8b**; 96 GB cards run Granite-4.1-**30b**. Check `nvidia-smi --query-gpu=name,memory.total --format=csv` and keep the one that fits.
+> **System 1 chat models are alternates, one at a time:** gpt-oss-120B (default) or Granite-4.1-30B, served across System 1's two 48 GB GPUs (tensor-parallel). Switch with `switch-model.sh`. See [operate.md](operate.md#switching-system-1s-chat-model-gpt-oss--granite-41-30b).
 
 ### Tiktoken encodings (gpt-oss harmony tokenizer)
 

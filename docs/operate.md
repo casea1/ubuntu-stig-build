@@ -483,12 +483,14 @@ Ansible does **host prep only** on the ai profile; the AI containers are deploye
 
   ```yaml
   ai_firewall_allow_ports:
-    - { port: 80,  proto: tcp, rule: allow }                        # Open WebUI (users)
-    - { port: 443, proto: tcp, rule: allow }
+    - { port: 443, proto: tcp, rule: allow }                        # reverse proxy (TLS) -> Open WebUI :3000
+    - { port: 80,  proto: tcp, rule: allow }                        # reverse proxy (HTTP redirect to 443)
     - { port: 8002, proto: tcp, rule: allow, from: "10.0.0.10/32" } # System 2 vLLM embeddings, from System 1 only
     - { port: 8003, proto: tcp, rule: allow, from: "10.0.0.10/32" } # System 2 vLLM vision, from System 1 only
     - { port: 5001, proto: tcp, rule: allow, from: "10.0.0.10/32" } # System 2 Docling, from System 1 only
   ```
+
+  > **Open WebUI listens on `3000`, not 80/443.** The default opens 80/443 because Open WebUI is meant to be fronted by a **reverse proxy** (TLS termination, e.g. `https://oi.atolab.cui`) that maps 80/443 -> the container's `3000`; the stack does **not** ship that proxy, so stand one up (nginx/Caddy/Cockpit) or you'll have an open 80/443 with nothing behind it. **Exposing Open WebUI directly instead?** Drop 80/443 and open **`3000`** here.
 
   `rule: limit` rate-limits a port; `from:` restricts it to a source CIDR (use it for the cross-node vLLM/Docling/pgvector ports so they aren't fleet-wide). SSH is always kept (rate-limited). The role also **enables ufw itself**, so an ai box is never left with an inactive firewall even if USG was skipped. Check: `sudo ufw status verbose`.
 
