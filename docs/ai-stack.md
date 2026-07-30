@@ -42,6 +42,8 @@ Full walkthrough: [build.md — Track B](build.md#track-b-ai-servers-two-node) a
 
 **Monitoring.** Grafana (`http://dev-ai2:3001`, first login `admin`/`admin`) ships a pre-provisioned **"Open WebUI (OTel)"** dashboard: request rate, latency percentiles, error rate, and logs, fed by the OTel export from System 1.
 
+**Admin scripts.** Short `it-*` commands (self-elevating) cover day-to-day ops: `it-status` (rollup), `it-docker`, `it-models`, `it-luks` / `it-luks-rebind`, `it-restart`, `it-set-ip` (renumber out of the lab), `it-inventory`. Full table: [operate.md — Admin scripts](operate.md#admin-scripts-it-).
+
 **RAG / Documents config + IDE clients.** The Open WebUI Documents panel (Docling extraction, Granite embeddings, hybrid search, chunk 2048/200) is seeded from env vars in System 1's compose — with the caveat that they're `PersistentConfig` (env seeds a fresh DB only; change in the UI on an existing box). Pointing the Continue VS Code extension at the stack (via Open WebUI's API or direct to vLLM) is a client-side setup. Both are documented in [operate.md — Open WebUI RAG defaults](operate.md#open-webui-rag--documents-defaults-and-the-persistentconfig-caveat) and [Connecting an IDE (Continue)](operate.md#connecting-an-ide-continue-vs-code----client-side).
 
 ## Software list
@@ -78,7 +80,7 @@ Software inventory for the two-node AI platform (IA / DCSA reference). Versions 
 | vllm/vllm-openai | v0.22.1-cu129-ubuntu2404 | vLLM project | LLM inference server (S1, S2) |
 | open-webui | v0.10.2 | Open WebUI | Chat web UI (S1) |
 | pgvector/pgvector | pg16-trixie | pgvector project | Database + vector store (S1) |
-| redis | 7.2.14-bookworm | Redis | Sessions / websockets (S1) |
+| redis | 7.2.14-bookworm | Redis | Websocket coordination + cache across the uvicorn workers (S1) |
 | apache/tika | 3.3.1.0 | Apache Software Foundation | Document text/metadata extraction (S2) |
 | docling-serve | v1.24.0 (cu128) | IBM / Docling project | Document structure/OCR extraction (S2) |
 | grafana/otel-lgtm | 0.29.0 | Grafana Labs | Monitoring / telemetry (S2) |

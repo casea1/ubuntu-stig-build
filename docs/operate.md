@@ -37,8 +37,8 @@ Self-hosted, on-prem AI chat. Users open a browser, chat with an LLM, and query 
                        ▼
    ┌──────────── SYSTEM 1 · dev-ai1 ────────────┐
    │  Open WebUI  ──►  vLLM (the chat model)     │
-   │      ├─► Postgres (chats + search)          │
-   │      └─► Redis    (logins/live updates)     │
+   │      ├─► Postgres (accounts/chats/search)   │
+   │      └─► Redis    (live updates + cache)     │
    └───────────────────┬─────────────────────────┘
                        │  uses System 2 for embeddings,
                        ▼  vision, document reading, monitoring
@@ -54,8 +54,8 @@ Self-hosted, on-prem AI chat. Users open a browser, chat with an LLM, and query 
 |-------|-------|-------------------|
 | **vLLM** | 1 | Runs the chat model (gpt-oss-120B or Granite, switchable). |
 | **Open WebUI** | 1 | The chat website. |
-| **Postgres (pgvector)** | 1 | Chats + searchable document index. |
-| **Redis** | 1 | Logins and live updates. |
+| **Postgres (pgvector)** | 1 | The database: user accounts/logins, chats, settings, and the searchable document-vector index. |
+| **Redis** | 1 | Real-time updates (websockets) and shared cache across the 9 workers. Not logins. |
 | **Embedding + vision models** | 2 | Documents to searchable vectors; read images/PDFs. |
 | **Docling** | 2 | Text/table extraction from PDFs and Office files. |
 | **Tika** | 2 | Text extraction from other file types. |
@@ -113,6 +113,22 @@ sudo docker compose run --rm hfcli hf download <repo> --local-dir /llm/<name>
 ```
 
 **Grafana dashboard.** A pre-provisioned **"Open WebUI (OTel)"** dashboard ships in the LGTM stack (request rate by route/status, latency p50/p95/p99, 5xx errors, and the Open WebUI log stream). Open `http://dev-ai2:3001` (first login `admin`/`admin`, then set a password) → **Dashboards → Open WebUI (OTel)**. Panels fill in once Open WebUI serves traffic; if a panel is empty, generate a chat message and wait ~15 s (metric export interval).
+
+### Admin scripts (`it-*`)
+
+The `it_scripts` + `inventory_report` roles install short admin commands into `/usr/local/sbin` (both profiles); the `it_scripts` ones live in `/opt/it/scripts` and are symlinked, while `it-inventory` is installed directly. Each **self-elevates with `sudo`**, so you can run them as a normal admin. Run `it-status` for the at-a-glance rollup; the rest are focused.
+
+| Command | Script | What it does |
+|---|---|---|
+| `it-status` | `status.sh` | Runs all the checks below in one rollup (host, docker, models, LUKS). |
+| `it-host` | `status-host.sh` | Host state: hostname, FIPS, Secure Boot, kernel, uptime, disk. |
+| `it-docker` | `status-docker.sh` | `docker compose ps` for the AI stack + flags any container not up/healthy. |
+| `it-models` | `status-models.sh` | Model volumes (populated?) + probes the local vLLM/Docling/Tika endpoints. |
+| `it-luks` | `status-luks.sh` | LUKS/TPM auto-unlock status (binding, clevis-in-initramfs, Secure Boot) with a verdict. |
+| `it-luks-rebind` | `luks-rebind.sh` | Re-seals the TPM2 keyslot to the **current** PCR 7 when the box prompts for the passphrase despite a stale binding. Binds a fresh slot before removing the old one (no lockout). |
+| `it-restart` | `restart-docker.sh` | Restart the AI-stack containers. `--up` uses `docker compose up -d` (apply `.env`/compose edits); a service name limits it to one. |
+| `it-set-ip` | `set-ip.sh` | Renumber the node when it leaves the lab: repoints the peer/cross-node IP (`site.yml` + `.env` + `/etc/hosts` + ufw + recreates containers) and/or this box's own static IP via netplan. Interactive or `--peer` / `--self`. |
+| `it-inventory` | `it-inventory.sh` | Writes `/opt/it/inventory-<host>.txt`: service tag, BIOS, DIMM/SSD serials, MACs, GPU, LVM/LUKS layout. |
 
 ### If something's wrong (things we've already handled in the tool)
 
@@ -490,7 +506,7 @@ The two-node stack is baked into the image so a fielded box comes up with its co
 
 Notes:
 - **Cross-node wiring.** System 1's Open WebUI reaches System 2 by **`ai_system2_addr`** (default the hostname `dev-ai2`): chat vision (:8003) as a second OpenAI endpoint, RAG embeddings (:8002), Docling extraction (:5001), and OTel → LGTM (:4317). System 2's **oikb** reaches System 1's Open WebUI (:3000) by **`ai_system1_addr`**. Set IPs in `site.yml` if the hostnames don't resolve across the boxes, and open the cross-node ports restricted to the peer (see `site.yml.example`). **Renumbering (e.g. deploying out of the lab)?** Run **`sudo it-set-ip`** on each box: it repoints the peer IP in `site.yml` + the live `.env` (`SYSTEM2_ADDR` / `OPEN_WEBUI_URL` + the container `extra_hosts`), fixes `/etc/hosts` and the ufw `from:` rules, recreates the containers, and can also set this box's own static IP via netplan. It edits files directly (works offline) and updates `site.yml` so a later online pull stays consistent. Change one box's own IP -> run `it-set-ip --peer <that new IP>` on the other.
-- **Open WebUI** runs as the engineer tuned it (Redis sessions/websockets, connection pool, 9 uvicorn workers). The model / embedding / Docling / vision **connections are wired via env** to System 2 (override/blank in `site.yml` to configure them in the admin UI instead). Extraction defaults to Docling; set `CONTENT_EXTRACTION_ENGINE=tika` + `TIKA_SERVER_URL` to use Tika.
+- **Open WebUI** runs as the engineer tuned it (Redis for websocket coordination + cache across workers, DB connection pool, 9 uvicorn workers). The model / embedding / Docling / vision **connections are wired via env** to System 2 (override/blank in `site.yml` to configure them in the admin UI instead). Extraction defaults to Docling; set `CONTENT_EXTRACTION_ENGINE=tika` + `TIKA_SERVER_URL` to use Tika.
 - **Custom images** `oikb`, `hfcli`, `repomix` (System 2 only) aren't on any registry; `ai_compose` **builds them on the box** (`ai_compose_build_images: true`). The `oikb` Dockerfile git-clones at build time → the box needs internet during imaging (or an internal mirror). `hfcli` is a `tools`-profile service (never auto-starts); `repomix` is a build-only utility.
 - **Model switching (System 1).** gpt-oss-120b and Granite-4.1-30b are alternates (one at a time). See "Switching System 1's chat model" below.
 
