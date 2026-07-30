@@ -34,6 +34,18 @@
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "0750"
 
+- name: "Dockge | Ensure the AI compose dir exists ({{ ai_compose_dir }}) for the bind mount"
+  # ai_stack runs BEFORE ai_compose, so /opt/it/docker may not exist yet. Create it
+  # now so Dockge's bind mount below has a real source (ai_compose fills it later;
+  # bind mounts are live, so the compose file appears in Dockge once written).
+  ansible.builtin.file:
+    path: "{{ ai_compose_dir }}"
+    state: directory
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "0750"
+  when: (ai_node_role | default('') | length) > 0
+
 - name: "Dockge | Is the container already present?"
   ansible.builtin.command: docker ps -aq --filter "name=^dockge$"
   register: _dockge_ps
@@ -42,12 +54,22 @@
 - name: "Dockge | Deploy Dockge ({{ dockge_image }})"
   # --restart=always so it survives reboot; named volume dockge_data is created
   # implicitly. `docker run` pulls the image if missing (do it now, while online).
+  vars:
+    # Mount the ansible-managed AI compose dir INTO Dockge as its own stack, named
+    # ai-system1 / ai-system2 to match the compose `name:`, so Dockge sees and
+    # manages the live stack. A host symlink under /opt/stacks does NOT work -- its
+    # target isn't mounted into the container. Empty on a non dev-aiN host (unknown
+    # node role) -> the AI-stack mount is simply omitted.
+    _dockge_ai_mount: >-
+      {{ ('-v ' ~ ai_compose_dir ~ ':' ~ dockge_stacks_dir ~ '/ai-' ~ ai_node_role)
+         if (ai_node_role | default('') | length > 0) else '' }}
   ansible.builtin.command: >-
     docker run -d --name dockge --restart=always
     -p {{ dockge_port }}:5001
     -v /var/run/docker.sock:/var/run/docker.sock
     -v dockge_data:/app/data
     -v {{ dockge_stacks_dir }}:{{ dockge_stacks_dir }}
+    {{ _dockge_ai_mount }}
     -e DOCKGE_STACKS_DIR={{ dockge_stacks_dir }}
     {{ dockge_image }}
   when: (_dockge_ps.stdout | trim) == ""
