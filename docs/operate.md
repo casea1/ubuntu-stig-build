@@ -37,8 +37,8 @@ Self-hosted, on-prem AI chat. Users open a browser, chat with an LLM, and query 
                        ▼
    ┌──────────── SYSTEM 1 · dev-ai1 ────────────┐
    │  Open WebUI  ──►  vLLM (the chat model)     │
-   │      ├─► Postgres (chats + search)          │
-   │      └─► Redis    (logins/live updates)     │
+   │      ├─► Postgres (accounts/chats/search)   │
+   │      └─► Redis    (live updates + cache)     │
    └───────────────────┬─────────────────────────┘
                        │  uses System 2 for embeddings,
                        ▼  vision, document reading, monitoring
@@ -54,8 +54,8 @@ Self-hosted, on-prem AI chat. Users open a browser, chat with an LLM, and query 
 |-------|-------|-------------------|
 | **vLLM** | 1 | Runs the chat model (gpt-oss-120B or Granite, switchable). |
 | **Open WebUI** | 1 | The chat website. |
-| **Postgres (pgvector)** | 1 | Chats + searchable document index. |
-| **Redis** | 1 | Logins and live updates. |
+| **Postgres (pgvector)** | 1 | The database: user accounts/logins, chats, settings, and the searchable document-vector index. |
+| **Redis** | 1 | Real-time updates (websockets) and shared cache across the 9 workers. Not logins. |
 | **Embedding + vision models** | 2 | Documents to searchable vectors; read images/PDFs. |
 | **Docling** | 2 | Text/table extraction from PDFs and Office files. |
 | **Tika** | 2 | Text extraction from other file types. |
@@ -113,6 +113,22 @@ sudo docker compose run --rm hfcli hf download <repo> --local-dir /llm/<name>
 ```
 
 **Grafana dashboard.** A pre-provisioned **"Open WebUI (OTel)"** dashboard ships in the LGTM stack (request rate by route/status, latency p50/p95/p99, 5xx errors, and the Open WebUI log stream). Open `http://dev-ai2:3001` (first login `admin`/`admin`, then set a password) → **Dashboards → Open WebUI (OTel)**. Panels fill in once Open WebUI serves traffic; if a panel is empty, generate a chat message and wait ~15 s (metric export interval).
+
+### Admin scripts (`it-*`)
+
+The `it_scripts` + `inventory_report` roles install short admin commands into `/usr/local/sbin` (both profiles); the `it_scripts` ones live in `/opt/it/scripts` and are symlinked, while `it-inventory` is installed directly. Each **self-elevates with `sudo`**, so you can run them as a normal admin. Run `it-status` for the at-a-glance rollup; the rest are focused.
+
+| Command | Script | What it does |
+|---|---|---|
+| `it-status` | `status.sh` | Runs all the checks below in one rollup (host, docker, models, LUKS). |
+| `it-host` | `status-host.sh` | Host state: hostname, FIPS, Secure Boot, kernel, uptime, disk. |
+| `it-docker` | `status-docker.sh` | `docker compose ps` for the AI stack + flags any container not up/healthy. |
+| `it-models` | `status-models.sh` | Model volumes (populated?) + probes the local vLLM/Docling/Tika endpoints. |
+| `it-luks` | `status-luks.sh` | LUKS/TPM auto-unlock status (binding, clevis-in-initramfs, Secure Boot) with a verdict. |
+| `it-luks-rebind` | `luks-rebind.sh` | Re-seals the TPM2 keyslot to the **current** PCR 7 when the box prompts for the passphrase despite a stale binding. Binds a fresh slot before removing the old one (no lockout). |
+| `it-restart` | `restart-docker.sh` | Restart the AI-stack containers. `--up` uses `docker compose up -d` (apply `.env`/compose edits); a service name limits it to one. |
+| `it-set-ip` | `set-ip.sh` | Renumber the node when it leaves the lab: repoints the peer/cross-node IP (`site.yml` + `.env` + `/etc/hosts` + ufw + recreates containers) and/or this box's own static IP via netplan. Interactive or `--peer` / `--self`. |
+| `it-inventory` | `it-inventory.sh` | Writes `/opt/it/inventory-<host>.txt`: service tag, BIOS, DIMM/SSD serials, MACs, GPU, LVM/LUKS layout. |
 
 ### If something's wrong (things we've already handled in the tool)
 
@@ -467,11 +483,14 @@ Ansible does **host prep only** on the ai profile; the AI containers are deploye
 
   ```yaml
   ai_firewall_allow_ports:
-    - { port: 80,  proto: tcp, rule: allow }                        # Open WebUI (users)
-    - { port: 443, proto: tcp, rule: allow }
-    - { port: 8001, proto: tcp, rule: allow, from: "10.0.0.10/32" } # System 2 vLLM, from System 1 only
+    - { port: 443, proto: tcp, rule: allow }                        # reverse proxy (TLS) -> Open WebUI :3000
+    - { port: 80,  proto: tcp, rule: allow }                        # reverse proxy (HTTP redirect to 443)
+    - { port: 8002, proto: tcp, rule: allow, from: "10.0.0.10/32" } # System 2 vLLM embeddings, from System 1 only
+    - { port: 8003, proto: tcp, rule: allow, from: "10.0.0.10/32" } # System 2 vLLM vision, from System 1 only
     - { port: 5001, proto: tcp, rule: allow, from: "10.0.0.10/32" } # System 2 Docling, from System 1 only
   ```
+
+  > **Open WebUI listens on `3000`, not 80/443.** The default opens 80/443 because Open WebUI is meant to be fronted by a **reverse proxy** (TLS termination, e.g. `https://oi.atolab.cui`) that maps 80/443 -> the container's `3000`; the stack does **not** ship that proxy, so stand one up (nginx/Caddy/Cockpit) or you'll have an open 80/443 with nothing behind it. **Exposing Open WebUI directly instead?** Drop 80/443 and open **`3000`** here.
 
   `rule: limit` rate-limits a port; `from:` restricts it to a source CIDR (use it for the cross-node vLLM/Docling/pgvector ports so they aren't fleet-wide). SSH is always kept (rate-limited). The role also **enables ufw itself**, so an ai box is never left with an inactive firewall even if USG was skipped. Check: `sudo ufw status verbose`.
 
@@ -490,7 +509,7 @@ The two-node stack is baked into the image so a fielded box comes up with its co
 
 Notes:
 - **Cross-node wiring.** System 1's Open WebUI reaches System 2 by **`ai_system2_addr`** (default the hostname `dev-ai2`): chat vision (:8003) as a second OpenAI endpoint, RAG embeddings (:8002), Docling extraction (:5001), and OTel → LGTM (:4317). System 2's **oikb** reaches System 1's Open WebUI (:3000) by **`ai_system1_addr`**. Set IPs in `site.yml` if the hostnames don't resolve across the boxes, and open the cross-node ports restricted to the peer (see `site.yml.example`). **Renumbering (e.g. deploying out of the lab)?** Run **`sudo it-set-ip`** on each box: it repoints the peer IP in `site.yml` + the live `.env` (`SYSTEM2_ADDR` / `OPEN_WEBUI_URL` + the container `extra_hosts`), fixes `/etc/hosts` and the ufw `from:` rules, recreates the containers, and can also set this box's own static IP via netplan. It edits files directly (works offline) and updates `site.yml` so a later online pull stays consistent. Change one box's own IP -> run `it-set-ip --peer <that new IP>` on the other.
-- **Open WebUI** runs as the engineer tuned it (Redis sessions/websockets, connection pool, 9 uvicorn workers). The model / embedding / Docling / vision **connections are wired via env** to System 2 (override/blank in `site.yml` to configure them in the admin UI instead). Extraction defaults to Docling; set `CONTENT_EXTRACTION_ENGINE=tika` + `TIKA_SERVER_URL` to use Tika.
+- **Open WebUI** runs as the engineer tuned it (Redis for websocket coordination + cache across workers, DB connection pool, 9 uvicorn workers). The model / embedding / Docling / vision **connections are wired via env** to System 2 (override/blank in `site.yml` to configure them in the admin UI instead). Extraction defaults to Docling; set `CONTENT_EXTRACTION_ENGINE=tika` + `TIKA_SERVER_URL` to use Tika.
 - **Custom images** `oikb`, `hfcli`, `repomix` (System 2 only) aren't on any registry; `ai_compose` **builds them on the box** (`ai_compose_build_images: true`). The `oikb` Dockerfile git-clones at build time → the box needs internet during imaging (or an internal mirror). `hfcli` is a `tools`-profile service (never auto-starts); `repomix` is a build-only utility.
 - **Model switching (System 1).** gpt-oss-120b and Granite-4.1-30b are alternates (one at a time). See "Switching System 1's chat model" below.
 
@@ -531,7 +550,6 @@ Open WebUI's **Admin -> Settings -> Documents** panel (extraction engine, embedd
 | Hybrid search + BM25 weight | on, 0.5 | `ENABLE_RAG_HYBRID_SEARCH`, `RAG_HYBRID_BM25_WEIGHT` |
 | Top K / Top K reranker | 3 / 3 | `RAG_TOP_K`, `RAG_TOP_K_RERANKER` |
 | Chunk size / overlap | 2048 / 200 | `CHUNK_SIZE`, `CHUNK_OVERLAP` |
-| CORS origin | `${OI_ORIGIN}` (set `ai_webui_cors_origin` in `site.yml`) | `CORS_ALLOW_ORIGIN` |
 
 > **Critical caveat -- these are Open WebUI `PersistentConfig`.** The env var seeds the value into the database **only on first boot (empty DB)**. On a box whose Open WebUI DB already exists, the **stored value wins** and editing the env has no effect -- change it in the UI (Admin -> Settings -> Documents) instead. So: for a **new image** the compose values apply automatically; for an **already-running box** set them in the UI (or reset that config row). The Redis / websocket / `UVICORN_WORKERS` / `CORS_ALLOW_ORIGIN` env vars are *not* PersistentConfig and always apply at start.
 

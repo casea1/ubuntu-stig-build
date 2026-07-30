@@ -42,6 +42,8 @@ Full walkthrough: [build.md — Track B](build.md#track-b-ai-servers-two-node) a
 
 **Monitoring.** Grafana (`http://dev-ai2:3001`, first login `admin`/`admin`) ships a pre-provisioned **"Open WebUI (OTel)"** dashboard: request rate, latency percentiles, error rate, and logs, fed by the OTel export from System 1.
 
+**Admin scripts.** Short `it-*` commands (self-elevating) cover day-to-day ops: `it-status` (rollup), `it-docker`, `it-models`, `it-luks` / `it-luks-rebind`, `it-restart`, `it-set-ip` (renumber out of the lab), `it-inventory`. Full table: [operate.md — Admin scripts](operate.md#admin-scripts-it-).
+
 **RAG / Documents config + IDE clients.** The Open WebUI Documents panel (Docling extraction, Granite embeddings, hybrid search, chunk 2048/200) is seeded from env vars in System 1's compose — with the caveat that they're `PersistentConfig` (env seeds a fresh DB only; change in the UI on an existing box). Pointing the Continue VS Code extension at the stack (via Open WebUI's API or direct to vLLM) is a client-side setup. Both are documented in [operate.md — Open WebUI RAG defaults](operate.md#open-webui-rag--documents-defaults-and-the-persistentconfig-caveat) and [Connecting an IDE (Continue)](operate.md#connecting-an-ide-continue-vs-code----client-side).
 
 ## Software list
@@ -78,7 +80,7 @@ Software inventory for the two-node AI platform (IA / DCSA reference). Versions 
 | vllm/vllm-openai | v0.22.1-cu129-ubuntu2404 | vLLM project | LLM inference server (S1, S2) |
 | open-webui | v0.10.2 | Open WebUI | Chat web UI (S1) |
 | pgvector/pgvector | pg16-trixie | pgvector project | Database + vector store (S1) |
-| redis | 7.2.14-bookworm | Redis | Sessions / websockets (S1) |
+| redis | 7.2.14-bookworm | Redis | Websocket coordination + cache across the uvicorn workers (S1) |
 | apache/tika | 3.3.1.0 | Apache Software Foundation | Document text/metadata extraction (S2) |
 | docling-serve | v1.24.0 (cu128) | IBM / Docling project | Document structure/OCR extraction (S2) |
 | grafana/otel-lgtm | 0.29.0 | Grafana Labs | Monitoring / telemetry (S2) |
@@ -88,7 +90,7 @@ Software inventory for the two-node AI platform (IA / DCSA reference). Versions 
 | Software/Tool | Version | Publisher | Purpose |
 |---|---|---|---|
 | oikb | latest (base oikb 0.3.6) | Open WebUI (oikb) | Sync data sources into Open WebUI KBs (S2) |
-| hfcli | latest (Python 3.12) | Hugging Face (`huggingface_hub`) | Download models/encodings into volumes (S1, S2) |
+| hfcli | latest (Python 3.12) | Hugging Face (`huggingface_hub`) | Download models/encodings into volumes (S2) |
 | repomix | latest (Node 22.23.1) | repomix project | Pack a code repo into one file for the LLM (S2) |
 
 ### AI models (Hugging Face, all Apache-2.0)
@@ -96,12 +98,11 @@ Software inventory for the two-node AI platform (IA / DCSA reference). Versions 
 | Software/Tool | Version | Publisher | Purpose |
 |---|---|---|---|
 | gpt-oss-120b | repo main | OpenAI | Primary text generation (S1) |
-| granite-4.1-30b | repo main | IBM | Secondary text generation, 96 GB GPUs (S1) |
-| granite-4.1-8b | repo main | IBM | Secondary text generation, 48 GB GPUs (S1) |
+| granite-4.1-30b | repo main | IBM | Secondary text generation, switchable alternate (S1) |
 | granite-embedding-small-english-r2 | repo main | IBM | Text embeddings / RAG (S2) |
 | granite-vision-4.1-4b | repo main | IBM | Vision / document understanding (S2) |
 
-> **System 1 companion model depends on GPU VRAM:** 48 GB cards run gpt-oss-120b + Granite-4.1-**8b**; 96 GB cards run Granite-4.1-**30b**. Check `nvidia-smi --query-gpu=name,memory.total --format=csv` and keep the one that fits.
+> **System 1 chat models are alternates, one at a time:** gpt-oss-120B (default) or Granite-4.1-30B, served across System 1's two 48 GB GPUs (tensor-parallel). Switch with `switch-model.sh`. See [operate.md](operate.md#switching-system-1s-chat-model-gpt-oss--granite-41-30b).
 
 ### Tiktoken encodings (gpt-oss harmony tokenizer)
 

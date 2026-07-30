@@ -667,14 +667,18 @@ dockge_stacks_dir: "/opt/stacks"
 #
 # Default exposes only the Open WebUI front-end. For the two-node design, open the
 # cross-node ports RESTRICTED to the peer node's IP (uncomment + set the CIDRs):
+# NOTE: Open WebUI listens on 3000. 80/443 assume a REVERSE PROXY (TLS) fronting
+# it (e.g. https://oi.atolab.cui) that maps 80/443 -> 3000 -- the stack does not
+# ship that proxy, so run one, or (for direct access) swap these for port 3000.
 ai_firewall_allow_ports:
-  - { port: 80,  proto: tcp, rule: allow }     # Open WebUI (HTTP)  -> users
-  - { port: 443, proto: tcp, rule: allow }     # Open WebUI (HTTPS) -> users
+  - { port: 443, proto: tcp, rule: allow }     # reverse proxy (TLS) -> Open WebUI :3000
+  - { port: 80,  proto: tcp, rule: allow }     # reverse proxy (HTTP redirect to 443)
   # ---- System 1 (UI/text-gen) also exposes, to the peer node only: ----
   # - { port: 8000, proto: tcp, rule: allow, from: "10.0.0.0/24" }   # vLLM (text gen)
   # - { port: 5432, proto: tcp, rule: allow, from: "10.0.0.0/24" }   # pgvector
   # ---- System 2 (embeddings/extraction) exposes, to System 1 only: ----
-  # - { port: 8001, proto: tcp, rule: allow, from: "10.0.0.10/32" }  # vLLM (embed/vision)
+  # - { port: 8002, proto: tcp, rule: allow, from: "10.0.0.10/32" }  # vLLM embeddings
+  # - { port: 8003, proto: tcp, rule: allow, from: "10.0.0.10/32" }  # vLLM vision
   # - { port: 5001, proto: tcp, rule: allow, from: "10.0.0.10/32" }  # Docling
 
 # =============================================================================
