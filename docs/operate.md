@@ -99,6 +99,9 @@ it-models                             # model volumes + service endpoints
 it-restart                             # restart ALL AI-stack containers (docker compose restart)
 it-restart --up                        #   ...as `up -d` instead, to apply .env / compose edits
 it-restart oikb                        #   ...restart just one service
+it-set-ip                              # renumber when the box leaves the lab (interactive)
+it-set-ip --peer 10.0.5.20             #   ...just repoint the cross-node/peer IP + firewall + containers
+it-set-ip --self 10.0.5.11/24 --gateway 10.0.5.1 --dns 10.0.5.2   # ...this box's own static IP (netplan)
 
 cd /opt/it/docker
 sudo docker compose ps                 # what's running / healthy
@@ -486,7 +489,7 @@ The two-node stack is baked into the image so a fielded box comes up with its co
 **One file per node on purpose.** Cross-service `depends_on` only works inside one compose project, so consolidating lets Open WebUI **health-gate** its start on pgvector + Redis (`condition: service_healthy`, with `pg_isready`/`redis-cli ping` healthchecks). You keep per-service control (`docker compose up -d pgvector redis`, `docker compose restart open-webui`).
 
 Notes:
-- **Cross-node wiring.** System 1's Open WebUI reaches System 2 by **`ai_system2_addr`** (default the hostname `dev-ai2`): chat vision (:8003) as a second OpenAI endpoint, RAG embeddings (:8002), Docling extraction (:5001), and OTel → LGTM (:4317). System 2's **oikb** reaches System 1's Open WebUI (:3000) by **`ai_system1_addr`**. Set IPs in `site.yml` if the hostnames don't resolve across the boxes, and open the cross-node ports restricted to the peer (see `site.yml.example`).
+- **Cross-node wiring.** System 1's Open WebUI reaches System 2 by **`ai_system2_addr`** (default the hostname `dev-ai2`): chat vision (:8003) as a second OpenAI endpoint, RAG embeddings (:8002), Docling extraction (:5001), and OTel → LGTM (:4317). System 2's **oikb** reaches System 1's Open WebUI (:3000) by **`ai_system1_addr`**. Set IPs in `site.yml` if the hostnames don't resolve across the boxes, and open the cross-node ports restricted to the peer (see `site.yml.example`). **Renumbering (e.g. deploying out of the lab)?** Run **`sudo it-set-ip`** on each box: it repoints the peer IP in `site.yml` + the live `.env` (`SYSTEM2_ADDR` / `OPEN_WEBUI_URL` + the container `extra_hosts`), fixes `/etc/hosts` and the ufw `from:` rules, recreates the containers, and can also set this box's own static IP via netplan. It edits files directly (works offline) and updates `site.yml` so a later online pull stays consistent. Change one box's own IP -> run `it-set-ip --peer <that new IP>` on the other.
 - **Open WebUI** runs as the engineer tuned it (Redis sessions/websockets, connection pool, 9 uvicorn workers). The model / embedding / Docling / vision **connections are wired via env** to System 2 (override/blank in `site.yml` to configure them in the admin UI instead). Extraction defaults to Docling; set `CONTENT_EXTRACTION_ENGINE=tika` + `TIKA_SERVER_URL` to use Tika.
 - **Custom images** `oikb`, `hfcli`, `repomix` (System 2 only) aren't on any registry; `ai_compose` **builds them on the box** (`ai_compose_build_images: true`). The `oikb` Dockerfile git-clones at build time → the box needs internet during imaging (or an internal mirror). `hfcli` is a `tools`-profile service (never auto-starts); `repomix` is a build-only utility.
 - **Model switching (System 1).** gpt-oss-120b and Granite-4.1-30b are alternates (one at a time). See "Switching System 1's chat model" below.
