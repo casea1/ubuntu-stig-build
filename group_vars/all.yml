@@ -639,15 +639,20 @@ nvidia_driver_min_version: "595.71.05"
 # nvidia-container-toolkit floor (7960 baseline: >= 1.19.1). "" disables the check.
 nvidia_container_toolkit_min_version: "1.19.1"
 
-# ---- Portainer (container management web UI) -------------------------------
+# ---- Dockge (Docker Compose stack manager, web UI) -------------------------
 # Optional MANAGEMENT-PLANE container Ansible deploys so ops can manage the box's
-# containers from a browser. It is NOT part of your AI workload stack. It mounts
-# the Docker socket (root-equivalent), so treat its port as privileged: restrict it
-# to an admin subnet via ai_firewall_allow_ports `from:`, and set a strong admin
-# password on first login. Set false to skip.
-portainer_enabled: true
-portainer_image: "portainer/portainer-ce:lts"   # pin an exact tag for frozen images
-portainer_https_port: 9443
+# compose stacks from a browser. It is NOT part of your AI workload stack. It
+# mounts the Docker socket (root-equivalent), so treat its port as privileged:
+# restrict it to an admin subnet via ai_firewall_allow_ports `from:`, and create
+# the admin account on first login. Set false to skip.
+dockge_enabled: true
+dockge_image: "louislam/dockge:1"       # pin the major tag for frozen images
+dockge_port: 9001                       # host port -> container 5001 (HTTP)
+# Stacks dir: bind-mounted at the SAME path inside the container (a Dockge
+# requirement -- it shells out to `docker compose` using this path) + exported as
+# DOCKGE_STACKS_DIR. To manage the AI stack from Dockge, symlink it in, e.g.
+# `ln -s /opt/it/docker /opt/stacks/ai` (see docs/operate.md).
+dockge_stacks_dir: "/opt/stacks"
 
 # =============================================================================
 # AI SERVER FIREWALL  (ai_firewall role -> opens container ports AFTER USG)
@@ -941,7 +946,7 @@ usg_remediate_reaudit: true
 # Cockpit (https://<host>:9090) is a lightweight web console for systemd units,
 # journald logs, storage, networking, updates, and an in-browser terminal. Handy
 # for managing a headless AI server or a dev box without a full desktop session.
-# It is a PRIVILEGED management surface (root-capable actions), so -- like Portainer
+# It is a PRIVILEGED management surface (root-capable actions), so -- like Dockge
 # -- its port is opened RATE-LIMITED and should be restricted to an admin subnet in
 # production (set cockpit_allow_from). Set cockpit_enabled: false to skip entirely.
 cockpit_enabled: true

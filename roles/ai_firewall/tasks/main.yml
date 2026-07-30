@@ -51,17 +51,25 @@
   loop_control:
     label: "{{ item.port }}/{{ item.proto | default('tcp') }} from {{ item.from | default('any', true) }}"
 
-- name: "AI FW | Open Portainer's web UI ({{ portainer_https_port | default(9443) }}/tcp, rate-limited)"
-  # Portainer mounts the Docker socket (root-equivalent), so this is a privileged
+- name: "AI FW | Remove the retired Portainer rule (9443/tcp) if present"
+  # Portainer was replaced by Dockge; drop its old firewall opening on re-run.
+  community.general.ufw:
+    rule: limit
+    port: "9443"
+    proto: tcp
+    delete: true
+
+- name: "AI FW | Open Dockge's web UI ({{ dockge_port | default(9001) }}/tcp, rate-limited)"
+  # Dockge mounts the Docker socket (root-equivalent), so this is a privileged
   # surface -- rate-limit it, and ideally restrict it to an admin subnet by adding
   # a matching entry to ai_firewall_allow_ports with `from:` instead of leaving it
   # open here. (This opens it to any source; tighten for production.)
   community.general.ufw:
     rule: limit
-    port: "{{ portainer_https_port | default(9443) | string }}"
+    port: "{{ dockge_port | default(9001) | string }}"
     proto: tcp
-    comment: "Portainer web UI (rate-limited)"
-  when: portainer_enabled | default(false) | bool
+    comment: "Dockge web UI (rate-limited)"
+  when: dockge_enabled | default(false) | bool
 
 - name: "AI FW | Open Cockpit's web console ({{ cockpit_port | default(9090) }}/tcp, rate-limited)"
   # Privileged management surface (root-capable). Rate-limited; restrict it to an

@@ -4,7 +4,7 @@ Profile page for the two-node, self-hosted AI stack. Overview, key endpoints, an
 
 ## What it builds
 
-`ansible` does host prep only: Docker + the NVIDIA GPU stack + Cockpit + Portainer, STIG-hardened with USG, with the container ports opened. You deploy the AI tools from prebuilt images + compose files (baked into `/opt/it/docker` by `ai_compose`).
+`ansible` does host prep only: Docker + the NVIDIA GPU stack + Cockpit + Dockge, STIG-hardened with USG, with the container ports opened. You deploy the AI tools from prebuilt images + compose files (baked into `/opt/it/docker` by `ai_compose`).
 
 ## The two machines
 
@@ -26,7 +26,7 @@ The hostname sets the role (`dev-ai1` -> system1, `dev-ai2` -> system2). Full ar
 | Docling | `:5001` | S2 |
 | Tika | `:9998` | S2 |
 | Grafana | `http://dev-ai2:3001` | S2 |
-| Portainer / Cockpit | `:9443` / `:9090` | each box |
+| Dockge / Cockpit | `:9001` / `:9090` | each box |
 
 Firewall openings for these ports go in `site.yml` per node. See [`site.yml.example`](site.yml.example).
 

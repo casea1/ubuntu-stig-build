@@ -190,6 +190,6 @@
   notify: restart docker
 
 # Flush now so Docker is restarted with the nvidia runtime BEFORE any container
-# (Portainer, or your GPU workload stack) comes up.
+# (Dockge, or your GPU workload stack) comes up.
 - name: "GPU | Apply the Docker runtime change now"
   ansible.builtin.meta: flush_handlers
