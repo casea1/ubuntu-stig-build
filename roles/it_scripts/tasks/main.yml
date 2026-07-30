@@ -28,6 +28,7 @@
     - status-luks.sh
     - luks-rebind.sh
     - restart-docker.sh
+    - set-ip.sh
 
 - name: "IT-SCRIPTS | Expose short it-* commands in /usr/local/sbin"
   ansible.builtin.file:
@@ -43,6 +44,7 @@
     - { link: it-luks,   target: status-luks.sh }
     - { link: it-luks-rebind, target: luks-rebind.sh }
     - { link: it-restart, target: restart-docker.sh }
+    - { link: it-set-ip, target: set-ip.sh }
 
 - name: "IT-SCRIPTS | Where the scripts are"
   ansible.builtin.debug:
