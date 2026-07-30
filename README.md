@@ -46,7 +46,7 @@ Pick one with `deployment_profile` (or `PROFILE=` on `bootstrap.sh`). Default: *
 | Profile | For | What it builds |
 |---|---|---|
 | **`development`** | Engineering **workstation** | Dev toolchain + **GNOME desktop over RDP** (installs the GUI, so a server base works too) + browser VS Code (code-server) + Cockpit. |
-| **`ai`** | Local-AI **inference server** | **Host prep only**: Docker + NVIDIA GPU stack + Cockpit + Portainer, with container inbound ports opened. Deploy the AI tools (vLLM / Open WebUI / pgvector / Docling) from your own prebuilt images + compose files. |
+| **`ai`** | Local-AI **inference server** | **Host prep only**: Docker + NVIDIA GPU stack + Cockpit + Dockge, with container inbound ports opened. Deploy the AI tools (vLLM / Open WebUI / pgvector / Docling) from your own prebuilt images + compose files. |
 
 Both profiles harden with USG (both need an **Ubuntu Pro** token), create the org accounts/groups and the `/opt/ia` + `/opt/it` admin folders, and drop the USG report in **`/opt/ia`**. `desktop`/`server` are aliases for `development`/`ai`.
 
@@ -94,7 +94,7 @@ Ansible roles run in a deliberate order: install → configure → dev tools →
 | 2. Configure | `app_config` | Service config + access controls (ClamAV, Wireshark capture group) |
 | 3. Accounts | `local_accounts` | Org users/groups, ACL'd shared folders, USB→`dta` policy |
 | 4. Dev tools | `dev_tools` *(development)* | Compilers, `/opt/eng-venv`, VS Code extensions, Docker |
-| 4. Host prep | `ai_stack` *(ai)* | Docker + NVIDIA GPU stack + Portainer |
+| 4. Host prep | `ai_stack` *(ai)* | Docker + NVIDIA GPU stack + Dockge |
 | 5. Harden | `usg_harden` → `desktop_hardening`/`ai_firewall` → `usg_remediate` | `usg fix disa_stig` + FIPS, then GUI/USB/firewall re-assert, then idempotent residual fixes |
 | 6. Report | `usg audit` (re-run by `usg_remediate`) | Compliance report → `/opt/ia` |
 
@@ -102,7 +102,7 @@ Full role-by-role detail, the STIG-gap coverage table, and every documented devi
 
 ## Configuration
 
-Toggle everything from **[`group_vars/all.yml`](group_vars/all.yml)**: profile selection, editor choice, STIG tunables (lockout counts, timeouts, audit retention), DCSA banner text, USG options (`usg_profile`, `usg_fix_enabled`, `usg_enable_fips`), NTP servers (`usg_chrony_servers`), Cockpit, and AI-server settings (`nvidia_*`, `portainer_enabled`, `ai_firewall_allow_ports`).
+Toggle everything from **[`group_vars/all.yml`](group_vars/all.yml)**: profile selection, editor choice, STIG tunables (lockout counts, timeouts, audit retention), DCSA banner text, USG options (`usg_profile`, `usg_fix_enabled`, `usg_enable_fips`), NTP servers (`usg_chrony_servers`), Cockpit, and AI-server settings (`nvidia_*`, `dockge_enabled`, `ai_firewall_allow_ports`).
 
 Per-node / per-site overrides (internal IPs, existing DB password, oikb secrets, firewall port openings) go in **`/opt/it/site.yml`** on the box (the build drops an editable template there; legacy `/etc/stig-build/site.yml` still works), see **[`docs/site.yml.example`](docs/site.yml.example)**. Package and VS Code extension lists live in `roles/dev_tools/defaults/main.yml`. Full config reference: **[Build Guide](docs/build.md)** and **[Operations & Reference](docs/operate.md)**.
 

@@ -69,7 +69,7 @@ sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml
 | Control | Why | Where |
 | --- | --- | --- |
 | Smart Card / CAC + SSSD (`smartcard_pam_enabled`, `service_sssd_enabled`, `sssd_enable_user_cert`) | password-login only; local accounts, no directory/CAC → **de-selected in the USG tailoring** so they don't count against you | `usg_disable_smartcard*` |
-| ufw rate-limit **all** ports (`ufw_rate_limit`, UBTU-24-600200) | on `ai`, rate-limiting the Open WebUI / vLLM / Docling ports throttles inference. Only **management** ports (SSH/RDP/Cockpit/Portainer) are `ufw limit`ed | firewall roles |
+| ufw rate-limit **all** ports (`ufw_rate_limit`, UBTU-24-600200) | on `ai`, rate-limiting the Open WebUI / vLLM / Docling ports throttles inference. Only **management** ports (SSH/RDP/Cockpit/Dockge) are `ufw limit`ed | firewall roles |
 | GNOME login-banner **text**, blank-screensaver, USB→`dta` *(development profile only; the AI nodes disable USB storage)* | mission requirements (DCSA banner, org wallpaper, USB data-transfer) | operate.md POA&M |
 
 ### ❌ Open POA&M: need a secret or infra (NOT auto-applied)
@@ -143,7 +143,7 @@ Every box is provisioned by a version-controlled Ansible build: repeatable, audi
 | **Identity & access** | Local least-privilege accounts and groups; locked (non-empty) default passwords; PAM **faillock** (lockout), fail-delay, password policy, session timeout + concurrent-session limits. |
 | **Boundary protection** | Host firewall (**ufw default-deny inbound**, rate-limited); only required service ports opened, cross-node ports restricted by source IP. |
 | **Access banner** | **DCSA Authorized Warning Banner** presented at GUI/console/SSH logon. |
-| **Least functionality** | Lean package set; privileged management surfaces (Cockpit, Portainer) restricted to admin subnets. |
+| **Least functionality** | Lean package set; privileged management surfaces (Cockpit, Dockge) restricted to admin subnets. |
 | **Removable media** | USB mass storage disabled on the AI nodes (USG blacklists the `usb-storage` module on a server; no carve-out). The authorized data-transfer group carve-out (udev + polkit) is development-profile only and is not enabled here. |
 | **Continuous monitoring** | `usg audit` re-run at end of build and re-runnable any time; OpenSCAP available offline; Ubuntu Pro **ESM + Livepatch** for ongoing vulnerability/patch management. |
 
@@ -171,7 +171,7 @@ The build is configuration-as-code, so it maps directly onto the CM family. The 
 | **CM-4 Impact Analysis** | Validate on a throwaway VM before imaging production (the DISA profile can be breaking). `HARDEN=0` runs an audit-only first pass to assess impact before `usg fix` is applied. |
 | **CM-5 Access Restrictions for Change** | Repo write access gates baseline changes. On the box, config changes need root/sudo; admin folders `/opt/ia` and `/opt/it` are restricted to the `sudo` group (mode `2770` + ACL); secrets (Pro token, LUKS passphrase, DB/API keys) stay out-of-band, root-only, never in the repo. |
 | **CM-6 Configuration Settings** | Mandated settings come from the DISA STIG applied by USG (`usg fix disa_stig`) plus documented tunables in `group_vars/all.yml` (lockout counts, timeouts, audit retention, banner, FIPS). `usg audit` (XCCDF + HTML) is the settings-compliance evidence; deviations are enumerated in [Hardening posture](#hardening-posture). |
-| **CM-7 Least Functionality** | Lean per-profile package sets; provisioning services installed but disabled + stopped; `ufw` default-deny inbound with only required ports opened; Cockpit/Portainer restricted to admin subnets; USB mass storage disabled on the AI nodes. |
+| **CM-7 Least Functionality** | Lean per-profile package sets; provisioning services installed but disabled + stopped; `ufw` default-deny inbound with only required ports opened; Cockpit/Dockge restricted to admin subnets; USB mass storage disabled on the AI nodes. |
 | **CM-8 System Component Inventory** | Component versions pinned across `group_vars`, the compose files, and the Dockerfiles. Per-profile software lists ([dev-workstation](dev-workstation.md#software-list), [ai-stack](ai-stack.md#software-list)) enumerate tool, version, publisher, and purpose; images and model repos are listed with versions. |
 | **CM-9 Configuration Management Plan** | Organizational/procedural control. This repo is the technical baseline the site CM Plan references; the plan itself is a program document. |
 | **CM-10 / CM-11 Software Usage & User-Installed Software** | Components are open-source with tracked licenses (software lists). Standard users are non-privileged; installs require sudo. The `docker` group (root-equivalent) is a documented developer-workstation exception; no unmanaged package channels are enabled. |
@@ -244,7 +244,7 @@ Plus, by design of the stack:
 - **No privileged containers**, no host PID/IPC/network sharing; the AI workload runs unprivileged.
 - **Least capabilities** where practical (e.g. Redis runs `cap_drop: ALL` + only `SETGID/SETUID/DAC_OVERRIDE`).
 - **Network isolation.** Services share a single user-defined bridge (`oi`); only required ports published, cross-node ports firewall-restricted to the peer (USG's ufw default-deny + `ai_firewall`).
-- **Docker socket** not mounted into workload containers (only Portainer, an admin tool, restricted to admins).
+- **Docker socket** not mounted into workload containers (only Dockge, an admin tool, restricted to admins).
 - **Host is FIPS + STIG-hardened** (the kernel/OS the containers share), and the **model runs inference only**. See [AI-specific risk considerations](#ai-specific-risk-considerations).
 - **Image provenance.** All images pinned by exact tag, can be **mirrored to an internal registry** and hash-verified for air-gap (supply-chain / SR controls).
 

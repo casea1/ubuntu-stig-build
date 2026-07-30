@@ -24,11 +24,11 @@
   ansible.builtin.include_tasks: gpu.yml
   when: gpu_enabled | default(true) | bool
 
-- name: "AI host | Deploy Portainer (container-management web UI)"
+- name: "AI host | Deploy Dockge (compose-stack management web UI)"
   # Management plane only -- NOT your AI workload stack. Needs Docker up (above)
   # and internet (image pull). Its port is opened by ai_firewall after USG.
-  ansible.builtin.import_tasks: portainer.yml
-  when: portainer_enabled | default(false) | bool
+  ansible.builtin.import_tasks: dockge.yml
+  when: dockge_enabled | default(false) | bool
 
 - name: "AI host | Reboot reminder (NVIDIA driver just installed)"
   ansible.builtin.debug:
