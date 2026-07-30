@@ -485,7 +485,8 @@ Ansible does **host prep only** on the ai profile; the AI containers are deploye
   ai_firewall_allow_ports:
     - { port: 80,  proto: tcp, rule: allow }                        # Open WebUI (users)
     - { port: 443, proto: tcp, rule: allow }
-    - { port: 8001, proto: tcp, rule: allow, from: "10.0.0.10/32" } # System 2 vLLM, from System 1 only
+    - { port: 8002, proto: tcp, rule: allow, from: "10.0.0.10/32" } # System 2 vLLM embeddings, from System 1 only
+    - { port: 8003, proto: tcp, rule: allow, from: "10.0.0.10/32" } # System 2 vLLM vision, from System 1 only
     - { port: 5001, proto: tcp, rule: allow, from: "10.0.0.10/32" } # System 2 Docling, from System 1 only
   ```
 
@@ -547,7 +548,6 @@ Open WebUI's **Admin -> Settings -> Documents** panel (extraction engine, embedd
 | Hybrid search + BM25 weight | on, 0.5 | `ENABLE_RAG_HYBRID_SEARCH`, `RAG_HYBRID_BM25_WEIGHT` |
 | Top K / Top K reranker | 3 / 3 | `RAG_TOP_K`, `RAG_TOP_K_RERANKER` |
 | Chunk size / overlap | 2048 / 200 | `CHUNK_SIZE`, `CHUNK_OVERLAP` |
-| CORS origin | `${OI_ORIGIN}` (set `ai_webui_cors_origin` in `site.yml`) | `CORS_ALLOW_ORIGIN` |
 
 > **Critical caveat -- these are Open WebUI `PersistentConfig`.** The env var seeds the value into the database **only on first boot (empty DB)**. On a box whose Open WebUI DB already exists, the **stored value wins** and editing the env has no effect -- change it in the UI (Admin -> Settings -> Documents) instead. So: for a **new image** the compose values apply automatically; for an **already-running box** set them in the UI (or reset that config row). The Redis / websocket / `UVICORN_WORKERS` / `CORS_ALLOW_ORIGIN` env vars are *not* PersistentConfig and always apply at start.
 

@@ -90,7 +90,7 @@ Software inventory for the two-node AI platform (IA / DCSA reference). Versions 
 | Software/Tool | Version | Publisher | Purpose |
 |---|---|---|---|
 | oikb | latest (base oikb 0.3.6) | Open WebUI (oikb) | Sync data sources into Open WebUI KBs (S2) |
-| hfcli | latest (Python 3.12) | Hugging Face (`huggingface_hub`) | Download models/encodings into volumes (S1, S2) |
+| hfcli | latest (Python 3.12) | Hugging Face (`huggingface_hub`) | Download models/encodings into volumes (S2) |
 | repomix | latest (Node 22.23.1) | repomix project | Pack a code repo into one file for the LLM (S2) |
 
 ### AI models (Hugging Face, all Apache-2.0)

@@ -674,7 +674,8 @@ ai_firewall_allow_ports:
   # - { port: 8000, proto: tcp, rule: allow, from: "10.0.0.0/24" }   # vLLM (text gen)
   # - { port: 5432, proto: tcp, rule: allow, from: "10.0.0.0/24" }   # pgvector
   # ---- System 2 (embeddings/extraction) exposes, to System 1 only: ----
-  # - { port: 8001, proto: tcp, rule: allow, from: "10.0.0.10/32" }  # vLLM (embed/vision)
+  # - { port: 8002, proto: tcp, rule: allow, from: "10.0.0.10/32" }  # vLLM embeddings
+  # - { port: 8003, proto: tcp, rule: allow, from: "10.0.0.10/32" }  # vLLM vision
   # - { port: 5001, proto: tcp, rule: allow, from: "10.0.0.10/32" }  # Docling
 
 # =============================================================================
