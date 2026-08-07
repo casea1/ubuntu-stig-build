@@ -256,6 +256,19 @@ classification_banner_level: "UNCLASSIFIED"
 classification_banner_force_xorg: true
 
 # =============================================================================
+# AUDIT: SYSTEM REBOOT / SHUTDOWN LOGGING  (usg_remediate role -- ALL profiles)
+# =============================================================================
+# USG's STIG ruleset ships no explicit reboot-audit rule; auditd records
+# SYSTEM_BOOT/SYSTEM_SHUTDOWN natively but without a searchable key. When enabled,
+# usg_remediate drops /etc/audit/rules.d/71-reboot.rules auditing the reboot(2) +
+# kexec_load(2) syscalls (reboot/poweroff/halt/kexec), keyed for easy searching:
+#   ausearch -k reboot        # or:  auditctl -l | grep reboot
+# STIG makes the running audit config immutable (-e 2), so this loads on the
+# post-build REBOOT rather than live. Set false to leave auditing to USG alone.
+audit_reboot_rules_enabled: true
+audit_reboot_rules_key: reboot        # the -k key on the rule (ausearch -k <key>)
+
+# =============================================================================
 # STIG GAP-REMEDIATION TUNABLES
 # =============================================================================
 # MOSTLY LEGACY: these fed the deleted SSG gap files (audit/pam/sessions/ssh/

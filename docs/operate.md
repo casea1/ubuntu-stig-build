@@ -258,6 +258,7 @@ These need a secret, a subscription, install-time action, or an environment this
 | `/var/log/audit` mode (`directory_permissions_var_log_audit`) | `chmod 0750 /var/log/audit` |
 | Remote time server (`chronyd_specify_remote_server`, `chronyd_server_directive`) | write `server <host> iburst` into `/etc/chrony/sources.d/stig.sources`, ensure `sourcedir`, comment out any `pool` line, set `makestep`; set `usg_chrony_servers` to your enclave NTP |
 | ufw active (`check_ufw_active`) | re-assert `ufw` enabled |
+| Reboot/shutdown auditing (not a USG rule) | drop `/etc/audit/rules.d/71-reboot.rules` auditing the `reboot(2)`/`kexec_load(2)` syscalls (reboot/poweroff/halt/kexec), keyed `reboot`; toggle `audit_reboot_rules_enabled` |
 | SSSD service + cert mapping (`service_sssd_enabled`, `sssd_enable_user_cert`) | **de-selected in the tailoring**; no central directory/CAC on this fleet (documented deviation) |
 
 After remediation the role **re-runs `usg audit`** (Pro-attached boxes; `usg_remediate_reaudit`) so the report in `usg_report_dir` reflects the fully-built box, not the mid-build snapshot. Re-run manually with `sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml`.
