@@ -47,8 +47,9 @@ Pick one with `deployment_profile` (or `PROFILE=` on `bootstrap.sh`). Default: *
 |---|---|---|
 | **`development`** | Engineering **workstation** | Dev toolchain + **GNOME desktop over RDP** (installs the GUI, so a server base works too) + browser VS Code (code-server) + Cockpit. |
 | **`ai`** | Local-AI **inference server** | **Host prep only**: Docker + NVIDIA GPU stack + Cockpit + Dockge, with container inbound ports opened. Deploy the AI tools (vLLM / Open WebUI / pgvector / Docling) from your own prebuilt images + compose files. |
+| **`baseline`** | An **already-built** box (software already installed) | **Provision + harden only, no app installs, no RDP**: org accounts/groups/ACL'd folders + USB→`dta`, `/opt/ia` + `/opt/it`, Cockpit, USG, and the GUI-preserving fixups (graphical target, GDM banner, GNOME dconf, USB re-enable). For a hand-built Ubuntu **Desktop** endpoint logged into locally. |
 
-Both profiles harden with USG (both need an **Ubuntu Pro** token), create the org accounts/groups and the `/opt/ia` + `/opt/it` admin folders, and drop the USG report in **`/opt/ia`**. `desktop`/`server` are aliases for `development`/`ai`.
+All profiles harden with USG (all need an **Ubuntu Pro** token), create the org accounts/groups and the `/opt/ia` + `/opt/it` admin folders, and drop the USG report in **`/opt/ia`**. `desktop`/`server` are aliases for `development`/`ai`.
 
 ## Quick start
 
@@ -56,7 +57,8 @@ Both profiles harden with USG (both need an **Ubuntu Pro** token), create the or
 
 - **`development`**: Ubuntu **Desktop** (or Server), plus a local account whose name matches `dev_tools_user` in `group_vars/all.yml` (default `austin_case_adm`).
 - **`ai`**: Ubuntu **Server**, with **Ubuntu Pro** selected during install.
-- **Both** need an **Ubuntu Pro token**. `bootstrap.sh` prompts for it (hidden), or drop it in `/etc/ubuntu-advantage/pro-token` beforehand.
+- **`baseline`**: an already-configured Ubuntu **Desktop** with your software already installed — the build adds only org provisioning + USG hardening.
+- **All** need an **Ubuntu Pro token**. `bootstrap.sh` prompts for it (hidden), or drop it in `/etc/ubuntu-advantage/pro-token` beforehand.
 
 **2. Run one command** on the target:
 
@@ -66,6 +68,9 @@ curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/boots
 
 # AI server:
 curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo PROFILE=ai bash
+
+# Baseline: harden + provision an already-built box (no app installs, no RDP):
+curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo PROFILE=baseline bash
 
 # AI server, audit-only first pass (installs USG + writes the report, but does NOT apply `usg fix` yet):
 curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo PROFILE=ai HARDEN=0 bash

@@ -2,16 +2,19 @@
 # =============================================================================
 # desktop_hardening -- the GUI-specific hardening that USG does NOT do.
 #
-# The development profile is hardened by Canonical's USG (usg_harden role, which
-# runs BEFORE this role). USG applies the DISA STIG's SERVER controls (auditd,
-# PAM faillock, sshd, ufw, AIDE, GRUB, file perms, ...), so this role no longer
-# imports the ansible-lockdown role or the SSG gap files -- USG owns all of that.
+# Runs for the development AND baseline profiles, both hardened by Canonical's USG
+# (usg_harden role, which runs BEFORE this role). USG applies the DISA STIG's
+# SERVER controls (auditd, PAM faillock, sshd, ufw, AIDE, GRUB, file perms, ...),
+# so this role no longer imports the ansible-lockdown role or the SSG gap files --
+# USG owns all of that.
 #
 # What USG does NOT know about is GNOME/GDM and this fleet's desktop carve-outs,
-# and it may lock down the box in ways that break the remote GUI. So this role,
-# running AFTER USG, does only the desktop-specific pieces:
+# and it may lock down the box in ways that break the GUI. So this role, running
+# AFTER USG, does only the desktop-specific pieces:
 #   1. RE-ASSERT the GUI so USG can't leave the box headless/unreachable:
-#      graphical target, GDM, xrdp, Wayland-off, and the RDP/SSH firewall openings.
+#      graphical target, GDM, the SSH/Cockpit firewall openings, and -- only when
+#      dev_rdp_enabled (development) -- xrdp, Wayland-off, and the RDP port. On
+#      baseline (a locally-used desktop) the RDP/Wayland steps are skipped.
 #   2. GDM login-screen DCSA banner (greeter.dconf-defaults).
 #   3. GNOME desktop dconf hardening + login banner (gnome.yml -- screensaver
 #      lock/idle, automount off, Ctrl-Alt-Del off, smartcard-removal lock).
@@ -30,16 +33,16 @@
 # operator DELIBERATELY built an unhardened box (usg_fix_enabled=false / HARDEN=0).
 # (_usg_active is set by usg_harden, which runs immediately before this role.)
 # ---------------------------------------------------------------------------
-- name: "SAFETY | Refuse to ship an unhardened development box that looks hardened"
+- name: "SAFETY | Refuse to ship an unhardened box that looks hardened"
   ansible.builtin.assert:
     that:
       - (not (usg_fix_enabled | default(true) | bool)) or (_usg_active | default(false) | bool)
     fail_msg: >-
-      This development box is NOT Ubuntu Pro-attached, so USG hardening was
-      SKIPPED -- but the profile still applies the DCSA banner + branding, which
-      would make an UNHARDENED box masquerade as hardened. Supply a Pro token
-      (bootstrap.sh prompt, or {{ ubuntu_pro_token_file }}), or set
-      usg_fix_enabled=false (HARDEN=0) to deliberately build an unhardened box.
+      This box is NOT Ubuntu Pro-attached, so USG hardening was SKIPPED -- but the
+      profile still applies the DCSA banner + branding, which would make an
+      UNHARDENED box masquerade as hardened. Supply a Pro token (bootstrap.sh
+      prompt, or {{ ubuntu_pro_token_file }}), or set usg_fix_enabled=false
+      (HARDEN=0) to deliberately build an unhardened box.
     quiet: true
 
 # ---------------------------------------------------------------------------
@@ -52,20 +55,22 @@
     state: link
     force: true
 
-- name: "GUI | Ensure the display manager + RDP services stay enabled"
+- name: "GUI | Ensure the display manager (+ RDP services when enabled) stay enabled"
   ansible.builtin.systemd:
     name: "{{ item }}"
     enabled: true
-  loop:
-    - gdm3
-    - xrdp
-    - xrdp-sesman
+  # gdm3 always; the xrdp units only when RDP is in use (development). On baseline
+  # xrdp is not installed, so we must not try to enable it.
+  loop: "{{ ['gdm3'] + (['xrdp', 'xrdp-sesman'] if (dev_rdp_enabled | default(true) | bool) else []) }}"
   # xrdp units are absent if dev_rdp_enabled was false; don't fail on that.
   register: _dh_svc
   failed_when:
     - _dh_svc is failed
     - "'Could not find the requested service' not in (_dh_svc.msg | default(''))"
 
+# Wayland-off is an xrdp requirement (xrdp needs Xorg). On baseline there is no
+# RDP and the box is used locally, so leave the native GNOME (Wayland) session
+# untouched -- forcing Xorg here would needlessly change the local user's session.
 - name: "GUI | Re-assert Wayland disabled in GDM (xrdp needs Xorg)"
   ansible.builtin.lineinfile:
     path: /etc/gdm3/custom.conf
@@ -73,6 +78,7 @@
     line: "WaylandEnable=false"
     insertafter: '^\[daemon\]'
     state: present
+  when: dev_rdp_enabled | default(true) | bool
   failed_when: false        # custom.conf is created by remote_desktop; tolerate absence
 
 # Host firewall: GUARANTEE it is active (never leave a dev box wide open) and

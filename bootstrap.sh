@@ -10,8 +10,13 @@
 #   firewall). Your prebuilt images + compose files deploy the AI tools:
 #     curl -fsSL .../bootstrap.sh | sudo PROFILE=ai bash
 #
+#   BASELINE -- an ALREADY-BUILT box (software already installed). Org accounts/
+#   groups/ACL'd folders + USB->dta, Cockpit, USG hardening, and the GUI-preserving
+#   fixups only. Installs NO app set and NO RDP:
+#     curl -fsSL .../bootstrap.sh | sudo PROFILE=baseline bash
+#
 # Recognised environment variables:
-#   PROFILE=development|ai   which build to run                 (default: development)
+#   PROFILE=development|ai|baseline  which build to run         (default: development)
 #                           (aliases: desktop->development, server->ai)
 #   PRO_TOKEN=<token>       Ubuntu Pro token for USG hardening (BOTH profiles use
 #                           USG; else you're prompted). Enter to skip = POA&M.
@@ -43,8 +48,8 @@ case "${PROFILE}" in
   server)  PROFILE="ai" ;;
 esac
 
-if [[ "${PROFILE}" != "development" && "${PROFILE}" != "ai" ]]; then
-  echo "PROFILE must be 'development' or 'ai' (got '${PROFILE}')." >&2
+if [[ "${PROFILE}" != "development" && "${PROFILE}" != "ai" && "${PROFILE}" != "baseline" ]]; then
+  echo "PROFILE must be 'development', 'ai', or 'baseline' (got '${PROFILE}')." >&2
   exit 1
 fi
 
@@ -149,6 +154,11 @@ if [[ "${PROFILE}" == "ai" ]]; then
   echo "    Host is prepped (Docker + NVIDIA + firewall). Deploy your prebuilt AI"
   echo "    compose stack (docker compose up -d) — Ansible does not manage the containers."
   echo "    Then REBOOT to apply USG hardening (and load the NVIDIA driver, if installed)."
+elif [[ "${PROFILE}" == "baseline" ]]; then
+  echo "    Reports:      /var/log/stig-scan/  — 'usg audit' output (collect BEFORE air-gapping)."
+  echo "    Provisioned org accounts/groups/folders + USB->dta and hardened with USG"
+  echo "    (no app installs, no RDP). Set each new account's password: sudo passwd <user>."
+  echo "    Then REBOOT to apply USG hardening; the box comes up to GDM with the DCSA banner."
 else
   echo "    Reports:      /var/log/stig-scan/  — 'usg audit' output (collect BEFORE air-gapping)."
   echo "    RDP:          connect an RDP client to this host:3389 (TLS) and log in as a local user."

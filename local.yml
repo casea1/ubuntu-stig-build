@@ -17,6 +17,13 @@
 #     your OWN prebuilt images + compose files. ai_firewall opens their inbound
 #     ports after USG's default-deny.
 #
+#   baseline    -- an ALREADY-BUILT box (software already installed) that only
+#     needs org provisioning + STIG. Installs NO app set and NO RDP; runs
+#     local_accounts (users/groups/ACL'd folders + USB->dta), managed_dirs,
+#     cockpit, USG, and the GUI-preserving pieces of desktop_hardening (graphical
+#     target, GDM banner, GNOME dconf, USB re-enable, ufw). For a hand-built
+#     Ubuntu Desktop endpoint logged into locally. (Needs an Ubuntu Pro token.)
+#
 # Run order is deliberate for BOTH: install + configure FIRST, harden SECOND.
 # Hardening (umask, noexec /tmp, PAM) can break installs/pip if applied first, and
 # the AI images / USG content must download while the box is still online.
@@ -34,6 +41,12 @@
     _deployment_profile: "{{ {'desktop': 'development', 'server': 'ai'}.get(_raw_profile, _raw_profile) }}"
     is_development: "{{ _deployment_profile == 'development' }}"
     is_ai: "{{ _deployment_profile == 'ai' }}"
+    # baseline -- an ALREADY-PROVISIONED box (all software already installed) that
+    # only needs org provisioning + STIG: Ubuntu Pro attach, USG, the local
+    # accounts/groups/ACL'd folders, the USB->dta carve-out, Cockpit, and the
+    # GUI-preserving desktop_hardening fixups -- but NO app installs and NO RDP.
+    # Intended for a hand-built Ubuntu Desktop endpoint logged into locally.
+    is_baseline: "{{ _deployment_profile == 'baseline' }}"
 
   # Fail fast on a typo'd profile rather than silently building nothing.
   pre_tasks:
@@ -64,12 +77,12 @@
         label: "{{ item.item }}"
       when: item.stat.exists | default(false)
 
-    - name: "Validate deployment_profile is development or ai"
+    - name: "Validate deployment_profile is development, ai, or baseline"
       ansible.builtin.assert:
         that:
-          - _deployment_profile in ['development', 'ai']
+          - _deployment_profile in ['development', 'ai', 'baseline']
         fail_msg: >-
-          deployment_profile must be 'development' or 'ai'
+          deployment_profile must be 'development', 'ai', or 'baseline'
           (aliases: 'desktop'->development, 'server'->ai). Got '{{ _raw_profile }}'.
         quiet: true
 
@@ -82,14 +95,16 @@
     - role: disk_expand      # grow root LV + fs to all free VG space (idempotent; disk_autoexpand)
 
     # -------------------------------------------------------------------------
-    # BASELINE  -- base_packages runs for both profiles; internally it installs
+    # BASELINE  -- base_packages runs for all profiles; internally it installs
     # the development app set (when is_development) or a lean AI-server baseline
-    # (when is_ai). See roles/base_packages/tasks/main.yml.
+    # (when is_ai). On the baseline profile neither set imports, so only the
+    # common packages (cifs-utils/net-tools) are ensured. See
+    # roles/base_packages/tasks/main.yml.
     # -------------------------------------------------------------------------
-    - role: base_packages    # development: clamav/wireshark/python/editor/putty; ai: lean baseline
+    - role: base_packages    # development: clamav/wireshark/python/editor/putty; ai: lean baseline; baseline: common only
 
     # -------------------------------------------------------------------------
-    # SHARED PROVISIONING  (both profiles)
+    # SHARED PROVISIONING  (all profiles)
     # Org access groups (dta/audit/sentry) + standing accounts + ACL'd shared
     # folders + USB->dta policy. Runs before hardening so the accounts exist when
     # PAM/faillock is applied. Toggle with local_accounts_enabled.
@@ -134,8 +149,8 @@
         - is_ai
         - gpu_enabled | default(true)
         - usg_enable_fips | default(false)
-    - role: desktop_hardening       # development: GUI-preserving fixups AFTER USG (GNOME/GDM banner, USB, firewall)
-      when: is_development
+    - role: desktop_hardening       # development + baseline: GUI-preserving fixups AFTER USG (GNOME/GDM banner, USB, firewall). RDP/Wayland-off bits are development-only (gated on dev_rdp_enabled).
+      when: is_development or is_baseline
     - role: ai_firewall             # ai: open the prebuilt AI stack's inbound ports AFTER USG's default-deny
       when: is_ai
     - role: ai_compose              # ai: bake the node's docker-compose + .env into /opt/it/docker (opt-in `up`)
