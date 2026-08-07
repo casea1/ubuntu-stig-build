@@ -1,0 +1,128 @@
+---
+# =============================================================================
+# peripheral_lockdown -- disable the camera + microphone in software.
+#
+# Defense-in-depth for a secure/field laptop: the AUTHORITATIVE disable is in the
+# firmware (disable the camera + mic in BIOS/UEFI), but this role also removes
+# them at the OS layer so a box is not one BIOS reset away from a live camera/mic.
+# Gated is_emi in local.yml; each half has its own toggle.
+#
+#   emi_disable_camera (default true) -- blacklist the camera kernel modules
+#     (Intel IPU6 MIPI stack + generic USB uvcvideo + Intel Visual Sensing
+#     Controller) so no camera device is ever created. EMI also never installs
+#     the camera drivers (no intel-ipu6-dkms / Dell OEM camera meta).
+#   emi_disable_mic (default true) -- best-effort: mute + lock every ALSA capture
+#     control at boot. Keeps speakers working. (The internal DMIC shares the audio
+#     codec, so a clean kernel-level mic-only kill isn't possible -- BIOS is the
+#     real control; this is belt-and-suspenders.)
+#   emi_disable_all_audio (default false) -- NUCLEAR: also blacklist the audio
+#     driver, killing mic AND speakers. Use on boxes that need no audio at all.
+# =============================================================================
+
+# --------------------------------------------------------------------------
+# CAMERA -- blacklist + hard-disable the modules.
+# --------------------------------------------------------------------------
+- name: "PERIPH | Blacklist the camera kernel modules"
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/emi-blacklist-camera.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by peripheral_lockdown (EMI) -- do not edit by hand.
+      # Disable the camera at the kernel layer (defense-in-depth with BIOS).
+      {% for m in emi_camera_blacklist_modules %}
+      blacklist {{ m }}
+      install {{ m }} /bin/false
+      {% endfor %}
+  when: emi_disable_camera | default(true) | bool
+  notify: Rebuild initramfs
+
+- name: "PERIPH | Unload any camera modules already loaded (no reboot needed)"
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: absent
+  loop: "{{ emi_camera_blacklist_modules }}"
+  loop_control:
+    label: "{{ item }}"
+  failed_when: false
+  when: emi_disable_camera | default(true) | bool
+
+# --------------------------------------------------------------------------
+# MICROPHONE -- best-effort mute+lock of every capture control at each boot.
+# --------------------------------------------------------------------------
+- name: "PERIPH | Install the mic-mute helper script"
+  ansible.builtin.copy:
+    dest: /usr/local/sbin/emi-mute-mic
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # Managed by peripheral_lockdown (EMI). Mute + disable every ALSA capture
+      # control on every sound card. Best-effort (control names vary); BIOS is the
+      # authoritative mic disable.
+      set +e
+      for card in $(cat /proc/asound/cards 2>/dev/null | sed -n 's/^[[:space:]]*\([0-9]\+\)[[:space:]].*/\1/p' | sort -u); do
+        amixer -c "$card" scontrols 2>/dev/null | sed -n "s/.*'\(.*\)',.*/\1/p" | while read -r ctl; do
+          amixer -c "$card" sset "$ctl" nocap  >/dev/null 2>&1
+          amixer -c "$card" sset "$ctl" mute   >/dev/null 2>&1
+        done
+      done
+      exit 0
+  when: emi_disable_mic | default(true) | bool
+
+- name: "PERIPH | Install + enable the mic-mute boot service"
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/emi-mute-mic.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by peripheral_lockdown (EMI) -- do not edit by hand.
+      [Unit]
+      Description=EMI: mute and disable the microphone (defense-in-depth)
+      After=sound.target
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/emi-mute-mic
+      RemainAfterExit=yes
+      [Install]
+      WantedBy=multi-user.target
+  when: emi_disable_mic | default(true) | bool
+  notify: Reload systemd
+
+- name: "PERIPH | Enable + run the mic-mute service now"
+  ansible.builtin.systemd:
+    name: emi-mute-mic.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: emi_disable_mic | default(true) | bool
+  failed_when: false
+
+# --------------------------------------------------------------------------
+# OPTIONAL: kill ALL audio (mic + speakers) by blacklisting the sound drivers.
+# --------------------------------------------------------------------------
+- name: "PERIPH | (Optional) Blacklist all audio drivers -- no mic AND no speakers"
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/emi-blacklist-audio.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by peripheral_lockdown (EMI) -- do not edit by hand.
+      # emi_disable_all_audio=true: disable the entire audio stack.
+      {% for m in emi_audio_blacklist_modules %}
+      blacklist {{ m }}
+      install {{ m }} /bin/false
+      {% endfor %}
+  when: emi_disable_all_audio | default(false) | bool
+  notify: Rebuild initramfs
+
+- name: "PERIPH | Remove the all-audio blacklist when disabled"
+  ansible.builtin.file:
+    path: /etc/modprobe.d/emi-blacklist-audio.conf
+    state: absent
+  when: not (emi_disable_all_audio | default(false) | bool)
+  notify: Rebuild initramfs

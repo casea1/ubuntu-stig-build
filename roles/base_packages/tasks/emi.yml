@@ -1,0 +1,40 @@
+---
+# EMI profile extras -- layered on top of the DEVELOPMENT app set (development.yml)
+# and the dev_tools toolchain, which EMI also runs. Only packages NOT already
+# covered by those live here. Included from main.yml when is_emi.
+#
+# EMI = a local-GUI, STIG-hardened Dell imaging/field workstation. The imaging
+# services (tftpd-hpa/isc-dhcp-server/dnsmasq) and the dev toolchain come from
+# development.yml + dev_tools; this file adds the VPN + network-recon tools and
+# the CJK input methods that make an EMI box distinct.
+
+- name: "EMI | Install VPN + network-recon tools"
+  ansible.builtin.apt:
+    name:
+      - openvpn
+      - nmap
+      - arp-scan
+    state: present
+
+# OpenVPN's generic unit is inactive until a tunnel config is dropped in. Leave it
+# disabled + stopped so the box has no half-configured listening service (mirrors
+# the TFTP/DHCP/dnsmasq handling in development.yml). emi_firewall opens 1194/udp
+# so the tunnel works once you enable a configured client/server unit.
+- name: "EMI | Leave OpenVPN disabled until a tunnel config is added"
+  ansible.builtin.systemd:
+    name: openvpn.service
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: "EMI | Install CJK input methods (IBus: Pinyin / Chewing / Cangjie)"
+  ansible.builtin.apt:
+    name:
+      - ibus
+      - ibus-libpinyin       # Simplified Chinese (Pinyin)
+      - ibus-chewing         # Traditional Chinese (Zhuyin/Bopomofo)
+      - ibus-table-cangjie3  # Cangjie 3
+      - ibus-table-cangjie5  # Cangjie 5
+      - ibus-table-cangjie-big
+    state: present
+  when: emi_cjk_input_methods | default(true) | bool
