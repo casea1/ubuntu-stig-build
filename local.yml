@@ -170,8 +170,10 @@
     # -------------------------------------------------------------------------
     # POST-HARDENING  (desktop branding, optional TPM)
     # -------------------------------------------------------------------------
-    - role: desktop_branding        # system-wide wallpaper (desktop + lock screen), runs after hardening
-      when: is_development
+    - role: desktop_branding        # GUI profiles (development + baseline): system-wide DoD SHB wallpaper + lock screen, runs after hardening. (ai is headless -> skipped.)
+      when:
+        - is_development or is_baseline
+        - desktop_branding_enabled | default(true) | bool
     - role: tpm_luks_unlock         # OPT-IN: bind LUKS to the TPM2 (works on either profile if encrypted)
       when: tpm_luks_enabled | default(false)
 

@@ -516,6 +516,9 @@ purge_default_accounts:
 
 # =============================================================================
 # DESKTOP BRANDING / WALLPAPER (desktop_branding role)
+# Runs on the GUI profiles (development + baseline); ai is headless so it is
+# skipped there. Set false to skip the wallpaper/lock-screen branding entirely.
+desktop_branding_enabled: true
 # =============================================================================
 # The wallpaper file ships in roles/desktop_branding/files/ and is deployed here.
 branding_wallpaper_dest: /usr/share/backgrounds/SHB_Background.jpg
