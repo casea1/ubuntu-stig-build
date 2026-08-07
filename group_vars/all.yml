@@ -25,7 +25,12 @@
 # (bootstrap.sh accepts PROFILE=ai and passes this for you.)
 # Back-compat: the first release used 'desktop'/'server'; those are still
 # accepted as aliases for 'development'/'ai'.
-deployment_profile: development    # options: development | ai  (aliases: desktop, server)
+#
+# A third profile, 'baseline', provisions + hardens an ALREADY-BUILT box: org
+# accounts/groups/ACL'd folders + USB->dta, managed dirs, Cockpit, USG, and the
+# GUI-preserving desktop_hardening fixups -- but installs NO app set and NO RDP.
+# Use it for a hand-built Ubuntu Desktop endpoint logged into locally.
+deployment_profile: development    # options: development | ai | baseline  (aliases: desktop, server)
 
 # ---- Root disk auto-expand (disk_expand role, runs first) ------------------
 # Ubuntu autoinstall often creates a small root LV (e.g. 100G) on a large disk,
@@ -35,7 +40,10 @@ deployment_profile: development    # options: development | ai  (aliases: deskto
 # on non-LVM boxes or a fully-allocated VG. Set false if you deliberately keep
 # separate partitions for /var, /home, ... The VG/LV names are Ubuntu's
 # autoinstall defaults; override per box in site.yml if yours differ.
-disk_autoexpand: true
+# Defaults ON for development/ai (freshly-imaged servers), but OFF for baseline:
+# a baseline box is an existing, already-partitioned endpoint, so don't silently
+# resize its root volume. Force either way in site.yml.
+disk_autoexpand: "{{ not (is_baseline | default(false) | bool) }}"
 disk_root_vg: ubuntu-vg
 disk_root_lv: ubuntu-lv
 
@@ -188,7 +196,9 @@ powershell_version: "7.4.16"
 # Installs code-server (dev_tools) and runs it as a per-user systemd service so
 # users can reach a full VS Code from a browser (in addition to RDP). Served over
 # self-signed TLS with a generated password; desktop_hardening opens the port.
-dev_code_server_enabled: true
+# Development only: a baseline box installs no dev_tools, so code-server is never
+# present there (and desktop_hardening must not open its port).
+dev_code_server_enabled: "{{ is_development | default(true) | bool }}"
 dev_code_server_version: ""           # "" = latest; pin e.g. "4.100.1" for frozen images
 dev_code_server_bind_addr: "0.0.0.0"  # set 127.0.0.1 to require an SSH tunnel / RDP browser
 dev_code_server_port: 8080
@@ -211,7 +221,10 @@ dev_gnome_package: ubuntu-desktop-minimal   # or: ubuntu-desktop
 
 # Install + configure xrdp so users can RDP into the GNOME session. xrdp logins
 # go through PAM, so the STIG faillock/faildelay hardening applies to them too.
-dev_rdp_enabled: true
+# Development only: on baseline (a locally-used desktop) RDP is not installed, so
+# desktop_hardening skips the xrdp/Wayland-off/RDP-firewall steps and leaves the
+# local GNOME (Wayland) session as-is. Force with true/false per box.
+dev_rdp_enabled: "{{ is_development | default(true) | bool }}"
 dev_rdp_port: 3389
 # TLS security layer for RDP: xrdp presents the system snakeoil cert and is added
 # to the ssl-cert group so it can read the key. Set false only if a client truly
@@ -226,16 +239,20 @@ dev_rdp_allowed_group: ""
 # CLASSIFICATION BANNER (persistent top + bottom on-screen bars)
 # =============================================================================
 # NOT a STIG requirement -- this is a classified-system / accreditation control.
-# To CHANGE THE LEVEL: edit classification_banner_level below, push, and re-run
-# the build (it's idempotent). Valid levels are the section names in
-# roles/classification_banner/files/classification-banner.conf:
+# Runs on ANY GUI profile (development + baseline); ai is headless so it's skipped.
+# To CHANGE THE LEVEL: set classification_banner_level (per box in /opt/it/site.yml,
+# or fleet-wide here), re-run the build (idempotent), and log out/in. Valid levels
+# are the section names in roles/classification_banner/files/classification-banner.conf:
 #   UNCLASSIFIED | CUI | FOUO | CONFIDENTIAL | SECRET | "TOP SECRET" | SCI
+# (edit that .conf to change a level's text/colors or add a new level).
 classification_banner_enabled: true
 classification_banner_level: "UNCLASSIFIED"
 # A docked top/bottom banner needs an Xorg login session -- Wayland (Ubuntu's
 # default) ignores the X11 dock/strut hints, so the bars won't pin. true => the
-# build forces GDM to Xorg. Set false only if you switch to a Wayland-native
-# (GNOME Shell extension) approach.
+# build forces GDM to Xorg. NOTE: on the baseline profile this is what switches a
+# locally-used desktop from Wayland to Xorg (baseline otherwise leaves Wayland
+# alone) -- required for the banner. Set false only if you switch to a
+# Wayland-native (GNOME Shell extension) approach.
 classification_banner_force_xorg: true
 
 # =============================================================================
@@ -474,8 +491,9 @@ local_shared_dirs:
 # engineering WORKSTATIONS that move files on removable media. The AI SERVERS
 # never do USB transfers, so on the ai profile the dta group + dta accounts + USB
 # polkit/udev rules are NOT created (and USG keeps usb-storage disabled there).
-# Defaults to on for development, off for ai; force with true/false per box.
-local_usb_transfer_enabled: "{{ is_development | default(true) | bool }}"
+# Defaults on for development and baseline (workstation/endpoint boxes that move
+# files on removable media), off for ai; force with true/false per box.
+local_usb_transfer_enabled: "{{ (is_development | default(true) | bool) or (is_baseline | default(false) | bool) }}"
 
 # USB storage is restricted to members of this group (udisks2 polkit + udev).
 usb_access_group: dta
@@ -502,6 +520,9 @@ purge_default_accounts:
 
 # =============================================================================
 # DESKTOP BRANDING / WALLPAPER (desktop_branding role)
+# Runs on the GUI profiles (development + baseline); ai is headless so it is
+# skipped there. Set false to skip the wallpaper/lock-screen branding entirely.
+desktop_branding_enabled: true
 # =============================================================================
 # The wallpaper file ships in roles/desktop_branding/files/ and is deployed here.
 branding_wallpaper_dest: /usr/share/backgrounds/SHB_Background.jpg
