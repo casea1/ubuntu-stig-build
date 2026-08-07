@@ -116,6 +116,16 @@
     - role: cockpit                 # web server-management console (9090); firewall opened post-USG
       when: cockpit_enabled | default(true)
 
+    # GUI classification banner -- ANY profile with a desktop or RDP GUI
+    # (development + baseline; ai is headless). Docked top/bottom classification
+    # bars (UNCLASSIFIED/SECRET/... in CAPCO colors); switch the level per box with
+    # classification_banner_level. Runs before hardening (installs pkgs + forces
+    # GDM to Xorg, which the docked bars require).
+    - role: classification_banner
+      when:
+        - is_development or is_baseline
+        - classification_banner_enabled | default(true) | bool
+
     # -------------------------------------------------------------------------
     # DEVELOPMENT-ONLY PROVISIONING  (GUI engineering box, RDP-accessible)
     # -------------------------------------------------------------------------
@@ -125,8 +135,6 @@
       when: is_development
     - role: remote_desktop          # GNOME desktop + xrdp (RDP into the dev GUI); runs before hardening
       when: is_development
-    - role: classification_banner   # top/bottom security-classification bars (optional)
-      when: is_development and (classification_banner_enabled | default(false))
 
     # -------------------------------------------------------------------------
     # AI-SERVER-ONLY PROVISIONING  (Ubuntu Pro AI server)

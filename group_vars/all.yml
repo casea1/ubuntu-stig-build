@@ -239,16 +239,20 @@ dev_rdp_allowed_group: ""
 # CLASSIFICATION BANNER (persistent top + bottom on-screen bars)
 # =============================================================================
 # NOT a STIG requirement -- this is a classified-system / accreditation control.
-# To CHANGE THE LEVEL: edit classification_banner_level below, push, and re-run
-# the build (it's idempotent). Valid levels are the section names in
-# roles/classification_banner/files/classification-banner.conf:
+# Runs on ANY GUI profile (development + baseline); ai is headless so it's skipped.
+# To CHANGE THE LEVEL: set classification_banner_level (per box in /opt/it/site.yml,
+# or fleet-wide here), re-run the build (idempotent), and log out/in. Valid levels
+# are the section names in roles/classification_banner/files/classification-banner.conf:
 #   UNCLASSIFIED | CUI | FOUO | CONFIDENTIAL | SECRET | "TOP SECRET" | SCI
+# (edit that .conf to change a level's text/colors or add a new level).
 classification_banner_enabled: true
 classification_banner_level: "UNCLASSIFIED"
 # A docked top/bottom banner needs an Xorg login session -- Wayland (Ubuntu's
 # default) ignores the X11 dock/strut hints, so the bars won't pin. true => the
-# build forces GDM to Xorg. Set false only if you switch to a Wayland-native
-# (GNOME Shell extension) approach.
+# build forces GDM to Xorg. NOTE: on the baseline profile this is what switches a
+# locally-used desktop from Wayland to Xorg (baseline otherwise leaves Wayland
+# alone) -- required for the banner. Set false only if you switch to a
+# Wayland-native (GNOME Shell extension) approach.
 classification_banner_force_xorg: true
 
 # =============================================================================
