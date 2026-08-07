@@ -10,3 +10,14 @@
     name: ssh
     state: restarted
   failed_when: false
+
+# Best-effort live load. `usg fix` has usually already set the audit config
+# immutable (-e 2), so a live reload is refused with "audit system is in
+# immutable mode" -- that's expected and NOT a failure: the staged rule in
+# /etc/audit/rules.d/ is compiled + loaded by the audit service on the next
+# (post-build) reboot. failed_when:false so the run never breaks on it.
+- name: Load audit rules
+  ansible.builtin.command: augenrules --load
+  register: _augenrules_load
+  changed_when: false
+  failed_when: false

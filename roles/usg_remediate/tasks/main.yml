@@ -211,7 +211,44 @@
     state: enabled
 
 # ---------------------------------------------------------------------------
-# 5) RE-AUDIT -- regenerate the USG report so it reflects the fully-built,
+# 5) SYSTEM REBOOT / SHUTDOWN AUDITING (all profiles).
+# USG's STIG ruleset does not ship an explicit reboot-audit rule; auditd records
+# SYSTEM_BOOT/SYSTEM_SHUTDOWN natively but without a searchable audit key. Drop a
+# rule for the reboot(2) + kexec_load syscalls -- the kernel entry points for
+# reboot/poweroff/halt/kexec no matter which tool (shutdown, reboot, systemctl,
+# ...) triggered them -- keyed so it's greppable (`ausearch -k {{ audit_reboot_rules_key }}`).
+# augenrules concatenates *.rules in name order; 71- keeps this BEFORE USG's
+# 99-*-finalize `-e 2` (immutable) line. Because `usg fix` has already set the
+# running config immutable, a live `augenrules --load` is refused -- the rule is
+# staged in rules.d and loaded by the audit service on the post-build REBOOT.
+# ---------------------------------------------------------------------------
+- name: "REMED | System reboot/shutdown audit rule"
+  when: audit_reboot_rules_enabled | default(true) | bool
+  block:
+    - name: "REMED | Is auditd's rules.d present? (skip on a box without auditd)"
+      ansible.builtin.stat:
+        path: /etc/audit/rules.d
+      register: _audit_rulesd
+
+    - name: "REMED | Install the reboot/shutdown audit rule (key={{ audit_reboot_rules_key | default('reboot') }})"
+      ansible.builtin.copy:
+        dest: /etc/audit/rules.d/71-reboot.rules
+        owner: root
+        group: root
+        mode: "0640"
+        content: |
+          ## Managed by usg_remediate -- do not edit by hand.
+          ## Audit system reboot / shutdown / power-off / kexec. reboot(2) is the
+          ## kernel entry point for reboot, poweroff and halt; kexec_load(2) is the
+          ## kexec reboot path. Keyed '{{ audit_reboot_rules_key | default('reboot') }}'
+          ## -> find them with: ausearch -k {{ audit_reboot_rules_key | default('reboot') }}
+          -a always,exit -F arch=b64 -S reboot -S kexec_load -k {{ audit_reboot_rules_key | default('reboot') }}
+          -a always,exit -F arch=b32 -S reboot -S kexec_load -k {{ audit_reboot_rules_key | default('reboot') }}
+      when: _audit_rulesd.stat.exists | default(false)
+      notify: Load audit rules
+
+# ---------------------------------------------------------------------------
+# 6) RE-AUDIT -- regenerate the USG report so it reflects the fully-built,
 # remediated box rather than the mid-build snapshot. Pro-attached boxes only.
 # (_usg_active / _usg_target are facts set by usg_harden earlier in this play.)
 # ---------------------------------------------------------------------------
