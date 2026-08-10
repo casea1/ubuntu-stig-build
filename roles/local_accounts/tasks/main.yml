@@ -208,6 +208,43 @@
   when: local_usb_transfer_enabled | default(true) | bool
 
 # ---------------------------------------------------------------------------
+# 4b) EMI-UNCLASS CLEANUP -- the unclassified EMI box wants open USB and no dta
+#     carve-out. On a FRESH build the tasks above are simply skipped (no group /
+#     accounts / rules created). This block ALSO actively REMOVES them so a box
+#     rebuilt/repurposed from a classified image (which had them) ends up clean:
+#     the dta accounts (+ homes), the dta group, and the leftover USB polkit/udev
+#     rule files. Scoped to emi-unclass only (is_emi and not emi_classified).
+# ---------------------------------------------------------------------------
+- name: "ACCOUNTS | emi-unclass -- remove the dta carve-out (accounts, group, USB rules)"
+  when:
+    - is_emi | default(false) | bool
+    - not (emi_classified | default(true) | bool)
+  block:
+    - name: "ACCOUNTS | Remove the dta data-transfer accounts (+ their homes)"
+      ansible.builtin.user:
+        name: "{{ item.name }}"
+        state: absent
+        remove: true
+      loop: "{{ local_users | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: usb_access_group | default('dta') in (item.groups | default([]))
+
+    - name: "ACCOUNTS | Remove the '{{ usb_access_group | default('dta') }}' group"
+      ansible.builtin.group:
+        name: "{{ usb_access_group | default('dta') }}"
+        state: absent
+
+    - name: "ACCOUNTS | Remove any leftover dta USB polkit + udev rule files"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/etc/polkit-1/rules.d/49-{{ usb_access_group | default('dta') }}-usb.rules"
+        - "/etc/udev/rules.d/99-{{ usb_access_group | default('dta') }}-usb.rules"
+      notify: reload udev
+
+# ---------------------------------------------------------------------------
 # 5) PURGE BASE-BOX DEFAULT ACCOUNTS (vagrant, etc.)
 #    Vagrant/Packer base images ship a default 'vagrant' account with a
 #    well-known password, passwordless sudo (/etc/sudoers.d/vagrant), and the
