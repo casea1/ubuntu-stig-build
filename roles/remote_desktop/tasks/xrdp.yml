@@ -41,6 +41,12 @@
     - { option: crypt_level, value: "high" }
     - { option: certificate, value: "{{ rdp_tls_cert }}" }
     - { option: key_file, value: "{{ rdp_tls_key }}" }
+    # Force the Xorg (xorgxrdp) backend and skip the session-type dropdown. The
+    # default xrdp.ini also offers Xvnc, which needs Xvnc (tigervnc) that isn't
+    # installed -> selecting it dies with "Error calling exec (Xvnc) ... No such
+    # file or directory" and a black screen (also trips the OpenSSL 3 legacy
+    # DES-EDE3 error in sesman). Pinning autorun=Xorg removes that footgun.
+    - { option: autorun, value: "{{ dev_rdp_autorun_session | default('Xorg') }}" }
   notify: restart xrdp
 
 - name: "XRDP | Polkit: silence colord/PackageKit auth prompts for RDP sessions"

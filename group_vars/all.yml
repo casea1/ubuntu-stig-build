@@ -319,6 +319,13 @@ dev_rdp_port: 3389
 # to the ssl-cert group so it can read the key. Set false only if a client truly
 # can't negotiate TLS (then RDP falls back to negotiate/RDP security).
 dev_rdp_use_tls: true
+# Auto-select this xrdp session backend and SKIP the session-type dropdown at the
+# xrdp login. "Xorg" is the xorgxrdp backend this role installs and the only one
+# that drives the GNOME session; the other options (notably Xvnc) need packages
+# that aren't installed and fail with a black screen / "No such file" on Ubuntu
+# 24.04. Pinning autorun=Xorg removes the broken choices. Set "" to restore the
+# dropdown (only if you deliberately add another backend).
+dev_rdp_autorun_session: "Xorg"
 # OPTIONAL: restrict RDP logins to members of this group (enforced in PAM). Empty
 # = any local account with a password may RDP (still password- + faillock-gated).
 # Set e.g. "rdpusers" to gate it; the role creates the group and adds the check.
