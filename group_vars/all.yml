@@ -563,9 +563,13 @@ local_shared_dirs:
 # engineering WORKSTATIONS that move files on removable media. The AI SERVERS
 # never do USB transfers, so on the ai profile the dta group + dta accounts + USB
 # polkit/udev rules are NOT created (and USG keeps usb-storage disabled there).
-# Defaults on for development, baseline, and emi (workstation/endpoint boxes that
-# move files on removable media), off for ai; force with true/false per box.
-local_usb_transfer_enabled: "{{ (is_development | default(true) | bool) or (is_baseline | default(false) | bool) or (is_emi | default(false) | bool) }}"
+# Defaults on for development, baseline, and the CLASSIFIED emi (workstation/
+# endpoint boxes that need controlled, dta-group-gated removable media). OFF for
+# ai (no USB transfers) and OFF for the UNCLASSIFIED emi variant (emi_classified:
+# false / PROFILE=emi-unclass): that box wants USB to just work with no dta gate,
+# so the dta group + dta accounts + USB polkit/udev restriction are NOT created
+# and any local desktop user can mount removable media normally. Force per box.
+local_usb_transfer_enabled: "{{ (is_development | default(true) | bool) or (is_baseline | default(false) | bool) or ((is_emi | default(false) | bool) and (emi_classified | default(true) | bool)) }}"
 
 # USB storage is restricted to members of this group (udisks2 polkit + udev).
 usb_access_group: dta
