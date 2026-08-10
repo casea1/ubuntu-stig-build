@@ -12,12 +12,17 @@
   # coder's upstream installer adds their apt repo and installs the .deb (same
   # curl|sh pattern as bootstrap.sh). Pin a version with dev_code_server_version for
   # frozen images; empty = latest. Idempotent via `creates` (skips once installed).
+  # HOME is set explicitly: ansible-pull runs from systemd (stig-build.service)
+  # with no HOME in the environment, and coder's install.sh runs under `set -u`
+  # and dereferences $HOME -> it aborts with "HOME: parameter not set" otherwise.
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
       curl -fsSL https://code-server.dev/install.sh | sh -s -- {{ ('--version ' ~ dev_code_server_version) if (dev_code_server_version | default('') | length > 0) else '' }}
     executable: /bin/bash
     creates: /usr/bin/code-server
+  environment:
+    HOME: /root
 
 - name: "CODE-SERVER | Resolve the service user's home directory"
   ansible.builtin.getent:
