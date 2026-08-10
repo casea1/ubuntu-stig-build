@@ -142,7 +142,7 @@ Every box is provisioned by a version-controlled Ansible build: repeatable, audi
 | **Audit** | `auditd` enabled with STIG rules; low-disk actions configured; journald/log permissions hardened. |
 | **Identity & access** | Local least-privilege accounts and groups; locked (non-empty) default passwords; PAM **faillock** (lockout), fail-delay, password policy, session timeout + concurrent-session limits. |
 | **Boundary protection** | Host firewall (**ufw default-deny inbound**, rate-limited); only required service ports opened, cross-node ports restricted by source IP. |
-| **Access banner** | **DCSA Authorized Warning Banner** presented at GUI/console/SSH logon. |
+| **Access banner** | **DCSA Authorized Warning Banner** presented at GUI/console/SSH logon (the unclassified EMI variant substitutes an unclassified EMI warning banner; the banner-enable control is satisfied in both cases). |
 | **Least functionality** | Lean package set; privileged management surfaces (Cockpit, Dockge) restricted to admin subnets. |
 | **Removable media** | USB mass storage disabled on the AI nodes (USG blacklists the `usb-storage` module on a server; no carve-out). The authorized data-transfer group carve-out (udev + polkit) is development-profile only and is not enabled here. |
 | **Continuous monitoring** | `usg audit` re-run at end of build and re-runnable any time; OpenSCAP available offline; Ubuntu Pro **ESM + Livepatch** for ongoing vulnerability/patch management. |

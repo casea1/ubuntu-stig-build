@@ -196,6 +196,28 @@ ubtu24stig_200650: false
 # '...' stays valid.
 dcsa_gui_banner: 'Defense Counterintelligence and Security Agency (DCSA) Authorized Warning Banner\n\nYou are accessing a U.S. Government (USG) Information System (IS). Use of this USG IS constitutes:\n- Consent for authorized monitoring at all times.\n-- To ensure proper functioning of equipment and systems including security systems and devices.\n-- To prevent, detect, and deter violations of statutes and security regulations and other unauthorized use of the system.\nThis system and related equipment are intended for the communication, transmission, processing, and storage of official USG or other authorized information only. Communications using, or data stored on this system are:\n- Not private\n-- Subject to routine monitoring, interception, and search.\n-- May be disclosed or used for any authorized purpose.\nIf monitoring of this USG IS reveals possible evidence of violation of criminal statutes or security regulations (or other unauthorized usage), this evidence and any other related information, including user identification, may be provided to law enforcement officials or may result in appropriate administrative or disciplinary action.'
 
+# ---- Unclassified EMI warning banner ---------------------------------------
+# The unclassified EMI variant (emi-unclass / emi_classified: false) does NOT
+# show the DCSA banner; it shows this text instead, at the GUI login, console,
+# and SSH. Same formatting rules as dcsa_gui_banner above: single-quoted YAML +
+# literal `\n`, apostrophe-free, kept on ONE physical line so it stays a valid
+# GVariant '...' string in greeter.dconf-defaults.
+#
+# NOTE: this is a sensible default so the build is never bannerless -- REPLACE it
+# with your site-approved unclassified EMI wording (here or per-box in site.yml).
+# banner-message-enable stays TRUE either way, so the STIG login-banner control
+# remains satisfied; only the *text* differs (the same documented text deviation
+# already tracked for the DCSA banner).
+emi_unclass_banner: 'EMI Unclassified System - Authorized Use Only\n\nThis is an unclassified U.S. Government (USG) Information System (IS). Use of this system constitutes consent to monitoring at all times. Unauthorized use is prohibited and may result in administrative, disciplinary, or criminal action.\n\nDo NOT process, store, or transmit classified information on this system. Communications using, or data stored on, this IS are not private and are subject to routine monitoring, interception, and search, and may be disclosed or used for any USG-authorized purpose.'
+
+# ---- Effective login/console/SSH banner TEXT (single source of truth) --------
+# Every place that stamps the warning banner (GDM greeter, GNOME login-screen
+# dconf, /etc/issue + /etc/issue.net for console/SSH) reads THIS var, so the
+# text is chosen in one spot. Defaults to the DCSA banner everywhere EXCEPT the
+# unclassified EMI variant (is_emi and not emi_classified), which uses
+# emi_unclass_banner. Classified EMI and all other profiles keep the DCSA text.
+gui_banner_text: "{{ emi_unclass_banner if ((is_emi | default(false) | bool) and not (emi_classified | default(true) | bool)) else dcsa_gui_banner }}"
+
 # ---- More upstream GNOME dconf bugs (malformed option names) ----------------
 # UBTU-24-200043 writes `option: picture-uri=` and UBTU-24-300025 writes
 # `option: logout=` (trailing '=' typos in community.general.ini_file), producing
@@ -1023,10 +1045,11 @@ usg_remediate_enabled: true
 # smartcard auth step, never touches pam_unix, so password login cannot be lost.
 usg_cleanup_pam_pkcs11: "{{ usg_disable_smartcard }}"
 
-# Show the DCSA banner (dcsa_gui_banner) at SSH + console login instead of USG's
-# DoD Standard Mandatory Notice. Writes /etc/issue.net + /etc/issue and pins sshd
-# with a 00- drop-in. Same documented banner-text deviation as the GUI banner.
-# Set false to keep USG's DoD banner on the console/SSH.
+# Show the box's configured banner (gui_banner_text -- the DCSA banner, or
+# emi_unclass_banner on the unclassified EMI variant) at SSH + console login
+# instead of USG's DoD Standard Mandatory Notice. Writes /etc/issue.net +
+# /etc/issue and pins sshd with a 00- drop-in. Same documented banner-text
+# deviation as the GUI banner. Set false to keep USG's DoD banner on console/SSH.
 usg_ssh_banner_dcsa: true
 
 # Fix /var/log file perms (file_permissions_var_log_stig / UBTU-24-700010) and

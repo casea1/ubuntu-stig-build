@@ -136,6 +136,14 @@ def make_bar(geo, at_top, message, bgcolor, fgcolor, screen_h):
         '<span weight="bold" foreground="%s">%s</span>'
         % (fgcolor, GLib.markup_escape_text(message))
     )
+    # Center the text on the bar independently of how the WM sizes the window:
+    # the label FILLs the bar's width and centers its own text (xalign 0.5), so
+    # the message stays centered even if a display reports an odd geometry.
+    label.set_hexpand(True)
+    label.set_halign(Gtk.Align.FILL)
+    label.set_valign(Gtk.Align.CENTER)
+    label.set_xalign(0.5)
+    label.set_justify(Gtk.Justification.CENTER)
     box.add(label)
     win.add(box)
     win.override_background_color(Gtk.StateFlags.NORMAL, rgba(bgcolor))
@@ -160,14 +168,74 @@ def monitor_geometries():
                 for i in range(screen.get_n_monitors())]
 
 
+class Banner:
+    """Owns the bars and rebuilds them when the display geometry changes.
+
+    The bar width/position is derived from the monitor geometry GDK reports at
+    build time. If a display's resolution or mode is applied AFTER the banner
+    starts -- a monitor hot-plug, an xrandr mode change, or a display profile
+    switching the panel to a different resolution post-login -- the original
+    bars stay sized to the OLD geometry and end up too narrow / offset. We
+    listen for those change signals and rebuild so the bars always re-fit the
+    current mode instead of needing a logout.
+    """
+
+    def __init__(self, message, bgcolor, fgcolor):
+        self.message = message
+        self.bgcolor = bgcolor
+        self.fgcolor = fgcolor
+        self.windows = []
+        self._rebuild_pending = False
+
+        screen = Gdk.Screen.get_default()
+        if screen is not None:
+            # size-changed: root/screen resolution changed. monitors-changed:
+            # a monitor was added/removed or its geometry changed.
+            screen.connect("size-changed", self._on_change)
+            screen.connect("monitors-changed", self._on_change)
+        display = Gdk.Display.get_default()
+        for sig in ("monitor-added", "monitor-removed"):
+            try:
+                display.connect(sig, self._on_change)
+            except Exception:  # signal absent on this GTK build
+                pass
+
+        self._build()
+
+    def _build(self):
+        screen = Gdk.Screen.get_default()
+        screen_h = screen.get_height() if screen is not None else 0
+        for geo in monitor_geometries():
+            # Skip a monitor that reports a degenerate geometry (0-width) rather
+            # than drawing a zero-size / mispositioned bar for it.
+            if geo.width <= 0 or geo.height <= 0:
+                continue
+            self.windows.append(
+                make_bar(geo, True, self.message, self.bgcolor, self.fgcolor, screen_h))
+            self.windows.append(
+                make_bar(geo, False, self.message, self.bgcolor, self.fgcolor, screen_h))
+
+    def _on_change(self, *args):
+        # Coalesce the burst of signals a mode change emits into one rebuild,
+        # deferred so GDK has settled the new geometry before we re-query it.
+        if self._rebuild_pending:
+            return
+        self._rebuild_pending = True
+        for win in self.windows:
+            win.destroy()
+        self.windows = []
+        GLib.idle_add(self._do_rebuild)
+
+    def _do_rebuild(self):
+        self._rebuild_pending = False
+        self._build()
+        return False  # one-shot idle callback
+
+
 def main():
     level = sys.argv[1] if len(sys.argv) > 1 else "UNCLASSIFIED"
     message, bgcolor, fgcolor = load_level(level)
-    screen_h = Gdk.Screen.get_default().get_height()   # X screen (root) height
-    windows = []
-    for geo in monitor_geometries():
-        windows.append(make_bar(geo, True, message, bgcolor, fgcolor, screen_h))
-        windows.append(make_bar(geo, False, message, bgcolor, fgcolor, screen_h))
+    Banner(message, bgcolor, fgcolor)   # holds its own windows + rebuild hooks
     Gtk.main()
 
 

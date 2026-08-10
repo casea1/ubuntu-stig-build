@@ -197,10 +197,12 @@
 #      "Enable GNOME3 Login Warning Banner"        -> banner-message-enable=true
 #      "Set the GNOME3 Login Warning Banner Text"  -> banner-message-text='<text>'
 #
-#    Banner text: REUSE the existing dcsa_gui_banner var (do not redefine it).
-#    That var is a single physical line whose value contains literal \n GVariant
-#    escapes and is apostrophe-free, so wrapping it in GVariant single quotes
-#    ('...') is valid and dconf unescapes \n into real line breaks at the greeter.
+#    Banner text: gui_banner_text (the DCSA banner everywhere except the
+#    unclassified EMI variant, which substitutes emi_unclass_banner; both are
+#    defined in group_vars). That value is a single physical line whose content
+#    contains literal \n GVariant escapes and is apostrophe-free, so wrapping it
+#    in GVariant single quotes ('...') is valid and dconf unescapes \n into real
+#    line breaks at the greeter.
 #
 #    IMPORTANT COMPLIANCE CAVEAT (see POA&M/risks): the OVAL for
 #    dconf_gnome_login_banner_text does not just check that the text is set --
@@ -227,7 +229,7 @@
       # Login-screen warning banner, checked by SSG against the gdm dconf db.
       [org/gnome/login-screen]
       banner-message-enable=true
-      banner-message-text='{{ dcsa_gui_banner }}'
+      banner-message-text='{{ gui_banner_text }}'
   notify: dconf update
 
 # ---------------------------------------------------------------------------

@@ -306,7 +306,8 @@ All operator-facing knobs. Values with a **cap** fail the scan if exceeded.
 **STIG engine toggles**
 - `ubtu24stig_cat1/cat2/cat3`: severity tiers (cat3 off by default).
 - `ubtu24stig_disruption_high: false`: leave off until validated (the gap-remediation files cover what it skips).
-- `dcsa_gui_banner`: the DCSA Authorized Warning Banner text (single-quoted, literal `\n`).
+- `dcsa_gui_banner`: the DCSA Authorized Warning Banner text (single-quoted, literal `\n`). Shown at GUI/console/SSH login on every profile **except** the unclassified EMI variant.
+- `emi_unclass_banner`: the warning-banner text used **instead** on the unclassified EMI variant (`emi-unclass` / `emi_classified: false`), which does not display the DCSA banner. Same formatting rules as `dcsa_gui_banner`; replace the shipped default with your site-approved wording. `banner-message-enable` stays true either way, so the STIG login-banner control is still satisfied. (Both feed the single `gui_banner_text` selector the roles actually read.)
 
 **STIG gap-remediation tunables**
 - `pam_faillock_deny: 3`, `pam_faillock_unlock_time: 0`, `pam_faillock_fail_interval: 900`: account lockout.

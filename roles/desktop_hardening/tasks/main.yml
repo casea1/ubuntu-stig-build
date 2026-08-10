@@ -133,12 +133,14 @@
     state: enabled
 
 # ---------------------------------------------------------------------------
-# 2) GDM LOGIN-SCREEN DCSA BANNER  (Ubuntu's greeter.dconf-defaults)
+# 2) GDM LOGIN-SCREEN WARNING BANNER  (Ubuntu's greeter.dconf-defaults)
 # ---------------------------------------------------------------------------
 # GDM reads the greeter banner from /etc/gdm3/greeter.dconf-defaults, which gdm's
 # generate-config bakes into the gdm dconf db at startup. The string value MUST be
 # wrapped in GVariant single quotes ('...') or generate-config rejects the keyfile.
-- name: "BANNER | Set the GDM login-screen DCSA banner (greeter.dconf-defaults)"
+# Text is gui_banner_text (DCSA everywhere except the unclassified EMI variant,
+# which shows emi_unclass_banner); banner-message-enable is always true.
+- name: "BANNER | Set the GDM login-screen warning banner (greeter.dconf-defaults)"
   community.general.ini_file:
     path: /etc/gdm3/greeter.dconf-defaults
     section: org/gnome/login-screen
@@ -147,7 +149,7 @@
     mode: 'go-wx'
   loop:
     - { option: banner-message-enable, value: "true" }
-    - { option: banner-message-text, value: "'{{ dcsa_gui_banner }}'" }
+    - { option: banner-message-text, value: "'{{ gui_banner_text }}'" }
 
 # ---------------------------------------------------------------------------
 # 3) GNOME desktop dconf hardening + login banner (dconf keyfiles + locks)
