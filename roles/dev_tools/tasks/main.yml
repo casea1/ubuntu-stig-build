@@ -5,6 +5,10 @@
 - name: Install developer toolchains (compilers, SDKs, Docker)
   ansible.builtin.import_tasks: toolchains.yml
 
+- name: Install Node.js (NodeSource LTS)
+  ansible.builtin.import_tasks: nodejs.yml
+  when: dev_nodejs_enabled | default(true) | bool
+
 - name: Provision the shared Python environment (/opt/eng-venv)
   ansible.builtin.import_tasks: python_env.yml
 

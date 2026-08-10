@@ -43,6 +43,7 @@ Software inventory for the development workstation. Versions are pinned in `grou
 | doxygen | distro | Doxygen project | Source documentation |
 | graphviz | distro | Graphviz project | Graph/diagram rendering |
 | docker.io | distro (Moby) | Docker / Ubuntu | Containers for development |
+| Node.js + npm | 22.x LTS (NodeSource) | OpenJS Foundation | JavaScript/TypeScript runtime + package manager (`nodejs_major_version`) |
 | `/opt/eng-venv` | Python 3.12 (~140 libs) | Built on box (PyPI) | Shared data-science + network-automation Python env (NumPy/Pandas/SciPy/JupyterLab, NAPALM/Netmiko/Scapy/ncclient/junos-eznc); `eng` command + Jupyter kernel |
 
 ### Editor & IDE

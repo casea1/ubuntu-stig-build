@@ -273,6 +273,14 @@ dotnet_sdk_package: dotnet-sdk-8.0      # .NET SDK from the Ubuntu archive (LTS)
 # PowerShell LTS — installed in base_packages as a pinned .deb (PowerStrux backend).
 powershell_version: "7.4.16"
 
+# ---- Node.js (dev_tools) ----------------------------------------------------
+# Installed from the official NodeSource apt repo, pinned to a major LTS line
+# (the `nodejs` package bundles npm). Bump the major deliberately and re-test;
+# 22 is the current broadly-compatible LTS ("Jod"). Set dev_nodejs_enabled: false
+# to skip. NodeSource is newer than Ubuntu's archived Node 18.
+dev_nodejs_enabled: true
+nodejs_major_version: "22"
+
 # ---- code-server (VS Code in the browser; development profile) --------------
 # Installs code-server (dev_tools) and runs it as a per-user systemd service so
 # users can reach a full VS Code from a browser (in addition to RDP). Served over
