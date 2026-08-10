@@ -203,12 +203,12 @@ dcsa_gui_banner: 'Defense Counterintelligence and Security Agency (DCSA) Authori
 # literal `\n`, apostrophe-free, kept on ONE physical line so it stays a valid
 # GVariant '...' string in greeter.dconf-defaults.
 #
-# NOTE: this is a sensible default so the build is never bannerless -- REPLACE it
-# with your site-approved unclassified EMI wording (here or per-box in site.yml).
-# banner-message-enable stays TRUE either way, so the STIG login-banner control
-# remains satisfied; only the *text* differs (the same documented text deviation
-# already tracked for the DCSA banner).
-emi_unclass_banner: 'EMI Unclassified System - Authorized Use Only\n\nThis is an unclassified U.S. Government (USG) Information System (IS). Use of this system constitutes consent to monitoring at all times. Unauthorized use is prohibited and may result in administrative, disciplinary, or criminal action.\n\nDo NOT process, store, or transmit classified information on this system. Communications using, or data stored on, this IS are not private and are subject to routine monitoring, interception, and search, and may be disclosed or used for any USG-authorized purpose.'
+# Site-approved GE Aerospace UNCLASSIFIED warning banner. banner-message-enable
+# stays TRUE, so the STIG login-banner control remains satisfied; only the *text*
+# differs (the same documented text deviation already tracked for the DCSA
+# banner). The `\n` are literal here: the GUI (GVariant '...') and the
+# /etc/issue[.net] template both unescape them into real line breaks.
+emi_unclass_banner: '********************************************************************\n                    ** UNCLASSIFIED **\n\nThis is a GE Aerospace information system, provided for authorized\nbusiness use only.\n\nUse of this system constitutes consent to monitoring, recording, and\naudit by GE Aerospace at any time. Users have no expectation of\nprivacy in any data stored on or transmitted through this system.\n\nThis system is accredited for UNCLASSIFIED processing only. Do not\nenter, process, or store classified information on this system.\n\nUnauthorized use may result in disciplinary action and civil or\ncriminal penalties.\n\n                    ** UNCLASSIFIED **\n********************************************************************'
 
 # ---- Effective login/console/SSH banner TEXT (single source of truth) --------
 # Every place that stamps the warning banner (GDM greeter, GNOME login-screen
