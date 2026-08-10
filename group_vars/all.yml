@@ -30,7 +30,62 @@
 # accounts/groups/ACL'd folders + USB->dta, managed dirs, Cockpit, USG, and the
 # GUI-preserving desktop_hardening fixups -- but installs NO app set and NO RDP.
 # Use it for a hand-built Ubuntu Desktop endpoint logged into locally.
-deployment_profile: development    # options: development | ai | baseline  (aliases: desktop, server)
+deployment_profile: development    # options: development | ai | baseline | emi  (aliases: desktop, server, emi-unclass)
+
+# =============================================================================
+# EMI PROFILE  (deployment_profile: emi  |  emi-unclass)
+# =============================================================================
+# A local-GUI, STIG-hardened Dell imaging/field workstation. Reuses the
+# development app set + dev_tools (minus RDP) and adds VPN/recon/CJK-IME extras
+# (base_packages/tasks/emi.yml), an imaging-service firewall (emi_firewall), and a
+# camera/mic lockdown (peripheral_lockdown). Wallpaper + classification banner on.
+#
+# TWO VARIANTS via emi_classified:
+#   true  (PROFILE=emi, default)         -- classified-CAPABLE: FIPS + LUKS/TPM on.
+#   false (PROFILE=emi-unclass)          -- unclassified-ONLY: FIPS + LUKS/TPM off.
+# Both start at classification banner UNCLASSIFIED. The 'emi-unclass' profile
+# string flips this off automatically; override per box in site.yml if needed.
+emi_classified: "{{ (_raw_profile | default('')) != 'emi-unclass' }}"
+
+# Install the CJK input methods (IBus Pinyin/Chewing/Cangjie). Set false to skip.
+emi_cjk_input_methods: true
+
+# ---- EMI camera / microphone lockdown (peripheral_lockdown role) ------------
+# Defense-in-depth with the BIOS/UEFI disable. Camera is a hard module blacklist;
+# mic is a best-effort capture mute (BIOS is the authoritative mic control).
+emi_disable_camera: true
+emi_disable_mic: true
+emi_disable_all_audio: false          # NUCLEAR: also kill speakers (no audio at all)
+# Camera modules blacklisted when emi_disable_camera: Intel IPU6 MIPI stack +
+# Intel Visual Sensing Controller + generic USB webcam (uvcvideo).
+emi_camera_blacklist_modules:
+  - uvcvideo
+  - intel_ipu6
+  - intel_ipu6_isys
+  - intel_ipu6_psys
+  - ipu6
+  - ipu6_isys
+  - ipu_bridge
+  - intel_vsc
+  - ivsc_csi
+  - ivsc_ace
+  - mei_vsc
+# Audio modules blacklisted only when emi_disable_all_audio: true.
+emi_audio_blacklist_modules:
+  - snd_hda_intel
+  - snd_sof_pci_intel_mtl
+
+# ---- EMI imaging/VPN firewall openings (emi_firewall role, post-USG) --------
+# Ports re-opened AFTER USG's default-deny for the imaging/provisioning services
+# (DHCP/TFTP/DNS via dnsmasq) + the VPN tunnel. The daemons ship DISABLED, so an
+# open port is harmless until you configure + enable the service. Restrict with
+# `from:` to the imaging subnet where possible. SSH + Cockpit are always kept.
+emi_firewall_allow_ports:
+  - { port: 67,   proto: udp, rule: allow }   # DHCP server (isc-dhcp-server)
+  - { port: 69,   proto: udp, rule: allow }   # TFTP (tftpd-hpa) -- PXE boot
+  - { port: 53,   proto: udp, rule: allow }   # DNS (dnsmasq)
+  - { port: 53,   proto: tcp, rule: allow }   # DNS (dnsmasq, TCP fallback/AXFR)
+  - { port: 1194, proto: udp, rule: allow }   # OpenVPN
 
 # ---- Root disk auto-expand (disk_expand role, runs first) ------------------
 # Ubuntu autoinstall often creates a small root LV (e.g. 100G) on a large disk,
@@ -504,9 +559,9 @@ local_shared_dirs:
 # engineering WORKSTATIONS that move files on removable media. The AI SERVERS
 # never do USB transfers, so on the ai profile the dta group + dta accounts + USB
 # polkit/udev rules are NOT created (and USG keeps usb-storage disabled there).
-# Defaults on for development and baseline (workstation/endpoint boxes that move
-# files on removable media), off for ai; force with true/false per box.
-local_usb_transfer_enabled: "{{ (is_development | default(true) | bool) or (is_baseline | default(false) | bool) }}"
+# Defaults on for development, baseline, and emi (workstation/endpoint boxes that
+# move files on removable media), off for ai; force with true/false per box.
+local_usb_transfer_enabled: "{{ (is_development | default(true) | bool) or (is_baseline | default(false) | bool) or (is_emi | default(false) | bool) }}"
 
 # USB storage is restricted to members of this group (udisks2 polkit + udev).
 usb_access_group: dta
@@ -556,7 +611,10 @@ branding_lockscreen_wallpaper: true
 # the role warns if it is off. The binding is sealed to this box's TPM, so this
 # must run on each PHYSICAL machine (the per-machine ansible-pull does) -- it
 # cannot be captured into a cloned gold image.
-tpm_luks_enabled: true            # ON by default (fleet standard: TPM auto-unlock)
+# ON by default everywhere EXCEPT the unclassified EMI variant (emi_classified:
+# false / PROFILE=emi-unclass), which never goes classified and so needs no
+# LUKS/TPM. Force with true/false per box.
+tpm_luks_enabled: "{{ (not (is_emi | default(false) | bool)) or (emi_classified | default(true) | bool) }}"
 #
 # SECRET HANDLING -- the LUKS passphrase must NOT live in this PUBLIC repo.
 # Leave `luks_passphrase` EMPTY here. The role reads the passphrase OUT OF BAND
@@ -873,7 +931,9 @@ ubuntu_pro_token_file: /etc/ubuntu-advantage/pro-token
 #   - the `is_fips_mode_enabled` check only passes AFTER a reboot;
 #   - validate on a throwaway box first if you run unusual crypto/dev tooling.
 # Set false to defer it (then FIPS is a documented POA&M).
-usg_enable_fips: true
+# ON by default everywhere EXCEPT the unclassified EMI variant (emi_classified:
+# false / PROFILE=emi-unclass), which never goes classified -> no FIPS needed.
+usg_enable_fips: "{{ (not (is_emi | default(false) | bool)) or (emi_classified | default(true) | bool) }}"
 
 # ---- USG fix (the disruptive remediation) ----------------------------------
 # Mirrors the desktop's `ubtu24stig_disruption_high` safety philosophy. When

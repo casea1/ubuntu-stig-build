@@ -38,7 +38,9 @@
   # names 'desktop'/'server'; they are accepted here as aliases for continuity.
   vars:
     _raw_profile: "{{ deployment_profile | default('development') }}"
-    _deployment_profile: "{{ {'desktop': 'development', 'server': 'ai'}.get(_raw_profile, _raw_profile) }}"
+    # Aliases: desktop->development, server->ai, and emi-unclass->emi (the
+    # unclassified EMI variant, which also flips emi_classified off in group_vars).
+    _deployment_profile: "{{ {'desktop': 'development', 'server': 'ai', 'emi-unclass': 'emi'}.get(_raw_profile, _raw_profile) }}"
     is_development: "{{ _deployment_profile == 'development' }}"
     is_ai: "{{ _deployment_profile == 'ai' }}"
     # baseline -- an ALREADY-PROVISIONED box (all software already installed) that
@@ -47,6 +49,12 @@
     # GUI-preserving desktop_hardening fixups -- but NO app installs and NO RDP.
     # Intended for a hand-built Ubuntu Desktop endpoint logged into locally.
     is_baseline: "{{ _deployment_profile == 'baseline' }}"
+    # emi -- a local-GUI, STIG-hardened Dell imaging/field workstation. Reuses the
+    # development app set + dev_tools (minus RDP), adds VPN/recon/CJK-IME extras,
+    # an imaging-service firewall, and a camera/mic lockdown. Two variants via
+    # emi_classified (group_vars): classified-capable (FIPS+LUKS) vs the
+    # unclassified-only 'emi-unclass' variant (FIPS/LUKS off).
+    is_emi: "{{ _deployment_profile == 'emi' }}"
 
   # Fail fast on a typo'd profile rather than silently building nothing.
   pre_tasks:
@@ -77,13 +85,14 @@
         label: "{{ item.item }}"
       when: item.stat.exists | default(false)
 
-    - name: "Validate deployment_profile is development, ai, or baseline"
+    - name: "Validate deployment_profile is development, ai, baseline, or emi"
       ansible.builtin.assert:
         that:
-          - _deployment_profile in ['development', 'ai', 'baseline']
+          - _deployment_profile in ['development', 'ai', 'baseline', 'emi']
         fail_msg: >-
-          deployment_profile must be 'development', 'ai', or 'baseline'
-          (aliases: 'desktop'->development, 'server'->ai). Got '{{ _raw_profile }}'.
+          deployment_profile must be 'development', 'ai', 'baseline', or 'emi'
+          (aliases: 'desktop'->development, 'server'->ai, 'emi-unclass'->emi).
+          Got '{{ _raw_profile }}'.
         quiet: true
 
   roles:
@@ -123,18 +132,21 @@
     # GDM to Xorg, which the docked bars require).
     - role: classification_banner
       when:
-        - is_development or is_baseline
+        - is_development or is_baseline or is_emi
         - classification_banner_enabled | default(true) | bool
 
     # -------------------------------------------------------------------------
     # DEVELOPMENT-ONLY PROVISIONING  (GUI engineering box, RDP-accessible)
     # -------------------------------------------------------------------------
-    - role: app_config              # clamav daemon/freshclam, wireshark group, etc.
+    - role: app_config              # clamav daemon/freshclam, wireshark group, etc. (development + emi)
+      when: is_development or is_emi
+    - role: dev_tools               # compilers/SDKs, /opt/eng-venv, VS Code extensions, docker.io (development + emi)
+      when: is_development or is_emi
+    - role: remote_desktop          # GNOME desktop + xrdp (RDP into the dev GUI); runs before hardening. development only -- emi/baseline are local-GUI.
       when: is_development
-    - role: dev_tools               # compilers/SDKs, /opt/eng-venv, VS Code extensions, docker.io
-      when: is_development
-    - role: remote_desktop          # GNOME desktop + xrdp (RDP into the dev GUI); runs before hardening
-      when: is_development
+    # EMI extras that run in the pre-hardening provisioning phase.
+    - role: peripheral_lockdown     # emi: disable camera + microphone (defense-in-depth with BIOS)
+      when: is_emi
 
     # -------------------------------------------------------------------------
     # AI-SERVER-ONLY PROVISIONING  (Ubuntu Pro AI server)
@@ -158,9 +170,11 @@
         - gpu_enabled | default(true)
         - usg_enable_fips | default(false)
     - role: desktop_hardening       # development + baseline: GUI-preserving fixups AFTER USG (GNOME/GDM banner, USB, firewall). RDP/Wayland-off bits are development-only (gated on dev_rdp_enabled).
-      when: is_development or is_baseline
+      when: is_development or is_baseline or is_emi
     - role: ai_firewall             # ai: open the prebuilt AI stack's inbound ports AFTER USG's default-deny
       when: is_ai
+    - role: emi_firewall            # emi: open the imaging/VPN service ports AFTER USG's default-deny
+      when: is_emi
     - role: ai_compose              # ai: bake the node's docker-compose + .env into /opt/it/docker (opt-in `up`)
       when:
         - is_ai
@@ -180,7 +194,7 @@
     # -------------------------------------------------------------------------
     - role: desktop_branding        # GUI profiles (development + baseline): system-wide DoD SHB wallpaper + lock screen, runs after hardening. (ai is headless -> skipped.)
       when:
-        - is_development or is_baseline
+        - is_development or is_baseline or is_emi
         - desktop_branding_enabled | default(true) | bool
     - role: tpm_luks_unlock         # OPT-IN: bind LUKS to the TPM2 (works on either profile if encrypted)
       when: tpm_luks_enabled | default(false)

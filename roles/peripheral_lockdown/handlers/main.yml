@@ -1,0 +1,11 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+# Camera/audio blacklists take effect on the next boot; rebuild the initramfs so
+# any module that could load early is covered too. Best-effort (never fail a run).
+- name: Rebuild initramfs
+  ansible.builtin.command: update-initramfs -u
+  changed_when: false
+  failed_when: false

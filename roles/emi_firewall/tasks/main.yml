@@ -1,0 +1,69 @@
+---
+# =============================================================================
+# emi_firewall -- open the EMI imaging/field laptop's inbound service ports on
+# the emi profile, applied AFTER USG hardening (gated is_emi in local.yml).
+#
+# WHY post-USG: `usg fix disa_stig` enables ufw with a DEFAULT-DENY inbound
+# policy. An EMI box runs imaging/provisioning services (DHCP, TFTP, DNS via
+# dnsmasq) and a VPN tunnel, so their ports must be re-opened after the lockdown
+# or PXE/imaging clients can't reach them. We also ENABLE ufw here so an EMI box
+# is never left with an inactive firewall even if USG was skipped.
+#
+# NOTE: the services themselves (tftpd-hpa/isc-dhcp-server/dnsmasq/openvpn) ship
+# INSTALLED-BUT-DISABLED (see base_packages). Opening the port is harmless while
+# the daemon is stopped -- nothing listens until you configure + enable it. These
+# are SCAP/STIG-flagged services (TFTP especially); running them is a documented
+# mission-need exception, so open only what this box will actually serve.
+#
+# Openings are driven from emi_firewall_allow_ports (group_vars); SSH + Cockpit
+# are always kept (rate-limited) so remote admin can't be locked out.
+# =============================================================================
+
+- name: "EMI FW | Ensure ufw is installed"
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+
+- name: "EMI FW | Default policy: deny inbound"
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+
+- name: "EMI FW | Default policy: allow outbound"
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+
+- name: "EMI FW | Keep SSH reachable (rate-limited) for remote admin"
+  community.general.ufw:
+    rule: limit
+    port: ssh
+    proto: tcp
+    comment: "OpenSSH (rate-limited)"
+
+- name: "EMI FW | Open Cockpit's web console ({{ cockpit_port | default(9090) }}/tcp, rate-limited)"
+  community.general.ufw:
+    rule: limit
+    port: "{{ cockpit_port | default(9090) | string }}"
+    proto: tcp
+    from_ip: "{{ cockpit_allow_from | default('any', true) }}"
+    comment: "Cockpit web console (rate-limited)"
+  when: cockpit_enabled | default(true) | bool
+
+- name: "EMI FW | Open the configured imaging/VPN service ports"
+  # Each entry: port, proto (default udp for these services), rule (default
+  # allow), from (source CIDR; '' / unset = anywhere). Restrict with `from:` to
+  # the imaging subnet where you can, so DHCP/TFTP aren't exposed fleet-wide.
+  community.general.ufw:
+    rule: "{{ item.rule | default('allow') }}"
+    port: "{{ item.port | string }}"
+    proto: "{{ item.proto | default('udp') }}"
+    from_ip: "{{ item.from | default('any', true) }}"
+    comment: "EMI service inbound ({{ item.port }}/{{ item.proto | default('udp') }})"
+  loop: "{{ emi_firewall_allow_ports | default([]) }}"
+  loop_control:
+    label: "{{ item.port }}/{{ item.proto | default('udp') }} from {{ item.from | default('any', true) }}"
+
+- name: "EMI FW | Enable ufw and persist across reboot"
+  community.general.ufw:
+    state: enabled

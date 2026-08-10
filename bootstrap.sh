@@ -15,9 +15,14 @@
 #   fixups only. Installs NO app set and NO RDP:
 #     curl -fsSL .../bootstrap.sh | sudo PROFILE=baseline bash
 #
+#   EMI -- a local-GUI, STIG-hardened Dell imaging/field workstation (dev app set
+#   minus RDP, + VPN/recon/CJK-IME, imaging-service firewall, camera/mic lockoff):
+#     curl -fsSL .../bootstrap.sh | sudo PROFILE=emi bash          # classified-capable (FIPS+LUKS)
+#     curl -fsSL .../bootstrap.sh | sudo PROFILE=emi-unclass bash  # unclassified-only (no FIPS/LUKS)
+#
 # Recognised environment variables:
-#   PROFILE=development|ai|baseline  which build to run         (default: development)
-#                           (aliases: desktop->development, server->ai)
+#   PROFILE=development|ai|baseline|emi|emi-unclass  which build  (default: development)
+#                           (aliases: desktop->development, server->ai, emi-unclass->emi variant)
 #   PRO_TOKEN=<token>       Ubuntu Pro token for USG hardening (BOTH profiles use
 #                           USG; else you're prompted). Enter to skip = POA&M.
 #   HARDEN=0                install but SKIP the disruptive `usg fix` (both
@@ -48,10 +53,10 @@ case "${PROFILE}" in
   server)  PROFILE="ai" ;;
 esac
 
-if [[ "${PROFILE}" != "development" && "${PROFILE}" != "ai" && "${PROFILE}" != "baseline" ]]; then
-  echo "PROFILE must be 'development', 'ai', or 'baseline' (got '${PROFILE}')." >&2
-  exit 1
-fi
+case "${PROFILE}" in
+  development|ai|baseline|emi|emi-unclass) : ;;
+  *) echo "PROFILE must be development|ai|baseline|emi|emi-unclass (got '${PROFILE}')." >&2; exit 1 ;;
+esac
 
 echo "[*] Deployment profile: ${PROFILE}"
 
@@ -159,6 +164,18 @@ elif [[ "${PROFILE}" == "baseline" ]]; then
   echo "    Provisioned org accounts/groups/folders + USB->dta and hardened with USG"
   echo "    (no app installs, no RDP). Set each new account's password: sudo passwd <user>."
   echo "    Then REBOOT to apply USG hardening; the box comes up to GDM with the DCSA banner."
+elif [[ "${PROFILE}" == "emi" || "${PROFILE}" == "emi-unclass" ]]; then
+  echo "    Reports:      /var/log/stig-scan/  — 'usg audit' output (collect BEFORE air-gapping)."
+  if [[ "${PROFILE}" == "emi-unclass" ]]; then
+    echo "    Variant:      UNCLASSIFIED-only — FIPS + LUKS/TPM are OFF."
+  else
+    echo "    Variant:      classified-CAPABLE — FIPS on + LUKS/TPM auto-unlock."
+    echo "                  (Select full-disk encryption at the Ubuntu install for LUKS.)"
+  fi
+  echo "    Camera + microphone are disabled in software — also disable them in BIOS."
+  echo "    Imaging services (TFTP/DHCP/dnsmasq/OpenVPN) are installed but DISABLED;"
+  echo "    their firewall ports are open — configure + enable a service to use it."
+  echo "    Set each account's password (sudo passwd <user>), then REBOOT to apply USG."
 else
   echo "    Reports:      /var/log/stig-scan/  — 'usg audit' output (collect BEFORE air-gapping)."
   echo "    RDP:          connect an RDP client to this host:3389 (TLS) and log in as a local user."

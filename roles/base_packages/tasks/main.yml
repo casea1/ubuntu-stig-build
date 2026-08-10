@@ -39,9 +39,15 @@
   when: (base_common_packages | default([])) | length > 0
 
 - name: Install the DEVELOPMENT engineering-workstation package set
+  # EMI reuses the same engineering app set (VS Code, PowerShell, wireshark,
+  # TFTP/DHCP/dnsmasq, ...) plus dev_tools; its extras are added by emi.yml below.
   ansible.builtin.import_tasks: development.yml
-  when: is_development | default(true) | bool
+  when: (is_development | default(true) | bool) or (is_emi | default(false) | bool)
 
 - name: Install the AI-server baseline package set
   ansible.builtin.import_tasks: ai.yml
   when: is_ai | default(false) | bool
+
+- name: Install the EMI profile extras (VPN, network recon, CJK input methods)
+  ansible.builtin.import_tasks: emi.yml
+  when: is_emi | default(false) | bool
