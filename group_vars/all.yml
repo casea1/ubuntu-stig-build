@@ -326,6 +326,11 @@ dev_rdp_use_tls: true
 # 24.04. Pinning autorun=Xorg removes the broken choices. Set "" to restore the
 # dropdown (only if you deliberately add another backend).
 dev_rdp_autorun_session: "Xorg"
+# RDP color depth (bits per pixel). GNOME-over-xrdp is bandwidth-heavy; lowering
+# this is the biggest server-side responsiveness lever. 16 = snappiest (slight
+# color banding), 24 = balanced default, 32 = best quality/heaviest. Paired with
+# TCP-nodelay + bitmap caching/compression in the xrdp [Globals] config.
+dev_rdp_max_bpp: "24"
 # OPTIONAL: restrict RDP logins to members of this group (enforced in PAM). Empty
 # = any local account with a password may RDP (still password- + faillock-gated).
 # Set e.g. "rdpusers" to gate it; the role creates the group and adds the check.

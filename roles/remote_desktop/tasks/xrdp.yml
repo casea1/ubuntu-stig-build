@@ -47,6 +47,13 @@
     # file or directory" and a black screen (also trips the OpenSSL 3 legacy
     # DES-EDE3 error in sesman). Pinning autorun=Xorg removes that footgun.
     - { option: autorun, value: "{{ dev_rdp_autorun_session | default('Xorg') }}" }
+    # ---- Performance (GNOME-over-xrdp is heavy; these cut latency + bandwidth) --
+    - { option: tcp_nodelay, value: "true" }        # disable Nagle -> lower input latency
+    - { option: tcp_keepalive, value: "true" }      # keep idle sessions from stalling/dropping
+    - { option: bitmap_cache, value: "true" }       # cache tiles client-side (less redraw traffic)
+    - { option: bitmap_compression, value: "true" } # compress bitmap updates
+    - { option: new_cursors, value: "true" }        # efficient color cursor updates
+    - { option: max_bpp, value: "{{ dev_rdp_max_bpp | default('24') }}" }  # cap color depth (bandwidth)
   notify: restart xrdp
 
 - name: "XRDP | Polkit: silence colord/PackageKit auth prompts for RDP sessions"
