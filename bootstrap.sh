@@ -167,7 +167,8 @@ elif [[ "${PROFILE}" == "baseline" ]]; then
 elif [[ "${PROFILE}" == "emi" || "${PROFILE}" == "emi-unclass" ]]; then
   echo "    Reports:      /var/log/stig-scan/  — 'usg audit' output (collect BEFORE air-gapping)."
   if [[ "${PROFILE}" == "emi-unclass" ]]; then
-    echo "    Variant:      UNCLASSIFIED-only — FIPS + LUKS/TPM are OFF."
+    echo "    Variant:      UNCLASSIFIED-only — FIPS + LUKS/TPM OFF, and 'usg fix' SKIPPED"
+    echo "                  (USG audit report still written; ufw/dconf/banner hardening still applied)."
   else
     echo "    Variant:      classified-CAPABLE — FIPS on + LUKS/TPM auto-unlock."
     echo "                  (Select full-disk encryption at the Ubuntu install for LUKS.)"

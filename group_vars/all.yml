@@ -41,8 +41,12 @@ deployment_profile: development    # options: development | ai | baseline | emi 
 # camera/mic lockdown (peripheral_lockdown). Wallpaper + classification banner on.
 #
 # TWO VARIANTS via emi_classified:
-#   true  (PROFILE=emi, default)         -- classified-CAPABLE: FIPS + LUKS/TPM on.
-#   false (PROFILE=emi-unclass)          -- unclassified-ONLY: FIPS + LUKS/TPM off.
+#   true  (PROFILE=emi, default)  -- classified-CAPABLE: FIPS + LUKS/TPM on, full
+#                                    `usg fix disa_stig`.
+#   false (PROFILE=emi-unclass)   -- unclassified-ONLY: FIPS + LUKS/TPM OFF and the
+#                                    disruptive `usg fix` SKIPPED (usg_fix_enabled
+#                                    false) -- USG audit + lighter role hardening
+#                                    (ufw/dconf/banners) still apply.
 # Both start at classification banner UNCLASSIFIED. The 'emi-unclass' profile
 # string flips this off automatically; override per box in site.yml if needed.
 emi_classified: "{{ (_raw_profile | default('')) != 'emi-unclass' }}"
@@ -942,7 +946,13 @@ usg_enable_fips: "{{ (not (is_emi | default(false) | bool)) or (emi_classified |
 # Flip true once you've validated on a throwaway VM (bootstrap.sh sets it for you
 # when you pass HARDEN=1). The role ALSO refuses to run `usg fix` unless a
 # sudo-group account has a usable (non-locked) password, as a lockout backstop.
-usg_fix_enabled: true
+#
+# Default TRUE everywhere EXCEPT the unclassified EMI variant (emi_classified:
+# false / PROFILE=emi-unclass): that box never goes classified, so it skips the
+# disruptive `usg fix disa_stig` entirely (USG is still installed and `usg audit`
+# still produces a report; the lighter role-level hardening -- ufw, GNOME dconf,
+# banners -- still applies). The classified `emi` keeps the full fix. Force per box.
+usg_fix_enabled: "{{ (not (is_emi | default(false) | bool)) or (emi_classified | default(true) | bool) }}"
 usg_profile: "disa_stig"              # `usg fix/audit <profile>`: disa_stig | cis_level1_server | cis_level2_server
 # Re-running `usg fix` on every ansible-pull is slow and needless. The role
 # stamps success and skips a re-fix unless the profile changed or you force it.
