@@ -122,3 +122,65 @@
       picture-uri='file://{{ branding_wallpaper_dest }}'
       picture-options='zoom'
   notify: dconf update
+
+# ---------------------------------------------------------------------------
+# ACCOUNT AVATARS -- set every human local user's account picture (GDM greeter +
+# Settings) to a shared image, and seed it for future accounts. GNOME reads the
+# avatar from AccountsService: /var/lib/AccountsService/users/<user> holds an
+# `Icon=` pointer, plus ~/.face as a fallback. Gated on the image existing in the
+# role's files/, so the build never fails when it hasn't been added yet.
+# ---------------------------------------------------------------------------
+- name: BRANDING | Look for the account-avatar image in files/
+  ansible.builtin.stat:
+    path: "{{ role_path }}/files/{{ branding_avatar_src }}"
+  register: _branding_avatar
+  when: (branding_avatar_src | default('')) | length > 0
+
+- name: BRANDING | Apply the shared account avatar
+  when: _branding_avatar.stat.exists | default(false)
+  block:
+    - name: BRANDING | Install the shared avatar image
+      ansible.builtin.copy:
+        src: "{{ branding_avatar_src }}"
+        dest: "{{ branding_avatar_dest }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: BRANDING | Seed the avatar for future accounts (/etc/skel/.face)
+      ansible.builtin.copy:
+        src: "{{ branding_avatar_src }}"
+        dest: /etc/skel/.face
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: BRANDING | Enumerate human local users (uid 1000-65533 with a /home)
+      ansible.builtin.shell: |
+        set -o pipefail
+        awk -F: '$3>=1000 && $3<65534 && $6 ~ /^\/home\// {print $1}' /etc/passwd
+      args:
+        executable: /bin/bash
+      register: _human_users
+      changed_when: false
+
+    - name: BRANDING | Point AccountsService at the avatar for each user
+      community.general.ini_file:
+        path: "/var/lib/AccountsService/users/{{ item }}"
+        section: User
+        option: Icon
+        value: "{{ branding_avatar_dest }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ _human_users.stdout_lines }}"
+
+    - name: BRANDING | Drop ~/.face into each existing user's home (fallback)
+      ansible.builtin.copy:
+        src: "{{ branding_avatar_src }}"
+        dest: "/home/{{ item }}/.face"
+        owner: "{{ item }}"
+        group: "{{ item }}"
+        mode: "0644"
+      loop: "{{ _human_users.stdout_lines }}"
+      failed_when: false

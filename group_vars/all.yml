@@ -672,6 +672,14 @@ branding_wallpaper_dest: /usr/share/backgrounds/SHB_Background.jpg
 # brand only the desktop (then re-enable the blank lock screen in gnome.yml).
 branding_lockscreen_wallpaper: true
 
+# ---- Account avatar (user account picture) ---------------------------------
+# Set every human local user's account picture (shown at the GDM greeter and in
+# Settings) to a shared image, and seed it for future accounts. Applied by
+# desktop_branding ONLY IF the image exists in roles/desktop_branding/files/, so
+# the build never fails when it is absent. Set branding_avatar_src to "" to skip.
+branding_avatar_src: "ge-account-emblem.png"      # filename in the role's files/
+branding_avatar_dest: /usr/share/pixmaps/ge-account-emblem.png
+
 # =============================================================================
 # TPM2 LUKS AUTO-UNLOCK (tpm_luks_unlock role) -- OPT-IN, per physical machine
 # =============================================================================
