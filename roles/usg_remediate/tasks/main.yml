@@ -149,7 +149,10 @@
           # warning banner (/etc/dcsa-warning-banner: DCSA, or the EMI banner on
           # the unclassified EMI variant) and requires acknowledgement on
           # interactive SSH logins. Replaces USG's hardcoded DoD-text version.
-          if [ -n "$SSH_CLIENT" ] || [ -n "$SSH_TTY" ]; then
+          # `[ -t 0 ]` (stdin is a real terminal) keeps the read loop from
+          # spinning on NON-interactive SSH (scp, git, VS Code Remote-SSH), which
+          # set $SSH_CLIENT but have no TTY to answer the prompt.
+          if [ -t 0 ] && { [ -n "$SSH_CLIENT" ] || [ -n "$SSH_TTY" ]; }; then
               _banner=/etc/dcsa-warning-banner
               while true; do
                   [ -s "$_banner" ] && cat "$_banner"
