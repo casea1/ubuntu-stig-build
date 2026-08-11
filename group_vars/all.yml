@@ -355,7 +355,7 @@ dev_rdp_login_title: "GE Aerospace -- Authorized Use Only"
 # build never fails when it is absent (colors + title still apply) and the logo
 # lights up the moment the file is added. Produce the BMP from a PNG with:
 #   convert logo.png -resize 300x -background white -flatten -type truecolor BMP3:ge-aerospace-logo.bmp
-dev_rdp_login_logo_src: "GE-Aerospace-Emblem.bmp"
+dev_rdp_login_logo_src: "GE-Aerospace-Logo.bmp"
 dev_rdp_login_logo_x: 25               # logo position inside the login box (px)
 dev_rdp_login_logo_y: 40
 
