@@ -29,6 +29,7 @@
     - luks-rebind.sh
     - restart-docker.sh
     - set-ip.sh
+    - set-classification.sh
 
 - name: "IT-SCRIPTS | Expose short it-* commands in /usr/local/sbin"
   ansible.builtin.file:
@@ -45,6 +46,7 @@
     - { link: it-luks-rebind, target: luks-rebind.sh }
     - { link: it-restart, target: restart-docker.sh }
     - { link: it-set-ip, target: set-ip.sh }
+    - { link: it-set-classification, target: set-classification.sh }
 
 - name: "IT-SCRIPTS | Where the scripts are"
   ansible.builtin.debug:
