@@ -74,19 +74,35 @@
 # ---------------------------------------------------------------------------
 # 1b) LOGIN BANNER for console + SSH
 # USG/STIG writes the DoD Standard Mandatory Notice to /etc/issue.net (and points
-# sshd at it), so SSH/console logins show the DoD banner, not the box's configured
-# one. We want the SAME banner everywhere the GUI shows (gui_banner_text -- the
-# DCSA banner, or emi_unclass_banner on the unclassified EMI variant). Write that
-# text to /etc/issue.net (SSH) + /etc/issue (console) and pin sshd at it with a
-# high-priority drop-in (00- sorts first, so it wins over USG's include).
-# This is the same documented banner-text deviation as the GUI banner.
+# sshd at it) on EVERY `usg fix`, so SSH/console logins show the DoD banner. We
+# want the box's configured banner instead (gui_banner_text -- the DCSA banner,
+# or emi_unclass_banner on the unclassified EMI variant). To make this survive
+# interrupted re-runs (USG re-writes /etc/issue.net each run; if a later run dies
+# before this role, an sshd pointed at /etc/issue.net would revert to DoD), sshd
+# is pointed at a DEDICATED file (/etc/dcsa-warning-banner) that USG never
+# touches, via a drop-in that sorts FIRST. /etc/issue.net + /etc/issue are still
+# overwritten so no DoD text lingers. Same documented text deviation as the GUI.
 # ---------------------------------------------------------------------------
 - name: "REMED | Login banner (console + SSH)"
   when:
     - usg_ssh_banner_dcsa | default(true) | bool
     - (gui_banner_text | default('') | length) > 0
   block:
-    - name: "REMED | Write the login banner to /etc/issue.net (SSH) + /etc/issue (console)"
+    - name: "REMED | Write the banner to a DEDICATED file USG never rewrites"
+      # sshd points HERE, not at /etc/issue.net. `usg fix` re-writes the DoD
+      # Standard Mandatory Notice into /etc/issue.net on EVERY run, so an sshd
+      # pointed at /etc/issue.net reverts to the DoD banner whenever a later
+      # re-run is interrupted before this role runs. USG never touches this
+      # dedicated path, so once one complete build writes it, SSH stays on the
+      # DCSA banner across interrupted re-runs.
+      ansible.builtin.template:
+        src: issue.net.j2
+        dest: /etc/dcsa-warning-banner
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: "REMED | Also overwrite /etc/issue.net + /etc/issue (leave no DoD text behind)"
       ansible.builtin.template:
         src: issue.net.j2
         dest: "{{ item }}"
@@ -97,13 +113,21 @@
         - /etc/issue.net
         - /etc/issue
 
-    - name: "REMED | Pin sshd at the login banner (00- drop-in wins over USG)"
+    - name: "REMED | Pin sshd at the dedicated DCSA banner (sorts FIRST -> wins over USG)"
+      # 00-0-... sorts before USG's 00-complianceascode-*.conf; sshd uses the
+      # FIRST Banner value it reads, so ours wins regardless of USG's drop-in.
       ansible.builtin.copy:
-        dest: /etc/ssh/sshd_config.d/00-dcsa-banner.conf
-        content: "Banner /etc/issue.net\n"
+        dest: /etc/ssh/sshd_config.d/00-0-dcsa-banner.conf
+        content: "Banner /etc/dcsa-warning-banner\n"
         owner: root
         group: root
         mode: "0644"
+      notify: Restart ssh
+
+    - name: "REMED | Remove the superseded drop-in (older name, pointed at /etc/issue.net)"
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d/00-dcsa-banner.conf
+        state: absent
       notify: Restart ssh
 
 # ---------------------------------------------------------------------------
