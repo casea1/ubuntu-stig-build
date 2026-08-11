@@ -16,7 +16,10 @@ BANNER_FILE=/etc/gui-consent-banner.txt
 
 # No banner text -> do nothing (never block login on a missing file).
 [ -s "$BANNER_FILE" ] || exit 0
-TEXT="$(cat "$BANNER_FILE")"
+# Pre-wrap at word boundaries to a sane column width so long banner paragraphs
+# don't stretch the dialog across the whole screen (zenity sizes to the longest
+# line). fold -s breaks on spaces; blank lines are preserved.
+TEXT="$(fold -s -w 76 "$BANNER_FILE")"
 
 # zenity is the acknowledgement dialog. If it is somehow missing, fail OPEN
 # (log a warning, allow the session) rather than locking users out of the box.
@@ -29,10 +32,9 @@ fi
 # the window (X) or Decline both return non-zero -> treated as "declined".
 if zenity --question \
         --title="Notice and Consent -- Authorized Use Only" \
-        --no-wrap \
         --ok-label="I Agree" \
         --cancel-label="Decline (log out)" \
-        --width=760 \
+        --width=700 \
         --text="$TEXT" 2>/dev/null; then
     exit 0
 fi
