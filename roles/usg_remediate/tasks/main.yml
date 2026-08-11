@@ -130,6 +130,38 @@
         state: absent
       notify: Restart ssh
 
+    - name: "REMED | Swap USG's post-auth DoD acknowledgement (ssh_confirm.sh) to DCSA"
+      # `usg fix` drops /etc/profile.d/ssh_confirm.sh with the DoD Standard
+      # Mandatory Notice HARDCODED plus a y/N gate, shown AFTER SSH auth (this is
+      # the "USG banner" seen post-password). Overwrite it to display the durable
+      # /etc/dcsa-warning-banner instead, keeping the acknowledgement gate (a
+      # legitimate consent control) but on the DCSA/EMI text. USG regenerates the
+      # DoD version on each `usg fix`; this task (running after usg_harden)
+      # re-swaps it every complete build.
+      ansible.builtin.copy:
+        dest: /etc/profile.d/ssh_confirm.sh
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          #!/bin/bash
+          # Managed by usg_remediate -- do not edit by hand. Shows the site
+          # warning banner (/etc/dcsa-warning-banner: DCSA, or the EMI banner on
+          # the unclassified EMI variant) and requires acknowledgement on
+          # interactive SSH logins. Replaces USG's hardcoded DoD-text version.
+          if [ -n "$SSH_CLIENT" ] || [ -n "$SSH_TTY" ]; then
+              _banner=/etc/dcsa-warning-banner
+              while true; do
+                  [ -s "$_banner" ] && cat "$_banner"
+                  read -p "
+          Do you agree? [y/N] " yn
+                  case "$yn" in
+                      [Yy]* ) break ;;
+                      [Nn]* ) exit 1 ;;
+                  esac
+              done
+          fi
+
 # ---------------------------------------------------------------------------
 # 2) /var/log FILE PERMS + /var/log/audit DIR MODE
 # file_permissions_var_log_stig (UBTU-24-700010) + directory_permissions_var_log_audit
