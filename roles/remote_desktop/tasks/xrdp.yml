@@ -56,6 +56,46 @@
     - { option: max_bpp, value: "{{ dev_rdp_max_bpp | default('24') }}" }  # cap color depth (bandwidth)
   notify: restart xrdp
 
+# ---- Login-screen appearance ----------------------------------------------
+# Skin the plain-grey xrdp login box: background/box colors + title, and an
+# optional logo. ls_* keys live in [Globals]. Colors are 6-hex RGB (no '#').
+- name: "XRDP | Skin the login screen (background, box, title)"
+  community.general.ini_file:
+    path: /etc/xrdp/xrdp.ini
+    section: Globals
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    mode: "0644"
+  loop:
+    - { option: ls_top_window_bg_color, value: "{{ dev_rdp_login_bg_color | default('001f3f') }}" }
+    - { option: ls_bg_color, value: "{{ dev_rdp_login_box_color | default('dedede') }}" }
+    - { option: ls_title, value: "{{ dev_rdp_login_title | default('Authorized Use Only') }}" }
+  notify: restart xrdp
+
+- name: "XRDP | Install + wire the login-screen logo (BMP)"
+  when: (dev_rdp_login_logo_src | default('')) | length > 0
+  block:
+    - name: "XRDP | Copy the login logo into /etc/xrdp"
+      ansible.builtin.copy:
+        src: "{{ dev_rdp_login_logo_src }}"
+        dest: /etc/xrdp/login-logo.bmp
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: "XRDP | Point xrdp at the logo and position it"
+      community.general.ini_file:
+        path: /etc/xrdp/xrdp.ini
+        section: Globals
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        mode: "0644"
+      loop:
+        - { option: ls_logo_filename, value: "/etc/xrdp/login-logo.bmp" }
+        - { option: ls_logo_x_pos, value: "{{ dev_rdp_login_logo_x | default(63) }}" }
+        - { option: ls_logo_y_pos, value: "{{ dev_rdp_login_logo_y | default(50) }}" }
+      notify: restart xrdp
+
 - name: "XRDP | Polkit: silence colord/PackageKit auth prompts for RDP sessions"
   ansible.builtin.copy:
     dest: /etc/polkit-1/rules.d/02-allow-colord-packagekit.rules

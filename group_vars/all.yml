@@ -343,6 +343,22 @@ dev_rdp_max_bpp: "24"
 # Set e.g. "rdpusers" to gate it; the role creates the group and adds the check.
 dev_rdp_allowed_group: ""
 
+# ---- xrdp login-screen appearance -------------------------------------------
+# Skin the (stock, plain-grey) xrdp login box. Colors are 6-hex RGB WITHOUT a
+# leading '#' -- xrdp's own format. _bg_color is the area behind the box;
+# _box_color is the box panel itself. Default is navy.
+dev_rdp_login_bg_color: "001f3f"       # navy blue behind the login box
+dev_rdp_login_box_color: "dedede"      # the login box panel
+dev_rdp_login_title: "GE Aerospace -- Authorized Use Only"
+# Optional logo on the login box. xrdp wants a 24-bit BMP, so convert your PNG
+# (ImageMagick): convert logo.png -resize 240x -type truecolor BMP3:ge-logo.bmp
+# then commit it to roles/remote_desktop/files/ and set the filename here (a bare
+# name resolves to that files/ dir; an absolute path on the box also works).
+# Empty = no logo (colors + title still apply).
+dev_rdp_login_logo_src: ""             # e.g. "ge-aerospace-logo.bmp"
+dev_rdp_login_logo_x: 63               # logo position inside the login box (px)
+dev_rdp_login_logo_y: 50
+
 # =============================================================================
 # CLASSIFICATION BANNER (persistent top + bottom on-screen bars)
 # =============================================================================
