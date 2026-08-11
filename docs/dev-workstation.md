@@ -26,6 +26,7 @@ Software inventory for the development workstation. Versions are pinned in `grou
 | Ubuntu | 24.04 LTS Desktop (Noble Numbat) | Canonical | Host OS + GNOME desktop |
 | git | distro | Git project | Version control |
 | cifs-utils | distro | Samba team | Mount SMB/CIFS shares |
+| smbclient | distro | Samba team | Browse/test SMB shares (`smbclient -L //server -U user`) |
 | net-tools | distro | net-tools project | `ifconfig`/`route`/`netstat` network admin |
 | Python | 3.12 | Python Software Foundation | Scripting, venvs |
 | openssh-client | distro | OpenBSD | SSH/SCP client |
