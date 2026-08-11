@@ -28,18 +28,29 @@ if ! command -v zenity >/dev/null 2>&1; then
     exit 0
 fi
 
-# --question with custom buttons = an explicit I Agree / Decline choice. Closing
-# the window (X) or Decline both return non-zero -> treated as "declined".
-if zenity --question \
+# --question with custom buttons = an explicit I Agree / Decline choice.
+zenity --question \
         --title="Notice and Consent -- Authorized Use Only" \
         --ok-label="I Agree" \
         --cancel-label="Decline (log out)" \
         --width=700 \
-        --text="$TEXT" 2>/dev/null; then
+        --text="$TEXT" 2>/dev/null
+rc=$?
+
+# zenity exit codes: 0 = I Agree; 1 = Decline / window closed; anything else
+# (5 = timeout, ~255 = failed to display / GTK error) is NOT a deliberate
+# decline -- e.g. the autostart firing before the compositor is ready over RDP.
+# Log out ONLY on an explicit Decline (rc 1); on any error, fail OPEN (allow the
+# session) so a transient display glitch can never trap the user in a
+# login->logout loop.
+if [ "$rc" -eq 0 ]; then
+    exit 0
+elif [ "$rc" -ne 1 ]; then
+    logger -t gui-consent-banner "zenity returned $rc (not a decline); allowing session"
     exit 0
 fi
 
-# Declined -> end the graphical session. Try the clean GNOME logout first, then
+# rc == 1 -> Declined -> end the graphical session. Try the clean GNOME logout first, then
 # fall back to terminating the systemd session, then a hard kill of the user's
 # processes as a last resort.
 logger -t gui-consent-banner "consent declined by ${USER:-unknown}; logging out"
