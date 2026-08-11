@@ -10,7 +10,7 @@ DISA-STIG-hardened Ubuntu 24.04 Desktop (GNOME) engineering workstation:
 - **Dev toolchain** (`dev_tools`): compilers, .NET, the `/opt/eng-venv` shared Python env, VS Code + extensions, Docker.
 - **Browser VS Code** (code-server) at `https://<host>:8080`.
 - **Cockpit** web console at `https://<host>:9090`.
-- **DCSA login banner** (GUI, console, SSH) + optional top/bottom **classification banner**.
+- **DCSA login banner** (GUI greeter, console, SSH) + a **GUI consent dialog** shown at the start of every graphical session so RDP users (xrdp bypasses the GDM greeter) get the same warning/consent gate + optional top/bottom **classification banner**.
 - **Org accounts/groups** and **USB mass storage restricted to the `dta` group** (udev + polkit). The USB carve-out is development-profile only; the AI servers disable USB storage.
 
 Hardened by Canonical USG (`usg fix disa_stig`), same as the `ai` profile. Needs an Ubuntu Pro token.

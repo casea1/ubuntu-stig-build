@@ -218,6 +218,13 @@ emi_unclass_banner: '***********************************************************
 # emi_unclass_banner. Classified EMI and all other profiles keep the DCSA text.
 gui_banner_text: "{{ emi_unclass_banner if ((is_emi | default(false) | bool) and not (emi_classified | default(true) | bool)) else dcsa_gui_banner }}"
 
+# Show gui_banner_text as a consent dialog (I Agree / Decline) at the start of
+# every GUI session. This is the ONLY warning banner RDP users see -- xrdp
+# bypasses the GDM greeter, so its login-screen banner never appears over RDP.
+# Declining logs the session out. Applied by desktop_hardening on the GUI
+# profiles (development/baseline/emi). Set false to disable the dialog.
+dcsa_consent_dialog_enabled: true
+
 # ---- More upstream GNOME dconf bugs (malformed option names) ----------------
 # UBTU-24-200043 writes `option: picture-uri=` and UBTU-24-300025 writes
 # `option: logout=` (trailing '=' typos in community.general.ini_file), producing

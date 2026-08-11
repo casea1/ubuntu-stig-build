@@ -152,6 +152,47 @@
     - { option: banner-message-text, value: "'{{ gui_banner_text }}'" }
 
 # ---------------------------------------------------------------------------
+# 2b) GUI SESSION CONSENT BANNER -- covers RDP, which bypasses the GDM greeter.
+# xrdp starts the user's GNOME session directly, so the GDM login-screen banner
+# above never shows over RDP. This autostart pops the SAME gui_banner_text as a
+# consent dialog at the start of every graphical session (local + RDP) and logs
+# the session out if declined. Toggle with dcsa_consent_dialog_enabled.
+# ---------------------------------------------------------------------------
+- name: "BANNER | GUI consent dialog for RDP/local sessions"
+  when: dcsa_consent_dialog_enabled | default(true) | bool
+  block:
+    - name: "BANNER | Install zenity (the consent dialog needs it)"
+      ansible.builtin.apt:
+        name: zenity
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: "BANNER | Write the consent banner text (gui_banner_text, real newlines)"
+      ansible.builtin.copy:
+        dest: /etc/gui-consent-banner.txt
+        owner: root
+        group: root
+        mode: "0644"
+        content: "{{ gui_banner_text | replace('\\n', '\n') }}\n"
+
+    - name: "BANNER | Install the consent script"
+      ansible.builtin.copy:
+        src: gui-consent-banner.sh
+        dest: /usr/local/bin/gui-consent-banner.sh
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "BANNER | Autostart the consent dialog for every GUI session"
+      ansible.builtin.copy:
+        src: gui-consent-banner.desktop
+        dest: /etc/xdg/autostart/gui-consent-banner.desktop
+        owner: root
+        group: root
+        mode: "0644"
+
+# ---------------------------------------------------------------------------
 # 3) GNOME desktop dconf hardening + login banner (dconf keyfiles + locks)
 # ---------------------------------------------------------------------------
 - name: "Apply GNOME dconf hardening (screensaver/automount/ctrl-alt-del + banner)"

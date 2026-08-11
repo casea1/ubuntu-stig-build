@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Logon Consent Banner
+Comment=Presents the warning/consent banner and requires acknowledgement (covers RDP)
+Exec=/usr/local/bin/gui-consent-banner.sh
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Phase=Applications
+StartupNotify=false
