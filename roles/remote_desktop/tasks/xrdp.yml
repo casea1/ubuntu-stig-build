@@ -72,8 +72,17 @@
     - { option: ls_title, value: "{{ dev_rdp_login_title | default('Authorized Use Only') }}" }
   notify: restart xrdp
 
-- name: "XRDP | Install + wire the login-screen logo (BMP)"
+- name: "XRDP | Look for the login-screen logo in the role files/"
+  ansible.builtin.stat:
+    path: "{{ role_path }}/files/{{ dev_rdp_login_logo_src }}"
+  register: _xrdp_logo
   when: (dev_rdp_login_logo_src | default('')) | length > 0
+
+- name: "XRDP | Install + wire the login-screen logo (only when the BMP is present)"
+  # Gated on the file actually existing, so the build never fails if the logo
+  # hasn't been committed yet -- colors + title still apply, and the logo lights
+  # up the moment roles/remote_desktop/files/<dev_rdp_login_logo_src> exists.
+  when: _xrdp_logo.stat.exists | default(false)
   block:
     - name: "XRDP | Copy the login logo into /etc/xrdp"
       ansible.builtin.copy:
