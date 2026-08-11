@@ -152,6 +152,20 @@
     state: present
   when: dev_rdp_keyring_autounlock | default(true) | bool
 
+# ---- Client drive redirection (~/thinclient_drives) ------------------------
+# xrdp's chansrv mounts the RDP client's local drives into the session via FUSE
+# (~/thinclient_drives). Disabled by default: it's an uncontrolled file-transfer
+# path that bypasses the removable-media (dta/USB) controls. Toggle with
+# dev_rdp_drive_redirect. sesman.ini is read by xrdp-sesman, so restart that.
+- name: "XRDP | Client drive redirection (chansrv FUSE mount) -> {{ dev_rdp_drive_redirect | default(false) }}"
+  community.general.ini_file:
+    path: /etc/xrdp/sesman.ini
+    section: Chansrv
+    option: EnableFuseMount
+    value: "{{ 'true' if (dev_rdp_drive_redirect | default(false) | bool) else 'false' }}"
+    mode: "0644"
+  notify: restart xrdp-sesman
+
 # ---- Optional: restrict RDP to a group (PAM) -- off by default -------------
 - name: "XRDP | Ensure the RDP-allowed group exists"
   ansible.builtin.group:

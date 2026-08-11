@@ -3,3 +3,8 @@
   ansible.builtin.systemd:
     name: xrdp
     state: restarted
+
+- name: restart xrdp-sesman
+  ansible.builtin.systemd:
+    name: xrdp-sesman
+    state: restarted

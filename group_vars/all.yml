@@ -338,6 +338,12 @@ dev_rdp_autorun_session: "Xorg"
 # Chromium) prompt "the login keyring did not get unlocked" on every launch over
 # RDP. Uses the RDP login password, same as a console login. Set false to skip.
 dev_rdp_keyring_autounlock: true
+# Allow the RDP client's local drives into the session (xrdp drive redirection --
+# the ~/thinclient_drives FUSE mount). OFF by default: on a STIG box this is an
+# uncontrolled file-transfer channel that bypasses the dta-group / USB
+# removable-media controls. Set true only if you deliberately want client drive
+# sharing over RDP.
+dev_rdp_drive_redirect: false
 # RDP color depth (bits per pixel). GNOME-over-xrdp is bandwidth-heavy; lowering
 # this is the biggest server-side responsiveness lever. 16 = snappiest (slight
 # color banding), 24 = balanced default, 32 = best quality/heaviest. Paired with
