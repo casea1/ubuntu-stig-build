@@ -333,6 +333,11 @@ dev_rdp_use_tls: true
 # 24.04. Pinning autorun=Xorg removes the broken choices. Set "" to restore the
 # dropdown (only if you deliberately add another backend).
 dev_rdp_autorun_session: "Xorg"
+# Unlock the GNOME login keyring at RDP login (adds pam_gnome_keyring to the
+# xrdp-sesman PAM stack). Without it, GNOME apps that store secrets (VS Code,
+# Chromium) prompt "the login keyring did not get unlocked" on every launch over
+# RDP. Uses the RDP login password, same as a console login. Set false to skip.
+dev_rdp_keyring_autounlock: true
 # RDP color depth (bits per pixel). GNOME-over-xrdp is bandwidth-heavy; lowering
 # this is the biggest server-side responsiveness lever. 16 = snappiest (slight
 # color banding), 24 = balanced default, 32 = best quality/heaviest. Paired with

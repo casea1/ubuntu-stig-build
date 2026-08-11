@@ -123,6 +123,35 @@
         }
       });
 
+# ---- GNOME keyring auto-unlock over RDP ------------------------------------
+# Over xrdp the login keyring is never unlocked with the login password (the
+# xrdp-sesman PAM stack lacks pam_gnome_keyring), so GNOME apps that store
+# secrets -- VS Code, Chromium, etc. -- prompt "the login keyring did not get
+# unlocked" on every launch. Add the auth+session hooks so the keyring unlocks
+# with the RDP login password, exactly like a console/GDM login. (Ubuntu already
+# wires this into GDM's PAM; xrdp just doesn't inherit it.)
+- name: "XRDP | Ensure pam_gnome_keyring is installed"
+  ansible.builtin.apt:
+    name: libpam-gnome-keyring
+    state: present
+  when: dev_rdp_keyring_autounlock | default(true) | bool
+
+- name: "XRDP | Unlock the GNOME keyring at RDP login (auth hook)"
+  ansible.builtin.lineinfile:
+    path: /etc/pam.d/xrdp-sesman
+    line: "auth       optional     pam_gnome_keyring.so"
+    insertafter: '^@include common-auth'
+    state: present
+  when: dev_rdp_keyring_autounlock | default(true) | bool
+
+- name: "XRDP | Unlock the GNOME keyring at RDP login (session hook)"
+  ansible.builtin.lineinfile:
+    path: /etc/pam.d/xrdp-sesman
+    line: "session    optional     pam_gnome_keyring.so auto_start"
+    insertafter: '^@include common-session'
+    state: present
+  when: dev_rdp_keyring_autounlock | default(true) | bool
+
 # ---- Optional: restrict RDP to a group (PAM) -- off by default -------------
 - name: "XRDP | Ensure the RDP-allowed group exists"
   ansible.builtin.group:
