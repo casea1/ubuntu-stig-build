@@ -31,6 +31,8 @@
     - ai-stack.sh
     - set-ip.sh
     - set-classification.sh
+    - model-export.sh
+    - model-import.sh
 
 - name: "IT-SCRIPTS | Expose short it-* commands in /usr/local/sbin"
   ansible.builtin.file:
@@ -49,6 +51,8 @@
     - { link: it-ai, target: ai-stack.sh }
     - { link: it-set-ip, target: set-ip.sh }
     - { link: it-set-classification, target: set-classification.sh }
+    - { link: it-model-export, target: model-export.sh }
+    - { link: it-model-import, target: model-import.sh }
 
 - name: "IT-SCRIPTS | Where the scripts are"
   ansible.builtin.debug:

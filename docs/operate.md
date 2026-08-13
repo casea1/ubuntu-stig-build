@@ -108,6 +108,8 @@ it-ai run openwiki openwiki <args>     #   ...generate a doc wiki; `it-ai tools`
 it-set-ip                              # renumber when the box leaves the lab (interactive)
 it-set-ip --peer 10.0.5.20             #   ...just repoint the cross-node/peer IP + firewall + containers
 it-set-ip --self 10.0.5.11/24 --gateway 10.0.5.1 --dns 10.0.5.2   # ...this box's own static IP (netplan)
+it-model-export /mnt/usb [--images]    # AIR-GAP gather (online box): models+encodings (+images) -> USB
+it-model-import /mnt/usb [--images]    # AIR-GAP install (fielded box): USB -> external volumes
 
 # The AI stack is split into one Dockge stack per service under /opt/stacks/<stack>/:
 it-ai status                           # what's running / healthy across all stacks
@@ -135,6 +137,8 @@ The `it_scripts` + `inventory_report` roles install short admin commands into `/
 | `it-ai` | `ai-stack.sh` | One control surface for the per-service AI stacks (`/opt/stacks/<stack>/`), runnable from anywhere: `up`/`down`/`stop`/`restart`/`status`/`logs`/`pull` (all, or one `[STACK]`), `stacks` (list), `oikb` (opt-in sync), `model gpt-oss|granite|status` (System 1 chat-model switch), and `run <stack>` for the on-demand `tools` utilities (`hfcli`/`openwiki`). `it-ai tools` lists them. |
 | `it-set-classification` | `set-classification.sh` | Change the on-screen classification banner level (interactive menu or arg). Updates the autostart entry + `site.yml`, and restarts the banner live in each GUI session. GUI profiles. |
 | `it-set-ip` | `set-ip.sh` | Renumber the node when it leaves the lab: repoints the peer/cross-node IP (`site.yml` + `.env` + `/etc/hosts` + ufw + recreates containers) and/or this box's own static IP via netplan. Interactive or `--peer` / `--self`. |
+| `it-model-export` | `model-export.sh` | **Air-gap gather side** (online box): `hf download` the models + tiktoken encodings (+ `--images` to `docker save` the containers) onto a USB with a manifest. Completeness-checked. |
+| `it-model-import` | `model-import.sh` | **Air-gap install side** (fielded box): read the USB manifest and load models/encodings straight into their external Docker volumes (+ `--images` to `docker load`). No internet/repo/helper-image needed. |
 | `it-inventory` | `it-inventory.sh` | Writes `/opt/it/inventory-<host>.txt`: service tag, BIOS, DIMM/SSD serials, MACs, GPU, LVM/LUKS layout. |
 
 ### If something's wrong (things we've already handled in the tool)
@@ -641,7 +645,32 @@ When ready to serve one, add its vLLM stack under `/opt/stacks/` (or its `ai_mod
 
 Verify before first `up`: `sudo docker run --rm -v vllm:/m alpine ls /m` should list `config.json` + weight shards. Then `it-ai up` (or flip `ai_compose_deploy`).
 
-**Air-gap** (no internet on the fielded box): fetch on an online machine, move each volume over (`docker run --rm -v ‹vol›:/m -v /mnt/usb:/src alpine cp -a /src/. /m`), and mirror the registry images into an internal registry / `docker load` them. The **custom** images (oikb/hfcli/repomix) are built on the box, and the oikb build git-clones, so an air-gapped box needs those images pre-built and loaded, or set `ai_compose_build_images: false` and push them from your registry.
+### Air-gap: gather models on a USB, install on the fielded box (`it-model-export` / `it-model-import`)
+
+A fielded box has no internet, so the models (and, for a full cold bring-up, the container images) travel on removable media. Two scripts make both sides one command; a **manifest** written to the media carries the volume↔repo mapping, so the air-gapped side needs no repo, no `group_vars`, and no internet.
+
+**On an ONLINE box** (any machine with Docker — a build-room box or a laptop), gather onto the USB:
+
+```bash
+sudo it-model-export /mnt/usb                 # all models + tiktoken encodings
+sudo it-model-export /mnt/usb --role system1  # just System 1's models (gpt-oss + granite chat)
+sudo it-model-export /mnt/usb --images        # ALSO save the container images (full cold bring-up)
+```
+
+It runs `hf download` into `/mnt/usb/models/<volume>/`, verifies **every safetensors shard is present** (the same completeness check the build uses — a truncated pull is left off the manifest so you notice), fetches the tiktoken encodings, and writes `/mnt/usb/manifest.txt`. With `--images` it `docker pull`s + `docker save`s the registry images (vLLM, Open WebUI, pgvector, redis, Docling, Tika, LGTM, Dockge). The **custom** images (oikb/hfcli/mlflow/openwiki, built on a box by `ai_compose`) must already exist locally to be saved — build them first (run the `ai_compose` role once online, or `docker build`); the script warns + skips any it can't find rather than building them.
+
+**On the AIR-GAPPED box**, install from the same USB:
+
+```bash
+sudo it-model-import /mnt/usb            # models + encodings into their external volumes
+sudo it-model-import /mnt/usb --images   # + docker load the saved images (do this first-ever bring-up)
+```
+
+It reads the manifest and copies each model **straight into its named Docker volume's host path** (`docker volume inspect` Mountpoint) — no helper image needed, so it works before any image exists — creating volumes as needed, re-verifying completeness, and **skipping a volume that's already complete** (`--force` to overwrite). Then `it-models` to confirm and `it-ai up` (plus `it-ai model gpt-oss` on System 1) to start.
+
+**Updating a model later** (air-gapped): re-run `it-model-export` for just that repo's role on the online box, carry the USB over, `it-model-import --force`, then `it-ai restart <stack>`. Keep the two scripts' pinned versions/repos in step with `group_vars/all.yml` (`ai_models`, `ai_compose_images`, `ai_vllm_image`) — they carry a copy of that list so they can run standalone.
+
+> Alternative to `--images`: mirror the registry images into an **internal registry** and set `ai_compose_build_images: false` to push the custom ones from there, instead of `docker save`/`load` over USB.
 
 ### FIPS + inference containers (POA&M)
 
