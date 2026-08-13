@@ -308,6 +308,27 @@
       notify: Load audit rules
 
 # ---------------------------------------------------------------------------
+# 5b) DISABLE CUPS PRINTING (all profiles) -- least-functionality hardening.
+# CUPS listens on :631 and is unneeded on these boxes; leaving it running is an
+# extra attack surface. Disable AND mask cups.service + cups.socket (the socket
+# would otherwise re-activate the service on demand) + cups-browsed. failed_when
+# false so a box that never installed CUPS (e.g. a headless AI node) is a no-op.
+# Set disable_cups: false per box if you genuinely need local printing.
+# ---------------------------------------------------------------------------
+- name: "REMED | Disable + mask CUPS printing services (all profiles)"
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+    masked: true
+  loop:
+    - cups.service
+    - cups.socket
+    - cups-browsed.service
+  failed_when: false          # units may be absent (not installed) -> nothing to do
+  when: disable_cups | default(true) | bool
+
+# ---------------------------------------------------------------------------
 # 6) RE-AUDIT -- regenerate the USG report so it reflects the fully-built,
 # remediated box rather than the mid-build snapshot. Pro-attached boxes only.
 # (_usg_active / _usg_target are facts set by usg_harden earlier in this play.)

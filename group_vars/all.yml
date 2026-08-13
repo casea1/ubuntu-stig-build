@@ -1112,6 +1112,12 @@ usg_report_file_mode: "0640"                   # root rw, admin group read, othe
 # =============================================================================
 usg_remediate_enabled: true
 
+# Disable + mask CUPS printing (cups.service/.socket + cups-browsed) on ALL
+# profiles -- least-functionality hardening; it listens on :631 and is unneeded
+# here. No-op on a box that never installed it. Set false per box (site.yml) if
+# you genuinely need local printing.
+disable_cups: true
+
 # Strip pam_pkcs11 back out of the PAM stack on already-hardened boxes (fixes the
 # "no suitable token available / No smart card found" spam). Tied to the same
 # password-only decision as usg_disable_smartcard. SAFE: it only comments out the
