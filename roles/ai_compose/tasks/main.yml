@@ -288,9 +288,17 @@
 # ---- Optional model fetch (both the split stacks + the fallback use these) ---
 - name: "AI-COMPOSE | Fetch models into their volumes (opt-in; needs internet + disk)"
   # Downloads each repo into its volume via the vLLM image's `hf` CLI.
-  # Idempotent: skips a volume that already holds a config.json. no_log because
-  # the HF token (if any) is on the command line. The fips_off mount is required
-  # -- on a FIPS host this image's OpenSSL can't do TLS without it (see below).
+  # COMPLETENESS-CHECKED, not just "config.json exists": a download interrupted
+  # partway (e.g. 13 of 14 shards) leaves config.json in place, so the old
+  # `test -f config.json && SKIP` treated a PARTIAL model as done and never
+  # re-pulled the missing shard -> vLLM loaded broken weights and generated
+  # repeating-token garbage (older vLLM) / refused to start (newer vLLM). Now we
+  # verify every shard named in model.safetensors.index.json is present and
+  # non-empty (or, for single-file repos, model.safetensors), and only then SKIP;
+  # otherwise we (re-)run `hf download`, which resumes and fills just the missing
+  # files. no_log because the HF token (if any) is on the command line. The
+  # fips_off mount is required -- on a FIPS host this image's OpenSSL can't do TLS.
+  # Single line (folded scalar): shell stmts are ';'-separated so folding is safe.
   ansible.builtin.command:
     cmd: >-
       docker run --rm
@@ -299,8 +307,7 @@
       -v {{ ai_compose_dir }}/fips_off:/proc/sys/crypto/fips_enabled:ro
       --entrypoint sh
       {{ ai_vllm_image }}
-      -c "test -f /model/config.json && echo SKIP ||
-          (hf download {{ item.repo }} --local-dir /model && echo FETCHED)"
+      -c 'ok=0; idx=/model/model.safetensors.index.json; if [ -f /model/config.json ]; then if [ -f $idx ]; then ok=1; for f in $(grep -o [A-Za-z0-9_.-]*\.safetensors $idx | sort -u); do [ -s /model/$f ] || ok=0; done; elif [ -s /model/model.safetensors ]; then ok=1; fi; fi; if [ $ok -eq 1 ]; then echo SKIP; else hf download {{ item.repo }} --local-dir /model && echo FETCHED; fi'
   register: _fetch
   changed_when: "'FETCHED' in (_fetch.stdout | default(''))"
   no_log: true
