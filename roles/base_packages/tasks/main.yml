@@ -4,10 +4,10 @@
 #
 # The concrete package set depends on the deployment profile (see local.yml):
 #   development -> development.yml  (the full engineering-workstation app set:
-#                  clamav, wireshark, putty, editor, VS Code, PowerShell,
-#                  provisioning services)
+#                  clamav, wireshark, putty, editor, VS Code, provisioning svcs)
 #   ai          -> ai.yml           (a lean headless baseline; the AI stack and
 #                  USG pull in almost everything else they need themselves)
+# Common to ALL profiles (below): base_common_packages + PowerShell (PowerStrux).
 
 - name: Update apt cache
   ansible.builtin.apt:
@@ -29,14 +29,31 @@
     update_cache: true
   when: base_packages_full_upgrade | default(false) | bool
 
-- name: "Install common packages (both profiles)"
-  # cifs-utils (mount SMB/CIFS shares) + net-tools (ifconfig/route/netstat).
-  # Wanted on every box regardless of profile; edit base_common_packages in
-  # group_vars to change the set.
+- name: "Install common packages (all profiles)"
+  # cifs-utils + smbclient (SMB) + net-tools + unzip. Wanted on every box
+  # regardless of profile; edit base_common_packages in group_vars to change it.
   ansible.builtin.apt:
     name: "{{ base_common_packages | default([]) }}"
     state: present
   when: (base_common_packages | default([])) | length > 0
+
+# --- PowerShell (LTS) -- ALL profiles ---------------------------------------
+# Required by the PowerStrux auditing tool (relevant on every box, incl. the AI
+# servers). Pinned .deb from the official GitHub release (no third-party apt
+# repo). Installs /usr/bin/pwsh; not added to /etc/shells, so it is not a valid
+# login shell. Set powershell_enabled: false to skip.
+- name: "Download pinned PowerShell {{ powershell_version }} .deb"
+  ansible.builtin.get_url:
+    url: "https://github.com/PowerShell/PowerShell/releases/download/v{{ powershell_version }}/powershell_{{ powershell_version }}-1.deb_amd64.deb"
+    dest: "/tmp/powershell_{{ powershell_version }}.deb"
+    mode: "0644"
+  when: powershell_enabled | default(true) | bool
+
+- name: "Install PowerShell from the .deb (apt resolves dependencies)"
+  ansible.builtin.apt:
+    deb: "/tmp/powershell_{{ powershell_version }}.deb"
+    state: present
+  when: powershell_enabled | default(true) | bool
 
 - name: Install the DEVELOPMENT engineering-workstation package set
   # EMI reuses the same engineering app set (VS Code, PowerShell, wireshark,

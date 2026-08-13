@@ -109,6 +109,8 @@ Software inventory for the two-node AI platform (IA / DCSA reference). Versions 
 | git | distro | Git project | Version control |
 | cifs-utils | distro | Samba team | Mount SMB/CIFS shares |
 | net-tools | distro | net-tools project | `ifconfig`/`route`/`netstat` network admin |
+| unzip | distro | Info-ZIP | Extract .zip archives |
+| PowerShell | 7.4.16 LTS | Microsoft | `pwsh`; required by the PowerStrux auditing tool |
 | NVIDIA GPU driver | ≥ 595.71.05 | NVIDIA | GPU driver |
 | NVIDIA Container Toolkit | ≥ 1.19.1 | NVIDIA | GPU access inside containers |
 

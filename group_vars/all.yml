@@ -135,10 +135,12 @@ base_packages_full_upgrade: false
 #   smbclient  : browse/test SMB shares (`smbclient -L //server -U user`) --
 #                the diagnostic companion to cifs-utils (SMB2/3; SMB1 stays off)
 #   net-tools  : ifconfig / route / netstat for network admin
+#   unzip      : extract .zip archives (installers, exported bundles)
 base_common_packages:
   - cifs-utils
   - smbclient
   - net-tools
+  - unzip
 
 # ---- Inventory report (BOTH profiles) --------------------------------------
 # Writes a basic hardware/system inventory (serials, MACs, BIOS, disks, GPU) to
@@ -1205,3 +1207,4 @@ it_dir: /opt/it
 managed_dirs:
   - "{{ ia_dir }}"
   - "{{ it_dir }}"
+  - "{{ it_dir }}/installers"   # staging area for installer files/archives (admin-only)
