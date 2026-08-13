@@ -586,8 +586,10 @@ models:
     apiBase: http://<dev-ai1-ip>:8000/v1
     apiKey: sk-noauth
     roles: [chat, edit, apply]
-    defaultCompletionOptions: { temperature: 0.0, maxTokens: 8192, contextLength: 65000 }
+    defaultCompletionOptions: { temperature: 1.0, topP: 1.0, maxTokens: 8192, contextLength: 65000 }
 ```
+
+> **gpt-oss sampling — avoid repetition loops.** gpt-oss is trained for **temperature 1.0 / top_p 1.0**; a low temperature (or `0.0` greedy) with no repetition penalty makes long generations collapse into single-token loops (`ex ex ex…`). The served model ships those defaults + a light `repetition_penalty` (1.1) via vLLM `--override-generation-config`, but **Open WebUI sends its own temperature**, so set it there too: **Admin → Settings → Models → `gpt-oss-120b` → Advanced Params → Temperature 1.0, Top P 1.0** (and optionally Frequency Penalty ~0.4). It's a per-model setting stored in the DB, so set it once in the UI (not via env). Direct IDE clients (above) should likewise send temperature 1.0, not 0.0.
 
 - **Prefer Option A** where the user activity should hit the Open WebUI audit trail (AU controls). Option B is a direct fast path.
 - **Firewall:** Option A needs `3000` reachable from the developer subnet (already the users' port). Option B needs `8000` opened to that subnet in `ai_firewall_allow_ports` -- by default `8000` is not published to clients, only used locally by Open WebUI. Open it deliberately if you want direct IDE access.
