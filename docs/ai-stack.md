@@ -47,6 +47,54 @@ Full walkthrough: [build.md — Track B](build.md#track-b-ai-servers-two-node) a
 
 **RAG / Documents config + IDE clients.** The Open WebUI Documents panel (Docling extraction, Granite embeddings, hybrid search, chunk 2048/200) is seeded from env vars in System 1's compose — with the caveat that they're `PersistentConfig` (env seeds a fresh DB only; change in the UI on an existing box). Pointing the Continue VS Code extension at the stack (via Open WebUI's API or direct to vLLM) is a client-side setup. Both are documented in [operate.md — Open WebUI RAG defaults](operate.md#open-webui-rag--documents-defaults-and-the-persistentconfig-caveat) and [Connecting an IDE (Continue)](operate.md#connecting-an-ide-continue-vs-code----client-side).
 
+## Compose files — what runs, and how
+
+The `ai_compose` role places the node's compose file at **`/opt/it/docker/docker-compose.yaml`** (from `system1-compose.yaml` on `dev-ai1`, `system2-compose.yaml` on `dev-ai2`) plus a root-only `.env` (secrets/site values). Named volumes are pre-created by the role; model-weight volumes are populated *before* first `up`. Run everything from `/opt/it/docker`.
+
+**Compose profiles decide what auto-starts.** A service with a `profiles:` tag is **excluded** from a plain `docker compose up` — it only runs when that profile is active. So some services show as **n/a** in Dockge until you invoke them; that's by design, not a failure.
+
+| Profile | Starts with | Contains | Notes |
+|---|---|---|---|
+| *(default)* | `docker compose up -d` | the long-running daemons | the always-on services below |
+| `granite` (S1) | `switch-model.sh granite` | `vllm-granite` | the alternate chat model; only one chat model fits VRAM |
+| `oikb` (S2) | auto when an Open WebUI API key is set, else `--profile oikb` | `oikb` | opt-in knowledge-base sync |
+| `tools` (S2) | `docker compose run --rm <svc> …` | `hfcli`, `openwiki` | **on-demand utilities** — no daemon process; run-and-exit |
+
+### System 1 (`dev-ai1`) — `system1-compose.yaml`
+| Service | Port | Profile | Job |
+|---|---|---|---|
+| `vllm` | `:8000` | default | Chat model (gpt-oss-120B) |
+| `vllm-granite` | `:8001` | `granite` | Alternate chat model (Granite-4.1-30B); via `switch-model.sh` |
+| `pgvector` | internal | default | Accounts/chats/settings + vector index |
+| `redis` | internal | default | Websocket coordination + cache |
+| `open-webui` | `:3000` | default | The chat website |
+
+### System 2 (`dev-ai2`) — `system2-compose.yaml`
+| Service | Port | Profile | Job |
+|---|---|---|---|
+| `vllm-embed` | `:8002` | default | RAG embeddings |
+| `vllm-vision` | `:8003` | default | Vision / image understanding |
+| `docling-serve` | `:5001` | default | Document structure/OCR extraction |
+| `tika` | `:9998` | default | Text extraction (other file types) |
+| `lgtm` | `:3001` `:4317` `:4318` | default | Grafana + OTel monitoring |
+| `mlflow-db` | internal | default | MLflow's Postgres backing store |
+| `mlflow` | `:5000` | default | Experiment tracking + model registry |
+| `oikb` | `:8081` | `oikb` | Knowledge-base sync → System 1's Open WebUI |
+| `hfcli` | — | `tools` | Download models/encodings into volumes |
+| `openwiki` | — | `tools` | Generate a documentation wiki from a repo |
+
+### Common commands
+```bash
+cd /opt/it/docker
+docker compose up -d                                        # start the default (daemon) services
+docker compose ps                                           # what's running
+docker compose --profile oikb up -d                         # + oikb (or set the API key -> auto)
+docker compose run --rm hfcli hf download <repo> --local-dir /granite-embed   # on-demand: fetch a model
+docker compose run --rm openwiki openwiki <args>            # on-demand: build a doc wiki (output in openwiki-out -> /work)
+./switch-model.sh gpt-oss | granite                         # System 1 only: swap the chat model
+```
+The `tools` utilities (`hfcli`, `openwiki`) will always read **n/a** in Dockge — they hold no long-running container; that is expected.
+
 ## Software list
 
 Software inventory for the two-node AI platform (IA / DCSA reference). Versions are pinned in the build (`group_vars/all.yml`, the compose files, the image Dockerfiles). Nodes: **S1** = System 1 (`dev-ai1`), **S2** = System 2 (`dev-ai2`).
