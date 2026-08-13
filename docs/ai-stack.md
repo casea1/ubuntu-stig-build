@@ -95,6 +95,8 @@ docker compose run --rm openwiki openwiki <args>            # on-demand: build a
 ```
 The `tools` utilities (`hfcli`, `openwiki`) will always read **n/a** in Dockge — they hold no long-running container; that is expected.
 
+**Shortcut:** the **`it-ai`** admin command wraps all of the above and works from anywhere (no `cd`): `it-ai up | down | stop | restart | status | logs | pull`, `it-ai oikb`, and `it-ai run <tool> [args]` (e.g. `it-ai run openwiki openwiki <args>`). `it-ai tools` lists the on-demand utilities. See [operate.md — Admin scripts](operate.md#admin-scripts-it-).
+
 ## Software list
 
 Software inventory for the two-node AI platform (IA / DCSA reference). Versions are pinned in the build (`group_vars/all.yml`, the compose files, the image Dockerfiles). Nodes: **S1** = System 1 (`dev-ai1`), **S2** = System 2 (`dev-ai2`).

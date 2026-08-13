@@ -28,6 +28,7 @@
     - status-luks.sh
     - luks-rebind.sh
     - restart-docker.sh
+    - ai-stack.sh
     - set-ip.sh
     - set-classification.sh
 
@@ -45,6 +46,7 @@
     - { link: it-luks,   target: status-luks.sh }
     - { link: it-luks-rebind, target: luks-rebind.sh }
     - { link: it-restart, target: restart-docker.sh }
+    - { link: it-ai, target: ai-stack.sh }
     - { link: it-set-ip, target: set-ip.sh }
     - { link: it-set-classification, target: set-classification.sh }
 

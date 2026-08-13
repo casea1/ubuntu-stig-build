@@ -100,6 +100,9 @@ it-models                             # model volumes + service endpoints
 it-restart                             # restart ALL AI-stack containers (docker compose restart)
 it-restart --up                        #   ...as `up -d` instead, to apply .env / compose edits
 it-restart oikb                        #   ...restart just one service
+it-ai up | down | stop | status | logs # control the whole AI stack from anywhere (wraps docker compose)
+it-ai run hfcli hf download <repo> --local-dir /granite-embed   # run a one-off `tools` utility (auto --rm)
+it-ai run openwiki openwiki <args>     #   ...generate a doc wiki; `it-ai tools` lists the utilities
 it-set-ip                              # renumber when the box leaves the lab (interactive)
 it-set-ip --peer 10.0.5.20             #   ...just repoint the cross-node/peer IP + firewall + containers
 it-set-ip --self 10.0.5.11/24 --gateway 10.0.5.1 --dns 10.0.5.2   # ...this box's own static IP (netplan)
@@ -128,6 +131,8 @@ The `it_scripts` + `inventory_report` roles install short admin commands into `/
 | `it-luks` | `status-luks.sh` | LUKS/TPM auto-unlock status (binding, clevis-in-initramfs, Secure Boot) with a verdict. |
 | `it-luks-rebind` | `luks-rebind.sh` | Re-seals the TPM2 keyslot to the **current** PCR 7 when the box prompts for the passphrase despite a stale binding. Binds a fresh slot before removing the old one (no lockout). |
 | `it-restart` | `restart-docker.sh` | Restart the AI-stack containers. `--up` uses `docker compose up -d` (apply `.env`/compose edits); a service name limits it to one. |
+| `it-ai` | `ai-stack.sh` | One control surface for the AI stack (`/opt/it/docker`), runnable from anywhere: `up`/`down`/`stop`/`restart`/`status`/`logs`/`pull`, `oikb` (opt-in sync), and `run <tool>` for the on-demand `tools` utilities (`hfcli`/`openwiki`/`repomix`). `it-ai tools` lists them. |
+| `it-set-classification` | `set-classification.sh` | Change the on-screen classification banner level (interactive menu or arg). Updates the autostart entry + `site.yml`, and restarts the banner live in each GUI session. GUI profiles. |
 | `it-set-ip` | `set-ip.sh` | Renumber the node when it leaves the lab: repoints the peer/cross-node IP (`site.yml` + `.env` + `/etc/hosts` + ufw + recreates containers) and/or this box's own static IP via netplan. Interactive or `--peer` / `--self`. |
 | `it-inventory` | `it-inventory.sh` | Writes `/opt/it/inventory-<host>.txt`: service tag, BIOS, DIMM/SSD serials, MACs, GPU, LVM/LUKS layout. |
 
