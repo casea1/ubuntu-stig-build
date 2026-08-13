@@ -1,0 +1,13 @@
+# System 2 -- Apache Tika (CPU document extraction, :9998). Own stack.
+# Fallback / alternative to Docling. Point Open WebUI at it with
+# CONTENT_EXTRACTION_ENGINE=tika + TIKA_SERVER_URL=http://<system2>:9998.
+name: tika
+networks:
+  oi: { external: true }
+services:
+  tika:
+    image: apache/tika:3.3.1.0
+    container_name: tika
+    ports: ["9998:9998"]
+    networks: [oi]
+    restart: unless-stopped

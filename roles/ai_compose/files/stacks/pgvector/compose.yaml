@@ -1,0 +1,25 @@
+# System 1 -- Postgres + pgvector (Open WebUI DB + vector index). Password from
+# .env (POSTGRES_PASSWORD, auto-generated).
+name: pgvector
+networks:
+  oi: { external: true }
+volumes:
+  pgvector-data: { external: true }
+services:
+  pgvector:
+    image: pgvector/pgvector:pg16-trixie
+    container_name: pgvector
+    environment:
+      POSTGRES_DB: "openwebui"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set in .env}"
+    volumes:
+      - pgvector-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d openwebui"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks: [oi]
+    restart: unless-stopped

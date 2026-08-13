@@ -1,0 +1,18 @@
+# System 2 -- hfcli utility (model downloads). Does NOT auto-start (`tools`
+# profile). Own stack. Run on demand:
+#   cd /opt/stacks/hfcli && docker compose run --rm hfcli hf download <repo> --local-dir /<vol>
+name: hfcli
+networks:
+  oi: { external: true }
+volumes:
+  granite-embed: { external: true }
+  granite-vision: { external: true }
+services:
+  hfcli:
+    image: hfcli:latest         # built on the box by ansible (ai_compose)
+    container_name: hfcli
+    profiles: ["tools"]
+    volumes:
+      - granite-embed:/granite-embed
+      - granite-vision:/granite-vision
+    networks: [oi]

@@ -1,0 +1,36 @@
+# System 1 -- Granite-4.1-30B, the ALTERNATE chat model. Behind the `granite`
+# profile so a plain `up` never starts it (only one chat model fits VRAM); the
+# switch-model helper stops gpt-oss and brings this up. Same chat-llm alias.
+name: vllm-granite
+networks:
+  oi: { external: true }
+volumes:
+  granite32b: { external: true }
+services:
+  vllm-granite:
+    image: vllm/vllm-openai:v0.22.1-cu129-ubuntu2404
+    container_name: vllm-granite
+    profiles: ["granite"]
+    ipc: host
+    ports: ["8001:8000"]
+    volumes:
+      - granite32b:/granite30b
+      - ./fips_off:/proc/sys/crypto/fips_enabled:ro
+    command:
+      - --model=/granite30b
+      - --served-model-name=granite-4.1-30b
+      - --gpu-memory-utilization=0.90
+      - --tensor-parallel-size=2
+      - --max-model-len=32768
+      - --port=8000
+      - --enable-auto-tool-choice
+      - --tool-call-parser=hermes
+    networks:
+      oi:
+        aliases: [chat-llm]
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }

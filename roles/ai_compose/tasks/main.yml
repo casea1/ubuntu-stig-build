@@ -1,11 +1,19 @@
 ---
 # =============================================================================
-# ai_compose -- stage the AI stack into {{ ai_compose_dir }} (default
-# /opt/it/docker) for the node's role. It: places the consolidated
-# docker-compose.yaml; builds the custom images the stack needs (oikb/hfcli/
-# repomix, not on any registry); renders a root-only .env (auto-generated DB +
-# WebUI secrets) and the oikb config skeleton; creates the external named
-# volumes; and OPTIONALLY fetches models + brings the stack up.
+# ai_compose -- stage the AI stack for the node's role. The stack is split into
+# one directory PER SERVICE under dockge_stacks_dir (/opt/stacks/<stack>/), so
+# each is a first-class, individually-manageable Dockge stack. Every stack on a
+# node shares ONE external Docker network (`oi`) and the external named volumes,
+# so services resolve each other by name across stacks (pgvector, redis,
+# chat-llm, ...).
+#
+# It: creates the shared `oi` network; places each stack's compose.yaml + the
+# per-stack assets it bind-mounts (fips_off, grafana/, .oikb.yaml) + a root-only
+# .env (auto-generated DB + WebUI secrets); builds the custom images the stack
+# needs (oikb/hfcli/repomix/mlflow/openwiki, not on any registry); creates the
+# external named volumes; keeps the OLD single-file compose as a dormant fallback
+# (docker-compose.consolidated.yaml under ai_compose_dir); and OPTIONALLY fetches
+# models + brings the stacks up.
 #
 # Gated is_ai + ai_compose_enabled in local.yml. The node's role (system1 |
 # system2) is auto-derived from the hostname (see group_vars).
@@ -13,7 +21,7 @@
 # HOST-PREP-FRIENDLY: by default it PLACES files + builds images + creates the
 # (empty) volumes, but does NOT `up` (ai_compose_deploy=false), because System
 # 1's vLLM volume must be populated with the model first (see docs/operate.md).
-# Flip ai_compose_deploy=true once the model is staged to have Ansible run it.
+# Flip ai_compose_deploy=true once the model is staged to have Ansible run them.
 # =============================================================================
 
 - name: "AI-COMPOSE | Validate ai_node_role (auto-derived from hostname)"
@@ -27,21 +35,46 @@
       this node's /etc/stig-build/site.yml.
     quiet: true
 
-- name: "AI-COMPOSE | Ensure the compose dir exists ({{ ai_compose_dir }})"
+- name: "AI-COMPOSE | Create the shared external Docker network ({{ ai_stack_network }})"
+  # Every per-service stack joins this ONE external network instead of each
+  # compose project spinning up its own, so cross-stack name resolution works
+  # (Open WebUI -> chat-llm/pgvector/redis; oikb -> dev-ai1). Idempotent.
+  ansible.builtin.command: "docker network create {{ ai_stack_network }}"
+  register: _net
+  changed_when: "'already exists' not in (_net.stderr | default(''))"
+  failed_when:
+    - _net.rc != 0
+    - "'already exists' not in (_net.stderr | default(''))"
+
+- name: "AI-COMPOSE | Ensure the Dockge stacks dir exists ({{ dockge_stacks_dir }})"
   ansible.builtin.file:
-    path: "{{ ai_compose_dir }}"
+    path: "{{ dockge_stacks_dir }}"
     state: directory
     owner: root
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "2750"          # admins (sudo group) can read/manage; others denied
 
-- name: "AI-COMPOSE | Place the compose file for role {{ ai_node_role }}"
+- name: "AI-COMPOSE | Create each stack's directory (/opt/stacks/<stack>)"
+  ansible.builtin.file:
+    path: "{{ dockge_stacks_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "2750"
+  loop: "{{ ai_stacks_by_role[ai_node_role] | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: "AI-COMPOSE | Place each stack's compose.yaml"
   ansible.builtin.copy:
-    src: "{{ ai_node_role }}-compose.yaml"
-    dest: "{{ ai_compose_dir }}/docker-compose.yaml"
+    src: "stacks/{{ item }}/compose.yaml"
+    dest: "{{ dockge_stacks_dir }}/{{ item }}/compose.yaml"
     owner: root
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "0640"
+  loop: "{{ ai_stacks_by_role[ai_node_role] | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
 
 - name: "AI-COMPOSE | Resolve the peer node via /etc/hosts (only when its addr is an IP)"
   # Hands-off cross-node name resolution: if this node's peer address is an IP (set
@@ -62,25 +95,29 @@
     - (_ai_peer_addr | default('')) | length > 0
     - (_ai_peer_addr | string)[0] in '0123456789'
 
-- name: "AI-COMPOSE | Drop the non-FIPS override file for inference containers"
-  # The host runs FIPS (kernel fips_enabled=1), but the vLLM image ships no FIPS
-  # OpenSSL provider, so its DRBG can't init and the container crash-loops
-  # (fips.so not found / FATAL FIPS SELFTEST). vLLM/PyTorch aren't FIPS-validated
-  # anyway, so vLLM services bind-mount THIS file (content "0") over
+- name: "AI-COMPOSE | Drop the non-FIPS override file into each stack that mounts it"
+  # The host runs FIPS (kernel fips_enabled=1), but the vLLM / OpenCV-bearing
+  # images ship no FIPS OpenSSL provider, so their DRBG can't init and they
+  # crash-loop (fips.so not found / FATAL FIPS SELFTEST). Those services aren't
+  # FIPS-validated anyway, so they bind-mount THIS file (content "0") over
   # /proc/sys/crypto/fips_enabled and use standard crypto. The HOST stays FIPS.
+  # Placed into each such stack's dir (the mount is relative: ./fips_off).
   ansible.builtin.copy:
     content: "0\n"
-    dest: "{{ ai_compose_dir }}/fips_off"
+    dest: "{{ dockge_stacks_dir }}/{{ item }}/fips_off"
     owner: root
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "0644"
+  loop: "{{ ai_stacks_need_fips[ai_node_role] | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
 
-- name: "AI-COMPOSE | Place the pre-provisioned Grafana dashboards (System 2)"
+- name: "AI-COMPOSE | Place the pre-provisioned Grafana dashboards (grafana-otel stack)"
   # LGTM bind-mounts ./grafana/*; the files must exist before `up`. Auto-loaded
-  # by Grafana at startup (Open WebUI OTel dashboard). System 2 only (LGTM lives there).
+  # by Grafana at startup (Open WebUI OTel dashboard). System 2 only.
   ansible.builtin.copy:
     src: "grafana/"
-    dest: "{{ ai_compose_dir }}/grafana/"
+    dest: "{{ dockge_stacks_dir }}/grafana-otel/grafana/"
     owner: root
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "0644"
@@ -88,10 +125,11 @@
   when: ai_node_role == 'system2'
 
 - name: "AI-COMPOSE | Place the chat-model switch script (System 1)"
-  # System 1 alternates gpt-oss-120b <-> Granite-4.1-30b (only one fits in VRAM).
+  # System 1 alternates gpt-oss-120b <-> Granite-4.1-30b, now two separate stacks
+  # (vllm-gptoss / vllm-granite); the script stops one stack and brings up the other.
   ansible.builtin.copy:
     src: switch-model.sh
-    dest: "{{ ai_compose_dir }}/switch-model.sh"
+    dest: "{{ dockge_stacks_dir }}/switch-model.sh"
     owner: root
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "0750"
@@ -148,24 +186,29 @@
     group: root
     mode: "0700"
 
-- name: "AI-COMPOSE | Render the root-only .env (secrets/site values)"
-  # Node-aware (env.j2): System 1 gets the DB/WebUI secrets + SYSTEM2_ADDR;
-  # System 2 gets oikb's cross-node URL + data-source secrets. Rendering evaluates
-  # the System-1 password lookups (generate + persist on first run, stable after).
+- name: "AI-COMPOSE | Render the root-only .env into each stack dir (secrets/site values)"
+  # docker compose auto-loads the `.env` next to the compose file, so every stack
+  # on the node gets the SAME node-aware .env (env.j2): System 1 stacks get the
+  # DB/WebUI secrets + SYSTEM2_ADDR; System 2 stacks get MLflow + oikb's cross-node
+  # URL/secrets. Unused vars in a given stack are harmless. Rendering evaluates the
+  # password lookups (generate + persist on first run, stable after).
   ansible.builtin.template:
     src: env.j2
-    dest: "{{ ai_compose_dir }}/.env"
+    dest: "{{ dockge_stacks_dir }}/{{ item }}/.env"
     owner: root
     group: root
     mode: "0600"
+  loop: "{{ ai_stacks_by_role[ai_node_role] | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
   no_log: true
 
-- name: "AI-COMPOSE | Render the oikb config skeleton (System 2; not overwritten on re-run)"
+- name: "AI-COMPOSE | Render the oikb config skeleton (oikb stack; not overwritten on re-run)"
   # oikb (System 2) bind-mounts ./.oikb.yaml, so the file must exist before `up`
   # (else Docker creates a directory there). force:false keeps your edits.
   ansible.builtin.template:
     src: oikb.yaml.j2
-    dest: "{{ ai_compose_dir }}/.oikb.yaml"
+    dest: "{{ dockge_stacks_dir }}/oikb/.oikb.yaml"
     owner: root
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "0640"
@@ -183,6 +226,66 @@
   loop_control:
     label: "{{ item }}"
 
+# ---- Dormant fallback: keep the old single-file compose on the box ----------
+- name: "AI-COMPOSE | Ensure the fallback dir exists ({{ ai_compose_dir }})"
+  ansible.builtin.file:
+    path: "{{ ai_compose_dir }}"
+    state: directory
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "2750"
+
+- name: "AI-COMPOSE | Stage the consolidated compose as a dormant fallback"
+  # The pre-split single-file compose, kept for break-glass use (one `docker
+  # compose up -d` brings the whole node up in one project). NOT deployed and NOT
+  # named docker-compose.yaml, so Dockge/it-ai/the recreate loop never pick it up.
+  # It shares the same external volumes, so switching to it needs no data move.
+  # Uses ./fips_off + ./grafana + ./switch-model.sh from this dir (staged below).
+  ansible.builtin.copy:
+    src: "{{ ai_node_role }}-compose.yaml"
+    dest: "{{ ai_compose_dir }}/docker-compose.consolidated.yaml"
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "0640"
+
+- name: "AI-COMPOSE | Fallback assets: fips_off (both roles)"
+  ansible.builtin.copy:
+    content: "0\n"
+    dest: "{{ ai_compose_dir }}/fips_off"
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "0644"
+
+- name: "AI-COMPOSE | Fallback assets: grafana/ (System 2)"
+  ansible.builtin.copy:
+    src: "grafana/"
+    dest: "{{ ai_compose_dir }}/grafana/"
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "0644"
+    directory_mode: "0750"
+  when: ai_node_role == 'system2'
+
+- name: "AI-COMPOSE | Fallback assets: root-only .env (System 1 + System 2)"
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ ai_compose_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: "AI-COMPOSE | Fallback assets: oikb config skeleton (System 2)"
+  ansible.builtin.template:
+    src: oikb.yaml.j2
+    dest: "{{ ai_compose_dir }}/.oikb.yaml"
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "0640"
+    force: false
+  when: ai_node_role == 'system2'
+
+# ---- Optional model fetch (both the split stacks + the fallback use these) ---
 - name: "AI-COMPOSE | Fetch models into their volumes (opt-in; needs internet + disk)"
   # Downloads each repo into its volume via the vLLM image's `hf` CLI.
   # Idempotent: skips a volume that already holds a config.json. no_log because
@@ -232,34 +335,32 @@
     - ai_model_fetch | default(false) | bool
     - "'encodings' in (ai_compose_volumes[ai_node_role] | default([]))"
 
-- name: "AI-COMPOSE | Deploy the stack (opt-in; needs the model staged + internet for pull)"
+- name: "AI-COMPOSE | Deploy all stacks (opt-in; needs the model staged + internet for pull)"
   when: ai_compose_deploy | default(false) | bool
   block:
-    - name: "AI-COMPOSE | docker compose pull (ignore local-only custom images)"
-      # oikb/hfcli/repomix aren't on a registry (built on the box), so their pull
-      # would fail -- ignore that; `up` uses the locally-built tags.
-      ansible.builtin.command:
-        cmd: docker compose pull --ignore-pull-failures
-        chdir: "{{ ai_compose_dir }}"
-      changed_when: true
-
-    - name: "AI-COMPOSE | docker compose up -d (reconcile: --remove-orphans)"
-      # --remove-orphans drops containers no longer in this node's compose file
-      # (e.g. a service that was re-homed to the other node), so re-running the
-      # tool CONVERGES the running stack to the compose file. Note: it does NOT
-      # remove old named volumes or images (those hold data / are pruned manually).
-      ansible.builtin.command:
-        cmd: docker compose up -d --remove-orphans
-        chdir: "{{ ai_compose_dir }}"
+    - name: "AI-COMPOSE | docker compose pull + up -d per stack"
+      # Each per-service stack is its own compose project. `pull
+      # --ignore-pull-failures` tolerates the local-only custom images (oikb/
+      # hfcli/openwiki/mlflow, built on the box). A plain `up -d` respects each
+      # stack's profiles, so the alternate/opt-in/on-demand services (granite,
+      # oikb, tools) stay down unless their .env opts them in. Converges each stack.
+      ansible.builtin.shell:
+        cmd: >-
+          docker compose pull --ignore-pull-failures;
+          docker compose up -d --remove-orphans
+        chdir: "{{ dockge_stacks_dir }}/{{ item }}"
       register: _compose_up
-      changed_when: "'Started' in (_compose_up.stderr | default('')) or 'Created' in (_compose_up.stderr | default('')) or 'Removing' in (_compose_up.stderr | default(''))"
+      changed_when: "'Started' in (_compose_up.stderr | default('')) or 'Created' in (_compose_up.stderr | default('')) or 'Recreated' in (_compose_up.stderr | default(''))"
+      loop: "{{ ai_stacks_by_role[ai_node_role] | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
 
-- name: "AI-COMPOSE | Where the stack lives"
+- name: "AI-COMPOSE | Where the stacks live"
   ansible.builtin.debug:
     msg: >-
-      {{ ai_node_role }} compose placed at {{ ai_compose_dir }}/docker-compose.yaml.
-      {{ 'Deployed (docker compose up -d).' if (ai_compose_deploy | default(false) | bool)
-         else ('Not deployed. Populate the model into the `vllm` volume, then `cd '
-               ~ ai_compose_dir ~ ' && docker compose up -d` (or set ai_compose_deploy=true).')
-         if ai_node_role == 'system1'
-         else ('Not deployed. `cd ' ~ ai_compose_dir ~ ' && docker compose up -d`.') }}
+      {{ ai_node_role }} split into {{ (ai_stacks_by_role[ai_node_role] | default([])) | length }}
+      per-service stacks under {{ dockge_stacks_dir }}/<stack>/ (managed in Dockge).
+      Consolidated fallback at {{ ai_compose_dir }}/docker-compose.consolidated.yaml.
+      {{ 'Deployed (docker compose up -d per stack).' if (ai_compose_deploy | default(false) | bool)
+         else ('NOT deployed. ' ~ ('Populate the model into the `vllm` volume first, then ' if ai_node_role == 'system1' else '')
+               ~ 'bring them all up with `it-ai up` (or set ai_compose_deploy=true).') }}

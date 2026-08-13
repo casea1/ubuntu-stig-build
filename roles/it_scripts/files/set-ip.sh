@@ -23,9 +23,18 @@ set -uo pipefail
 
 IT_DIR=/opt/it
 SITE="$IT_DIR/site.yml"
-COMPOSE_DIR="$IT_DIR/docker"
-ENVF="$COMPOSE_DIR/.env"
+STACKS_DIR=/opt/stacks               # per-service Dockge stacks (each has its own .env)
+COMPOSE_DIR="$IT_DIR/docker"         # dormant consolidated fallback (also carries a .env)
 TS=$(date +%Y%m%d-%H%M%S)
+
+# Every stack's .env, plus the fallback .env -- they all carry the same peer vars.
+env_files() {
+  for f in "$STACKS_DIR"/*/.env "$COMPOSE_DIR/.env"; do [ -f "$f" ] && echo "$f"; done
+}
+# Stack dirs holding a compose.yaml (for the recreate step).
+stack_dirs() {
+  for d in "$STACKS_DIR"/*/; do [ -f "${d}compose.yaml" ] && echo "$d"; done
+}
 
 bak(){ [ -e "$1" ] && cp -a "$1" "$1.bak-$TS" && echo "  backup: $1.bak-$TS"; }
 # escape dots so an IP is matched literally, bounded by non-digits (so .10 != .104)
@@ -106,8 +115,9 @@ if [ -n "$NEW_PEER" ]; then
       [ -n "$CUR_PEER" ] && ipswap "$SITE" "$CUR_PEER" "$NEW_PEER"   # firewall from: etc.
       echo "   site.yml: $PEER_VAR = $NEW_PEER"
     fi
-    # live .env the containers read
-    if [ -f "$ENVF" ]; then
+    # live .env files the containers read (one per stack + the fallback)
+    _env_n=0
+    for ENVF in $(env_files); do
       bak "$ENVF"
       if [ "$ROLE" = system1 ]; then
         sed -i -E "s|^SYSTEM2_ADDR=.*|SYSTEM2_ADDR=${NEW_PEER}|" "$ENVF"
@@ -116,8 +126,9 @@ if [ -n "$NEW_PEER" ]; then
         sed -i -E "s|^OPEN_WEBUI_URL=.*|OPEN_WEBUI_URL=http://${NEW_PEER}:3000|" "$ENVF"
         sed -i -E "s|^SYSTEM1_HOSTS_ENTRY=.*|SYSTEM1_HOSTS_ENTRY=${PEER_HOST}:${NEW_PEER}|" "$ENVF"
       fi
-      echo "   .env updated"
-    fi
+      _env_n=$((_env_n+1))
+    done
+    [ "$_env_n" -gt 0 ] && echo "   .env updated ($_env_n file(s))"
     # host-side peer resolution
     bak /etc/hosts
     if grep -qE "[[:space:]]${PEER_HOST}([[:space:]]|\$)" /etc/hosts; then
@@ -132,11 +143,15 @@ if [ -n "$NEW_PEER" ]; then
       ipswap /etc/ufw/user.rules "$CUR_PEER" "$NEW_PEER"
       ufw reload >/dev/null 2>&1 && echo "   ufw: rules for $CUR_PEER -> $NEW_PEER (reloaded)"
     fi
-    # recreate containers so Open WebUI picks up the new env
-    if [ -f "$COMPOSE_DIR/docker-compose.yaml" ]; then
-      ( cd "$COMPOSE_DIR" && docker compose up -d ) >/dev/null 2>&1 \
-        && echo "   containers recreated (docker compose up -d)" \
-        || echo "   NOTE: 'docker compose up -d' reported an issue -- run it in $COMPOSE_DIR"
+    # recreate containers so they pick up the new env (each stack is its own project)
+    _rc_n=0
+    for d in $(stack_dirs); do
+      ( cd "$d" && docker compose up -d ) >/dev/null 2>&1 && _rc_n=$((_rc_n+1)) || true
+    done
+    if [ "$_rc_n" -gt 0 ]; then
+      echo "   containers recreated ($_rc_n stack(s), docker compose up -d)"
+    else
+      echo "   NOTE: no stacks recreated -- run 'it-ai up' by hand"
     fi
     _thisip="${NEW_SELF%%/*}"; [ -n "$_thisip" ] || _thisip="$SELF_IP"
     echo "   PEER update done. On $PEER_HOST, point it back at THIS box:  sudo it-set-ip --peer ${_thisip}"

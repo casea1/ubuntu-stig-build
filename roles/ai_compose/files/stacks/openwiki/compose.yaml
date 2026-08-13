@@ -1,0 +1,21 @@
+# System 2 -- OpenWiki utility (generate a doc wiki from a repo). Does NOT
+# auto-start (`tools` profile). Own stack. Reaches System 1's chat endpoint over
+# the `oi` network (extra_hosts resolves dev-ai1). Output persists in the
+# openwiki-out volume (/work). Run e.g.:
+#   cd /opt/stacks/openwiki && docker compose run --rm openwiki openwiki <args>
+name: openwiki
+networks:
+  oi: { external: true }
+volumes:
+  openwiki-out: { external: true }
+services:
+  openwiki:
+    image: openwiki:latest      # built on the box by ansible (ai_compose)
+    container_name: openwiki
+    profiles: ["tools"]
+    extra_hosts:
+      - "${SYSTEM1_HOSTS_ENTRY:-localhost:127.0.0.1}"
+    working_dir: /work
+    volumes:
+      - openwiki-out:/work
+    networks: [oi]

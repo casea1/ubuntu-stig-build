@@ -839,10 +839,9 @@ dockge_image: "louislam/dockge:1"       # pin the major tag for frozen images
 dockge_port: 9001                       # host port -> container 5001 (HTTP)
 # Stacks dir: bind-mounted at the SAME path inside the container (a Dockge
 # requirement -- it shells out to `docker compose` using this path) + exported as
-# DOCKGE_STACKS_DIR. The build ALSO bind-mounts the AI compose dir (ai_compose_dir)
-# into Dockge as the stack `ai-<node role>` (ai-system1 / ai-system2), so the live
-# stack shows up and is manageable in Dockge with no symlink (a host symlink here
-# does not work -- its target is outside the container's mount). See docs/operate.md.
+# DOCKGE_STACKS_DIR. ai_compose writes the per-service AI stacks straight into
+# here (/opt/stacks/<stack>/compose.yaml), so each is a first-class Dockge stack
+# with no extra bind mount. See docs/operate.md.
 dockge_stacks_dir: "/opt/stacks"
 
 # =============================================================================
@@ -955,6 +954,30 @@ ai_oikb_gitlab_token: ""
 ai_compose_volumes:
   system1: [vllm, granite32b, encodings, pgvector-data, open-webui, redis-data]
   system2: [granite-embed, granite-vision, lgtm-data, mlflow-artifacts, postgres_mlflow_data, openwiki-out]
+
+# ---- Dockge-native per-service stacks (ai_compose) --------------------------
+# The stack is split into one directory PER SERVICE under dockge_stacks_dir
+# (/opt/stacks/<stack>/compose.yaml), so each shows up as its own manageable
+# stack in Dockge (simpler to start/stop/edit one service at a time). All stacks
+# on a node share the EXTERNAL `oi` Docker network + the external named volumes
+# above, so services resolve each other by name (pgvector, redis, chat-llm, ...).
+# Each vLLM is its own stack. The old single-file compose (system{1,2}-compose.yaml)
+# is KEPT as a dormant fallback: it's staged to ai_compose_dir as
+# docker-compose.consolidated.yaml but never brought up.
+#   Recreate all stacks on a node:
+#     docker network create oi 2>/dev/null || true
+#     for d in /opt/stacks/*/; do (cd "$d" && docker compose up -d); done
+#   ...or just:  it-ai up
+ai_stack_network: oi
+ai_stacks_by_role:
+  system1: [vllm-gptoss, vllm-granite, pgvector, redis, open-webui]
+  system2: [vllm-embed, vllm-vision, docling, tika, grafana-otel, mlflow, oikb, hfcli, openwiki]
+# Stacks whose compose bind-mounts ./fips_off (the host-FIPS carve-out for the
+# vLLM / OpenCV-bearing containers). The `fips_off` file is placed into each of
+# these stack dirs so the relative mount resolves.
+ai_stacks_need_fips:
+  system1: [vllm-gptoss, vllm-granite]
+  system2: [vllm-embed, vllm-vision, docling]
 
 # ---- Custom image builds (ai_compose) ---------------------------------------
 # Three services use images not on any registry, so ansible builds them ON THE

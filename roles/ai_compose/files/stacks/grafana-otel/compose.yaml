@@ -1,0 +1,24 @@
+# System 2 -- Grafana/LGTM observability (Grafana UI :3001, OTLP :4317/:4318).
+# Own stack. Receives OpenTelemetry from System 1's Open WebUI. The pre-provisioned
+# Open WebUI dashboard is placed next to this file by ansible (grafana/ subdir).
+name: grafana-otel
+networks:
+  oi: { external: true }
+volumes:
+  lgtm-data: { external: true }
+services:
+  lgtm:
+    image: grafana/otel-lgtm:0.29.0
+    container_name: open-webui-lgtm
+    ports:
+      - "3001:3000"        # Grafana UI (admins)
+      - "4317:4317"        # OTLP gRPC  (from System 1's Open WebUI)
+      - "4318:4318"        # OTLP HTTP
+    volumes:
+      - lgtm-data:/data
+      # Pre-provisioned Open WebUI dashboard (auto-loaded at startup; edits in the
+      # UI persist to lgtm-data). Placed by ansible (ai_compose) alongside this file.
+      - ./grafana/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/ubuntu-stig-build.yaml:ro
+      - ./grafana/openwebui-dashboard.json:/otel-lgtm/grafana/conf/provisioning/dashboards/custom/openwebui-dashboard.json:ro
+    networks: [oi]
+    restart: unless-stopped

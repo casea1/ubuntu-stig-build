@@ -1,0 +1,31 @@
+# System 2 -- Granite embedding vLLM (RAG embeddings, :8002). Own stack.
+# OpenAI-compatible; reached from System 1's Open WebUI. Shares System 2's ONE
+# GPU with vllm-vision + docling (all small), so a low gpu-memory-utilization.
+name: vllm-embed
+networks:
+  oi: { external: true }
+volumes:
+  granite-embed: { external: true }
+services:
+  vllm-embed:
+    image: vllm/vllm-openai:v0.22.1-cu129-ubuntu2404
+    container_name: vllm-embed
+    ipc: host
+    ports: ["8002:8002"]
+    volumes:
+      - granite-embed:/granite-embed
+      - ./fips_off:/proc/sys/crypto/fips_enabled:ro   # host FIPS carve-out (see docs/operate.md)
+    command:
+      - --model=/granite-embed
+      - --served-model-name=granite-embedding-small-english-r2
+      - --runner=pooling                  # embedding mode (replaces the removed --task=embed)
+      - --tensor-parallel-size=1          # System 2 has ONE GPU
+      - --gpu-memory-utilization=0.10
+      - --port=8002
+    networks: [oi]
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }

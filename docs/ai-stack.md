@@ -4,7 +4,7 @@ Profile page for the two-node, self-hosted AI stack. Overview, key endpoints, an
 
 ## What it builds
 
-`ansible` does host prep only: Docker + the NVIDIA GPU stack + Cockpit + Dockge, STIG-hardened with USG, with the container ports opened. You deploy the AI tools from prebuilt images + compose files (baked into `/opt/it/docker` by `ai_compose`).
+`ansible` does host prep only: Docker + the NVIDIA GPU stack + Cockpit + Dockge, STIG-hardened with USG, with the container ports opened. You deploy the AI tools from prebuilt images + per-service compose stacks (baked into `/opt/stacks/<stack>/` by `ai_compose`, managed in Dockge).
 
 ## The two machines
 
@@ -47,55 +47,63 @@ Full walkthrough: [build.md — Track B](build.md#track-b-ai-servers-two-node) a
 
 **RAG / Documents config + IDE clients.** The Open WebUI Documents panel (Docling extraction, Granite embeddings, hybrid search, chunk 2048/200) is seeded from env vars in System 1's compose — with the caveat that they're `PersistentConfig` (env seeds a fresh DB only; change in the UI on an existing box). Pointing the Continue VS Code extension at the stack (via Open WebUI's API or direct to vLLM) is a client-side setup. Both are documented in [operate.md — Open WebUI RAG defaults](operate.md#open-webui-rag--documents-defaults-and-the-persistentconfig-caveat) and [Connecting an IDE (Continue)](operate.md#connecting-an-ide-continue-vs-code----client-side).
 
-## Compose files — what runs, and how
+## Compose stacks — what runs, and how
 
-The `ai_compose` role places the node's compose file at **`/opt/it/docker/docker-compose.yaml`** (from `system1-compose.yaml` on `dev-ai1`, `system2-compose.yaml` on `dev-ai2`) plus a root-only `.env` (secrets/site values). Named volumes are pre-created by the role; model-weight volumes are populated *before* first `up`. Run everything from `/opt/it/docker`.
+The stack is split into **one Dockge stack per service**. The `ai_compose` role writes each service's compose to **`/opt/stacks/<stack>/compose.yaml`** with a root-only `.env` (secrets/site values) beside it, so each shows up as its own start/stop/edit-able stack in Dockge. **Each vLLM is its own stack.** All stacks on a node share one **external Docker network `oi`** (created by the role) and the **external named volumes**, so services resolve each other by name across stacks (`pgvector`, `redis`, `chat-llm`, `dev-ai1`/`dev-ai2`). Named volumes are pre-created by the role; model-weight volumes are populated *before* first `up`.
 
-**Compose profiles decide what auto-starts.** A service with a `profiles:` tag is **excluded** from a plain `docker compose up` — it only runs when that profile is active. So some services show as **n/a** in Dockge until you invoke them; that's by design, not a failure.
+> The pre-split single-file compose is kept as a **dormant fallback** at `/opt/it/docker/docker-compose.consolidated.yaml` (not deployed, not named `docker-compose.yaml`, so nothing auto-picks it up). It uses the same external volumes, so a break-glass `cd /opt/it/docker && docker compose -f docker-compose.consolidated.yaml up -d` brings the whole node up as one project with no data move.
 
-| Profile | Starts with | Contains | Notes |
+**Compose profiles decide what auto-starts.** Within a stack, a service tagged with `profiles:` is **excluded** from a plain `docker compose up` — it only runs when that profile is active. So the alternate/opt-in/on-demand stacks read **n/a** (nothing running) until you invoke them; that's by design, not a failure.
+
+| Profile | Starts with | Stack(s) | Notes |
 |---|---|---|---|
-| *(default)* | `docker compose up -d` | the long-running daemons | the always-on services below |
-| `granite` (S1) | `switch-model.sh granite` | `vllm-granite` | the alternate chat model; only one chat model fits VRAM |
-| `oikb` (S2) | auto when an Open WebUI API key is set, else `--profile oikb` | `oikb` | opt-in knowledge-base sync |
-| `tools` (S2) | `docker compose run --rm <svc> …` | `hfcli`, `openwiki` | **on-demand utilities** — no daemon process; run-and-exit |
+| *(default)* | `docker compose up -d` (per stack) | the daemon stacks below | the always-on services |
+| `granite` (S1) | `it-ai model granite` (`switch-model.sh`) | `vllm-granite` | the alternate chat model; only one chat model fits VRAM |
+| `oikb` (S2) | auto when an Open WebUI API key is set, else `it-ai oikb` | `oikb` | opt-in knowledge-base sync |
+| `tools` (S2) | `it-ai run <stack> …` | `hfcli`, `openwiki` | **on-demand utilities** — no daemon process; run-and-exit |
 
-### System 1 (`dev-ai1`) — `system1-compose.yaml`
-| Service | Port | Profile | Job |
-|---|---|---|---|
-| `vllm` | `:8000` | default | Chat model (gpt-oss-120B) |
-| `vllm-granite` | `:8001` | `granite` | Alternate chat model (Granite-4.1-30B); via `switch-model.sh` |
-| `pgvector` | internal | default | Accounts/chats/settings + vector index |
-| `redis` | internal | default | Websocket coordination + cache |
-| `open-webui` | `:3000` | default | The chat website |
+### System 1 (`dev-ai1`) — stacks under `/opt/stacks/`
+| Stack | Service | Port | Profile | Job |
+|---|---|---|---|---|
+| `vllm-gptoss` | `vllm` | `:8000` | default | Chat model (gpt-oss-120B) |
+| `vllm-granite` | `vllm-granite` | `:8001` | `granite` | Alternate chat model (Granite-4.1-30B); via `it-ai model` |
+| `pgvector` | `pgvector` | internal | default | Accounts/chats/settings + vector index |
+| `redis` | `redis` | internal | default | Websocket coordination + cache |
+| `open-webui` | `open-webui` | `:3000` | default | The chat website |
 
-### System 2 (`dev-ai2`) — `system2-compose.yaml`
-| Service | Port | Profile | Job |
-|---|---|---|---|
-| `vllm-embed` | `:8002` | default | RAG embeddings |
-| `vllm-vision` | `:8003` | default | Vision / image understanding |
-| `docling-serve` | `:5001` | default | Document structure/OCR extraction |
-| `tika` | `:9998` | default | Text extraction (other file types) |
-| `lgtm` | `:3001` `:4317` `:4318` | default | Grafana + OTel monitoring |
-| `mlflow-db` | internal | default | MLflow's Postgres backing store |
-| `mlflow` | `:5000` | default | Experiment tracking + model registry |
-| `oikb` | `:8081` | `oikb` | Knowledge-base sync → System 1's Open WebUI |
-| `hfcli` | — | `tools` | Download models/encodings into volumes |
-| `openwiki` | — | `tools` | Generate a documentation wiki from a repo |
+### System 2 (`dev-ai2`) — stacks under `/opt/stacks/`
+| Stack | Service | Port | Profile | Job |
+|---|---|---|---|---|
+| `vllm-embed` | `vllm-embed` | `:8002` | default | RAG embeddings |
+| `vllm-vision` | `vllm-vision` | `:8003` | default | Vision / image understanding |
+| `docling` | `docling-serve` | `:5001` | default | Document structure/OCR extraction |
+| `tika` | `tika` | `:9998` | default | Text extraction (other file types) |
+| `grafana-otel` | `lgtm` | `:3001` `:4317` `:4318` | default | Grafana + OTel monitoring |
+| `mlflow` | `mlflow-db` + `mlflow` | `:5000` | default | Experiment tracking + model registry (+ its Postgres) |
+| `oikb` | `oikb` | `:8081` | `oikb` | Knowledge-base sync → System 1's Open WebUI |
+| `hfcli` | `hfcli` | — | `tools` | Download models/encodings into volumes |
+| `openwiki` | `openwiki` | — | `tools` | Generate a documentation wiki from a repo |
 
-### Common commands
+> **Cross-stack startup:** `open-webui` no longer `depends_on` `pgvector`/`redis` (they're separate stacks now), so bring the DB/cache up first. `it-ai up` and the recreate loop below start the stacks in a sane order; if you start `open-webui` alone before `pgvector`, it simply retries the DB connection until `pgvector` is up.
+
+### Recreate / control the stacks
 ```bash
-cd /opt/it/docker
-docker compose up -d                                        # start the default (daemon) services
-docker compose ps                                           # what's running
-docker compose --profile oikb up -d                         # + oikb (or set the API key -> auto)
-docker compose run --rm hfcli hf download <repo> --local-dir /granite-embed   # on-demand: fetch a model
-docker compose run --rm openwiki openwiki <args>            # on-demand: build a doc wiki (output in openwiki-out -> /work)
-./switch-model.sh gpt-oss | granite                         # System 1 only: swap the chat model
-```
-The `tools` utilities (`hfcli`, `openwiki`) will always read **n/a** in Dockge — they hold no long-running container; that is expected.
+# Recreate every stack on a node (plain docker; from scratch):
+docker network create oi 2>/dev/null || true
+for d in /opt/stacks/*/; do (cd "$d" && docker compose up -d); done
 
-**Shortcut:** the **`it-ai`** admin command wraps all of the above and works from anywhere (no `cd`): `it-ai up | down | stop | restart | status | logs | pull`, `it-ai oikb`, and `it-ai run <tool> [args]` (e.g. `it-ai run openwiki openwiki <args>`). `it-ai tools` lists the on-demand utilities. See [operate.md — Admin scripts](operate.md#admin-scripts-it-).
+# ...or the it-ai shortcut (from anywhere, no cd — this is the easy button):
+it-ai up                       # bring every default stack up (right order)
+it-ai up open-webui            # just one stack
+it-ai down | stop | restart [STACK]
+it-ai status | logs <STACK> | pull [STACK]
+it-ai stacks                   # list the stacks on this node
+it-ai oikb                     # start the opt-in oikb sync
+it-ai model gpt-oss | granite | status   # System 1: swap the chat model
+it-ai run hfcli hf download <repo> --local-dir /granite-embed   # on-demand tool
+it-ai run openwiki openwiki <args>       # on-demand: build a doc wiki
+```
+The `tools` stacks (`hfcli`, `openwiki`) always read **n/a** in Dockge — they hold no long-running container; that is expected. See [operate.md — Admin scripts](operate.md#admin-scripts-it-).
 
 ## Software list
 
@@ -157,7 +165,7 @@ Software inventory for the two-node AI platform (IA / DCSA reference). Versions 
 | granite-embedding-small-english-r2 | repo main | IBM | Text embeddings / RAG (S2) |
 | granite-vision-4.1-4b | repo main | IBM | Vision / document understanding (S2) |
 
-> **System 1 chat models are alternates, one at a time:** gpt-oss-120B (default) or Granite-4.1-30B, served across System 1's two 48 GB GPUs (tensor-parallel). Switch with `switch-model.sh`. See [operate.md](operate.md#switching-system-1s-chat-model-gpt-oss--granite-41-30b).
+> **System 1 chat models are alternates, one at a time:** gpt-oss-120B (default) or Granite-4.1-30B, served across System 1's two 48 GB GPUs (tensor-parallel). Switch with `it-ai model gpt-oss|granite`. See [operate.md](operate.md#switching-system-1s-chat-model-gpt-oss--granite-41-30b).
 
 ### Tiktoken encodings (gpt-oss harmony tokenizer)
 

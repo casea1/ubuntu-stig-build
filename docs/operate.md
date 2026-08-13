@@ -78,7 +78,7 @@ Self-hosted, on-prem AI chat. Users open a browser, chat with an LLM, and query 
    ai_model_fetch: true      # download the model (~200 GB, one time)
    ai_compose_deploy: true   # start the containers
    ```
-   Re-run the build. (By hand: `cd /opt/it/docker && sudo docker compose up -d`.)
+   Re-run the build. (By hand: `sudo it-ai up`.)
 5. **Connect the chat UI to the model** (System 1, one time): Open WebUI → **Admin → Settings → Connections** → add an OpenAI connection: URL `http://chat-llm:8000/v1`, key `sk-noauth`. `chat-llm` always points at the running model, so switching needs no UI change.
 
 ### Where to go
@@ -100,20 +100,21 @@ it-models                             # model volumes + service endpoints
 it-restart                             # restart ALL AI-stack containers (docker compose restart)
 it-restart --up                        #   ...as `up -d` instead, to apply .env / compose edits
 it-restart oikb                        #   ...restart just one service
-it-ai up | down | stop | status | logs # control the whole AI stack from anywhere (wraps docker compose)
+it-ai up | down | stop | status | logs <stack>   # control the AI stacks from anywhere (wraps docker compose)
+it-ai up open-webui                    # ...or just one stack
+it-ai model gpt-oss | granite | status # System 1: swap the chat model (separate vllm stacks)
 it-ai run hfcli hf download <repo> --local-dir /granite-embed   # run a one-off `tools` utility (auto --rm)
 it-ai run openwiki openwiki <args>     #   ...generate a doc wiki; `it-ai tools` lists the utilities
 it-set-ip                              # renumber when the box leaves the lab (interactive)
 it-set-ip --peer 10.0.5.20             #   ...just repoint the cross-node/peer IP + firewall + containers
 it-set-ip --self 10.0.5.11/24 --gateway 10.0.5.1 --dns 10.0.5.2   # ...this box's own static IP (netplan)
 
-cd /opt/it/docker
-sudo docker compose ps                 # what's running / healthy
-sudo docker compose up -d              # start everything
-sudo docker compose restart <name>     # restart one service (e.g. vllm)
+# The AI stack is split into one Dockge stack per service under /opt/stacks/<stack>/:
+it-ai status                           # what's running / healthy across all stacks
+it-ai up                               # start every default stack (right order)
+it-ai restart open-webui               # restart one stack
 sudo docker logs -f vllm-server        # watch the model start up
-# download an extra model on demand:
-sudo docker compose run --rm hfcli hf download <repo> --local-dir /llm/<name>
+it-ai run hfcli hf download <repo> --local-dir /llm/<name>   # download an extra model on demand
 ```
 
 **Grafana dashboard.** A pre-provisioned **"Open WebUI (OTel)"** dashboard ships in the LGTM stack (request rate by route/status, latency p50/p95/p99, 5xx errors, and the Open WebUI log stream). Open `http://dev-ai2:3001` (first login `admin`/`admin`, then set a password) → **Dashboards → Open WebUI (OTel)**. Panels fill in once Open WebUI serves traffic; if a panel is empty, generate a chat message and wait ~15 s (metric export interval).
@@ -126,12 +127,12 @@ The `it_scripts` + `inventory_report` roles install short admin commands into `/
 |---|---|---|
 | `it-status` | `status.sh` | Runs all the checks below in one rollup (host, docker, models, LUKS). |
 | `it-host` | `status-host.sh` | Host state: hostname, FIPS, Secure Boot, kernel, uptime, disk. |
-| `it-docker` | `status-docker.sh` | `docker compose ps` for the AI stack + flags any container not up/healthy. |
+| `it-docker` | `status-docker.sh` | `docker compose ps` across the per-service AI stacks (`/opt/stacks/<stack>/`) + flags any container not up/healthy. |
 | `it-models` | `status-models.sh` | Model volumes (populated?) + probes the local vLLM/Docling/Tika endpoints. |
 | `it-luks` | `status-luks.sh` | LUKS/TPM auto-unlock status (binding, clevis-in-initramfs, Secure Boot) with a verdict. |
 | `it-luks-rebind` | `luks-rebind.sh` | Re-seals the TPM2 keyslot to the **current** PCR 7 when the box prompts for the passphrase despite a stale binding. Binds a fresh slot before removing the old one (no lockout). |
-| `it-restart` | `restart-docker.sh` | Restart the AI-stack containers. `--up` uses `docker compose up -d` (apply `.env`/compose edits); a service name limits it to one. |
-| `it-ai` | `ai-stack.sh` | One control surface for the AI stack (`/opt/it/docker`), runnable from anywhere: `up`/`down`/`stop`/`restart`/`status`/`logs`/`pull`, `oikb` (opt-in sync), and `run <tool>` for the on-demand `tools` utilities (`hfcli`/`openwiki`/`repomix`). `it-ai tools` lists them. |
+| `it-restart` | `restart-docker.sh` | Restart the AI stacks under `/opt/stacks/`. `--up` uses `docker compose up -d` (apply `.env`/compose edits); a **stack** name limits it to one. (Thin wrapper over `it-ai restart|up`.) |
+| `it-ai` | `ai-stack.sh` | One control surface for the per-service AI stacks (`/opt/stacks/<stack>/`), runnable from anywhere: `up`/`down`/`stop`/`restart`/`status`/`logs`/`pull` (all, or one `[STACK]`), `stacks` (list), `oikb` (opt-in sync), `model gpt-oss|granite|status` (System 1 chat-model switch), and `run <stack>` for the on-demand `tools` utilities (`hfcli`/`openwiki`). `it-ai tools` lists them. |
 | `it-set-classification` | `set-classification.sh` | Change the on-screen classification banner level (interactive menu or arg). Updates the autostart entry + `site.yml`, and restarts the banner live in each GUI session. GUI profiles. |
 | `it-set-ip` | `set-ip.sh` | Renumber the node when it leaves the lab: repoints the peer/cross-node IP (`site.yml` + `.env` + `/etc/hosts` + ufw + recreates containers) and/or this box's own static IP via netplan. Interactive or `--peer` / `--self`. |
 | `it-inventory` | `it-inventory.sh` | Writes `/opt/it/inventory-<host>.txt`: service tag, BIOS, DIMM/SSD serials, MACs, GPU, LVM/LUKS layout. |
@@ -487,7 +488,7 @@ Ansible does **host prep only** on the ai profile; the AI containers are deploye
 - **Docker + GPU (`ai_stack`):** installs docker-ce (≥29.5.2) + the compose v2 plugin + the extra plugins in `docker_extra_packages` (default `docker-model-plugin`, `docker-sbx`), and (when `gpu_enabled`) the NVIDIA driver + `nvidia-container-toolkit` with the `nvidia` runtime wired into Docker. The driver is autoselected unless you pin `nvidia_driver_package` (needed to reach the 7960 baseline **≥595.71.05**; the RTX PRO 6000 Blackwell cards want the `-open` variant, which may require NVIDIA's CUDA apt repo / the graphics-drivers PPA); the role **asserts** the active driver ≥ `nvidia_driver_min_version` after reboot. Verify: `docker --version`, `docker model version`, `docker info | grep -i runtime`, `nvidia-smi`. `ai_stack_user` is added to the `docker` group.
 - **GPU + FIPS (`gpu_fips_module`, runs after `usg_harden`):** Canonical's prebuilt NVIDIA modules (`linux-modules-nvidia-<branch>-<variant>-<kernel>`) are **flavour-locked to the generic kernel**, so when `usg_enable_fips` swaps in the FIPS kernel, `nvidia.ko` is missing after the reboot and `nvidia-smi` fails ("couldn't communicate with the NVIDIA driver"). This role detects the installed NVIDIA flavour + the installed FIPS kernel and **stages the matching `linux-modules-nvidia-*-fips` module** (from the `esm.ubuntu.com/fips-updates` repo) for that kernel *before* the reboot (apt installs modules for any installed kernel ABI, not just the running one), so the single FIPS reboot brings up FIPS **and** working GPUs with no manual DKMS/driver rebuild. Prefers the flavour metapackage (`…-fips`) so future FIPS-kernel updates keep the module in step; falls back to the version-locked package. If the driver was installed via `.run`/DKMS (no prebuilt `-generic` package), it logs a POA&M note instead. Gated `is_ai` + `gpu_enabled` + `usg_enable_fips`. **Recovering a box where FIPS was enabled before this existed:** boot the `-fips` kernel, then `sudo apt-get install -y linux-modules-nvidia-<branch>-<variant>-$(uname -r)` and `sudo modprobe nvidia`.
 - **Dockge (`ai_stack`, `dockge_enabled`):** a Docker-Compose-stack management web UI on `http://‹host›:9001` (opened by `ai_firewall`, rate-limited; HTTP, so use `http://`). **Create the admin account on first login.** It mounts the Docker socket (root-equivalent), so restrict its port to admins (add a `from:` entry in `ai_firewall_allow_ports`) or front it with a proxy. Dockge manages compose stacks under **`dockge_stacks_dir`** (`/opt/stacks`), bind-mounted at the same path in the container.
-  - **The AI stack shows up automatically.** The build **bind-mounts** `ai_compose_dir` (`/opt/it/docker`) into Dockge as the stack **`ai-system1`** / **`ai-system2`** (matching the compose `name:`), so the live stack is visible and manageable in Dockge with no extra steps. Do **not** use a host symlink under `/opt/stacks` for this -- Dockge can't follow a symlink whose target isn't mounted into the container. If Dockge shows the stack as `exited`/`?` while `docker ps` shows the containers `Up` (e.g. it was started outside Dockge), reconcile by opening the stack in Dockge and clicking **Stop** then **Start**; the external named volumes (models, DB, encodings) are untouched by a restart. Dockge (root, via the socket) can read the stack's `.env`, so its secrets are visible in the UI -- an accepted consequence of it being a root-equivalent admin tool.
+  - **The AI stacks show up automatically.** `ai_compose` writes each service straight into **`/opt/stacks/<stack>/compose.yaml`** (one Dockge stack per service — `vllm-gptoss`, `pgvector`, `open-webui`, …; see [ai-stack.md](ai-stack.md#compose-stacks--what-runs-and-how)), and that whole dir is bind-mounted into Dockge, so every stack is visible and individually manageable with no extra steps or symlinks. If Dockge shows a stack as `exited`/`?` while `docker ps` shows its containers `Up` (e.g. it was started outside Dockge), reconcile by opening the stack in Dockge and clicking **Stop** then **Start**; the external named volumes (models, DB, encodings) are untouched by a restart. Dockge (root, via the socket) can read each stack's `.env`, so its secrets are visible in the UI -- an accepted consequence of it being a root-equivalent admin tool.
   - Update Dockge later with `docker pull <dockge_image> && docker rm -f dockge` then re-run the play (`dockge_image` in group_vars). Set `dockge_enabled: false` to skip. (Dockge replaced Portainer; the build removes an old `portainer` container and its `9443` firewall rule on re-run.)
 - **Cockpit (`cockpit` role, `cockpit_enabled`, BOTH profiles):** a web server-management console on `https://‹host›:{{ cockpit_port }}` (9090 by default), opened **rate-limited** by the firewall roles after USG. Systemd units, journald, storage, networking, updates, and a browser terminal. Log in with a local account. Privileged surface: set **`cockpit_allow_from`** to an admin CIDR to restrict it (else it's opened to any source). Change the port with `cockpit_port` (writes a `cockpit.socket` override). `cockpit_extra_packages` adds add-ons (e.g. `cockpit-pcp` for historical metrics). Set `cockpit_enabled: false` to skip.
 - **Firewall (`ai_firewall`, after USG):** USG enables ufw with **default-deny inbound**, so the ports your containers publish must be opened here. Edit **`ai_firewall_allow_ports`** in `group_vars/all.yml`:
@@ -509,14 +510,16 @@ Ansible does **host prep only** on the ai profile; the AI containers are deploye
 
 ### Baking in the AI stack (`ai_compose`)
 
-The two-node stack is baked into the image so a fielded box comes up with its compose file in place. The **`ai_compose`** role (ai profile, `ai_compose_enabled: true`) drops the node's **consolidated** `docker-compose.yaml` + a root-only `.env` into **`ai_compose_dir`** (default **`/opt/it/docker`**), **builds the custom images** the stack needs, creates the named volumes, optionally auto-fetches the model, and (opt-in) `up -d`. Two per-node compose files chosen by **`ai_node_role`**:
+The two-node stack is baked into the image so a fielded box comes up with its stacks in place. The **`ai_compose`** role (ai profile, `ai_compose_enabled: true`) writes the node's services as **one Dockge stack per service** into **`/opt/stacks/<stack>/compose.yaml`** (each with a root-only `.env` beside it), creates the shared external **`oi`** network, **builds the custom images** the stack needs, creates the named volumes, optionally auto-fetches the model, and (opt-in) `up -d` each stack. The per-service stacks by **`ai_node_role`** (full table in [ai-stack.md](ai-stack.md#compose-stacks--what-runs-and-how)):
 
-| role (node) | services | serves |
+| role (node) | stacks | serves |
 |------|------|------|
-| `system1` (dev-ai1) | vLLM `gpt-oss-120b` (:8000) + switchable `granite-4.1-30b`, Open WebUI (:3000), Redis, pgvector | UI / text generation |
-| `system2` (dev-ai2) | vLLM embedding (:8002) + vision (:8003), Docling (:5001), Tika (:9998), LGTM/Grafana (:3001,:4317), MLflow (:5000), oikb (:8081), hfcli/repomix/openwiki | extraction / embeddings / monitoring / tracking / sync |
+| `system1` (dev-ai1) | `vllm-gptoss` (:8000) + switchable `vllm-granite`, `open-webui` (:3000), `redis`, `pgvector` | UI / text generation |
+| `system2` (dev-ai2) | `vllm-embed` (:8002), `vllm-vision` (:8003), `docling` (:5001), `tika` (:9998), `grafana-otel` (:3001,:4317), `mlflow` (:5000), `oikb` (:8081), `hfcli`/`openwiki` | extraction / embeddings / monitoring / tracking / sync |
 
-**One file per node on purpose.** Cross-service `depends_on` only works inside one compose project, so consolidating lets Open WebUI **health-gate** its start on pgvector + Redis (`condition: service_healthy`, with `pg_isready`/`redis-cli ping` healthchecks). You keep per-service control (`docker compose up -d pgvector redis`, `docker compose restart open-webui`).
+**One stack per service, one shared network.** All stacks on a node join the external **`oi`** network, so services resolve each other by name across stacks (`chat-llm`, `pgvector`, `redis`, `dev-ai1`/`dev-ai2`). Because cross-stack `depends_on` can't span separate compose projects, `open-webui` **retries** its DB/cache connection on boot instead of health-gating — bring `pgvector`/`redis` up first (`it-ai up` does this ordering). Each service is now started/stopped/edited on its own (`it-ai up open-webui`, `it-ai restart pgvector`, or per-stack in Dockge).
+
+> The pre-split single-file compose is kept as a **dormant fallback** at `/opt/it/docker/docker-compose.consolidated.yaml` (same external volumes; not deployed). Break-glass: `cd /opt/it/docker && sudo docker compose -f docker-compose.consolidated.yaml up -d` brings the whole node up as one project.
 
 Notes:
 - **Cross-node wiring.** System 1's Open WebUI reaches System 2 by **`ai_system2_addr`** (default the hostname `dev-ai2`): chat vision (:8003) as a second OpenAI endpoint, RAG embeddings (:8002), Docling extraction (:5001), and OTel → LGTM (:4317). System 2's **oikb** reaches System 1's Open WebUI (:3000) by **`ai_system1_addr`**. Set IPs in `site.yml` if the hostnames don't resolve across the boxes, and open the cross-node ports restricted to the peer (see `site.yml.example`). **Renumbering (e.g. deploying out of the lab)?** Run **`sudo it-set-ip`** on each box: it repoints the peer IP in `site.yml` + the live `.env` (`SYSTEM2_ADDR` / `OPEN_WEBUI_URL` + the container `extra_hosts`), fixes `/etc/hosts` and the ufw `from:` rules, recreates the containers, and can also set this box's own static IP via netplan. It edits files directly (works offline) and updates `site.yml` so a later online pull stays consistent. Change one box's own IP -> run `it-set-ip --peer <that new IP>` on the other.
@@ -599,21 +602,20 @@ models:
 
 System 1's two 48 GB (RTX 6000 Ada) GPUs can't hold **gpt-oss-120B** and **Granite-4.1-30B** at once, so they're **alternates, one at a time.**
 
-- Both are defined in the compose sharing the `chat-llm` network alias; **gpt-oss auto-starts**, Granite is under the `granite` profile.
+- They're **separate stacks** (`vllm-gptoss` / `vllm-granite`) that share the `chat-llm` network alias; **gpt-oss auto-starts**, `vllm-granite` sits behind the `granite` profile (nothing runs on a plain `up`).
 - Open WebUI points at `http://chat-llm:8000/v1`, so switching needs no UI change; the model just changes in the dropdown.
 
-Swap with the helper `ai_compose` drops in the compose dir:
+Swap with **`it-ai model`** (wraps `switch-model.sh`, works from anywhere):
 
 ```bash
-cd /opt/it/docker
-sudo ./switch-model.sh granite     # stop gpt-oss, start Granite-4.1-30B
-sudo ./switch-model.sh gpt-oss     # back to the 120B (default)
-sudo ./switch-model.sh status      # which one is running
+sudo it-ai model granite     # stop the gpt-oss stack, start the Granite stack
+sudo it-ai model gpt-oss     # back to the 120B (default)
+sudo it-ai model status      # which one is running
 ```
 
-Each switch stops the other model first (so only one holds VRAM) and takes a few minutes to load.
+Each switch stops the other model's stack first (so only one holds VRAM) and takes a few minutes to load.
 
-**Don't run a bare `docker compose up -d` while on Granite**: it would also start gpt-oss and OOM the GPUs; use the switch script. (On the already-running dev-ai1, point Open WebUI's connection at `http://chat-llm:8000/v1` and remove the old `http://vllm:8000/v1` one so switching works.)
+**Don't `it-ai up` both vLLM stacks while on Granite**: bringing `vllm-gptoss` up alongside `vllm-granite` would OOM the GPUs; use `it-ai model` to flip between them. (On the already-running dev-ai1, point Open WebUI's connection at `http://chat-llm:8000/v1` and remove the old `http://vllm:8000/v1` one so switching works.)
 
 ### Gathering the models (automated + hfcli)
 
@@ -628,16 +630,16 @@ Models live in **external** docker volumes (survive `docker compose down -v`). T
 **Ad-hoc staging** (an extra model, or a re-download) uses the **`hfcli`** utility container on **System 2** (`tools` profile, doesn't auto-start). It mounts the model volumes, so download to the volume root:
 
 ```bash
-cd /opt/it/docker      # on System 2
-sudo docker compose run --rm hfcli hf download ibm-granite/granite-embedding-small-english-r2 --local-dir /granite-embed
-sudo docker compose run --rm hfcli hf download ibm-granite/granite-vision-4.1-4b            --local-dir /granite-vision
+# on System 2 (it-ai run wraps `docker compose run --rm` in the hfcli stack):
+sudo it-ai run hfcli hf download ibm-granite/granite-embedding-small-english-r2 --local-dir /granite-embed
+sudo it-ai run hfcli hf download ibm-granite/granite-vision-4.1-4b            --local-dir /granite-vision
 ```
 
-On **System 1** (no hfcli) use the vLLM image directly, e.g. to re-stage Granite chat into its volume: `sudo docker run --rm -v granite32b:/m -v /opt/it/docker/fips_off:/proc/sys/crypto/fips_enabled:ro --entrypoint hf vllm/vllm-openai:v0.22.1-cu129-ubuntu2404 download ibm-granite/granite-4.1-30b --local-dir /m`.
+On **System 1** (no hfcli) use the vLLM image directly, e.g. to re-stage Granite chat into its volume: `sudo docker run --rm -v granite32b:/m -v /opt/stacks/vllm-granite/fips_off:/proc/sys/crypto/fips_enabled:ro --entrypoint hf vllm/vllm-openai:v0.22.1-cu129-ubuntu2404 download ibm-granite/granite-4.1-30b --local-dir /m`.
 
-When ready to serve one, add its vLLM service to the node's compose file and (optionally) its `ai_models` entry, then `docker compose up -d`. The `tiktoken`/harmony encodings gpt-oss expects in the `encodings` volume are fetched on first start when online; for air-gap, pre-stage them into that volume too.
+When ready to serve one, add its vLLM stack under `/opt/stacks/` (or its `ai_models` entry), then `it-ai up <stack>`. The `tiktoken`/harmony encodings gpt-oss expects in the `encodings` volume are fetched on first start when online; for air-gap, pre-stage them into that volume too.
 
-Verify before first `up`: `sudo docker run --rm -v vllm:/m alpine ls /m` should list `config.json` + weight shards. Then `cd /opt/it/docker && sudo docker compose up -d` (or flip `ai_compose_deploy`).
+Verify before first `up`: `sudo docker run --rm -v vllm:/m alpine ls /m` should list `config.json` + weight shards. Then `it-ai up` (or flip `ai_compose_deploy`).
 
 **Air-gap** (no internet on the fielded box): fetch on an online machine, move each volume over (`docker run --rm -v ‹vol›:/m -v /mnt/usb:/src alpine cp -a /src/. /m`), and mirror the registry images into an internal registry / `docker load` them. The **custom** images (oikb/hfcli/repomix) are built on the box, and the oikb build git-clones, so an air-gapped box needs those images pre-built and loaded, or set `ai_compose_build_images: false` and push them from your registry.
 

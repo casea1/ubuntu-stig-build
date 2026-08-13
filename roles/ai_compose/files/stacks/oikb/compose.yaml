@@ -1,0 +1,36 @@
+# System 2 -- oikb knowledge-base sync (:8081 -> System 1's Open WebUI API).
+# Own stack. OPT-IN: behind the `oikb` profile so a plain `up` never starts it;
+# .env sets COMPOSE_PROFILES=oikb automatically when an Open WebUI API key is
+# present. Force it on ad hoc with:  docker compose --profile oikb up -d
+# The .oikb.yaml config is placed next to this file by ansible.
+name: oikb
+networks:
+  oi: { external: true }
+services:
+  oikb:
+    image: oikb:latest          # built on the box by ansible (ai_compose)
+    container_name: oikb
+    profiles: ["oikb"]
+    working_dir: /app
+    ports: ["8081:8080"]
+    # Resolve System 1 (dev-ai1) by name without host DNS: when ai_system1_addr is an
+    # IP, .env sets SYSTEM1_HOSTS_ENTRY=dev-ai1:<ip>; otherwise a harmless no-op.
+    extra_hosts:
+      - "${SYSTEM1_HOSTS_ENTRY:-localhost:127.0.0.1}"
+    environment:
+      OPEN_WEBUI_URL: "${OPEN_WEBUI_URL:-http://dev-ai1:3000}"   # System 1, cross-node
+      OPEN_WEBUI_API_KEY: "${OPEN_WEBUI_API_KEY:-}"
+      GITLAB_URL: "${GITLAB_URL:-}"
+      GITLAB_TOKEN: "${GITLAB_TOKEN:-}"
+      LOG_FORMAT: "json"
+    command: oikb daemon
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://0.0.0.0:8080/health/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    volumes:
+      - ./.oikb.yaml:/app/.oikb.yaml
+    networks: [oi]
+    restart: unless-stopped

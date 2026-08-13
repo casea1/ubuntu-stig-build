@@ -1,0 +1,49 @@
+# System 2 -- MLflow experiment tracking + model registry (:5000) and its
+# internal Postgres. Own stack -- both services live here (mlflow-db is only
+# talked to by mlflow, so keep them together for the depends_on healthcheck).
+# Password comes from .env (MLFLOW_DB_PASSWORD, auto-generated).
+name: mlflow
+networks:
+  oi: { external: true }
+volumes:
+  mlflow-artifacts: { external: true }
+  postgres_mlflow_data: { external: true }
+services:
+  mlflow-db:
+    image: pgvector/pgvector:pg16-trixie      # same image as System 1's pgvector
+    container_name: mlflow-db
+    environment:
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: ${MLFLOW_DB_PASSWORD:?set in .env}
+      POSTGRES_DB: mlflow
+    volumes:
+      - postgres_mlflow_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlflow -d mlflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [oi]
+    restart: unless-stopped
+
+  mlflow:
+    image: mlflow:v3.15.1-psycopg2      # built on the box by ansible (ai_compose)
+    container_name: mlflow
+    ports: ["5000:5000"]
+    command: >
+      mlflow server
+      --backend-store-uri postgresql://mlflow:${MLFLOW_DB_PASSWORD}@mlflow-db:5432/mlflow
+      --default-artifact-root /mlflow/artifacts
+      --host 0.0.0.0
+      --port 5000
+      --disable-security-middleware
+    volumes:
+      - mlflow-artifacts:/mlflow/artifacts
+    depends_on:
+      mlflow-db:
+        condition: service_healthy
+    networks: [oi]
+    restart: unless-stopped
+    # NOTE (FIPS): if this container crash-loops with an OpenSSL/FIPS selftest
+    # error on the FIPS host, add the same carve-out the vLLM/docling services
+    # use:  volumes: - ./fips_off:/proc/sys/crypto/fips_enabled:ro   (host stays FIPS).

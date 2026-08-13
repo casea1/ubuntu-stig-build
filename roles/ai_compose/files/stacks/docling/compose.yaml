@@ -1,0 +1,27 @@
+# System 2 -- Docling (GPU document extraction, :5001). Own stack.
+# Default extraction engine for Open WebUI (Tika is the fallback stack).
+name: docling
+networks:
+  oi: { external: true }
+services:
+  docling-serve:
+    image: ghcr.io/docling-project/docling-serve-cu128:v1.24.0
+    container_name: docling-serve
+    ports: ["5001:5001"]
+    volumes:
+      # docling bundles OpenCV, whose vendored OpenSSL 1.1.1k runs a FIPS selftest
+      # and abort()s on the FIPS host (fips_enabled=1) -> SIGABRT/exit 134 crash-loop.
+      # Same host-FIPS carve-out the vLLM services use; the HOST stays FIPS.
+      - ./fips_off:/proc/sys/crypto/fips_enabled:ro
+    environment:
+      - DOCLING_SERVE_MAX_SYNC_WAIT=6000
+      - DOCLING_SERVE_ENABLE_UI=false
+      - OMP_NUM_THREADS=4
+      - UVICORN_WORKERS=1
+    networks: [oi]
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }

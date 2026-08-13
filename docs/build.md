@@ -423,24 +423,23 @@ Full reference: [`site.yml.example`](site.yml.example). On **System 2**, set the
 ```bash
 curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | PROFILE=ai bash
 ```
-Grows the disk, installs Docker + NVIDIA + hardens Docker, attaches Ubuntu Pro and STIG-hardens with FIPS (**FIPS needs a reboot**; the build flags it), bakes the node's compose into `/opt/it/docker`, builds the custom images (System 2), and (if the toggles are set) fetches models and starts the stack. Watch: `sudo journalctl -u stig-build -f`. **Reboot** when it finishes.
+Grows the disk, installs Docker + NVIDIA + hardens Docker, attaches Ubuntu Pro and STIG-hardens with FIPS (**FIPS needs a reboot**; the build flags it), writes the node's services as per-service Dockge stacks into `/opt/stacks/<stack>/` (creates the shared `oi` network), builds the custom images (System 2), and (if the toggles are set) fetches models and starts the stacks. Watch: `sudo journalctl -u stig-build -f`. **Reboot** when it finishes.
 
 ### Step 4: Fetch models & start the stack
 
 If you didn't set `ai_model_fetch`/`ai_compose_deploy` in `site.yml`, do it now on each box:
 
 ```bash
-cd /opt/it/docker
 # (models auto-fetch on the build if ai_model_fetch: true; otherwise the build placed the empty volumes)
-sudo docker compose up -d          # start the node's services
-sudo ./switch-model.sh gpt-oss     # System 1 only: load the default chat model
+sudo it-ai up                      # start the node's stacks (right order; from anywhere)
+sudo it-ai model gpt-oss           # System 1 only: load the default chat model
 ```
 gpt-oss-120B is ~200 GB; the first fetch is long. System 2's embedding/vision models are small.
 
 ### Step 5: Connect & verify
 
-- **System 2 first** (System 1 depends on it): `docker compose ps`, embed/vision/docling/tika/lgtm/mlflow healthy (oikb only if you enabled it, see Step 6; hfcli/repomix/openwiki are on-demand `tools`-profile utilities and stay down).
-- **System 1:** `docker compose ps`, vllm/open-webui/redis/pgvector healthy; `curl -s http://localhost:8000/v1/models` lists the chat model.
+- **System 2 first** (System 1 depends on it): `it-ai status`, embed/vision/docling/tika/grafana-otel/mlflow healthy (oikb only if you enabled it, see Step 6; hfcli/openwiki are on-demand `tools` utilities and stay down).
+- **System 1:** `it-ai status`, vllm/open-webui/redis/pgvector healthy; `curl -s http://localhost:8000/v1/models` lists the chat model.
 - **Browse:** Open WebUI at `http://dev-ai1:3000`. Create the first (admin) account. The chat model appears in the dropdown; embeddings/vision/Docling are wired to System 2 via env (or set them in **Admin → Settings → Connections/Documents** if you blanked the env).
 - **Monitoring:** Grafana at `http://dev-ai2:3001` (admins; first login `admin`/`admin`, set a new password). A pre-provisioned **"Open WebUI (OTel)"** dashboard (request rate, latency p50/p95/p99, errors, logs) is under Dashboards; it fills in once Open WebUI has served some traffic.
 - **MLflow:** experiment tracking + model registry at `http://dev-ai2:5000` (System 2). Closed by default — open `:5000` to your lab subnet in `site.yml` (`ai_firewall_allow_ports`) to reach it.
@@ -452,20 +451,19 @@ oikb (System 2) syncs external data sources into Open WebUI knowledge bases. **I
 To enable: create an **API key** in Open WebUI (Settings → Account → API Keys), put it in System 2's `site.yml` as `ai_oikb_openwebui_api_key` (the starter template has this commented out). Add `ai_oikb_gitlab_url` + `ai_oikb_gitlab_token` **only if** you actually have a GitLab source. Then re-render + start:
 
 ```bash
-sudo ansible-pull ... --tags ai_compose      # writes COMPOSE_PROFILES=oikb into .env
-cd /opt/it/docker && sudo docker compose up -d
+sudo ansible-pull ... --tags ai_compose      # writes COMPOSE_PROFILES=oikb into the oikb stack's .env
+sudo it-ai up oikb                            # (or: it-ai oikb)
 ```
 
-Finally edit `/opt/it/docker/.oikb.yaml` to map sources → KBs and `docker compose restart oikb`. To start it ad hoc without the key in `.env`: `docker compose --profile oikb up -d`.
+Finally edit `/opt/stacks/oikb/.oikb.yaml` to map sources → KBs and `it-ai restart oikb`. To start it ad hoc without the key in `.env`: `it-ai oikb`.
 
 ### Switching the System 1 chat model
 
-gpt-oss-120B and Granite-4.1-30B are **alternates** (only one fits in VRAM):
+gpt-oss-120B and Granite-4.1-30B are **alternates** (only one fits in VRAM), and now separate stacks:
 ```bash
-cd /opt/it/docker
-sudo ./switch-model.sh granite    # or gpt-oss ; or status
+sudo it-ai model granite    # or gpt-oss ; or status
 ```
-Don't run a bare `docker compose up -d` while on Granite; it would also start gpt-oss and OOM the GPUs.
+Don't `it-ai up` both vLLM stacks while on Granite; bringing up `vllm-gptoss` alongside it would OOM the GPUs — use `it-ai model` to flip.
 
 ### Collect the compliance report
 
@@ -479,7 +477,7 @@ Don't run a bare `docker compose up -d` while on Granite; it would also start gp
 | Symptom | Cause / fix |
 |---------|-------------|
 | Disk fills mid-build | `disk_expand` grows root automatically; if it didn't, check it's LVM (`docs` note). |
-| A vLLM container crash-loops on `fips.so` / `FIPS SELFTEST` | Host FIPS vs the image's OpenSSL; the `fips_off` mount handles it; ensure it's present (`grep fips_off docker-compose.yaml`). |
+| A vLLM container crash-loops on `fips.so` / `FIPS SELFTEST` | Host FIPS vs the image's OpenSSL; the `fips_off` mount handles it; ensure it's present (`grep fips_off /opt/stacks/*/compose.yaml` + the `fips_off` file in each vLLM/docling stack dir). |
 | Model loads but no model in Open WebUI | tiktoken/harmony encodings missing (auto-fetched now) **and/or** add the `http://chat-llm:8000/v1` connection. |
 | vLLM `Up` seconds then restarts | still loading (120B takes minutes) or OOM; check `docker logs vllm-server` + `nvidia-smi`. |
 | Open WebUI can't reach System 2 (embed/vision/Docling) | set `ai_system2_addr` to dev-ai2's **IP** in `site.yml` (containers use their own DNS, not the host's `/etc/hosts`). With an IP set, the build auto-maps the name in the host `/etc/hosts` **and** the containers' `extra_hosts` (no manual editing). Also confirm the System 2 firewall opened 8002/8003/5001 from System 1. |

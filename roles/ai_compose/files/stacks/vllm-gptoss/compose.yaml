@@ -1,0 +1,40 @@
+# System 1 -- gpt-oss-120B chat model (default). Own stack; shares the external
+# `oi` network + the chat-llm alias with vllm-granite (only one runs at a time).
+name: vllm-gptoss
+networks:
+  oi: { external: true }
+volumes:
+  vllm: { external: true }
+  encodings: { external: true }
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.22.1-cu129-ubuntu2404
+    container_name: vllm-server
+    ipc: host
+    ports: ["8000:8000"]
+    volumes:
+      - vllm:/gpt120b
+      - encodings:/etc/encodings
+      - ./fips_off:/proc/sys/crypto/fips_enabled:ro
+    environment:
+      TIKTOKEN_ENCODINGS_BASE: "/etc/encodings"
+      TIKTOKEN_RS_CACHE_DIR: "/etc/encodings"
+    command:
+      - --model=/gpt120b
+      - --served-model-name=gpt-oss-120b
+      - --gpu-memory-utilization=0.90
+      - --tensor-parallel-size=2
+      - --max-model-len=32768
+      - --port=8000
+      - --enable-auto-tool-choice
+      - --tool-call-parser=openai
+      - '--override-generation-config={"temperature": 1.0, "top_p": 1.0, "repetition_penalty": 1.1}'
+    networks:
+      oi:
+        aliases: [chat-llm]
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
