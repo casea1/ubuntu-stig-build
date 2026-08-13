@@ -1,7 +1,8 @@
 # =============================================================================
 # System 2 (dev-ai2) -- EXTRACTION / EMBEDDINGS / MONITORING / SYNC node
 #   Docling + Tika (extraction) · vLLM embedding + vision · LGTM (monitoring)
-#   · oikb (knowledge-base sync) · hfcli/repomix (utilities)
+#   · MLflow (experiment tracking / model registry) · oikb (knowledge-base sync)
+#   · hfcli/repomix/openwiki (utilities)
 # Managed by ansible (ai_compose role); placed in {{ ai_compose_dir }}.
 # System 2 has ONE 48GB GPU shared by Docling + the embed/vision vLLMs (all small).
 #   Run:   cd /opt/it/docker && docker compose up -d
@@ -15,9 +16,12 @@ networks:
     driver: bridge
 
 volumes:
-  granite-embed: { external: true }    # granite-embedding-small-english-r2 weights
-  granite-vision: { external: true }   # granite-vision-4.1-4b weights
-  lgtm-data: { external: true }        # Grafana/LGTM state (dashboards, TSDB)
+  granite-embed: { external: true }        # granite-embedding-small-english-r2 weights
+  granite-vision: { external: true }       # granite-vision-4.1-4b weights
+  lgtm-data: { external: true }            # Grafana/LGTM state (dashboards, TSDB)
+  mlflow-artifacts: { external: true }     # MLflow artifact store
+  postgres_mlflow_data: { external: true } # MLflow's internal Postgres data
+  openwiki-out: { external: true }         # OpenWiki output workdir
 
 services:
   # ---- Embeddings (RAG) -- OpenAI-compatible, reached from System 1 ----
@@ -156,6 +160,51 @@ services:
     networks: [oi]
     restart: unless-stopped
 
+  # ---- MLflow: experiment tracking + model registry (CPU-only ops plane) -----
+  # Its Postgres backing store is container-internal (no host port; only the
+  # MLflow server talks to it). Password comes from .env (MLFLOW_DB_PASSWORD,
+  # auto-generated). The MLflow UI/API is on :5000 -- open it to your lab subnet
+  # in ai_firewall_allow_ports (it is NOT exposed by default).
+  mlflow-db:
+    image: pgvector/pgvector:pg16-trixie      # same image as System 1's pgvector
+    container_name: mlflow-db
+    environment:
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: ${MLFLOW_DB_PASSWORD:?set in .env}
+      POSTGRES_DB: mlflow
+    volumes:
+      - postgres_mlflow_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlflow -d mlflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [oi]
+    restart: unless-stopped
+
+  mlflow:
+    image: mlflow:v3.15.1-psycopg2      # built on the box by ansible (ai_compose)
+    container_name: mlflow
+    ports:
+      - "5000:5000"
+    command: >
+      mlflow server
+      --backend-store-uri postgresql://mlflow:${MLFLOW_DB_PASSWORD}@mlflow-db:5432/mlflow
+      --default-artifact-root /mlflow/artifacts
+      --host 0.0.0.0
+      --port 5000
+      --disable-security-middleware
+    volumes:
+      - mlflow-artifacts:/mlflow/artifacts
+    depends_on:
+      mlflow-db:
+        condition: service_healthy
+    networks: [oi]
+    restart: unless-stopped
+    # NOTE (FIPS): if this container crash-loops with an OpenSSL/FIPS selftest
+    # error on the FIPS host, add the same carve-out the vLLM/docling services
+    # use:  volumes: - ./fips_off:/proc/sys/crypto/fips_enabled:ro   (host stays FIPS).
+
   # ---- Utility container: model downloads (does NOT auto-start) ----
   # docker compose run --rm hfcli hf download <repo> --local-dir /<vol>
   hfcli:
@@ -165,4 +214,20 @@ services:
     volumes:
       - granite-embed:/granite-embed
       - granite-vision:/granite-vision
+    networks: [oi]
+
+  # ---- Utility container: OpenWiki -- generate a doc wiki from a repo ---------
+  # On-demand (does NOT auto-start; `tools` profile). Reaches System 1's chat
+  # endpoint over the network (extra_hosts resolves dev-ai1). Output persists in
+  # the openwiki-out volume (/work). Run e.g.:
+  #   docker compose run --rm openwiki openwiki <args>
+  openwiki:
+    image: openwiki:latest      # built on the box by ansible (ai_compose)
+    container_name: openwiki
+    profiles: ["tools"]
+    extra_hosts:
+      - "${SYSTEM1_HOSTS_ENTRY:-localhost:127.0.0.1}"
+    working_dir: /work
+    volumes:
+      - openwiki-out:/work
     networks: [oi]

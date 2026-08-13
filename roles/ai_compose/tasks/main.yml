@@ -137,16 +137,16 @@
     - ai_compose_build_images | default(true) | bool
     - (ai_compose_build_force | default(false) | bool) or ((item.1.rc | default(1)) != 0)
 
-- name: "AI-COMPOSE | Lock down the secrets dir (holds the auto-generated DB password)"
-  # The pgvector password is auto-generated + persisted here on first render of
-  # .env; 0700 root keeps it root-only regardless of the lookup's file perms.
+- name: "AI-COMPOSE | Lock down the secrets dir (holds the auto-generated DB passwords)"
+  # The pgvector password (System 1) and MLflow DB password (System 2) are auto-
+  # generated + persisted here on first render of .env; 0700 root keeps them
+  # root-only regardless of the lookup's file perms. Both live in the same dir.
   ansible.builtin.file:
     path: "{{ ai_pgvector_password_file | dirname }}"
     state: directory
     owner: root
     group: root
     mode: "0700"
-  when: ai_node_role == 'system1'
 
 - name: "AI-COMPOSE | Render the root-only .env (secrets/site values)"
   # Node-aware (env.j2): System 1 gets the DB/WebUI secrets + SYSTEM2_ADDR;

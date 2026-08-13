@@ -11,7 +11,7 @@ Profile page for the two-node, self-hosted AI stack. Overview, key endpoints, an
 | Machine | Hostname | Job |
 |---|---|---|
 | System 1 | `dev-ai1` | Front end + chat model. Open WebUI + vLLM + Postgres/pgvector + Redis. |
-| System 2 | `dev-ai2` | Helpers. Embedding + vision vLLM, Docling + Tika extraction, LGTM/Grafana, oikb sync. |
+| System 2 | `dev-ai2` | Helpers. Embedding + vision vLLM, Docling + Tika extraction, LGTM/Grafana, MLflow tracking/registry, oikb sync. |
 
 The hostname sets the role (`dev-ai1` -> system1, `dev-ai2` -> system2). Full architecture diagram, per-service table, and handy commands: [operate.md -> AI stack quick reference](operate.md#ai-stack-quick-reference).
 
@@ -26,6 +26,7 @@ The hostname sets the role (`dev-ai1` -> system1, `dev-ai2` -> system2). Full ar
 | Docling | `:5001` | S2 |
 | Tika | `:9998` | S2 |
 | Grafana | `http://dev-ai2:3001` | S2 |
+| MLflow | `http://dev-ai2:5000` | S2 |
 | Dockge / Cockpit | `:9001` / `:9090` | each box |
 
 Firewall openings for these ports go in `site.yml` per node. See [`site.yml.example`](site.yml.example).
@@ -92,6 +93,8 @@ Software inventory for the two-node AI platform (IA / DCSA reference). Versions 
 | oikb | latest (base oikb 0.3.6) | Open WebUI (oikb) | Sync data sources into Open WebUI KBs (S2) |
 | hfcli | latest (Python 3.12) | Hugging Face (`huggingface_hub`) | Download models/encodings into volumes (S2) |
 | repomix | latest (Node 22.23.1) | repomix project | Pack a code repo into one file for the LLM (S2) |
+| mlflow | v3.15.1 (+psycopg2) | MLflow / LF AI & Data | Experiment tracking + model registry, UI `:5000`; Postgres-backed (S2) |
+| openwiki | latest (Node 22.23.1) | openwiki project | Generate a documentation wiki from a repo (S2 utility) |
 
 ### AI models (Hugging Face, all Apache-2.0)
 
