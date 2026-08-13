@@ -128,7 +128,7 @@ Self-hosted, on-premises AI chat/document system on two hardened Ubuntu 24.04 se
 All data (prompts, responses, documents, vector index) stays inside the accreditation boundary. **Inference only**: static weights are read-only, not retrained/updated by user data.
 
 - **System 1 (`dev-ai1`):** user chat UI (Open WebUI), chat LLM engine (vLLM), database (PostgreSQL/pgvector: accounts, chats, document vectors), websocket/cache store (Redis).
-- **System 2 (`dev-ai2`):** document extraction (Docling, Apache Tika), embedding + vision models (vLLM), monitoring (LGTM/Grafana), knowledge-base sync (oikb).
+- **System 2 (`dev-ai2`):** document extraction (Docling, Apache Tika), embedding + vision models (vLLM), monitoring (LGTM/Grafana), experiment tracking + model registry (MLflow), knowledge-base sync (oikb).
 
 ### Compliance baseline (what the build enforces)
 

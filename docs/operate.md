@@ -44,7 +44,7 @@ Self-hosted, on-prem AI chat. Users open a browser, chat with an LLM, and query 
                        ▼  vision, document reading, monitoring
    ┌──────────── SYSTEM 2 · dev-ai2 ─────────────────────────┐
    │  Docling + Tika (read files) · embedding + vision models │
-   │  Grafana (dashboards) · oikb (knowledge sync)            │
+   │  Grafana (dashboards) · MLflow (tracking) · oikb (sync)  │
    └───────────────────────────────────────────────────────────┘
 ```
 
@@ -60,8 +60,9 @@ Self-hosted, on-prem AI chat. Users open a browser, chat with an LLM, and query 
 | **Docling** | 2 | Text/table extraction from PDFs and Office files. |
 | **Tika** | 2 | Text extraction from other file types. |
 | **LGTM / Grafana** | 2 | Health dashboards and logs. |
+| **MLflow** | 2 | Experiment tracking + model registry (web UI `:5000`, Postgres-backed). |
 | **oikb** | 2 | Syncs documents from sources (e.g. GitLab) into the AI's knowledge. |
-| **hfcli / repomix** | 2 | Helpers (download models; pack a repo for the AI). |
+| **hfcli / repomix / openwiki** | 2 | Helpers (download models; pack a repo for the AI; generate a doc wiki from a repo). |
 
 ### How to set up a machine (same steps for either)
 
@@ -508,7 +509,7 @@ The two-node stack is baked into the image so a fielded box comes up with its co
 | role (node) | services | serves |
 |------|------|------|
 | `system1` (dev-ai1) | vLLM `gpt-oss-120b` (:8000) + switchable `granite-4.1-30b`, Open WebUI (:3000), Redis, pgvector | UI / text generation |
-| `system2` (dev-ai2) | vLLM embedding (:8002) + vision (:8003), Docling (:5001), Tika (:9998), LGTM/Grafana (:3001,:4317), oikb (:8081), hfcli/repomix | extraction / embeddings / monitoring / sync |
+| `system2` (dev-ai2) | vLLM embedding (:8002) + vision (:8003), Docling (:5001), Tika (:9998), LGTM/Grafana (:3001,:4317), MLflow (:5000), oikb (:8081), hfcli/repomix/openwiki | extraction / embeddings / monitoring / tracking / sync |
 
 **One file per node on purpose.** Cross-service `depends_on` only works inside one compose project, so consolidating lets Open WebUI **health-gate** its start on pgvector + Redis (`condition: service_healthy`, with `pg_isready`/`redis-cli ping` healthchecks). You keep per-service control (`docker compose up -d pgvector redis`, `docker compose restart open-webui`).
 
@@ -541,7 +542,7 @@ ai_model_fetch: true                  # download gpt-oss into its volume
 ai_compose_deploy: true               # start the stack (after the model is staged)
 ```
 
-Also open **System 2's** cross-node ports **to System 1 only** (`ai_firewall_allow_ports` in `site.yml`): `8002` (embed), `8003` (vision), `5001` (Docling), `9998` (Tika), `4317`/`4318` (OTel), each `from: "‹System 1 IP›"`. Also restrict `3001` (Grafana) + `8081` (oikb), also on System 2, to an admin CIDR. System 1 opens `3000` (Open WebUI, to users + oikb from System 2).
+Also open **System 2's** cross-node ports **to System 1 only** (`ai_firewall_allow_ports` in `site.yml`): `8002` (embed), `8003` (vision), `5001` (Docling), `9998` (Tika), `4317`/`4318` (OTel), each `from: "‹System 1 IP›"`. Also restrict `3001` (Grafana), `5000` (MLflow), and `8081` (oikb), also on System 2, to an admin CIDR. System 1 opens `3000` (Open WebUI, to users + oikb from System 2).
 
 ### Open WebUI RAG / Documents defaults (and the PersistentConfig caveat)
 

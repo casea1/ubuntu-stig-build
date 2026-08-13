@@ -439,10 +439,11 @@ gpt-oss-120B is ~200 GB; the first fetch is long. System 2's embedding/vision mo
 
 ### Step 5: Connect & verify
 
-- **System 2 first** (System 1 depends on it): `docker compose ps`, embed/vision/docling/tika/lgtm healthy (oikb only if you enabled it, see Step 6).
+- **System 2 first** (System 1 depends on it): `docker compose ps`, embed/vision/docling/tika/lgtm/mlflow healthy (oikb only if you enabled it, see Step 6; hfcli/repomix/openwiki are on-demand `tools`-profile utilities and stay down).
 - **System 1:** `docker compose ps`, vllm/open-webui/redis/pgvector healthy; `curl -s http://localhost:8000/v1/models` lists the chat model.
 - **Browse:** Open WebUI at `http://dev-ai1:3000`. Create the first (admin) account. The chat model appears in the dropdown; embeddings/vision/Docling are wired to System 2 via env (or set them in **Admin → Settings → Connections/Documents** if you blanked the env).
 - **Monitoring:** Grafana at `http://dev-ai2:3001` (admins; first login `admin`/`admin`, set a new password). A pre-provisioned **"Open WebUI (OTel)"** dashboard (request rate, latency p50/p95/p99, errors, logs) is under Dashboards; it fills in once Open WebUI has served some traffic.
+- **MLflow:** experiment tracking + model registry at `http://dev-ai2:5000` (System 2). Closed by default — open `:5000` to your lab subnet in `site.yml` (`ai_firewall_allow_ports`) to reach it.
 
 ### Step 6: Optional oikb knowledge sync
 

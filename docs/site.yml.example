@@ -32,6 +32,7 @@
 #   - { port: 4317, proto: tcp, rule: allow, from: "192.168.1.102" }   # OTel/LGTM       <- System 1
 #   - { port: 4318, proto: tcp, rule: allow, from: "192.168.1.102" }   # OTel/LGTM (HTTP)<- System 1
 #   - { port: 3001, proto: tcp, rule: allow, from: "192.168.1.0/24" }  # Grafana UI (admins)
+#   - { port: 5000, proto: tcp, rule: allow, from: "192.168.1.0/24" }  # MLflow UI/API (admins)
 #   - { port: 8081, proto: tcp, rule: allow, from: "192.168.1.0/24" }  # oikb (admins)
 
 # ---- AI docker-compose stack (ai profile) -----------------------------------
