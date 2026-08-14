@@ -141,6 +141,7 @@ base_common_packages:
   - smbclient
   - net-tools
   - unzip
+  - cron                       # provides /usr/bin/crontab + the cron daemon
 
 # ---- Inventory report (BOTH profiles) --------------------------------------
 # Writes a basic hardware/system inventory (serials, MACs, BIOS, disks, GPU) to
@@ -623,6 +624,23 @@ local_users:
 # workspace) in addition to their role groups. Set to [] to disable.
 local_users_common_groups:
   - sentry
+
+# ---- Automation accounts ----------------------------------------------------
+# Non-human accounts created exactly like the human ones (locked password, own
+# primary group, declarative supplementary groups). Present on EVERY profile
+# except the UNCLASSIFIED EMI variant, which carries no audit tooling.
+#   auto_audit -- runs the scheduled audit/compliance jobs (crontab is installed
+#   on every profile via base_common_packages).
+# NOTE: `sudo` here still requires a password, and these accounts are created
+# LOCKED, so sudo will not work until an admin sets one (`sudo passwd auto_audit`)
+# or a deliberate, documented sudoers rule is added. See docs/operate.md.
+local_auto_audit_enabled: "{{ not ((is_emi | default(false) | bool) and not (emi_classified | default(true) | bool)) }}"
+local_automation_users:
+  - { name: auto_audit, groups: [audit, sudo] }
+
+# The list local_accounts actually creates: the standing human accounts plus the
+# automation accounts where the profile allows them.
+local_users_effective: "{{ local_users + (local_automation_users if (local_auto_audit_enabled | default(true) | bool) else []) }}"
 
 # Accounts created OUTSIDE the playbook (the OS-install operator/admin account)
 # that should ALSO join local_users_common_groups (e.g. sentry). These are added

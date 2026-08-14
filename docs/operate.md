@@ -322,6 +322,13 @@ sudo passwd austin_case_dta
 # ... one per account, on the fielded box (not baked into the gold image)
 ```
 
+**Automation account: `auto_audit`.** Created on **every profile except `emi-unclass`** (which carries no audit tooling), in the `audit` and `sudo` groups, for the scheduled audit/compliance jobs. `crontab` is available everywhere — the `cron` package is in `base_common_packages`. Governed by `local_auto_audit_enabled` / `local_automation_users` in `group_vars`; on an `emi-unclass` box the role also **removes** it, so a machine repurposed from a classified image ends up clean.
+
+> **`auto_audit` cannot use `sudo` until you give it a credential.** Like every account here it is created **locked**, and `sudo` group membership still requires the user's own password — so an unattended cron job running as `auto_audit` will fail at the `sudo` prompt. Pick one deliberately:
+> - **Run the job as root** (`/etc/cron.d` or root's crontab) and drop `auto_audit` from `sudo`. Least privilege, no new credential, and usually what a scheduled audit actually needs.
+> - **Set a password** (`sudo passwd auto_audit`) if a human ever runs it interactively. Does not help unattended jobs.
+> - **Add a scoped `NOPASSWD` sudoers rule** for the specific audit commands. This works unattended but is a STIG finding (`sudo` must re-authenticate) and needs documenting as a POA&M — do not do it fleet-wide or for `ALL`.
+
 Supplementary groups are **declarative**: a re-run re-asserts exactly the `groups:` list for each user (a manually-added group gets removed on the next `ansible-pull`). `sudo`-group membership grants full sudo. The `audit` group is for `/opt/_AuditFiles` access; sudo is granted to the named auditor accounts individually (their `groups:` include `sudo`), **not** to the whole `audit` group; change `local_users` for group-wide sudo.
 
 **Base-box default accounts are purged.** The role removes any account listed in `purge_default_accounts` (default: `vagrant`) along with its home, insecure SSH key, and any matching `/etc/sudoers.d/` drop-in. Vagrant/Packer base images ship a `vagrant` user with a well-known password + `NOPASSWD` sudo + a publicly-published SSH key (a STIG finding); this build doesn't create it, but cleans it up if your base image had one. Removal is idempotent.

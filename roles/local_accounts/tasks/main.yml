@@ -2,7 +2,8 @@
 # =============================================================================
 # local_accounts -- org users, access groups, group-shared folders, USB policy
 # =============================================================================
-# Creates the standing local accounts and the access groups (dta/audit/sentry),
+# Creates the standing local accounts (human + automation) and the access groups
+# (dta/audit/sentry),
 # the two group-shared directories (with POSIX ACLs so sharing survives the STIG
 # umask 077), and the USB-storage access control that limits removable media to
 # the 'dta' group.
@@ -62,7 +63,7 @@
     password: "!"               # locked: account exists, no valid password yet
     update_password: on_create  # never re-lock a password an admin sets later
     state: present
-  loop: "{{ local_users }}"
+  loop: "{{ local_users_effective | default(local_users) }}"
   loop_control:
     label: "{{ item.name }} (groups: {{ (item.groups | default([]) + (local_users_common_groups | default([]))) | unique | join(',') }})"
   # Skip the data-transfer (dta) accounts where USB transfer isn't used (AI
@@ -229,6 +230,18 @@
       loop_control:
         label: "{{ item.name }}"
       when: usb_access_group | default('dta') in (item.groups | default([]))
+
+    - name: "ACCOUNTS | Remove the automation accounts (+ their homes)"
+      # Same reasoning as the dta accounts above: a FRESH emi-unclass build never
+      # creates them (local_auto_audit_enabled is false), but a box rebuilt from a
+      # classified image would still carry them.
+      ansible.builtin.user:
+        name: "{{ item.name }}"
+        state: absent
+        remove: true
+      loop: "{{ local_automation_users | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
 
     - name: "ACCOUNTS | Remove the '{{ usb_access_group | default('dta') }}' group"
       ansible.builtin.group:
