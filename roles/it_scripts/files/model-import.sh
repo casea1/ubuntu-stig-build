@@ -77,6 +77,17 @@ grep -E '^MODEL	' "$MAN" | while IFS=$'\t' read -r _ vol repo; do
   else echo "      WARNING: '$vol' still incomplete after copy -- media may be truncated"; fi
 done
 
+# ---- HF-cache models (e.g. docling's granite-docling VLM) into their volumes ----
+echo ">> Loading HF-cache models into their volumes"
+grep -E '^HFCACHE	' "$MAN" | while IFS=$'\t' read -r _ vol repo; do
+  srcd="$SRC/hfcache/$vol"
+  [ -d "$srcd" ] || { echo "   MISSING hfcache dir on media: hfcache/$vol ($repo)"; continue; }
+  mp="$(vol_path "$vol")"
+  echo "   -- $repo -> volume '$vol' ($mp)"
+  cp -a "$srcd/." "$mp"/ && echo "      ok ($(du -sh "$mp" 2>/dev/null | cut -f1))" \
+    || echo "      copy failed: $vol"
+done
+
 # ---- Encodings into the `encodings` volume ----
 enc_line="$(grep -E '^ENCODINGS	' "$MAN" | head -1 || true)"
 if [ -n "$enc_line" ]; then

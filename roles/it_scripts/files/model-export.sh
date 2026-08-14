@@ -34,6 +34,10 @@ MODELS="$(printf '%s\n' \
   'granite32b	ibm-granite/granite-4.1-30b	system1' \
   'granite-embed	ibm-granite/granite-embedding-small-english-r2	system2' \
   'granite-vision	ibm-granite/granite-vision-4.1-4b	system2')"
+# HF-cache models: loaded LOCALLY by a service via transformers/HF_HOME (not vLLM),
+# so they travel in HF-cache format, not flat. volume<TAB>repo<TAB>role
+HFCACHE_MODELS="$(printf '%s\n' \
+  'docling-models	ibm-granite/granite-docling-258M	system2')"
 REGISTRY_IMAGES="$VLLM_IMAGE
 ghcr.io/open-webui/open-webui:v0.10.2
 pgvector/pgvector:pg16-trixie
@@ -104,6 +108,23 @@ printf '%s\n' "$MODELS" | while IFS=$'\t' read -r vol repo mrole; do
   else
     echo "   INCOMPLETE after download: $repo (left off the manifest; re-run to resume)"
   fi
+done
+
+# HF-cache models (e.g. docling's granite-docling VLM) -> downloaded in cache
+# format (HF_HOME) into hfcache/<volume>/, so the offline box can drop it into
+# that service's HF-cache volume as-is.
+echo ">> Downloading HF-cache models to $DEST/hfcache  (role: $ROLE)"
+printf '%s\n' "$HFCACHE_MODELS" | while IFS=$'\t' read -r vol repo mrole; do
+  [ -n "$vol" ] || continue
+  [ "$ROLE" = all ] || [ "$ROLE" = "$mrole" ] || continue
+  d="$DEST/hfcache/$vol"; mkdir -p "$d"
+  echo "   -- $repo -> hfcache/$vol"
+  if docker run --rm ${TOKEN:+-e HF_TOKEN=$TOKEN} $FIPS_MNT \
+       -e HF_HOME=/cache -v "$d":/cache --entrypoint hf "$VLLM_IMAGE" \
+       download "$repo" >/dev/null; then
+    echo "HFCACHE	$vol	$repo" >> "$MAN"
+    echo "   ok ($(du -sh "$d" 2>/dev/null | cut -f1))"
+  else echo "   FETCH FAILED: $repo"; fi
 done
 
 # Encodings (only needed by nodes that run gpt-oss, i.e. System 1 / all)

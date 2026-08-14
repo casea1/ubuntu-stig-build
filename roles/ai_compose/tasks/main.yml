@@ -342,6 +342,30 @@
     - ai_model_fetch | default(false) | bool
     - "'encodings' in (ai_compose_volumes[ai_node_role] | default([]))"
 
+- name: "AI-COMPOSE | Pre-stage the docling VLM (granite-docling) into its HF-cache volume (System 2, opt-in)"
+  # Docling runs granite-docling-258M LOCALLY (its default `granite_docling` VLM
+  # preset). It loads the model via transformers from HF_HOME, so we download it
+  # in HF-CACHE format (NO --local-dir) into the docling-models volume that the
+  # docling stack mounts at HF_HOME=/opt/hf-cache -> the weights are present + the
+  # box can run offline (HF_HUB_OFFLINE=1). Idempotent: skips if the model dir is
+  # already in the cache. fips_off is required for TLS on the FIPS host.
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm
+      {{ ('-e HF_TOKEN=' ~ ai_hf_token) if (ai_hf_token | default('') | length > 0) else '' }}
+      -e HF_HOME=/cache
+      -v {{ ai_docling_models_volume }}:/cache
+      -v {{ ai_compose_dir }}/fips_off:/proc/sys/crypto/fips_enabled:ro
+      --entrypoint sh
+      {{ ai_vllm_image }}
+      -c 'test -d /cache/hub/models--ibm-granite--granite-docling-258M && echo SKIP || (hf download {{ ai_docling_vlm_repo }} && echo FETCHED)'
+  register: _docling_vlm_fetch
+  changed_when: "'FETCHED' in (_docling_vlm_fetch.stdout | default(''))"
+  no_log: true
+  when:
+    - ai_node_role == 'system2'
+    - ai_model_fetch | default(false) | bool
+
 - name: "AI-COMPOSE | Deploy all stacks (opt-in; needs the model staged + internet for pull)"
   when: ai_compose_deploy | default(false) | bool
   block:

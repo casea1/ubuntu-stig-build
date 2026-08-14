@@ -18,6 +18,7 @@ networks:
 volumes:
   granite-embed: { external: true }        # granite-embedding-small-english-r2 weights
   granite-vision: { external: true }       # granite-vision-4.1-4b weights
+  docling-models: { external: true }       # docling HF cache (granite-docling-258M VLM)
   lgtm-data: { external: true }            # Grafana/LGTM state (dashboards, TSDB)
   mlflow-artifacts: { external: true }     # MLflow artifact store
   postgres_mlflow_data: { external: true } # MLflow's internal Postgres data
@@ -88,11 +89,18 @@ services:
       # and abort()s on the FIPS host (fips_enabled=1) -> SIGABRT/exit 134 crash-loop.
       # Same host-FIPS carve-out the vLLM services use; the HOST stays FIPS.
       - ./fips_off:/proc/sys/crypto/fips_enabled:ro
+      # Persist the granite-docling-258M VLM weights (docling's HF cache).
+      - docling-models:/opt/hf-cache
     environment:
       - DOCLING_SERVE_MAX_SYNC_WAIT=6000
       - DOCLING_SERVE_ENABLE_UI=false
       - OMP_NUM_THREADS=4
       - UVICORN_WORKERS=1
+      # ---- granite-docling-258M VLM (runs locally on this GPU; default preset) ----
+      - DOCLING_SERVE_DEFAULT_VLM_PRESET=granite_docling
+      - DOCLING_SERVE_LOAD_MODELS_AT_BOOT=true
+      - HF_HOME=/opt/hf-cache
+      - HF_HUB_OFFLINE=${DOCLING_HF_OFFLINE:-0}
     networks: [oi]
     restart: unless-stopped
     deploy:

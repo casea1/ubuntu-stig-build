@@ -953,7 +953,21 @@ ai_oikb_gitlab_token: ""
 # model weights / DB survive `down -v`). Empty list = role creates none.
 ai_compose_volumes:
   system1: [vllm, granite32b, encodings, pgvector-data, open-webui, redis-data]
-  system2: [granite-embed, granite-vision, lgtm-data, mlflow-artifacts, postgres_mlflow_data, openwiki-out]
+  system2: [granite-embed, granite-vision, docling-models, lgtm-data, mlflow-artifacts, postgres_mlflow_data, openwiki-out]
+
+# ---- Docling VLM: granite-docling-258M (System 2) ---------------------------
+# Docling-serve's DEFAULT VLM preset is `granite_docling`, and the -cu128 image
+# runs it LOCALLY on the System-2 GPU (a tiny 258M vision-language model that
+# converts a page image straight to DocTags) -- no separate vLLM server needed,
+# and transformers handles its tied weights, so no `untied` revision workaround
+# (that quirk is vLLM-only). We just persist + pre-stage the weights: the docling
+# stack mounts the `docling-models` volume as its HuggingFace cache (HF_HOME), so
+# the model is downloaded once, survives container recreates, and can be captured
+# to USB for air-gap. Set ai_docling_hf_offline: 1 on a fielded (no-internet) box
+# once the weights are staged, to stop docling reaching out to HF.
+ai_docling_vlm_repo: "ibm-granite/granite-docling-258M"
+ai_docling_models_volume: "docling-models"
+ai_docling_hf_offline: 0          # 1 = air-gapped: use only the pre-staged cache
 
 # ---- Dockge-native per-service stacks (ai_compose) --------------------------
 # The stack is split into one directory PER SERVICE under dockge_stacks_dir
