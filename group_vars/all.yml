@@ -861,6 +861,11 @@ dockge_stacks_dir: "/opt/stacks"
 ai_firewall_allow_ports:
   - { port: 443, proto: tcp, rule: allow }     # reverse proxy (TLS) -> Open WebUI :3000
   - { port: 80,  proto: tcp, rule: allow }     # reverse proxy (HTTP redirect to 443)
+  # ---- OpenWiki viewer (dev-ai2 `openwiki-view` stack, :4321), restricted to the
+  # admin LANs. ufw allows multiple source rules on one port, so BOTH are honoured.
+  # (Harmless no-op on dev-ai1 -- nothing listens on 4321 there.)
+  - { port: 4321, proto: tcp, rule: allow, from: "192.168.1.0/24" }   # OpenWiki viewer, LAN 1
+  - { port: 4321, proto: tcp, rule: allow, from: "10.10.99.0/24" }    # OpenWiki viewer, LAN 2
   # ---- System 1 (UI/text-gen) also exposes, to the peer node only: ----
   # - { port: 8000, proto: tcp, rule: allow, from: "10.0.0.0/24" }   # vLLM (text gen)
   # - { port: 5432, proto: tcp, rule: allow, from: "10.0.0.0/24" }   # pgvector
@@ -978,7 +983,7 @@ ai_compose_volumes:
 ai_stack_network: oi
 ai_stacks_by_role:
   system1: [vllm-gptoss, vllm-granite, pgvector, redis, open-webui]
-  system2: [vllm-embed, vllm-vision, docling, tika, grafana-otel, mlflow, oikb, hfcli, openwiki]
+  system2: [vllm-embed, vllm-vision, docling, tika, grafana-otel, mlflow, oikb, hfcli, openwiki, openwiki-view]
 # Stacks whose compose bind-mounts ./fips_off (the host-FIPS carve-out for the
 # vLLM / OpenCV-bearing containers). The `fips_off` file is placed into each of
 # these stack dirs so the relative mount resolves.
@@ -998,9 +1003,10 @@ ai_compose_images:               # name -> tag + Dockerfile (context copied from
   repomix:  { tag: "repomix:latest",           dockerfile: "Dockerfile" }
   mlflow:   { tag: "mlflow:v3.15.1-psycopg2",  dockerfile: "Dockerfile" }
   openwiki: { tag: "openwiki:latest",          dockerfile: "Dockerfile" }
+  openwiki-view: { tag: "openwiki-view:latest", dockerfile: "Dockerfile" }   # nginx + vendored viewer libs
 ai_compose_build_by_role:        # which images each node builds
   system1: []                    # System 1 uses only registry images
-  system2: [oikb, hfcli, repomix, mlflow, openwiki]
+  system2: [oikb, hfcli, repomix, mlflow, openwiki, openwiki-view]
 
 # ---- Model auto-fetch (ai_compose) ------------------------------------------
 # Which HuggingFace repo lands in which volume, per node role. The role can

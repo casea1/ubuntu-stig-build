@@ -234,6 +234,7 @@ services:
     volumes:
       - openwiki-out:/work
     networks: [oi]
-    # NOTE: no served-viewer daemon -- `openwiki serve` is broken in this image
-    # (upstream langchain dep mismatch, crashes on DEFAULT_LANGSMITH_GATEWAY) and
-    # its viewer loads JS/CSS from a public CDN (won't render air-gapped).
+    # Generator only. The browsable viewer lives in the split `openwiki-view`
+    # stack (/opt/stacks/openwiki-view, :4321) -- `openwiki visualize` behind an
+    # nginx that vendors the viewer's CDN libraries so it renders air-gapped.
+    # This dormant fallback file does not reproduce it.

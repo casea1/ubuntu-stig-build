@@ -1,0 +1,43 @@
+# System 2 -- OpenWiki VIEWER: browse a generated wiki from the network.
+# Own stack, starts by default (it is a daemon, unlike the `openwiki` generator
+# stack, which is an on-demand `tools` utility).
+#
+#   generate:  it-ai run openwiki openwiki --init      (writes into openwiki-out)
+#   browse:    http://<dev-ai2>:4321                   (this stack)
+#
+# Two containers, ONE network namespace:
+#   openwiki-view        `openwiki visualize` -- renders the wiki + live-reloads,
+#                        but binds 127.0.0.1 ONLY (it has no bind/host flag).
+#   openwiki-view-proxy  nginx sharing that namespace: listens on 0.0.0.0:8080,
+#                        proxies to 127.0.0.1:4321, and rewrites the viewer's
+#                        CDN <script src> tags to libraries VENDORED in its image
+#                        so the graph/markdown/diagrams render AIR-GAPPED.
+# Only the namespace owner may publish ports, so `ports` lives on openwiki-view.
+# Restrict who can reach :4321 in ai_firewall_allow_ports.
+name: openwiki-view
+networks:
+  oi: { external: true }
+volumes:
+  openwiki-out: { external: true }
+services:
+  openwiki-view:
+    image: openwiki:latest          # built on the box by ansible (ai_compose)
+    container_name: openwiki-view
+    working_dir: /work
+    # `visualize` defaults to ./openwiki and exits if it is missing, so make sure
+    # the dir exists on a box where no wiki has been generated yet (empty viewer
+    # instead of a crash-loop). exec so openwiki stays PID 1 and sees SIGTERM.
+    command: ["sh", "-c", "mkdir -p openwiki && exec openwiki visualize --no-open --port 4321"]
+    volumes:
+      - openwiki-out:/work
+    ports:
+      - "4321:8080"                 # host 4321 -> nginx (:8080) -> visualize (127.0.0.1:4321)
+    networks: [oi]
+    restart: unless-stopped
+
+  openwiki-view-proxy:
+    image: openwiki-view:latest     # built on the box by ansible (ai_compose)
+    container_name: openwiki-view-proxy
+    network_mode: "service:openwiki-view"   # share netns so 127.0.0.1 reaches the viewer
+    depends_on: [openwiki-view]
+    restart: unless-stopped

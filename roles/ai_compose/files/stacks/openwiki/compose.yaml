@@ -4,11 +4,10 @@
 # openwiki-out volume (/work). Run e.g.:
 #   cd /opt/stacks/openwiki && docker compose run --rm openwiki openwiki <args>
 #
-# NOTE: there is intentionally no served-viewer daemon here. `openwiki serve`
-# is broken in this image (upstream langchain dep mismatch -- crashes on
-# `DEFAULT_LANGSMITH_GATEWAY` import), and its viewer also loads JS/CSS from a
-# public CDN (won't render air-gapped). Generate the wiki here and serve the
-# static output elsewhere if a browsable view is needed.
+# This stack GENERATES only. To BROWSE the result on the LAN, see the separate
+# `openwiki-view` stack (:4321), which runs `openwiki visualize` behind nginx.
+# (There is no `openwiki serve` command -- it is `visualize`; an earlier attempt
+# at `serve` here was both the wrong verb and a broken openwiki build.)
 name: openwiki
 networks:
   oi: { external: true }

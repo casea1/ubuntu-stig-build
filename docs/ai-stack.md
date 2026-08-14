@@ -82,7 +82,8 @@ The stack is split into **one Dockge stack per service**. The `ai_compose` role 
 | `mlflow` | `mlflow-db` + `mlflow` | `:5000` | default | Experiment tracking + model registry (+ its Postgres) |
 | `oikb` | `oikb` | `:8081` | `oikb` | Knowledge-base sync → System 1's Open WebUI |
 | `hfcli` | `hfcli` | — | `tools` | Download models/encodings into volumes |
-| `openwiki` | `openwiki` | — | `tools` | Generate a documentation wiki from a repo |
+| `openwiki` | `openwiki` | — | `tools` | **Generate** a documentation wiki from a repo (writes to `openwiki-out`) |
+| `openwiki-view` | `openwiki-view` + `openwiki-view-proxy` | `:4321` | default | **Browse** the generated wiki on the LAN (`openwiki visualize` + nginx; viewer libraries vendored, so it renders air-gapped) |
 
 > **Cross-stack startup:** `open-webui` no longer `depends_on` `pgvector`/`redis` (they're separate stacks now), so bring the DB/cache up first. `it-ai up` and the recreate loop below start the stacks in a sane order; if you start `open-webui` alone before `pgvector`, it simply retries the DB connection until `pgvector` is up.
 
@@ -101,7 +102,8 @@ it-ai stacks                   # list the stacks on this node
 it-ai oikb                     # start the opt-in oikb sync
 it-ai model gpt-oss | granite | status   # System 1: swap the chat model
 it-ai run hfcli hf download <repo> --local-dir /granite-embed   # on-demand tool
-it-ai run openwiki openwiki <args>       # on-demand: build a doc wiki
+it-ai run openwiki openwiki --init       # on-demand: build a doc wiki
+#   ...then browse it at http://<dev-ai2>:4321  (openwiki-view stack, always on)
 ```
 The `tools` stacks (`hfcli`, `openwiki`) always read **n/a** in Dockge — they hold no long-running container; that is expected. See [operate.md — Admin scripts](operate.md#admin-scripts-it-).
 
@@ -144,7 +146,7 @@ A single map of what's stored where — useful for backups, disk sizing, moving 
 | `lgtm-data` | Grafana/LGTM state (dashboards, TSDB) | `grafana-otel` | `/data` |
 | `mlflow-artifacts` | MLflow artifact store | `mlflow` | `/mlflow/artifacts` |
 | `postgres_mlflow_data` | MLflow's internal Postgres data | `mlflow` (`mlflow-db`) | `/var/lib/postgresql/data` |
-| `openwiki-out` | OpenWiki generated output | `openwiki` | `/work` |
+| `openwiki-out` | OpenWiki generated wiki (markdown pages) | `openwiki`, `openwiki-view` | `/work` |
 
 > **docling has no named volume.** The `docling-serve` image ships its OCR/layout/tableformer models **baked in** (`--artifacts-path`, runtime downloads disabled), so the models live inside the image at `/opt/app-root/src/.cache/docling/models` and travel **with the image** — nothing to back up or stage separately (bring it across air-gap with `it-model-export --images`).
 

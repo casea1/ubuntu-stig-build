@@ -23,7 +23,8 @@
 #   it-ai up                              # bring every default stack up
 #   it-ai up open-webui                   # just one stack
 #   it-ai run hfcli hf download ibm-granite/granite-embedding-small-english-r2 --local-dir /granite-embed
-#   it-ai run openwiki openwiki <args>
+#   it-ai run openwiki openwiki --init     # generate the wiki into openwiki-out
+#   it-ai restart openwiki-view            # then browse it at http://<dev-ai2>:4321
 set -uo pipefail
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 

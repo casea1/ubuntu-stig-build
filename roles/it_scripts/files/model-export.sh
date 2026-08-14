@@ -48,7 +48,8 @@ louislam/dockge:1"
 CUSTOM_IMAGES="oikb:latest
 hfcli:latest
 mlflow:v3.15.1-psycopg2
-openwiki:latest"
+openwiki:latest
+openwiki-view:latest"
 # --------------------------------------------------------------------------------
 
 DEST=""; ROLE="all"; IMAGES=0; TOKEN=""
