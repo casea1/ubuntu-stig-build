@@ -105,6 +105,68 @@ it-ai run openwiki openwiki <args>       # on-demand: build a doc wiki
 ```
 The `tools` stacks (`hfcli`, `openwiki`) always read **n/a** in Dockge — they hold no long-running container; that is expected. See [operate.md — Admin scripts](operate.md#admin-scripts-it-).
 
+## Where everything lives (paths, volumes & models)
+
+A single map of what's stored where — useful for backups, disk sizing, moving weights, and air-gap staging.
+
+### Filesystem layout (on each box)
+
+| Path | What | Notes |
+|---|---|---|
+| `/opt/stacks/<stack>/compose.yaml` | The per-service Dockge stacks (one dir per service) | Dockge watches `/opt/stacks`; edit/start/stop per stack |
+| `/opt/stacks/<stack>/.env` | Per-stack env (secrets + site values) | Root-only `0600`; same node-aware `.env` in every stack dir |
+| `/opt/stacks/<stack>/fips_off` | Host-FIPS carve-out file (content `0`) | Only in stacks that bind-mount it (`vllm-*`, `docling`) |
+| `/opt/stacks/switch-model.sh` | System 1 chat-model switch script | Backs `it-ai model …` |
+| `/opt/it/docker/docker-compose.consolidated.yaml` | Dormant single-file fallback (whole node in one project) | Break-glass only; shares the same volumes |
+| `/opt/it/docker/{.env,fips_off,grafana/,.oikb.yaml}` | Assets for the fallback compose | Mirrors the per-stack assets |
+| `/etc/stig-build/site.yml` | Per-box overrides (out of git, root-only) | IPs, oikb keys, pinned DB password |
+| `/etc/stig-build/pgvector.pw` | Auto-generated pgvector password (System 1) | `0600` root; generated on first run |
+| `/etc/stig-build/mlflow_db.pw` | Auto-generated MLflow DB password (System 2) | `0600` root; generated on first run |
+| `/var/lib/docker/volumes/<name>/_data` | Physical location of every named volume below | Default `local` driver; this is where the model weights + DBs actually sit on disk |
+
+### Named volumes — System 1 (`dev-ai1`)
+
+| Volume | Contents | Mounted in | Container path |
+|---|---|---|---|
+| `vllm` | **gpt-oss-120b** weights (default chat model, ~61 GB) | `vllm-gptoss` | `/gpt120b` |
+| `granite32b` | **granite-4.1-30b** weights (switchable alternate) | `vllm-granite` | `/granite30b` |
+| `encodings` | tiktoken vocab (`o200k_base`, `cl100k_base`) for gpt-oss | `vllm-gptoss` | `/etc/encodings` |
+| `pgvector-data` | Postgres + pgvector data (RAG vector store) | `pgvector` | `/var/lib/postgresql/data` |
+| `open-webui` | Open WebUI app data (users, chats, uploads, settings) | `open-webui` | `/app/backend/data` |
+| `redis-data` | Redis persistence (websocket/cache coordination) | `redis` | `/data` |
+
+### Named volumes — System 2 (`dev-ai2`)
+
+| Volume | Contents | Mounted in | Container path |
+|---|---|---|---|
+| `granite-embed` | **granite-embedding-small-english-r2** weights | `vllm-embed`, `hfcli` | `/granite-embed` |
+| `granite-vision` | **granite-vision-4.1-4b** weights | `vllm-vision`, `hfcli` | `/granite-vision` |
+| `lgtm-data` | Grafana/LGTM state (dashboards, TSDB) | `grafana-otel` | `/data` |
+| `mlflow-artifacts` | MLflow artifact store | `mlflow` | `/mlflow/artifacts` |
+| `postgres_mlflow_data` | MLflow's internal Postgres data | `mlflow` (`mlflow-db`) | `/var/lib/postgresql/data` |
+| `openwiki-out` | OpenWiki generated output | `openwiki` | `/work` |
+
+> **docling has no named volume.** The `docling-serve` image ships its OCR/layout/tableformer models **baked in** (`--artifacts-path`, runtime downloads disabled), so the models live inside the image at `/opt/app-root/src/.cache/docling/models` and travel **with the image** — nothing to back up or stage separately (bring it across air-gap with `it-model-export --images`).
+
+### Model → volume → served-name (vLLM services)
+
+| Model | Volume | Container path | vLLM `--served-model-name` | Host port |
+|---|---|---|---|---|
+| gpt-oss-120b | `vllm` | `/gpt120b` | `gpt-oss-120b` | `:8000` (S1) |
+| granite-4.1-30b | `granite32b` | `/granite30b` | `granite-4.1-30b` | `:8001` (S1, alternate) |
+| granite-embedding-small-english-r2 | `granite-embed` | `/granite-embed` | `granite-embedding-small-english-r2` | `:8002` (S2) |
+| granite-vision-4.1-4b | `granite-vision` | `/granite-vision` | `granite-vision-4.1-4b` | `:8003` (S2) |
+
+Weights are downloaded into these volumes by the opt-in fetch (`ai_model_fetch`) or on demand with `hfcli` (`it-ai run hfcli hf download <repo> --local-dir /<mount>`). Because the volumes are **external** (declared `external: true`), `docker compose down -v` never deletes them — the weights and DBs survive teardown/recreate. To inspect or copy a volume on the box:
+
+```bash
+sudo docker volume inspect vllm                       # shows Mountpoint (…/vllm/_data)
+sudo du -sh /var/lib/docker/volumes/vllm/_data        # size on disk
+sudo ls /var/lib/docker/volumes/granite32b/_data      # peek at the weights
+```
+
+For carrying weights to an air-gapped box, use `it-model-export` / `it-model-import` (they read/write these same volumes) — see [operate.md — Air-gap model transfer](operate.md#air-gap-gather-models-on-a-usb-install-on-the-fielded-box-it-model-export--it-model-import).
+
 ## Software list
 
 Software inventory for the two-node AI platform (IA / DCSA reference). Versions are pinned in the build (`group_vars/all.yml`, the compose files, the image Dockerfiles). Nodes: **S1** = System 1 (`dev-ai1`), **S2** = System 2 (`dev-ai2`).
