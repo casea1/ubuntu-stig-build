@@ -410,7 +410,7 @@ sudo nano /opt/it/site.yml           # edit the template the build placed here
 sudo tee /opt/it/site.yml >/dev/null <<'EOF'
 # --- System 1 example ---
 ai_system2_addr: "192.168.1.106"     # if dev-ai2 doesn't resolve by name
-ai_pgvector_password: "gelab_24"     # ONLY if reusing an already-initialised DB
+ai_pgvector_password: "<existing db password>"   # ONLY if reusing an already-initialised DB
 ai_model_fetch: true                 # download the models during the build
 ai_compose_deploy: true              # start the stack during the build
 # firewall: open the ports this node serves (see docs/site.yml.example)

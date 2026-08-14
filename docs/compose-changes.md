@@ -14,13 +14,13 @@ The originals carried live credentials in plain text:
 
 | Where | Original | Now |
 |---|---|---|
-| pgvector / Open WebUI DB | `POSTGRES_PASSWORD: gelab_24` | `${POSTGRES_PASSWORD:?set in .env}` |
-| Open WebUI session key | `WEBUI_SECRET_KEY: 0b64edef…` | `${WEBUI_SECRET_KEY:?set in .env}` |
-| MLflow DB | `mlflow-pw` | `${MLFLOW_DB_PASSWORD}` |
+| pgvector / Open WebUI DB | a literal password | `${POSTGRES_PASSWORD:?set in .env}` |
+| Open WebUI session key | a literal 64-char key | `${WEBUI_SECRET_KEY:?set in .env}` |
+| MLflow DB | a literal password | `${MLFLOW_DB_PASSWORD}` |
 
 These files live in a public git repo, so a committed password is published permanently. Passwords are now **auto-generated on first run** and persisted root-only under `/etc/stig-build/*.pw`, then rendered into each stack's `.env` (mode `0600`). Nothing to type, nothing to leak. The `:?set in .env` form makes compose **fail loudly** if the value is missing rather than starting with an empty password.
 
-> **If you are migrating a box that ran the originals:** Postgres only applies `POSTGRES_PASSWORD` when it initialises an *empty* volume. An existing volume keeps `gelab_24`, and the new config will fail to authenticate. Either pin the old password in `site.yml` (`ai_pgvector_password`) or reinitialise the volume.
+> **If you are migrating a box that ran the originals:** Postgres only applies `POSTGRES_PASSWORD` when it initialises an *empty* volume. An existing volume keeps the **original** password, and the new config will fail to authenticate. Either pin the old password in `site.yml` (`ai_pgvector_password`) or reinitialise the volume.
 
 ### 2. Hardcoded addresses became variables
 
