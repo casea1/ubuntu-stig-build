@@ -7,6 +7,7 @@ The two-node, self-hosted AI stack: what runs, where, and on which box.
 | Build steps | [build.md — Track B](build.md#track-b-ai-servers-two-node) |
 | Day-to-day ops | [operate.md](operate.md#ai-stack-quick-reference) |
 | Hardening / compliance | [compliance.md](compliance.md) |
+| Why the compose files differ from the originals | [compose-changes.md](compose-changes.md) |
 
 ## What it builds
 
@@ -63,7 +64,7 @@ All stacks on a node share:
 | `docling` | `:5001` | default | Document structure + OCR extraction |
 | `tika` | `:9998` | default | Text extraction (other file types) |
 | `grafana-otel` | `:3001` `:4317` `:4318` | default | Grafana + OTel monitoring |
-| `mlflow` | `:5000` | default | Experiment tracking + model registry |
+| `mlflow` | `:5000` | default | Experiment tracking + model registry (nginx-fronted; MLflow itself publishes nothing) |
 | `openwiki-view` | `:4321` | default | Browse the generated doc wiki |
 | `oikb` | `:8081` | `oikb` | Knowledge-base sync → System 1 |
 | `hfcli` | — | `tools` | Download models into volumes |
@@ -76,7 +77,7 @@ Most stacks run a container of the same name. The exceptions, for `docker logs`:
 | `vllm-gptoss` | `vllm-server` |
 | `docling` | `docling-serve` |
 | `grafana-otel` | `open-webui-lgtm` |
-| `mlflow` | `mlflow` + `mlflow-db` |
+| `mlflow` | `mlflow` + `mlflow-db` + `mlflow-proxy` |
 | `openwiki-view` | `openwiki-view` + `openwiki-view-proxy` |
 
 ### Why some stacks show "n/a"
