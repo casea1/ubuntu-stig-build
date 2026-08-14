@@ -34,9 +34,11 @@ MODELS="$(printf '%s\n' \
   'granite32b	ibm-granite/granite-4.1-30b	system1' \
   'granite-embed	ibm-granite/granite-embedding-small-english-r2	system2' \
   'granite-vision	ibm-granite/granite-vision-4.1-4b	system2')"
-# HF-cache models: loaded LOCALLY by a service via transformers/HF_HOME (not vLLM),
-# so they travel in HF-cache format, not flat. volume<TAB>repo<TAB>role
-HFCACHE_MODELS="$(printf '%s\n' \
+DOCLING_IMAGE="ghcr.io/docling-project/docling-serve-cu128:v1.24.0"
+DOCLING_ARTIFACTS="/opt/app-root/src/.cache/docling/models"
+# Docling models: staged with docling's own tool into docling's artifacts layout
+# (not vLLM, not an HF cache). volume<TAB>repo<TAB>role
+DOCLING_MODELS="$(printf '%s\n' \
   'docling-models	ibm-granite/granite-docling-258M	system2')"
 REGISTRY_IMAGES="$VLLM_IMAGE
 ghcr.io/open-webui/open-webui:v0.10.2
@@ -110,21 +112,27 @@ printf '%s\n' "$MODELS" | while IFS=$'\t' read -r vol repo mrole; do
   fi
 done
 
-# HF-cache models (e.g. docling's granite-docling VLM) -> downloaded in cache
-# format (HF_HOME) into hfcache/<volume>/, so the offline box can drop it into
-# that service's HF-cache volume as-is.
-echo ">> Downloading HF-cache models to $DEST/hfcache  (role: $ROLE)"
-printf '%s\n' "$HFCACHE_MODELS" | while IFS=$'\t' read -r vol repo mrole; do
+# Docling models -> staged with docling's own tool into docling's artifacts
+# layout inside dockmodels/<volume>/, so the offline box drops it straight into
+# docling's model volume. Mounting the empty per-model dir also seeds it with the
+# image's baked-in docling models (Docker volume seeding), so the volume is
+# COMPLETE (standard models + granite-docling), not granite-only.
+echo ">> Staging docling models to $DEST/dockmodels  (role: $ROLE)"
+printf '%s\n' "$DOCLING_MODELS" | while IFS=$'\t' read -r vol repo mrole; do
   [ -n "$vol" ] || continue
   [ "$ROLE" = all ] || [ "$ROLE" = "$mrole" ] || continue
-  d="$DEST/hfcache/$vol"; mkdir -p "$d"
-  echo "   -- $repo -> hfcache/$vol"
+  echo "   -- $repo -> dockmodels/$vol"
+  docker volume rm "_exp_$vol" >/dev/null 2>&1 || true
+  # Seed a scratch volume with baked-in models + add the repo, then copy it out.
   if docker run --rm ${TOKEN:+-e HF_TOKEN=$TOKEN} $FIPS_MNT \
-       -e HF_HOME=/cache -v "$d":/cache --entrypoint hf "$VLLM_IMAGE" \
-       download "$repo" >/dev/null; then
-    echo "HFCACHE	$vol	$repo" >> "$MAN"
-    echo "   ok ($(du -sh "$d" 2>/dev/null | cut -f1))"
-  else echo "   FETCH FAILED: $repo"; fi
+       -v "_exp_$vol":"$DOCLING_ARTIFACTS" --entrypoint docling-tools \
+       "$DOCLING_IMAGE" models download-hf-repo "$repo" >/dev/null 2>&1; then
+    mp="$(docker volume inspect -f '{{.Mountpoint}}' "_exp_$vol")"
+    d="$DEST/dockmodels/$vol"; mkdir -p "$d"
+    cp -a "$mp"/. "$d"/ && echo "DOCLING	$vol	$repo" >> "$MAN" \
+      && echo "   ok ($(du -sh "$d" 2>/dev/null | cut -f1))" || echo "   copy failed: $vol"
+    docker volume rm "_exp_$vol" >/dev/null 2>&1 || true
+  else echo "   STAGE FAILED: $repo"; docker volume rm "_exp_$vol" >/dev/null 2>&1 || true; fi
 done
 
 # Encodings (only needed by nodes that run gpt-oss, i.e. System 1 / all)

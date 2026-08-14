@@ -7,7 +7,7 @@ name: docling
 networks:
   oi: { external: true }
 volumes:
-  docling-models: { external: true }        # HF cache -> persists granite-docling-258M
+  docling-models: { external: true }        # docling artifacts path -> baked-in models + granite-docling
 services:
   docling-serve:
     image: ghcr.io/docling-project/docling-serve-cu128:v1.24.0
@@ -18,23 +18,21 @@ services:
       # and abort()s on the FIPS host (fips_enabled=1) -> SIGABRT/exit 134 crash-loop.
       # Same host-FIPS carve-out the vLLM services use; the HOST stays FIPS.
       - ./fips_off:/proc/sys/crypto/fips_enabled:ro
-      # Persist the granite-docling VLM weights (downloaded once; survives recreate;
-      # captured to USB for air-gap by it-model-export). Mounted as HF_HOME below.
-      - docling-models:/opt/hf-cache
+      # Persist docling's model artifacts. This image ships its standard models
+      # here and runs with --artifacts-path (runtime downloads DISABLED), so the
+      # granite-docling-258M VLM must be present in this dir. Mounting an empty
+      # named volume here seeds it with the image's baked-in models on first run;
+      # ai_compose then adds granite-docling via `docling-tools` (see the role).
+      # Survives recreate; captured to USB for air-gap by it-model-export.
+      - docling-models:/opt/app-root/src/.cache/docling/models
     environment:
       - DOCLING_SERVE_MAX_SYNC_WAIT=6000
       - DOCLING_SERVE_ENABLE_UI=false
       - OMP_NUM_THREADS=4
       - UVICORN_WORKERS=1
-      # ---- granite-docling-258M VLM (runs locally on this GPU) ----
       # granite_docling is docling-serve's default VLM preset; select the VLM
-      # pipeline per request (or set it as the client default in Open WebUI).
+      # pipeline per request. Weights come from the artifacts dir above.
       - DOCLING_SERVE_DEFAULT_VLM_PRESET=granite_docling
-      - DOCLING_SERVE_LOAD_MODELS_AT_BOOT=true
-      # transformers cache -> the persisted volume; OFFLINE=1 on an air-gapped box
-      # (weights pre-staged) so docling never reaches out to huggingface.co.
-      - HF_HOME=/opt/hf-cache
-      - HF_HUB_OFFLINE=${DOCLING_HF_OFFLINE:-0}
     networks: [oi]
     restart: unless-stopped
     deploy:

@@ -95,6 +95,27 @@
     - (_ai_peer_addr | default('')) | length > 0
     - (_ai_peer_addr | string)[0] in '0123456789'
 
+- name: "AI-COMPOSE | Stat the per-stack fips_off paths (detect a stray dir from an aborted docker mount)"
+  # Docker auto-creates a bind-mount SOURCE as a directory when the path doesn't
+  # exist yet. If someone ran `docker run -v /opt/stacks/<stack>/fips_off:...`
+  # before this stack dir existed, a stray fips_off/ DIRECTORY is left behind and
+  # the copy below fails ("can not use content with a dir as dest"). Detect + clear.
+  ansible.builtin.stat:
+    path: "{{ dockge_stacks_dir }}/{{ item }}/fips_off"
+  register: _fips_off_stat
+  loop: "{{ ai_stacks_need_fips[ai_node_role] | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: "AI-COMPOSE | Remove any stray fips_off DIRECTORY (should be a file)"
+  ansible.builtin.file:
+    path: "{{ item.stat.path }}"
+    state: absent
+  loop: "{{ _fips_off_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stat.exists and item.stat.isdir
+
 - name: "AI-COMPOSE | Drop the non-FIPS override file into each stack that mounts it"
   # The host runs FIPS (kernel fips_enabled=1), but the vLLM / OpenCV-bearing
   # images ship no FIPS OpenSSL provider, so their DRBG can't init and they
@@ -342,25 +363,26 @@
     - ai_model_fetch | default(false) | bool
     - "'encodings' in (ai_compose_volumes[ai_node_role] | default([]))"
 
-- name: "AI-COMPOSE | Pre-stage the docling VLM (granite-docling) into its HF-cache volume (System 2, opt-in)"
-  # Docling runs granite-docling-258M LOCALLY (its default `granite_docling` VLM
-  # preset). It loads the model via transformers from HF_HOME, so we download it
-  # in HF-CACHE format (NO --local-dir) into the docling-models volume that the
-  # docling stack mounts at HF_HOME=/opt/hf-cache -> the weights are present + the
-  # box can run offline (HF_HUB_OFFLINE=1). Idempotent: skips if the model dir is
-  # already in the cache. fips_off is required for TLS on the FIPS host.
+- name: "AI-COMPOSE | Pre-stage the docling VLM (granite-docling) into the artifacts volume (System 2, opt-in)"
+  # This docling image runs with --artifacts-path (runtime model downloads
+  # DISABLED) and resolves models from /opt/app-root/src/.cache/docling/models in
+  # docling's own layout (ibm-granite--granite-docling-258M), NOT an HF cache. So
+  # we add it with docling's own tool. Mounting the (empty) docling-models volume
+  # at that path seeds it with the image's baked-in models first (Docker volume
+  # seeding); `docling-tools models download-hf-repo` then adds granite-docling.
+  # Idempotent: docling-tools skips a repo already present. fips_off is required
+  # (the image's OpenCV OpenSSL abort()s on the FIPS host without it).
   ansible.builtin.command:
     cmd: >-
       docker run --rm
       {{ ('-e HF_TOKEN=' ~ ai_hf_token) if (ai_hf_token | default('') | length > 0) else '' }}
-      -e HF_HOME=/cache
-      -v {{ ai_docling_models_volume }}:/cache
+      -v {{ ai_docling_models_volume }}:/opt/app-root/src/.cache/docling/models
       -v {{ ai_compose_dir }}/fips_off:/proc/sys/crypto/fips_enabled:ro
-      --entrypoint sh
-      {{ ai_vllm_image }}
-      -c 'test -d /cache/hub/models--ibm-granite--granite-docling-258M && echo SKIP || (hf download {{ ai_docling_vlm_repo }} && echo FETCHED)'
+      --entrypoint docling-tools
+      {{ ai_docling_image }}
+      models download-hf-repo {{ ai_docling_vlm_repo }}
   register: _docling_vlm_fetch
-  changed_when: "'FETCHED' in (_docling_vlm_fetch.stdout | default(''))"
+  changed_when: "'download' in (_docling_vlm_fetch.stdout | default('') | lower) or 'download' in (_docling_vlm_fetch.stderr | default('') | lower)"
   no_log: true
   when:
     - ai_node_role == 'system2'

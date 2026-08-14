@@ -76,7 +76,7 @@ The stack is split into **one Dockge stack per service**. The `ai_compose` role 
 |---|---|---|---|---|
 | `vllm-embed` | `vllm-embed` | `:8002` | default | RAG embeddings |
 | `vllm-vision` | `vllm-vision` | `:8003` | default | Vision / image understanding |
-| `docling` | `docling-serve` | `:5001` | default | Document structure/OCR extraction; also runs the **granite-docling-258M VLM** locally on the GPU (docling's default `granite_docling` preset) for VLM conversion. Weights persist in the `docling-models` volume (its HF cache). |
+| `docling` | `docling-serve` | `:5001` | default | Document structure/OCR extraction; also runs the **granite-docling-258M VLM** locally on the GPU (docling's default `granite_docling` preset) for VLM conversion. Models persist in the `docling-models` volume (docling's artifacts path); granite-docling is added via `docling-tools` (runtime downloads are disabled). |
 | `tika` | `tika` | `:9998` | default | Text extraction (other file types) |
 | `grafana-otel` | `lgtm` | `:3001` `:4317` `:4318` | default | Grafana + OTel monitoring |
 | `mlflow` | `mlflow-db` + `mlflow` | `:5000` | default | Experiment tracking + model registry (+ its Postgres) |
