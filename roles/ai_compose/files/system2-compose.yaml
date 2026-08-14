@@ -96,6 +96,10 @@ services:
       - DOCLING_SERVE_ENABLE_UI=false
       - OMP_NUM_THREADS=4
       - UVICORN_WORKERS=1
+      # Allow a network-hosted VLM + caller-supplied VLM config (both default
+      # false upstream). See the split docling stack for the preset caveat.
+      - DOCLING_SERVE_ENABLE_REMOTE_SERVICES=true
+      - DOCLING_SERVE_ALLOW_CUSTOM_VLM_CONFIG=true
     networks: [oi]
     restart: unless-stopped
     deploy:
