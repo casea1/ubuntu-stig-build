@@ -383,14 +383,42 @@
       models download-hf-repo {{ ai_docling_vlm_repo }}
   register: _docling_vlm_fetch
   changed_when: "'download' in (_docling_vlm_fetch.stdout | default('') | lower) or 'download' in (_docling_vlm_fetch.stderr | default('') | lower)"
+  # Best-effort: a hiccup adding the VLM must NOT fail the whole build. docling
+  # still serves (its baked-in models seed the volume on first `up`); the VLM
+  # pipeline just needs granite-docling, which can be added by hand afterwards.
+  failed_when: false
   no_log: true
   when:
     - ai_node_role == 'system2'
     - ai_model_fetch | default(false) | bool
 
+- name: "AI-COMPOSE | Note if the docling VLM pre-stage did not succeed (non-fatal)"
+  ansible.builtin.debug:
+    msg: >-
+      granite-docling pre-stage exit={{ _docling_vlm_fetch.rc | default('n/a') }}.
+      If non-zero, add it once the docling stack is up (surfaces the real error):
+      sudo docker run --rm -v {{ ai_docling_models_volume }}:/opt/app-root/src/.cache/docling/models
+      -v {{ ai_compose_dir }}/fips_off:/proc/sys/crypto/fips_enabled:ro --entrypoint docling-tools
+      {{ ai_docling_image }} models download-hf-repo {{ ai_docling_vlm_repo }}
+  when:
+    - ai_node_role == 'system2'
+    - ai_model_fetch | default(false) | bool
+    - (_docling_vlm_fetch.rc | default(0)) != 0
+
 - name: "AI-COMPOSE | Deploy all stacks (opt-in; needs the model staged + internet for pull)"
   when: ai_compose_deploy | default(false) | bool
   block:
+    - name: "AI-COMPOSE | Retire the pre-split consolidated project before deploying the per-service stacks"
+      # The pre-split stack ran as ONE compose project (ai-system1 / ai-system2).
+      # Its containers use the SAME explicit container_names + host ports as the
+      # new per-service stacks, so `up` collides ("name already in use") until the
+      # old project is torn down. Idempotent no-op once it's gone. Keeps volumes.
+      ansible.builtin.command:
+        cmd: "docker compose -p ai-{{ ai_node_role }} down --remove-orphans"
+      register: _retire_old
+      changed_when: "'Removing' in (_retire_old.stderr | default('')) or 'Stopping' in (_retire_old.stderr | default(''))"
+      failed_when: false
+
     - name: "AI-COMPOSE | docker compose pull + up -d per stack"
       # Each per-service stack is its own compose project. `pull
       # --ignore-pull-failures` tolerates the local-only custom images (oikb/
@@ -404,6 +432,12 @@
         chdir: "{{ dockge_stacks_dir }}/{{ item }}"
       register: _compose_up
       changed_when: "'Started' in (_compose_up.stderr | default('')) or 'Created' in (_compose_up.stderr | default('')) or 'Recreated' in (_compose_up.stderr | default(''))"
+      # A stack whose services are ALL behind a profile (vllm-granite, oikb when
+      # no key, hfcli/openwiki) has nothing to start on a plain `up` -> compose
+      # exits non-zero with "no service selected". That's expected, not an error.
+      failed_when:
+        - _compose_up.rc != 0
+        - "'no service selected' not in (_compose_up.stderr | default(''))"
       loop: "{{ ai_stacks_by_role[ai_node_role] | default([]) }}"
       loop_control:
         label: "{{ item }}"
