@@ -861,11 +861,6 @@ dockge_stacks_dir: "/opt/stacks"
 ai_firewall_allow_ports:
   - { port: 443, proto: tcp, rule: allow }     # reverse proxy (TLS) -> Open WebUI :3000
   - { port: 80,  proto: tcp, rule: allow }     # reverse proxy (HTTP redirect to 443)
-  # ---- OpenWiki served viewer (dev-ai2 openwiki stack, :4321), restricted to the
-  # admin LANs. ufw allows multiple source rules per port, so both are honoured.
-  # (Harmless no-op on dev-ai1 -- nothing listens on 4321 there.)
-  - { port: 4321, proto: tcp, rule: allow, from: "192.168.1.0/24" }   # OpenWiki, LAN 1
-  - { port: 4321, proto: tcp, rule: allow, from: "10.10.99.0/24" }    # OpenWiki, LAN 2
   # ---- System 1 (UI/text-gen) also exposes, to the peer node only: ----
   # - { port: 8000, proto: tcp, rule: allow, from: "10.0.0.0/24" }   # vLLM (text gen)
   # - { port: 5432, proto: tcp, rule: allow, from: "10.0.0.0/24" }   # pgvector
@@ -958,23 +953,14 @@ ai_oikb_gitlab_token: ""
 # model weights / DB survive `down -v`). Empty list = role creates none.
 ai_compose_volumes:
   system1: [vllm, granite32b, encodings, pgvector-data, open-webui, redis-data]
-  system2: [granite-embed, granite-vision, docling-models, lgtm-data, mlflow-artifacts, postgres_mlflow_data, openwiki-out]
+  system2: [granite-embed, granite-vision, lgtm-data, mlflow-artifacts, postgres_mlflow_data, openwiki-out]
 
-# ---- Docling VLM: granite-docling-258M (System 2) ---------------------------
-# Docling-serve's DEFAULT VLM preset is `granite_docling`, and the -cu128 image
-# runs it LOCALLY on the System-2 GPU (a tiny 258M vision-language model that
-# converts a page image straight to DocTags) -- no separate vLLM server needed.
-# This image runs with --artifacts-path, i.e. runtime model downloads DISABLED,
-# and resolves models from /opt/app-root/src/.cache/docling/models in DOCLING'S
-# OWN layout (ibm-granite--granite-docling-258M), not an HF cache. So we persist
-# that dir as the `docling-models` volume (mounting the empty volume seeds it with
-# the image's baked-in models) and add granite-docling with docling's own tool
-# (`docling-tools models download-hf-repo`). Downloads-disabled = inherently
-# air-gap-safe once the volume is populated. No revision/tied-weights workaround
-# (that's a vLLM-only quirk; docling loads it via transformers).
-ai_docling_vlm_repo: "ibm-granite/granite-docling-258M"
-ai_docling_models_volume: "docling-models"
-ai_docling_image: "ghcr.io/docling-project/docling-serve-cu128:v1.24.0"   # keep in step with the docling stack
+# NOTE (docling VLM / granite-docling-258M): NOT wired in. The -cu128 docling
+# image runs with --artifacts-path (runtime downloads DISABLED) and ships its
+# models baked in; mounting an external volume over that cache HIDES the built-in
+# OCR/layout/tableformer models and docling crash-loops. Adding granite-docling
+# would require a CUSTOM docling image with the weights baked in -- a deliberate
+# future task, not attempted here. docling runs fine on its baked-in models.
 
 # ---- Dockge-native per-service stacks (ai_compose) --------------------------
 # The stack is split into one directory PER SERVICE under dockge_stacks_dir

@@ -76,7 +76,7 @@ The stack is split into **one Dockge stack per service**. The `ai_compose` role 
 |---|---|---|---|---|
 | `vllm-embed` | `vllm-embed` | `:8002` | default | RAG embeddings |
 | `vllm-vision` | `vllm-vision` | `:8003` | default | Vision / image understanding |
-| `docling` | `docling-serve` | `:5001` | default | Document structure/OCR extraction; also runs the **granite-docling-258M VLM** locally on the GPU (docling's default `granite_docling` preset) for VLM conversion. Models persist in the `docling-models` volume (docling's artifacts path); granite-docling is added via `docling-tools` (runtime downloads are disabled). |
+| `docling` | `docling-serve` | `:5001` | default | Document structure/OCR extraction. Uses the image's baked-in models (`--artifacts-path`, runtime downloads disabled); no model volume is mounted. The granite-docling VLM is **not** wired in — it would need a custom docling image with the weights baked in (see note below). |
 | `tika` | `tika` | `:9998` | default | Text extraction (other file types) |
 | `grafana-otel` | `lgtm` | `:3001` `:4317` `:4318` | default | Grafana + OTel monitoring |
 | `mlflow` | `mlflow-db` + `mlflow` | `:5000` | default | Experiment tracking + model registry (+ its Postgres) |
@@ -164,7 +164,13 @@ Software inventory for the two-node AI platform (IA / DCSA reference). Versions 
 | granite-4.1-30b | repo main | IBM | Secondary text generation, switchable alternate (S1) |
 | granite-embedding-small-english-r2 | repo main | IBM | Text embeddings / RAG (S2) |
 | granite-vision-4.1-4b | repo main | IBM | Vision / document understanding (S2) |
-| granite-docling-258M | repo main | IBM | Docling VLM — page-image → DocTags conversion, runs **inside `docling-serve`** on the S2 GPU (S2) |
+
+> **granite-docling-258M (docling VLM) is not deployed.** The `-cu128` docling
+> image runs with `--artifacts-path` (runtime downloads disabled) and ships its
+> models baked in; mounting an external volume to add granite-docling hides the
+> image's built-in OCR/layout models and docling crash-loops. Adding the VLM
+> would require building a custom docling image with the weights baked in — a
+> future task. docling runs fine on its baked-in models for structure/OCR.
 
 > **System 1 chat models are alternates, one at a time:** gpt-oss-120B (default) or Granite-4.1-30B, served across System 1's two 48 GB GPUs (tensor-parallel). Switch with `it-ai model gpt-oss|granite`. See [operate.md](operate.md#switching-system-1s-chat-model-gpt-oss--granite-41-30b).
 

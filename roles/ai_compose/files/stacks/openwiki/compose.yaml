@@ -3,6 +3,12 @@
 # the `oi` network (extra_hosts resolves dev-ai1). Output persists in the
 # openwiki-out volume (/work). Run e.g.:
 #   cd /opt/stacks/openwiki && docker compose run --rm openwiki openwiki <args>
+#
+# NOTE: there is intentionally no served-viewer daemon here. `openwiki serve`
+# is broken in this image (upstream langchain dep mismatch -- crashes on
+# `DEFAULT_LANGSMITH_GATEWAY` import), and its viewer also loads JS/CSS from a
+# public CDN (won't render air-gapped). Generate the wiki here and serve the
+# static output elsewhere if a browsable view is needed.
 name: openwiki
 networks:
   oi: { external: true }
@@ -21,31 +27,3 @@ services:
     volumes:
       - openwiki-out:/work
     networks: [oi]
-
-  # ---- Served viewer (daemon) + LAN forwarder --------------------------------
-  # `openwiki serve` binds 127.0.0.1 ONLY (by design), so it's unreachable from
-  # the network on its own. openwiki-serve runs the viewer on loopback; the
-  # openwiki-proxy sidecar shares its network namespace and socat-forwards
-  # 0.0.0.0:8080 -> 127.0.0.1:4321, and the published port exposes it. Reach it at
-  # http://<dev-ai2>:4321 (restrict the source in ai_firewall_allow_ports).
-  # NOTE: the viewer pulls its JS/CSS from a public CDN -> needs internet to
-  # render (fine in the lab; the graph UI won't draw on an air-gapped box).
-  openwiki-serve:
-    image: openwiki:latest
-    container_name: openwiki-serve
-    working_dir: /work
-    command: ["sh", "-c", "mkdir -p openwiki && exec openwiki serve --no-open --port 4321"]
-    volumes:
-      - openwiki-out:/work
-    ports:
-      - "4321:8080"            # host 4321 -> socat (:8080) -> openwiki serve (127.0.0.1:4321)
-    networks: [oi]
-    restart: unless-stopped
-
-  openwiki-proxy:
-    image: alpine/socat:latest   # pin a tag before air-gapping (public socat image)
-    container_name: openwiki-proxy
-    network_mode: "service:openwiki-serve"   # share netns so 127.0.0.1 reaches the viewer
-    command: ["TCP-LISTEN:8080,fork,reuseaddr", "TCP:127.0.0.1:4321"]
-    depends_on: [openwiki-serve]
-    restart: unless-stopped

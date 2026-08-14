@@ -1,13 +1,13 @@
 # System 2 -- Docling (GPU document extraction, :5001). Own stack.
 # Default extraction engine for Open WebUI (Tika is the fallback stack).
-# Also runs the granite-docling-258M VLM locally on the GPU (docling's default
-# `granite_docling` preset) for VLM-based conversion -> DocTags. Its weights
-# persist in the docling-models volume (docling's HF cache).
+# Uses the image's baked-in models (this image ships with --artifacts-path and
+# runtime downloads DISABLED); no external model volume is mounted -- mounting an
+# empty volume over the cache HIDES those built-in models and docling crash-loops
+# (RapidOCR/layout/tableformer FileNotFoundError). The granite-docling VLM would
+# need a custom image with the weights baked in; not wired in here.
 name: docling
 networks:
   oi: { external: true }
-volumes:
-  docling-models: { external: true }        # docling artifacts path -> baked-in models + granite-docling
 services:
   docling-serve:
     image: ghcr.io/docling-project/docling-serve-cu128:v1.24.0
@@ -18,21 +18,11 @@ services:
       # and abort()s on the FIPS host (fips_enabled=1) -> SIGABRT/exit 134 crash-loop.
       # Same host-FIPS carve-out the vLLM services use; the HOST stays FIPS.
       - ./fips_off:/proc/sys/crypto/fips_enabled:ro
-      # Persist docling's model artifacts. This image ships its standard models
-      # here and runs with --artifacts-path (runtime downloads DISABLED), so the
-      # granite-docling-258M VLM must be present in this dir. Mounting an empty
-      # named volume here seeds it with the image's baked-in models on first run;
-      # ai_compose then adds granite-docling via `docling-tools` (see the role).
-      # Survives recreate; captured to USB for air-gap by it-model-export.
-      - docling-models:/opt/app-root/src/.cache/docling/models
     environment:
       - DOCLING_SERVE_MAX_SYNC_WAIT=6000
       - DOCLING_SERVE_ENABLE_UI=false
       - OMP_NUM_THREADS=4
       - UVICORN_WORKERS=1
-      # granite_docling is docling-serve's default VLM preset; select the VLM
-      # pipeline per request. Weights come from the artifacts dir above.
-      - DOCLING_SERVE_DEFAULT_VLM_PRESET=granite_docling
     networks: [oi]
     restart: unless-stopped
     deploy:

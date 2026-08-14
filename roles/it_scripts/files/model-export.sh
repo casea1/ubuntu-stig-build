@@ -34,12 +34,9 @@ MODELS="$(printf '%s\n' \
   'granite32b	ibm-granite/granite-4.1-30b	system1' \
   'granite-embed	ibm-granite/granite-embedding-small-english-r2	system2' \
   'granite-vision	ibm-granite/granite-vision-4.1-4b	system2')"
-DOCLING_IMAGE="ghcr.io/docling-project/docling-serve-cu128:v1.24.0"
-DOCLING_ARTIFACTS="/opt/app-root/src/.cache/docling/models"
-# Docling models: staged with docling's own tool into docling's artifacts layout
-# (not vLLM, not an HF cache). volume<TAB>repo<TAB>role
-DOCLING_MODELS="$(printf '%s\n' \
-  'docling-models	ibm-granite/granite-docling-258M	system2')"
+# Docling ships its models baked into the image (--artifacts-path, downloads
+# disabled), so nothing to stage separately -- the docling image (below) carries
+# the models. Bring it across with --images.
 REGISTRY_IMAGES="$VLLM_IMAGE
 ghcr.io/open-webui/open-webui:v0.10.2
 pgvector/pgvector:pg16-trixie
@@ -47,8 +44,7 @@ redis:7.2.14-bookworm
 ghcr.io/docling-project/docling-serve-cu128:v1.24.0
 apache/tika:3.3.1.0
 grafana/otel-lgtm:0.29.0
-louislam/dockge:1
-alpine/socat:latest"
+louislam/dockge:1"
 CUSTOM_IMAGES="oikb:latest
 hfcli:latest
 mlflow:v3.15.1-psycopg2
@@ -113,34 +109,9 @@ printf '%s\n' "$MODELS" | while IFS=$'\t' read -r vol repo mrole; do
   fi
 done
 
-# Docling models -> staged with docling's own tool into docling's artifacts
-# layout inside dockmodels/<volume>/, so the offline box drops it straight into
-# docling's model volume. Mounting the empty per-model dir also seeds it with the
-# image's baked-in docling models (Docker volume seeding), so the volume is
-# COMPLETE (standard models + granite-docling), not granite-only.
-echo ">> Staging docling models to $DEST/dockmodels  (role: $ROLE)"
-printf '%s\n' "$DOCLING_MODELS" | while IFS=$'\t' read -r vol repo mrole; do
-  [ -n "$vol" ] || continue
-  [ "$ROLE" = all ] || [ "$ROLE" = "$mrole" ] || continue
-  echo "   -- $repo -> dockmodels/$vol"
-  docker volume rm "_exp_$vol" >/dev/null 2>&1 || true
-  # Seed the scratch volume with the image's BUILT-IN docling models (RapidOCR/
-  # layout/tableformer/...) -- mounting the volume over the cache hides them, and
-  # docling runs with downloads disabled, so they must travel too. Copy them from
-  # the image (volume mounted at /vol so the image path is visible).
-  docker run --rm --entrypoint sh -v "_exp_$vol":/vol "$DOCLING_IMAGE" \
-    -c 'cp -an /opt/app-root/src/.cache/docling/models/. /vol/ 2>/dev/null' >/dev/null 2>&1 || true
-  # Then add the VLM repo into the same volume (mounted at the real cache path).
-  if docker run --rm ${TOKEN:+-e HF_TOKEN=$TOKEN} $FIPS_MNT \
-       -v "_exp_$vol":"$DOCLING_ARTIFACTS" --entrypoint docling-tools \
-       "$DOCLING_IMAGE" models download-hf-repo "$repo" >/dev/null 2>&1; then
-    mp="$(docker volume inspect -f '{{.Mountpoint}}' "_exp_$vol")"
-    d="$DEST/dockmodels/$vol"; mkdir -p "$d"
-    cp -a "$mp"/. "$d"/ && echo "DOCLING	$vol	$repo" >> "$MAN" \
-      && echo "   ok ($(du -sh "$d" 2>/dev/null | cut -f1))" || echo "   copy failed: $vol"
-    docker volume rm "_exp_$vol" >/dev/null 2>&1 || true
-  else echo "   STAGE FAILED: $repo"; docker volume rm "_exp_$vol" >/dev/null 2>&1 || true; fi
-done
+# Docling: no separate model staging. The docling image ships its models baked
+# in (--artifacts-path, runtime downloads disabled), so the models travel WITH
+# the image -- bring docling across with --images (it's in REGISTRY_IMAGES).
 
 # Encodings (only needed by nodes that run gpt-oss, i.e. System 1 / all)
 if [ "$ROLE" = all ] || [ "$ROLE" = system1 ]; then

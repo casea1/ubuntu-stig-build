@@ -18,7 +18,6 @@ networks:
 volumes:
   granite-embed: { external: true }        # granite-embedding-small-english-r2 weights
   granite-vision: { external: true }       # granite-vision-4.1-4b weights
-  docling-models: { external: true }       # docling HF cache (granite-docling-258M VLM)
   lgtm-data: { external: true }            # Grafana/LGTM state (dashboards, TSDB)
   mlflow-artifacts: { external: true }     # MLflow artifact store
   postgres_mlflow_data: { external: true } # MLflow's internal Postgres data
@@ -88,18 +87,15 @@ services:
       # docling bundles OpenCV, whose vendored OpenSSL 1.1.1k runs a FIPS selftest
       # and abort()s on the FIPS host (fips_enabled=1) -> SIGABRT/exit 134 crash-loop.
       # Same host-FIPS carve-out the vLLM services use; the HOST stays FIPS.
+      # No model volume is mounted: this image ships its models under --artifacts-path
+      # with runtime downloads DISABLED, and mounting an empty volume over that cache
+      # HIDES the built-in models -> crash-loop. Uses the image's baked-in models.
       - ./fips_off:/proc/sys/crypto/fips_enabled:ro
-      # Persist docling's model artifacts (this image runs with --artifacts-path,
-      # runtime downloads disabled). Empty volume is seeded with the image's
-      # baked-in models on first run; ai_compose adds granite-docling-258M via
-      # `docling-tools`. Survives recreate.
-      - docling-models:/opt/app-root/src/.cache/docling/models
     environment:
       - DOCLING_SERVE_MAX_SYNC_WAIT=6000
       - DOCLING_SERVE_ENABLE_UI=false
       - OMP_NUM_THREADS=4
       - UVICORN_WORKERS=1
-      - DOCLING_SERVE_DEFAULT_VLM_PRESET=granite_docling
     networks: [oi]
     restart: unless-stopped
     deploy:
@@ -238,26 +234,6 @@ services:
     volumes:
       - openwiki-out:/work
     networks: [oi]
-
-  # Served viewer (daemon) + LAN forwarder -- openwiki serve binds 127.0.0.1 only,
-  # so socat bridges 0.0.0.0:8080 -> 127.0.0.1:4321. Reach it at http://<host>:4321
-  # (restrict the source in ai_firewall_allow_ports). Viewer needs internet (CDN).
-  openwiki-serve:
-    image: openwiki:latest
-    container_name: openwiki-serve
-    working_dir: /work
-    command: ["sh", "-c", "mkdir -p openwiki && exec openwiki serve --no-open --port 4321"]
-    volumes:
-      - openwiki-out:/work
-    ports:
-      - "4321:8080"
-    networks: [oi]
-    restart: unless-stopped
-
-  openwiki-proxy:
-    image: alpine/socat:latest
-    container_name: openwiki-proxy
-    network_mode: "service:openwiki-serve"
-    command: ["TCP-LISTEN:8080,fork,reuseaddr", "TCP:127.0.0.1:4321"]
-    depends_on: [openwiki-serve]
-    restart: unless-stopped
+    # NOTE: no served-viewer daemon -- `openwiki serve` is broken in this image
+    # (upstream langchain dep mismatch, crashes on DEFAULT_LANGSMITH_GATEWAY) and
+    # its viewer loads JS/CSS from a public CDN (won't render air-gapped).
