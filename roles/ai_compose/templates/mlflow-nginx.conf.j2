@@ -1,0 +1,59 @@
+# Managed by ansible (ai_compose) -- do not edit by hand.
+# Reverse proxy in front of MLflow. MLflow runs with --disable-security-middleware
+# and has NO authentication, so this allow-list is the only thing restricting it.
+# It has to live here rather than in ufw: Docker publishes container ports with its
+# own DNAT rules, which are evaluated BEFORE ufw's INPUT chain, so ufw cannot filter
+# a published port at all. The mlflow container no longer publishes 5000 -- only
+# this proxy does -- so every request is filtered here.
+user  nginx;
+worker_processes  auto;
+error_log  /var/log/nginx/error.log warn;
+pid        /var/run/nginx.pid;
+
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+    sendfile      on;
+    keepalive_timeout  65;
+
+    # MLflow artifact upload/download must not be capped.
+    client_max_body_size 0;
+
+    # Real client IPs reach this proxy because the daemon runs with
+    # userland-proxy:false (DNAT preserves the source address). If that is ever
+    # flipped to true, every request appears to come from the bridge gateway and
+    # the allow-list below would block everything -- check before changing it.
+    server {
+        listen 5000;
+        server_name _;
+
+{% for cidr in ai_mlflow_allow_cidrs | default([]) %}
+        allow {{ cidr }};
+{% endfor %}
+        deny  all;
+
+        location / {
+            proxy_pass http://mlflow:5000;
+            proxy_http_version 1.1;
+            proxy_set_header Host              $host;
+            proxy_set_header X-Real-IP         $remote_addr;
+            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_buffering off;
+            proxy_read_timeout 600s;
+            proxy_send_timeout 600s;
+        }
+
+        # Optional HTTP basic auth on top of the allow-list. It also applies to the
+        # MLflow *API*, so any client (mlflow python, CI) must send credentials --
+        # enable deliberately, not by default:
+        #   htpasswd -c /opt/stacks/mlflow/htpasswd <user>     # apache2-utils
+        # then mount it (compose) and uncomment:
+        #   auth_basic           "MLflow";
+        #   auth_basic_user_file /etc/nginx/htpasswd;
+    }
+}

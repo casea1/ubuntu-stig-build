@@ -1,5 +1,7 @@
 # System 2 -- MLflow tracking + model registry (:5000) with its own Postgres.
 # Both live here so depends_on can health-gate; only mlflow talks to mlflow-db.
+# MLflow has NO auth, and ufw cannot filter a published container port, so :5000
+# is published by the nginx proxy (source allow-list) and not by mlflow itself.
 name: mlflow
 networks:
   oi: { external: true }
@@ -27,7 +29,7 @@ services:
   mlflow:
     image: mlflow:v3.15.1-psycopg2      # built on the box by ansible (ai_compose)
     container_name: mlflow
-    ports: ["5000:5000"]
+    # No published port ON PURPOSE -- reachable only via mlflow-proxy below.
     command: >
       mlflow server
       --backend-store-uri postgresql://mlflow:${MLFLOW_DB_PASSWORD}@mlflow-db:5432/mlflow
@@ -44,3 +46,16 @@ services:
     restart: unless-stopped
     # If this ever crash-loops on a FIPS selftest, add the same fips_off mount
     # the vLLM/docling services use.
+
+  # Reverse proxy: the ONLY thing published on :5000. Enforces the source
+  # allow-list that ufw cannot (Docker's DNAT runs before ufw's INPUT chain).
+  # nginx.conf is rendered next to this file by ansible (ai_mlflow_allow_cidrs).
+  mlflow-proxy:
+    image: nginx:1.30.4-alpine
+    container_name: mlflow-proxy
+    ports: ["5000:5000"]
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on: [mlflow]
+    networks: [oi]
+    restart: unless-stopped

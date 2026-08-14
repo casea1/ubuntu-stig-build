@@ -44,7 +44,8 @@ redis:7.2.14-bookworm
 ghcr.io/docling-project/docling-serve-cu128:v1.24.0
 apache/tika:3.3.1.0
 grafana/otel-lgtm:0.29.0
-louislam/dockge:1"
+louislam/dockge:1
+nginx:1.30.4-alpine"
 CUSTOM_IMAGES="oikb:latest
 hfcli:latest
 mlflow:v3.15.1-psycopg2

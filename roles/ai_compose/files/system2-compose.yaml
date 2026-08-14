@@ -157,8 +157,7 @@ services:
   mlflow:
     image: mlflow:v3.15.1-psycopg2      # built on the box by ansible (ai_compose)
     container_name: mlflow
-    ports:
-      - "5000:5000"
+    # No published port -- reachable only through mlflow-proxy (see below).
     command: >
       mlflow server
       --backend-store-uri postgresql://mlflow:${MLFLOW_DB_PASSWORD}@mlflow-db:5432/mlflow
@@ -216,4 +215,14 @@ services:
     container_name: openwiki-view-proxy
     network_mode: "service:openwiki-view"
     depends_on: [openwiki-view]
+    restart: unless-stopped
+
+  mlflow-proxy:
+    image: nginx:1.30.4-alpine
+    container_name: mlflow-proxy
+    ports: ["5000:5000"]
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on: [mlflow]
+    networks: [oi]
     restart: unless-stopped

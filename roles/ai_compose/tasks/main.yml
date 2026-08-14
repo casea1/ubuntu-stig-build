@@ -224,6 +224,27 @@
     label: "{{ item }}"
   no_log: true
 
+- name: "AI-COMPOSE | Render the MLflow reverse-proxy nginx.conf (mlflow stack)"
+  # mlflow-proxy bind-mounts ./nginx.conf, so it must exist before `up` (else
+  # Docker creates a DIRECTORY there and nginx fails to start). Overwritten on
+  # each run so the allow-list tracks ai_mlflow_allow_cidrs.
+  ansible.builtin.template:
+    src: mlflow-nginx.conf.j2
+    dest: "{{ dockge_stacks_dir }}/mlflow/nginx.conf"
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "0640"
+  when: ai_node_role == 'system2'
+
+- name: "AI-COMPOSE | Fallback assets: MLflow nginx.conf (System 2)"
+  ansible.builtin.template:
+    src: mlflow-nginx.conf.j2
+    dest: "{{ ai_compose_dir }}/nginx.conf"
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "0640"
+  when: ai_node_role == 'system2'
+
 - name: "AI-COMPOSE | Render the oikb config skeleton (oikb stack; not overwritten on re-run)"
   # oikb (System 2) bind-mounts ./.oikb.yaml, so the file must exist before `up`
   # (else Docker creates a directory there). force:false keeps your edits.
