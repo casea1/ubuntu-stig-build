@@ -1,7 +1,5 @@
-# System 2 -- MLflow experiment tracking + model registry (:5000) and its
-# internal Postgres. Own stack -- both services live here (mlflow-db is only
-# talked to by mlflow, so keep them together for the depends_on healthcheck).
-# Password comes from .env (MLFLOW_DB_PASSWORD, auto-generated).
+# System 2 -- MLflow tracking + model registry (:5000) with its own Postgres.
+# Both live here so depends_on can health-gate; only mlflow talks to mlflow-db.
 name: mlflow
 networks:
   oi: { external: true }
@@ -44,6 +42,5 @@ services:
         condition: service_healthy
     networks: [oi]
     restart: unless-stopped
-    # NOTE (FIPS): if this container crash-loops with an OpenSSL/FIPS selftest
-    # error on the FIPS host, add the same carve-out the vLLM/docling services
-    # use:  volumes: - ./fips_off:/proc/sys/crypto/fips_enabled:ro   (host stays FIPS).
+    # If this ever crash-loops on a FIPS selftest, add the same fips_off mount
+    # the vLLM/docling services use.

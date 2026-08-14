@@ -1,16 +1,5 @@
-# System 2 -- Docling (GPU document extraction, :5001). Own stack.
-# Default extraction engine for Open WebUI (Tika is the fallback stack).
-#
-# Models: this image ships its OCR/layout/tableformer models BAKED IN and runs
-# with --artifacts-path (runtime downloads DISABLED), so no model volume is
-# mounted. Mounting a volume over the whole cache dir hides the built-in models
-# and docling crash-loops; if a model is ever added by hand, mount only its own
-# subdirectory, never the parent.
-#
-# VLM conversion (page image -> DocTags/markdown) is set up to call an EXTERNAL
-# model over the network rather than loading one locally -- System 2's single GPU
-# is already shared by docling, vllm-embed and vllm-vision. See the note on the
-# VLM preset below before enabling it.
+# System 2 -- Docling: GPU document extraction (:5001). Default extraction engine
+# for Open WebUI; Tika is the fallback. See docs/ai-stack.md.
 name: docling
 networks:
   oi: { external: true }
@@ -20,31 +9,22 @@ services:
     container_name: docling-serve
     ports: ["5001:5001"]
     volumes:
-      # docling bundles OpenCV, whose vendored OpenSSL 1.1.1k runs a FIPS selftest
-      # and abort()s on the FIPS host (fips_enabled=1) -> SIGABRT/exit 134 crash-loop.
-      # Same host-FIPS carve-out the vLLM services use; the HOST stays FIPS.
+      # This image's OpenCV aborts the FIPS selftest on the FIPS host. Host stays FIPS.
       - ./fips_off:/proc/sys/crypto/fips_enabled:ro
+      # NO model volume. Models are baked into the image and runtime downloads are
+      # off; mounting over the cache dir hides them and docling crash-loops. To add
+      # a model, mount its own subdir under .../docling/models, never the parent.
     environment:
       - DOCLING_SERVE_MAX_SYNC_WAIT=6000
       - DOCLING_SERVE_ENABLE_UI=false
       - OMP_NUM_THREADS=4
       - UVICORN_WORKERS=1
-      # Allow docling to call a VLM over the network, and to accept a
-      # caller-supplied VLM config. Both default to false upstream.
+      # Permit a network-hosted VLM (both default false upstream).
       - DOCLING_SERVE_ENABLE_REMOTE_SERVICES=true
       - DOCLING_SERVE_ALLOW_CUSTOM_VLM_CONFIG=true
-      # NOT SET ON PURPOSE -- `external_granite_vision` is NOT a built-in preset.
-      # docling's built-in names are the VlmModelType enum (granite_docling,
-      # granite_docling_vllm, granite_vision, granite_vision_vllm,
-      # granite_vision_ollama, smoldocling, glm_ocr, lightonocr, ...), and every
-      # built-in remote preset hardcodes a localhost URL, so none of them reach
-      # System 2's vllm-vision. To point docling at it, define a CUSTOM preset
-      # (json) and make it the default -- both containers are on the `oi`
-      # network, so vllm-vision resolves by name:
-      #   - DOCLING_SERVE_CUSTOM_VLM_PRESETS={"lab_granite_vision":{"url":"http://vllm-vision:8003/v1/chat/completions","params":{"model":"granite-vision-4.1-4b","max_tokens":4096},"timeout":90,"scale":2.0,"temperature":0.0,"response_format":"markdown"}}
-      #   - DOCLING_SERVE_DEFAULT_VLM_PRESET=lab_granite_vision
-      # Verify with a real VLM conversion before relying on it. Plain (non-VLM)
-      # extraction -- what Open WebUI uses -- is unaffected either way.
+      # VLM conversion is NOT configured. docling's built-in remote presets all
+      # hardcode localhost, so reaching vllm-vision needs a custom preset -- see
+      # docs/operate.md. Plain extraction (what Open WebUI uses) is unaffected.
     networks: [oi]
     restart: unless-stopped
     deploy:

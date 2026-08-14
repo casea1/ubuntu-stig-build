@@ -1,23 +1,14 @@
-# System 2 -- OpenWiki utility (generate a doc wiki from a repo). Does NOT
-# auto-start (`tools` profile). Own stack. Reaches System 1's chat endpoint over
-# the `oi` network (extra_hosts resolves dev-ai1). Output persists in the
-# openwiki-out volume (/work). Run e.g.:
+# System 2 -- OpenWiki generator. On-demand (`tools` profile; never auto-starts):
 #   cd /opt/stacks/openwiki && docker compose run --rm openwiki openwiki <args>
-#
-# This stack GENERATES only. To BROWSE the result on the LAN, see the separate
-# `openwiki-view` stack (:4321), which runs `openwiki visualize` behind nginx.
-# (There is no `openwiki serve` command -- it is `visualize`; an earlier attempt
-# at `serve` here was both the wrong verb and a broken openwiki build.)
+# Writes into the openwiki-out volume; browse it via the `openwiki-view` stack.
 name: openwiki
 networks:
   oi: { external: true }
 volumes:
   openwiki-out: { external: true }
 services:
-  # ---- On-demand generator (tools profile; does NOT auto-start) --------------
-  #   cd /opt/stacks/openwiki && docker compose run --rm openwiki openwiki <args>
   openwiki:
-    image: openwiki:latest      # built on the box by ansible (ai_compose)
+    image: openwiki:latest
     container_name: openwiki
     profiles: ["tools"]
     extra_hosts:
@@ -25,9 +16,8 @@ services:
     working_dir: /work
     volumes:
       - openwiki-out:/work
-    # Point openwiki at System 1's vLLM instead of api.openai.com. Values come
-    # from the rendered .env (ai_openwiki_* in group_vars); openwiki reads them
-    # straight from the environment, so there is no `openwiki auth` step.
+    # Use System 1's vLLM instead of api.openai.com. Read straight from the
+    # environment, so no `openwiki auth` step is needed.
     environment:
       OPENWIKI_PROVIDER: "${OPENWIKI_PROVIDER:-openai-compatible}"
       OPENAI_COMPATIBLE_BASE_URL: "${OPENAI_COMPATIBLE_BASE_URL:-http://dev-ai1:8000/v1}"

@@ -1,13 +1,7 @@
-# System 1 -- Open WebUI (the chat/RAG front end, :3000). Own stack.
-#
-# pgvector + redis are SEPARATE stacks now, so there is no compose-level
-# depends_on across them -- Open WebUI simply retries the DB/Redis connection on
-# boot until those stacks are up. Bring pgvector + redis up first (the recreate
-# command / it-ai start does this ordering for you). All three share the external
-# `oi` network, so `pgvector`, `redis`, and `chat-llm` resolve by name.
-#
-# Secrets/site values come from the sibling root-only `.env` (POSTGRES_PASSWORD,
-# WEBUI_SECRET_KEY, SYSTEM2_ADDR, ...). This file holds NO secrets.
+# System 1 -- Open WebUI: the chat/RAG front end (:3000).
+# pgvector and redis are separate stacks, so there is no depends_on -- start them
+# first (`it-ai up` does). Open WebUI retries until they appear. Values come from
+# the sibling root-only .env; no secrets live in this file.
 name: open-webui
 networks:
   oi: { external: true }
@@ -17,10 +11,7 @@ services:
   open-webui:
     image: ghcr.io/open-webui/open-webui:v0.10.2
     container_name: open-webui
-    # Resolve System 2 by its canonical name inside the container without host DNS:
-    # when SYSTEM2_ADDR is an IP, .env sets SYSTEM2_HOSTS_ENTRY=dev-ai2:<ip>; if it's
-    # already a name, this is a harmless localhost:127.0.0.1 no-op. (URLs below use
-    # ${SYSTEM2_ADDR} directly, so an IP address works with or without this line.)
+    # Resolves dev-ai2 in-container when SYSTEM2_ADDR is an IP; no-op otherwise.
     extra_hosts:
       - "${SYSTEM2_HOSTS_ENTRY:-localhost:127.0.0.1}"
     volumes:
@@ -31,22 +22,17 @@ services:
       VECTOR_DB: "pgvector"
       VECTOR_DB_URL: "postgresql://postgres:${POSTGRES_PASSWORD:?set in .env}@pgvector:5432/openwebui"
       ENV: "dev"
-      # ---- Chat models: local vLLM via the `chat-llm` alias (gpt-oss/Granite,
-      # switchable) + Granite VISION on System 2. Switching the local model needs
-      # no UI change. SYSTEM2_ADDR comes from .env (System 2's hostname/IP). ----
+      # Chat: local vLLM via the `chat-llm` alias (survives a model switch) + vision on S2.
       OPENAI_API_BASE_URLS: "http://chat-llm:8000/v1;http://${SYSTEM2_ADDR:?set in .env}:8003/v1"
       OPENAI_API_KEYS: "sk-noauth;sk-noauth"
-      # ---- RAG embeddings: Granite embedding vLLM on System 2 ----
+      # RAG embeddings (System 2)
       RAG_EMBEDDING_ENGINE: "openai"
       RAG_EMBEDDING_MODEL: "granite-embedding-small-english-r2"
       RAG_OPENAI_API_BASE_URL: "http://${SYSTEM2_ADDR:?set in .env}:8002/v1"
       RAG_OPENAI_API_KEY: "sk-noauth"
       RAG_EMBEDDING_BATCH_SIZE: "15"
-      # ---- RAG retrieval / chunking (the Admin -> Settings -> Documents panel) ----
-      # NOTE: these are Open WebUI *PersistentConfig* -- the env seeds them on a
-      # FRESH database (first boot) only. On a box whose DB already exists, the
-      # stored value wins and these are ignored; change them in the UI instead.
-      # See docs/operate.md (AI stack -> Open WebUI RAG defaults).
+      # RAG retrieval / chunking. PersistentConfig: these seed a FRESH database
+      # only -- on an existing box the stored value wins, so change them in the UI.
       ENABLE_RAG_HYBRID_SEARCH: "true"
       RAG_HYBRID_BM25_WEIGHT: "0.5"
       RAG_TOP_K: "3"
@@ -54,21 +40,17 @@ services:
       RAG_RELEVANCE_THRESHOLD: "0.0"
       CHUNK_SIZE: "2048"
       CHUNK_OVERLAP: "200"
-      # Optional external reranker (off by default). A cross-encoder reranker is
-      # NOT the embedding model; only enable this if System 2 serves a real rerank
-      # endpoint, then point these at it:
+      # Optional reranker -- needs a real rerank endpoint (NOT the embedding model):
       # RAG_RERANKING_ENGINE: "external"
       # RAG_RERANKING_MODEL: "<reranker-served-name>"
       # RAG_EXTERNAL_RERANKER_URL: "http://${SYSTEM2_ADDR}:8002/v1"
       # RAG_EXTERNAL_RERANKER_API_KEY: "sk-noauth"
-      # Optional: knowledge-base code execution. Runs code from KB content, so it's
-      # left OFF on a hardened box by default -- enable deliberately if you need it:
+      # Executes code from KB content -- off by default on a hardened box:
       # ENABLE_KB_EXEC: "true"
-      # ---- Document extraction: Docling on System 2 (switch to Tika by setting
-      # CONTENT_EXTRACTION_ENGINE=tika + TIKA_SERVER_URL=http://${SYSTEM2_ADDR}:9998) ----
+      # Extraction. For Tika: CONTENT_EXTRACTION_ENGINE=tika + TIKA_SERVER_URL=...:9998
       CONTENT_EXTRACTION_ENGINE: "docling"
       DOCLING_SERVER_URL: "http://${SYSTEM2_ADDR:?set in .env}:5001"
-      # ---- Observability: OTel -> LGTM/Grafana on System 2 ----
+      # OTel -> Grafana/LGTM on System 2
       ENABLE_OTEL: "true"
       ENABLE_OTEL_TRACES: "true"
       ENABLE_OTEL_METRICS: "true"
@@ -93,11 +75,8 @@ services:
       UVICORN_WORKERS: "9"
       CORS_ALLOW_ORIGIN: "${OI_ORIGIN:-*}"
       REDIS_SOCKET_KEEPALIVE: "true"
-      # User-activity audit trail (AU controls). METADATA = who / endpoint / when
-      # / result, NO prompt/response content -> the log stays unclassified. Raise
-      # to REQUEST / REQUEST_RESPONSE in site.yml to capture prompt/response text
-      # (then the log holds data-at-level and must be protected like the DB).
-      # Writes to /app/backend/data/audit.log -> persisted in the open-webui volume.
+      # Audit trail (AU controls) -> /app/backend/data/audit.log. METADATA logs no
+      # prompt text, so it stays unclassified; REQUEST/REQUEST_RESPONSE do not.
       AUDIT_LOG_LEVEL: "${AUDIT_LOG_LEVEL:-METADATA}"
     ports:
       - "3000:8080"

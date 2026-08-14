@@ -1,8 +1,6 @@
 # System 2 -- oikb knowledge-base sync (:8081 -> System 1's Open WebUI API).
-# Own stack. OPT-IN: behind the `oikb` profile so a plain `up` never starts it;
-# .env sets COMPOSE_PROFILES=oikb automatically when an Open WebUI API key is
-# present. Force it on ad hoc with:  docker compose --profile oikb up -d
-# The .oikb.yaml config is placed next to this file by ansible.
+# Opt-in: the `oikb` profile only activates when an API key is set in .env.
+# Ad hoc:  docker compose --profile oikb up -d
 name: oikb
 networks:
   oi: { external: true }
@@ -13,8 +11,7 @@ services:
     profiles: ["oikb"]
     working_dir: /app
     ports: ["8081:8080"]
-    # Resolve System 1 (dev-ai1) by name without host DNS: when ai_system1_addr is an
-    # IP, .env sets SYSTEM1_HOSTS_ENTRY=dev-ai1:<ip>; otherwise a harmless no-op.
+    # Resolves dev-ai1 in-container when its addr is an IP; no-op otherwise.
     extra_hosts:
       - "${SYSTEM1_HOSTS_ENTRY:-localhost:127.0.0.1}"
     environment:

@@ -1,14 +1,8 @@
-# =============================================================================
-# System 2 (dev-ai2) -- EXTRACTION / EMBEDDINGS / MONITORING / SYNC node
-#   Docling + Tika (extraction) · vLLM embedding + vision · LGTM (monitoring)
-#   · MLflow (experiment tracking / model registry) · oikb (knowledge-base sync)
-#   · hfcli/repomix/openwiki (utilities)
-# Managed by ansible (ai_compose role); placed in {{ ai_compose_dir }}.
-# System 2 has ONE 48GB GPU shared by Docling + the embed/vision vLLMs (all small).
-#   Run:   cd /opt/it/docker && docker compose up -d
-# Cross-node values (System 1's address, oikb secrets) come from the root-only
-# `.env` (rendered from site.yml). This file holds NO secrets.
-# =============================================================================
+# System 2 -- DORMANT break-glass fallback: the whole node as ONE compose
+# project. NOT deployed. The live config is the per-service stacks under
+# /opt/stacks/<stack>/, which carry the explanatory comments; this file is a
+# mirror of them and shares the same external volumes.
+#   docker compose -f docker-compose.consolidated.yaml up -d
 name: ai-system2
 
 networks:
@@ -24,7 +18,6 @@ volumes:
   openwiki-out: { external: true }         # OpenWiki output workdir
 
 services:
-  # ---- Embeddings (RAG) -- OpenAI-compatible, reached from System 1 ----
   vllm-embed:
     image: vllm/vllm-openai:v0.22.1-cu129-ubuntu2404
     container_name: vllm-embed
@@ -49,7 +42,6 @@ services:
           devices:
             - { driver: nvidia, count: all, capabilities: [gpu] }
 
-  # ---- Vision / document understanding -- OpenAI-compatible, from System 1 ----
   vllm-vision:
     image: vllm/vllm-openai:v0.22.1-cu129-ubuntu2404
     container_name: vllm-vision
@@ -66,9 +58,6 @@ services:
       - --gpu-memory-utilization=0.35
       - --max-model-len=16384
       - --port=8003
-      # granite-vision-4.1-4b ships as a LoRA adapter on Granite-4.1-3B. If vLLM
-      # won't serve the adapter repo directly, use `--enable-lora` with the 3B
-      # base, or swap for the merged `ibm-granite/granite-4.0-3b-vision`.
     networks: [oi]
     restart: unless-stopped
     deploy:
@@ -77,27 +66,18 @@ services:
           devices:
             - { driver: nvidia, count: all, capabilities: [gpu] }
 
-  # ---- Document extraction ----
   docling-serve:
     image: ghcr.io/docling-project/docling-serve-cu128:v1.24.0
     container_name: docling-serve
     ports:
       - "5001:5001"
     volumes:
-      # docling bundles OpenCV, whose vendored OpenSSL 1.1.1k runs a FIPS selftest
-      # and abort()s on the FIPS host (fips_enabled=1) -> SIGABRT/exit 134 crash-loop.
-      # Same host-FIPS carve-out the vLLM services use; the HOST stays FIPS.
-      # No model volume is mounted: this image ships its models under --artifacts-path
-      # with runtime downloads DISABLED, and mounting an empty volume over that cache
-      # HIDES the built-in models -> crash-loop. Uses the image's baked-in models.
       - ./fips_off:/proc/sys/crypto/fips_enabled:ro
     environment:
       - DOCLING_SERVE_MAX_SYNC_WAIT=6000
       - DOCLING_SERVE_ENABLE_UI=false
       - OMP_NUM_THREADS=4
       - UVICORN_WORKERS=1
-      # Allow a network-hosted VLM + caller-supplied VLM config (both default
-      # false upstream). See the split docling stack for the preset caveat.
       - DOCLING_SERVE_ENABLE_REMOTE_SERVICES=true
       - DOCLING_SERVE_ALLOW_CUSTOM_VLM_CONFIG=true
     networks: [oi]
@@ -116,7 +96,6 @@ services:
     networks: [oi]
     restart: unless-stopped
 
-  # ---- Monitoring: Grafana/LGTM (admin UI :3001, receives OTel from System 1) ----
   lgtm:
     image: grafana/otel-lgtm:0.29.0
     container_name: open-webui-lgtm
@@ -126,18 +105,11 @@ services:
       - "4318:4318"        # OTLP HTTP
     volumes:
       - lgtm-data:/data
-      # Pre-provisioned Open WebUI dashboard (auto-loaded at startup; edits in the
-      # UI persist to lgtm-data). Placed by ansible (ai_compose) on System 2.
       - ./grafana/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/ubuntu-stig-build.yaml:ro
       - ./grafana/openwebui-dashboard.json:/otel-lgtm/grafana/conf/provisioning/dashboards/custom/openwebui-dashboard.json:ro
     networks: [oi]
     restart: unless-stopped
 
-  # ---- Knowledge-base sync: oikb -> System 1's Open WebUI API ----
-  # OPT-IN: oikb only starts when the `oikb` compose profile is active. The .env
-  # sets COMPOSE_PROFILES=oikb automatically when an Open WebUI API key is present
-  # (ai_oikb_openwebui_api_key in site.yml); with no key/no source it stays down
-  # instead of crash-looping. Force it on ad hoc with:  docker compose --profile oikb up -d
   oikb:
     image: oikb:latest          # built on the box by ansible (ai_compose)
     container_name: oikb
@@ -145,8 +117,6 @@ services:
     working_dir: /app
     ports:
       - "8081:8080"
-    # Resolve System 1 (dev-ai1) by name without host DNS: when ai_system1_addr is an
-    # IP, .env sets SYSTEM1_HOSTS_ENTRY=dev-ai1:<ip>; otherwise a harmless no-op.
     extra_hosts:
       - "${SYSTEM1_HOSTS_ENTRY:-localhost:127.0.0.1}"
     environment:
@@ -167,11 +137,6 @@ services:
     networks: [oi]
     restart: unless-stopped
 
-  # ---- MLflow: experiment tracking + model registry (CPU-only ops plane) -----
-  # Its Postgres backing store is container-internal (no host port; only the
-  # MLflow server talks to it). Password comes from .env (MLFLOW_DB_PASSWORD,
-  # auto-generated). The MLflow UI/API is on :5000 -- open it to your lab subnet
-  # in ai_firewall_allow_ports (it is NOT exposed by default).
   mlflow-db:
     image: pgvector/pgvector:pg16-trixie      # same image as System 1's pgvector
     container_name: mlflow-db
@@ -208,12 +173,7 @@ services:
         condition: service_healthy
     networks: [oi]
     restart: unless-stopped
-    # NOTE (FIPS): if this container crash-loops with an OpenSSL/FIPS selftest
-    # error on the FIPS host, add the same carve-out the vLLM/docling services
-    # use:  volumes: - ./fips_off:/proc/sys/crypto/fips_enabled:ro   (host stays FIPS).
 
-  # ---- Utility container: model downloads (does NOT auto-start) ----
-  # docker compose run --rm hfcli hf download <repo> --local-dir /<vol>
   hfcli:
     image: hfcli:latest         # built on the box by ansible (ai_compose)
     container_name: hfcli
@@ -223,11 +183,6 @@ services:
       - granite-vision:/granite-vision
     networks: [oi]
 
-  # ---- Utility container: OpenWiki -- generate a doc wiki from a repo ---------
-  # On-demand (does NOT auto-start; `tools` profile). Reaches System 1's chat
-  # endpoint over the network (extra_hosts resolves dev-ai1). Output persists in
-  # the openwiki-out volume (/work). Run e.g.:
-  #   docker compose run --rm openwiki openwiki <args>
   openwiki:
     image: openwiki:latest      # built on the box by ansible (ai_compose)
     container_name: openwiki
@@ -243,7 +198,22 @@ services:
       OPENAI_COMPATIBLE_API_KEY: "${OPENAI_COMPATIBLE_API_KEY:-not-used}"
       OPENWIKI_MODEL_ID: "${OPENWIKI_MODEL_ID:-gpt-oss-120b}"
     networks: [oi]
-    # Generator only. The browsable viewer lives in the split `openwiki-view`
-    # stack (/opt/stacks/openwiki-view, :4321) -- `openwiki visualize` behind an
-    # nginx that vendors the viewer's CDN libraries so it renders air-gapped.
-    # This dormant fallback file does not reproduce it.
+
+  openwiki-view:
+    image: openwiki:latest
+    container_name: openwiki-view
+    working_dir: /work
+    command: ["sh", "-c", "mkdir -p openwiki && exec openwiki visualize --no-open --port 4321"]
+    volumes:
+      - openwiki-out:/work
+    ports:
+      - "4321:8080"
+    networks: [oi]
+    restart: unless-stopped
+
+  openwiki-view-proxy:
+    image: openwiki-view:latest
+    container_name: openwiki-view-proxy
+    network_mode: "service:openwiki-view"
+    depends_on: [openwiki-view]
+    restart: unless-stopped
