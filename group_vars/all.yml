@@ -861,6 +861,11 @@ dockge_stacks_dir: "/opt/stacks"
 ai_firewall_allow_ports:
   - { port: 443, proto: tcp, rule: allow }     # reverse proxy (TLS) -> Open WebUI :3000
   - { port: 80,  proto: tcp, rule: allow }     # reverse proxy (HTTP redirect to 443)
+  # ---- OpenWiki served viewer (dev-ai2 openwiki stack, :4321), restricted to the
+  # admin LANs. ufw allows multiple source rules per port, so both are honoured.
+  # (Harmless no-op on dev-ai1 -- nothing listens on 4321 there.)
+  - { port: 4321, proto: tcp, rule: allow, from: "192.168.1.0/24" }   # OpenWiki, LAN 1
+  - { port: 4321, proto: tcp, rule: allow, from: "10.10.99.0/24" }    # OpenWiki, LAN 2
   # ---- System 1 (UI/text-gen) also exposes, to the peer node only: ----
   # - { port: 8000, proto: tcp, rule: allow, from: "10.0.0.0/24" }   # vLLM (text gen)
   # - { port: 5432, proto: tcp, rule: allow, from: "10.0.0.0/24" }   # pgvector

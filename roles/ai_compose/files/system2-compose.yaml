@@ -238,3 +238,26 @@ services:
     volumes:
       - openwiki-out:/work
     networks: [oi]
+
+  # Served viewer (daemon) + LAN forwarder -- openwiki serve binds 127.0.0.1 only,
+  # so socat bridges 0.0.0.0:8080 -> 127.0.0.1:4321. Reach it at http://<host>:4321
+  # (restrict the source in ai_firewall_allow_ports). Viewer needs internet (CDN).
+  openwiki-serve:
+    image: openwiki:latest
+    container_name: openwiki-serve
+    working_dir: /work
+    command: ["sh", "-c", "mkdir -p openwiki && exec openwiki serve --no-open --port 4321"]
+    volumes:
+      - openwiki-out:/work
+    ports:
+      - "4321:8080"
+    networks: [oi]
+    restart: unless-stopped
+
+  openwiki-proxy:
+    image: alpine/socat:latest
+    container_name: openwiki-proxy
+    network_mode: "service:openwiki-serve"
+    command: ["TCP-LISTEN:8080,fork,reuseaddr", "TCP:127.0.0.1:4321"]
+    depends_on: [openwiki-serve]
+    restart: unless-stopped
