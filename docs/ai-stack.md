@@ -8,6 +8,7 @@ The two-node, self-hosted AI stack: what runs, where, and on which box.
 | Day-to-day ops | [operate.md](operate.md#ai-stack-quick-reference) |
 | Hardening / compliance | [compliance.md](compliance.md) |
 | Why the compose files differ from the originals | [compose-changes.md](compose-changes.md) |
+| Patching & updates | [patching.md](patching.md) |
 
 ## What it builds
 

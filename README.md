@@ -36,6 +36,7 @@ This README is orientation. Detail lives under [`docs/`](docs/).
 | **[Build & Imaging Guide](docs/build.md)** | Bare-metal build steps: **Track A** (dev workstation), **Track B** (two-node AI servers). |
 | **[Operations & Reference](docs/operate.md)** | Operator manual: run steps, gotchas, STIG-gap remediation, accounts, TPM/LUKS, RDP, AI-stack quick reference + deep ops, USG/SCAP scans. |
 | **[Security & Compliance](docs/compliance.md)** | For IA / DCSA: hardening posture, NIST 800-53 mapping, POA&M, "why no Docker STIG." |
+| **[Patching & Updates](docs/patching.md)** | Where each component comes from, what is pinned, how to patch it connected or air-gapped, suggested cadence, and the known gaps. |
 
 Per-node config template: **[`docs/site.yml.example`](docs/site.yml.example)**.
 
