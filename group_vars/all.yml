@@ -967,6 +967,17 @@ ai_compose_volumes:
 # would require a CUSTOM docling image with the weights baked in -- a deliberate
 # future task, not attempted here. docling runs fine on its baked-in models.
 
+# ---- openwiki -> local model (System 2 generator) ---------------------------
+# openwiki defaults to api.openai.com. Point it at System 1's vLLM instead: it
+# speaks the OpenAI-compatible API, and openwiki reads these straight from the
+# environment (no `openwiki auth` step, no credential file). The model id must
+# match vLLM's --served-model-name, NOT the HF repo path. Switching System 1 to
+# Granite (it-ai model granite) means setting ai_openwiki_model_id accordingly.
+ai_openwiki_provider: "openai-compatible"
+ai_openwiki_model_id: "gpt-oss-120b"     # = vLLM --served-model-name on :8000
+ai_openwiki_port: 8000                   # System 1 chat endpoint (8001 for granite)
+ai_openwiki_api_key: "not-used"          # vLLM ignores it; openwiki needs non-empty
+
 # ---- Dockge-native per-service stacks (ai_compose) --------------------------
 # The stack is split into one directory PER SERVICE under dockge_stacks_dir
 # (/opt/stacks/<stack>/compose.yaml), so each shows up as its own manageable

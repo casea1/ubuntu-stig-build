@@ -25,4 +25,12 @@ services:
     working_dir: /work
     volumes:
       - openwiki-out:/work
+    # Point openwiki at System 1's vLLM instead of api.openai.com. Values come
+    # from the rendered .env (ai_openwiki_* in group_vars); openwiki reads them
+    # straight from the environment, so there is no `openwiki auth` step.
+    environment:
+      OPENWIKI_PROVIDER: "${OPENWIKI_PROVIDER:-openai-compatible}"
+      OPENAI_COMPATIBLE_BASE_URL: "${OPENAI_COMPATIBLE_BASE_URL:-http://dev-ai1:8000/v1}"
+      OPENAI_COMPATIBLE_API_KEY: "${OPENAI_COMPATIBLE_API_KEY:-not-used}"
+      OPENWIKI_MODEL_ID: "${OPENWIKI_MODEL_ID:-gpt-oss-120b}"
     networks: [oi]

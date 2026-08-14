@@ -24,3 +24,10 @@ nvidia_ct_list_path: "/etc/apt/sources.list.d/nvidia-container-toolkit.list"
 # Set true by gpu.yml when a driver is installed, so the role can remind the
 # operator a reboot is needed before the GPU is usable.
 ai_stack_reboot_required: false
+
+# ---- Outbound name resolution for registry pulls ---------------------------
+# true => raise IPv4-mapped addresses above native IPv6 in /etc/gai.conf, so
+# Docker resolves registry endpoints to IPv4 first. Fixes "network is
+# unreachable" pull failures on an IPv4-only LAN that still returns AAAA
+# records. IPv6 stays ENABLED (this is a preference, not a disable).
+docker_prefer_ipv4: true

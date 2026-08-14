@@ -77,6 +77,28 @@
     # "Docker version 29.5.2, build abcdef" -> "29.5.2"
     _installed_docker_version: "{{ _docker_ver.stdout | regex_search('([0-9]+\\.[0-9]+\\.[0-9]+)', '\\1') | first }}"
 
+- name: "DOCKER | Prefer IPv4 for outbound name resolution (registry pulls)"
+  # On an IPv4-only network that still gets AAAA records back, Docker happily
+  # resolves a registry endpoint to IPv6 and the pull dies with
+  #   dial tcp [2a06:...]:443: connect: network is unreachable
+  # -- seen on dev-ai2 pulling nginx (auth.docker.io resolved to IPv6). This is
+  # getaddrinfo's RFC 3484 precedence table: raising the ::ffff:0:0/96 (IPv4-
+  # mapped) row above the native-IPv6 rows makes resolvers return IPv4 FIRST,
+  # while leaving IPv6 fully enabled -- nothing is disabled, IPv6-only hosts
+  # still resolve. Harmless on a dual-stack network with working IPv6.
+  # Set docker_prefer_ipv4: false to opt out.
+  ansible.builtin.lineinfile:
+    path: /etc/gai.conf
+    line: "precedence ::ffff:0:0/96  100"
+    regexp: '^\s*precedence\s+::ffff:0:0/96\b'
+    state: present
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  when: docker_prefer_ipv4 | default(true) | bool
+  notify: restart docker
+
 - name: "DOCKER | Enable and start the Docker service"
   ansible.builtin.systemd:
     name: docker
