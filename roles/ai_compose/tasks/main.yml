@@ -363,13 +363,31 @@
     - ai_model_fetch | default(false) | bool
     - "'encodings' in (ai_compose_volumes[ai_node_role] | default([]))"
 
+- name: "AI-COMPOSE | Seed docling's built-in models into the docling-models volume (System 2)"
+  # CRITICAL: the docling-models volume is mounted OVER docling's model cache, which
+  # HIDES the image's built-in models (RapidOCR / layout / tableformer / ...). This
+  # image runs with --artifacts-path (runtime downloads DISABLED), so docling-serve
+  # crashes at startup unless those models are IN the volume (Docker's volume auto-
+  # seeding does not reliably populate them here). So copy them from the image into
+  # the volume, with the volume mounted ELSEWHERE (/vol) so the image's own model
+  # dir is visible. Offline + deterministic (no download); idempotent (cp -n keeps
+  # anything already there, e.g. the granite hub/ cache). Run whenever docling is on
+  # this node, not just under ai_model_fetch -- docling won't start without it.
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --entrypoint sh
+      -v {{ ai_docling_models_volume }}:/vol
+      {{ ai_docling_image }}
+      -c 'cp -an /opt/app-root/src/.cache/docling/models/. /vol/ 2>/dev/null; ls /vol'
+  register: _docling_seed
+  changed_when: true
+  failed_when: false
+  when: ai_node_role == 'system2'
+
 - name: "AI-COMPOSE | Pre-stage the docling VLM (granite-docling) into the artifacts volume (System 2, opt-in)"
   # This docling image runs with --artifacts-path (runtime model downloads
-  # DISABLED) and resolves models from /opt/app-root/src/.cache/docling/models in
-  # docling's own layout (ibm-granite--granite-docling-258M), NOT an HF cache. So
-  # we add it with docling's own tool. Mounting the (empty) docling-models volume
-  # at that path seeds it with the image's baked-in models first (Docker volume
-  # seeding); `docling-tools models download-hf-repo` then adds granite-docling.
+  # DISABLED) and resolves models from /opt/app-root/src/.cache/docling/models. We
+  # add granite-docling with docling's own tool (into the now-seeded volume).
   # Idempotent: docling-tools skips a repo already present. fips_off is required
   # (the image's OpenCV OpenSSL abort()s on the FIPS host without it).
   ansible.builtin.command:

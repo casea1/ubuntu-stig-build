@@ -124,7 +124,13 @@ printf '%s\n' "$DOCLING_MODELS" | while IFS=$'\t' read -r vol repo mrole; do
   [ "$ROLE" = all ] || [ "$ROLE" = "$mrole" ] || continue
   echo "   -- $repo -> dockmodels/$vol"
   docker volume rm "_exp_$vol" >/dev/null 2>&1 || true
-  # Seed a scratch volume with baked-in models + add the repo, then copy it out.
+  # Seed the scratch volume with the image's BUILT-IN docling models (RapidOCR/
+  # layout/tableformer/...) -- mounting the volume over the cache hides them, and
+  # docling runs with downloads disabled, so they must travel too. Copy them from
+  # the image (volume mounted at /vol so the image path is visible).
+  docker run --rm --entrypoint sh -v "_exp_$vol":/vol "$DOCLING_IMAGE" \
+    -c 'cp -an /opt/app-root/src/.cache/docling/models/. /vol/ 2>/dev/null' >/dev/null 2>&1 || true
+  # Then add the VLM repo into the same volume (mounted at the real cache path).
   if docker run --rm ${TOKEN:+-e HF_TOKEN=$TOKEN} $FIPS_MNT \
        -v "_exp_$vol":"$DOCLING_ARTIFACTS" --entrypoint docling-tools \
        "$DOCLING_IMAGE" models download-hf-repo "$repo" >/dev/null 2>&1; then
