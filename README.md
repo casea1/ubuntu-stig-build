@@ -63,29 +63,45 @@ All profiles harden with USG (all need an **Ubuntu Pro** token), create the org 
 - **`baseline`**: an already-configured Ubuntu **Desktop** with your software already installed — the build adds only org provisioning + USG hardening.
 - **All** need an **Ubuntu Pro token**. `bootstrap.sh` prompts for it (hidden), or drop it in `/etc/ubuntu-advantage/pro-token` beforehand.
 
-**2. Run one command** on the target:
+**2. Trust the lab CA.** The forge uses an internal CA, so a fresh machine must
+trust it before it can fetch anything over HTTPS. Once per target:
+
+```bash
+sudo curl -fsSLo /usr/local/share/ca-certificates/lab-root-ca.crt \
+  http://git.ASPLAB.com/lab-root-ca.crt
+sudo update-ca-certificates
+```
+
+Verify you got the real one before trusting it -- the SHA-1 fingerprint must be
+`03:DD:DD:55:C6:34:F5:8F:2D:1B:6B:25:D2:ED:73:93:54:A8:AE:F9`:
+
+```bash
+openssl x509 -in /usr/local/share/ca-certificates/lab-root-ca.crt -noout -fingerprint -sha1
+```
+
+**3. Run one command** on the target:
 
 ```bash
 # Development workstation (default profile):
-curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo bash
+curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo bash
 
 # AI server:
-curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo PROFILE=ai bash
+curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo PROFILE=ai bash
 
 # Baseline: harden + provision an already-built box (no app installs, no RDP):
-curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo PROFILE=baseline bash
+curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo PROFILE=baseline bash
 
 # EMI imaging/field workstation (classified-capable / unclassified-only):
-curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo PROFILE=emi bash
-curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo PROFILE=emi-unclass bash
+curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo PROFILE=emi bash
+curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo PROFILE=emi-unclass bash
 
 # AI server, audit-only first pass (installs USG + writes the report, but does NOT apply `usg fix` yet):
-curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo PROFILE=ai HARDEN=0 bash
+curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo PROFILE=ai HARDEN=0 bash
 ```
 
 Pipeline runs as detached systemd unit `stig-build`. The `development` run also prompts (hidden) for the disk-encryption password to enable TPM auto-unlock (Enter to skip).
 
-**3. Watch it, then collect the report:**
+**4. Watch it, then collect the report:**
 
 ```bash
 sudo journalctl -u stig-build -f

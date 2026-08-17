@@ -4,7 +4,7 @@
 #
 #   DEVELOPMENT (default) -- engineering workstation with a GNOME desktop reached
 #   over RDP (xrdp). Works on a headless server base (it installs the GUI):
-#     curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | sudo bash
+#     curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo bash
 #
 #   AI -- Ubuntu Pro AI server (host prep: Docker + NVIDIA + USG hardening +
 #   firewall). Your prebuilt images + compose files deploy the AI tools:
@@ -38,7 +38,7 @@
 
 set -euo pipefail
 
-REPO_URL="https://github.com/casea1/ubuntu-stig-build.git"
+REPO_URL="${REPO_URL:-https://git.ASPLAB.com/austin/ubuntu-stig-build.git}"
 BRANCH="main"
 PROFILE="${PROFILE:-development}"
 
@@ -136,7 +136,7 @@ apt-get install -y ansible git curl
 
 echo "[*] Installing roles + collections from requirements.yml..."
 TMP_REQ="$(mktemp --suffix=.yml)"   # ansible-galaxy requires a .yml/.yaml extension
-curl -fsSL "https://raw.githubusercontent.com/casea1/ubuntu-stig-build/${BRANCH}/requirements.yml" -o "$TMP_REQ"
+curl -fsSL "https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/${BRANCH}/requirements.yml" -o "$TMP_REQ"
 ansible-galaxy install -r "$TMP_REQ"
 rm -f "$TMP_REQ"
 

@@ -69,7 +69,7 @@ Self-hosted, on-prem AI chat. Users open a browser, chat with an LLM, and query 
 1. **Install Ubuntu 24.04** with the standard encrypted-disk installer. **Name it `dev-ai1` or `dev-ai2`**: the name decides its job.
 2. **Run the build** (needs internet):
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh | PROFILE=ai bash
+   curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh | PROFILE=ai bash
    ```
    Hardens the box, installs Docker + the GPU stack, drops the AI stack into **`/opt/it/docker`**. Auto-grows the disk and builds the helper images.
 3. **(Optional) per-machine settings** go in `/opt/it/site.yml` (the build drops an editable template there; legacy `/etc/stig-build/site.yml` still works). Exceptions only (different hostname, existing DB password, oikb secrets). A correctly-named box usually needs nothing.
@@ -183,12 +183,12 @@ Push this repo to a **public** GitHub/GitLab repo.
 ```bash
 sudo apt update && sudo apt install -y ansible git curl
 # Install the pinned Lockdown role from requirements.yml:
-curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/requirements.yml -o /tmp/requirements.yml
+curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/requirements.yml -o /tmp/requirements.yml
 sudo ansible-galaxy install -r /tmp/requirements.yml
 # Run DETACHED as a systemd unit: hardening restarts GDM mid-run, which would
 # kill a foreground job launched from the GUI session. systemd-run survives it:
 sudo systemd-run --unit=stig-build --collect \
-  ansible-pull -U https://github.com/casea1/ubuntu-stig-build.git -C main -i localhost, local.yml
+  ansible-pull -U https://git.ASPLAB.com/austin/ubuntu-stig-build.git -C main -i localhost, local.yml
 # Watch:  sudo journalctl -u stig-build -f      Result: systemctl status stig-build
 ```
 
@@ -442,7 +442,7 @@ The `ai` profile (`deployment_profile: ai`, or `PROFILE=ai` to `bootstrap.sh`) b
 
 ```bash
 # All tools, GPU, hardening. Prompts (hidden) for the Ubuntu Pro token:
-curl -fsSL https://raw.githubusercontent.com/casea1/ubuntu-stig-build/main/bootstrap.sh \
+curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh \
   | sudo PROFILE=ai bash
 
 # Env-var options (piped bash can't take flags):
