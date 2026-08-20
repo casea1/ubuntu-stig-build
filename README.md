@@ -68,7 +68,7 @@ trust it before it can fetch anything over HTTPS. Once per target:
 
 ```bash
 sudo curl -fsSLo /usr/local/share/ca-certificates/lab-root-ca.crt \
-  http://git.ASPLAB.com/lab-root-ca.crt
+  http://git.asplab.com/lab-root-ca.crt
 sudo update-ca-certificates
 ```
 
@@ -83,20 +83,20 @@ openssl x509 -in /usr/local/share/ca-certificates/lab-root-ca.crt -noout -finger
 
 ```bash
 # Development workstation (default profile):
-curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo bash
+curl -fsSL https://git.asplab.com/ASPLAB/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo bash
 
 # AI server:
-curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo PROFILE=ai bash
+curl -fsSL https://git.asplab.com/ASPLAB/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo PROFILE=ai bash
 
 # Baseline: harden + provision an already-built box (no app installs, no RDP):
-curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo PROFILE=baseline bash
+curl -fsSL https://git.asplab.com/ASPLAB/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo PROFILE=baseline bash
 
 # EMI imaging/field workstation (classified-capable / unclassified-only):
-curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo PROFILE=emi bash
-curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo PROFILE=emi-unclass bash
+curl -fsSL https://git.asplab.com/ASPLAB/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo PROFILE=emi bash
+curl -fsSL https://git.asplab.com/ASPLAB/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo PROFILE=emi-unclass bash
 
 # AI server, audit-only first pass (installs USG + writes the report, but does NOT apply `usg fix` yet):
-curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo PROFILE=ai HARDEN=0 bash
+curl -fsSL https://git.asplab.com/ASPLAB/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo PROFILE=ai HARDEN=0 bash
 ```
 
 Pipeline runs as detached systemd unit `stig-build`. The `development` run also prompts (hidden) for the disk-encryption password to enable TPM auto-unlock (Enter to skip).

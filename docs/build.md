@@ -19,8 +19,8 @@ The normal path is the [README quick start](../README.md#quick-start) — trust 
 **Pointing a build at a different forge.** `REPO_URL` and `BRANCH` are environment-overridable, so no edit to the script is needed:
 
 ```bash
-curl -fsSL https://git.example.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh \
-  | sudo REPO_URL=https://git.example.com/austin/ubuntu-stig-build.git PROFILE=emi bash
+curl -fsSL https://git.example.com/ASPLAB/ubuntu-stig-build/raw/branch/main/bootstrap.sh \
+  | sudo REPO_URL=https://git.example.com/ASPLAB/ubuntu-stig-build.git PROFILE=emi bash
 ```
 
 Set `REPO_URL` whenever you fetch the script from somewhere other than the default forge. Without it the build clones from the **default** even though you fetched the script from your mirror — and it looks like it worked.
@@ -130,11 +130,11 @@ Decide these before install. Several are irreversible.
   Air-gap only after collecting reports. (`editor_choice: vim`/`neovim` instead of the default `vscode` is
   the only thing that drops an internet dependency.)
 - [ ] **Forge reachable and lab CA trusted.** The install command pulls `bootstrap.sh` + `requirements.yml`
-  from `git.ASPLAB.com`; `ansible-pull` clones from there over HTTPS. The forge uses an internal CA, so
+  from `git.asplab.com`; `ansible-pull` clones from there over HTTPS. The forge uses an internal CA, so
   each target must install the lab root first (README quick start, step 2) or curl fails with `unable to
   get local issuer certificate`. An untrusted CA or unreachable forge
   fails immediately.
-- [ ] **Forked/renamed the repo:** update the `git.ASPLAB.com/austin` URL everywhere (§12).
+- [ ] **Forked/renamed the repo:** update the `git.asplab.com/ASPLAB` URL everywhere (§12).
 - [ ] **Operator account name** must match `dev_tools_user` and `wireshark_users` in `group_vars/all.yml`
   (default **`austin_case_adm`**). See §3.4.
 - [ ] **Build host uses the full `ansible` package, not `ansible-core`.** Gap-remediation tasks use
@@ -207,7 +207,7 @@ Forked repo: update the URLs (§12) and **push to a public repo**.
 On the target box, online:
 
 ```bash
-curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo bash
+curl -fsSL https://git.asplab.com/ASPLAB/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo bash
 ```
 
 It prompts (hidden) for the disk encryption password to enable TPM auto-unlock: type it and press Enter, or press Enter to skip. (Auto-skips on a non-encrypted disk, an already-bound box, or a headless run.) Then `bootstrap.sh`, in order: installs `ansible git curl`; downloads `requirements.yml` and runs `ansible-galaxy install -r` (installs both the pinned `UBUNTU24-STIG` role **v1.3.0** and the `community.general` + `ansible.posix` collections); launches the build **detached** as transient systemd unit `stig-build` via `systemd-run`.
@@ -392,7 +392,7 @@ All operator-facing knobs. Values with a **cap** fail the scan if exceeded.
 **Command cheat-sheet**
 ```bash
 # Run / watch
-curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo bash
+curl -fsSL https://git.asplab.com/ASPLAB/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo bash
 sudo journalctl -u stig-build -f ; systemctl status stig-build
 sudo systemctl stop stig-build           # abort a run (then re-run; it's idempotent)
 
@@ -477,7 +477,7 @@ Full reference: [`site.yml.example`](site.yml.example). On **System 2**, set the
 ### Step 3: Run the build
 
 ```bash
-curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh | PROFILE=ai bash
+curl -fsSL https://git.asplab.com/ASPLAB/ubuntu-stig-build/raw/branch/main/bootstrap.sh | PROFILE=ai bash
 ```
 Grows the disk, installs Docker + NVIDIA + hardens Docker, attaches Ubuntu Pro and STIG-hardens with FIPS (**FIPS needs a reboot**; the build flags it), writes the node's services as per-service Dockge stacks into `/opt/stacks/<stack>/` (creates the shared `oi` network), builds the custom images (System 2), and (if the toggles are set) fetches models and starts the stacks. Watch: `sudo journalctl -u stig-build -f`. **Reboot** when it finishes.
 

@@ -4,7 +4,7 @@
 #
 #   DEVELOPMENT (default) -- engineering workstation with a GNOME desktop reached
 #   over RDP (xrdp). Works on a headless server base (it installs the GUI):
-#     curl -fsSL https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo bash
+#     curl -fsSL https://git.asplab.com/ASPLAB/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo bash
 #
 #   AI -- Ubuntu Pro AI server (host prep: Docker + NVIDIA + USG hardening +
 #   firewall). Your prebuilt images + compose files deploy the AI tools:
@@ -35,16 +35,16 @@
 # It also prompts (hidden) for the disk encryption password to enable TPM
 # auto-unlock (either profile). Press Enter at any prompt to skip.
 # REPO_URL/BRANCH are environment-overridable, so a mirror needs no edit:
-#     curl -fsSL https://git.example.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh \
-#       | sudo REPO_URL=https://git.example.com/austin/ubuntu-stig-build.git PROFILE=emi bash
+#     curl -fsSL https://git.example.com/ASPLAB/ubuntu-stig-build/raw/branch/main/bootstrap.sh \
+#       | sudo REPO_URL=https://git.example.com/ASPLAB/ubuntu-stig-build.git PROFILE=emi bash
 # If the server uses an internal CA, install it first (or pass CA_CERT=/path/ca.crt).
 
 set -euo pipefail
 
 # Overridable from the environment so the same script works against another
 # mirror, or back at GitHub during a transition, without editing it:
-#   sudo REPO_URL=https://git.example.com/austin/ubuntu-stig-build.git PROFILE=emi bash
-REPO_URL="${REPO_URL:-https://git.ASPLAB.com/austin/ubuntu-stig-build.git}"
+#   sudo REPO_URL=https://git.example.com/ASPLAB/ubuntu-stig-build.git PROFILE=emi bash
+REPO_URL="${REPO_URL:-https://git.asplab.com/ASPLAB/ubuntu-stig-build.git}"
 BRANCH="${BRANCH:-main}"
 PROFILE="${PROFILE:-development}"
 
