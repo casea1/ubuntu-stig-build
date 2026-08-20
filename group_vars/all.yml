@@ -607,13 +607,14 @@ grub_password_pbkdf2: "grub.pbkdf2.sha512.10000.CHANGEME_RUN_grub-mkpasswd-pbkdf
 # ---- USBGuard (device authorisation allow-list) ------------------------------
 # A DIFFERENT layer from the `dta` USB controls below: those gate MOUNTING,
 # USBGuard gates whether the kernel authorises the DEVICE at all. Both apply.
-# ON for ai + development. OFF for EMI until its approved-device list is agreed
-# and the policy is generated with those devices attached -- the EMI laptop is
-# the machine most likely to need peripherals, and a bad policy locks out an
-# external keyboard. Flip usbguard_enabled: true in that box's site.yml when
-# ready; the internal keyboard/trackpad are captured by the initial policy, so
-# the console is never lost.
-usbguard_enabled: "{{ (is_ai | default(false) | bool) or (is_development | default(false) | bool) }}"
+# ON for every profile, EMI included. The laptop is the machine most likely to
+# meet an unknown USB device, so it is the strongest case for having this -- and
+# `it-usb enroll` makes approving a peripheral a two-step operation.
+# LOCKOUT SAFETY: the initial policy is generated from the devices attached at
+# that moment, so the built-in keyboard/trackpad are always authorised and the
+# console is never lost. External peripherals are enrolled once, from the
+# console. Set usbguard_enabled: false in a box's site.yml to opt out.
+usbguard_enabled: true
 
 # =============================================================================
 # LOCAL ACCOUNTS / ACCESS GROUPS / SHARED FOLDERS / USB POLICY (local_accounts)

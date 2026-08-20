@@ -135,7 +135,8 @@ The `it_scripts` + `inventory_report` roles install short admin commands into `/
 | `it-luks-rebind` | `luks-rebind.sh` | Re-seals the TPM2 keyslot to the **current** PCR 7 when the box prompts for the passphrase despite a stale binding. Binds a fresh slot before removing the old one (no lockout). |
 | `it-restart` | `restart-docker.sh` | Restart the AI stacks under `/opt/stacks/`. `--up` uses `docker compose up -d` (apply `.env`/compose edits); a **stack** name limits it to one. (Thin wrapper over `it-ai restart|up`.) |
 | `it-oscap` | `oscap-scan.sh` | Run the OpenSCAP DISA-STIG evaluation now; results to `/opt/ia/oscap`. Also runs on a schedule (`oscap-scan.timer` or `/etc/cron.d/oscap-scan`). |
-| `it-usb` | `usb-guard.sh` | USBGuard device allow-list: `status`/`list`/`blocked`/`allow`/`block`/`policy`/`regenerate`. |
+| `it-usb` | `usb-guard.sh` | USBGuard device allow-list: `enroll` (guided whitelist), `status`/`list`/`blocked`/`allow`/`block`/`policy`/`regenerate`. |
+| `it-grub` | `grub-password.sh` | GRUB bootloader password: `status` (is it configured + will it pass the scan), `hash` (generate one to vault), `set` (apply to this box), `remove`. |
 | `it-ai` | `ai-stack.sh` | One control surface for the per-service AI stacks (`/opt/stacks/<stack>/`), runnable from anywhere: `up`/`down`/`stop`/`restart`/`status`/`logs`/`pull` (all, or one `[STACK]`), `stacks` (list), `oikb` (opt-in sync), `model gpt-oss|granite|status` (System 1 chat-model switch), and `run <stack>` for the on-demand `tools` utilities (`hfcli`/`openwiki`). `it-ai tools` lists them. |
 | `it-set-classification` | `set-classification.sh` | Change the on-screen classification banner level (interactive menu or arg). Updates the autostart entry + `site.yml`, and restarts the banner live in each GUI session. GUI profiles. |
 | `it-set-ip` | `set-ip.sh` | Renumber the node when it leaves the lab: repoints the peer/cross-node IP (`site.yml` + `.env` + `/etc/hosts` + ufw + recreates containers) and/or this box's own static IP via netplan. Interactive or `--peer` / `--self`. |
@@ -554,15 +555,41 @@ Notes:
 
 **Normal boot stays password-free.** Setting `superusers` makes GRUB demand the password for *every* entry unless entries carry `--unrestricted`; the role adds that flag, so unattended reboot still works.
 
-**Setup** (once, then it applies fleet-wide):
+#### Activating it
+
+There are two paths. Both are driven by **`it-grub`**.
+
+**Check what a box has right now:**
 
 ```bash
-grub-mkpasswd-pbkdf2            # enter the password twice
-# copy ONLY the token: grub.pbkdf2.sha512.10000.<salt>.<hash>
-ansible-vault encrypt_string 'grub.pbkdf2.sha512.10000.…' --name 'grub_password_pbkdf2'
+sudo it-grub status
 ```
 
-Paste the vault block over `grub_password_pbkdf2` in `group_vars/all.yml`. Until you do, the value is a `CHANGEME` sentinel and **the role skips entirely** — deliberately, because writing a bogus credential can make a box unbootable. The rule shows as an open finding until then.
+It reports each condition separately — drop-in present, `set superusers` in `grub.cfg`, superuser name passing SSG's regex, `password_pbkdf2` present, **every menu entry `--unrestricted`**, and `grub.cfg` at `0600` — then a single overall verdict. The `--unrestricted` line is the one to read carefully: if any entry lacks it, **every boot will prompt for the password**.
+
+**Path A — fleet-wide (the supported path).** Generate a hash, vault it, and let the role roll it out:
+
+```bash
+sudo it-grub hash
+```
+
+It runs `grub-mkpasswd-pbkdf2`, parses out just the token, and prints the exact `ansible-vault encrypt_string` command to run. Paste the resulting `!vault` block over `grub_password_pbkdf2` in `group_vars/all.yml`, commit, and re-run the pull on each box.
+
+Until you do, the value is a `CHANGEME` sentinel and **the role skips entirely** — deliberately, because writing a bogus credential can make a box unbootable. The rule shows as an open finding until then.
+
+**Path B — activate one box now:**
+
+```bash
+sudo it-grub set
+```
+
+Prompts for the password, applies it to that box only, and runs the same safety checks as the role: it generates a candidate `grub.cfg`, refuses to install it unless the credential is present and no entry is restricted, and keeps a recovery copy. Useful for testing on a throwaway box before committing to the fleet.
+
+> These two do not fight. The role skips while `group_vars` holds the sentinel, so a locally-set password survives an `ansible-pull`. Once you vault a real hash, the role becomes authoritative and overwrites the local one.
+
+**Removing it** (recovery, one box): `sudo it-grub remove`. Note the role re-applies it on the next pull if a hash is vaulted.
+
+**Test it before trusting it.** On a throwaway box: `sudo it-grub set`, reboot, confirm it boots to the login prompt **without** asking for anything, then reboot again and press `e` — that should demand the superuser name and password.
 
 **Safety built into the role.** It generates a candidate `grub.cfg` to a temp file, then refuses to install it unless the credential is present, at least one menu entry exists, and **no** entry lacks `--unrestricted`. A restricted entry would make every boot hang waiting for input, so that check is a hard failure rather than a warning. The first known-good config is preserved at `/boot/grub/grub.cfg.pre-grubpw`.
 
@@ -610,11 +637,21 @@ sudo it-usb policy                    # show the saved allow-list
 sudo it-usb regenerate                # re-baseline from attached devices
 ```
 
-**Adding an approved device:** plug it in → `sudo it-usb blocked` to get its id → `sudo it-usb allow <id> --permanent`. The policy is backed up before every change.
+**Adding an approved device — the easy way:**
+
+```bash
+sudo it-usb enroll
+```
+
+It snapshots the attached devices, waits for you to plug the new one in, diffs, shows exactly what appeared, and authorises it permanently after you confirm. Safer than reading ids by eye — you cannot accidentally authorise a device that was already sitting there.
+
+Manual equivalent: plug it in → `sudo it-usb blocked` for the id → `sudo it-usb allow <id> --permanent`. The policy is backed up before every change.
 
 **External HID is not blanket-allowed, on purpose.** A keystroke-injection device (BadUSB) presents as a keyboard, so allowing the HID class would defeat the control. An external keyboard is authorised once, from the console, using the internal one.
 
-**Profiles:** on for `ai` and `development`. **Off for EMI** until its approved-device list is agreed and the policy is generated with those devices attached — that laptop is the most likely to need peripherals, and a bad policy locks out an external keyboard. Set `usbguard_enabled: true` in that box's `site.yml` when ready.
+**Profiles:** on everywhere, EMI included. The laptop is the machine most likely to meet an unknown USB device, so it is the strongest case for having this — and `it-usb enroll` makes approving a peripheral a two-step operation.
+
+**On the EMI laptop specifically:** the initial policy is generated from whatever is attached during the build, so the built-in keyboard and trackpad are always authorised — you cannot lose the console. Enrol the approved peripherals once, at imaging time, with the devices to hand. Set `usbguard_enabled: false` in that box's `site.yml` to opt out.
 
 > **Lockout recovery:** boot to recovery/single-user and `systemctl disable --now usbguard`, then `it-usb regenerate` with the right devices attached.
 

@@ -8,6 +8,7 @@
 #   it-usb status                 daemon state + policy summary
 #   it-usb list                   all devices, with allow/block state and IDs
 #   it-usb blocked                only the devices currently being blocked
+#   it-usb enroll                 GUIDED: plug a device in, it gets whitelisted
 #   it-usb allow <id>             authorise NOW (until it is unplugged)
 #   it-usb allow <id> --permanent authorise now AND add it to the policy
 #   it-usb block <id>             de-authorise NOW
@@ -17,8 +18,10 @@
 #
 # <id> is the leading number in `it-usb list` (usbguard's device rule id).
 #
-# TYPICAL: plug the device in, run `it-usb blocked` to get its id, then
-#   sudo it-usb allow 14 --permanent
+# EASIEST WAY TO WHITELIST A DEVICE:
+#   sudo it-usb enroll          <- prompts you to plug it in, finds it, allows it
+# Manual equivalent: plug in, `it-usb blocked` for the id, then
+#   sudo it-usb allow <id> --permanent
 set -uo pipefail
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
@@ -63,6 +66,38 @@ case "${1:-help}" in
     need_id "${2:-}"
     usbguard block-device "$2" && echo "Blocked device $2."
     ;;
+  enroll)
+    # Guided whitelisting: snapshot device ids, wait for an insertion, diff,
+    # confirm, then authorise permanently. Safer than reading ids by eye --
+    # you cannot accidentally authorise the wrong (already-present) device.
+    before="$(usbguard list-devices 2>/dev/null | cut -d: -f1 | sort)"
+    echo "Plug in the device to authorise now."
+    printf 'Press Enter once it is connected (Ctrl-C to abort)... '
+    read -r _
+    sleep 1
+    after="$(usbguard list-devices 2>/dev/null | cut -d: -f1 | sort)"
+    new_ids="$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))"
+    if [ -z "$new_ids" ]; then
+      echo
+      echo "No new device detected."
+      echo "Some devices re-use an id, or the device may present several interfaces."
+      echo "Check 'sudo it-usb blocked' and allow by id instead."
+      exit 1
+    fi
+    echo
+    echo "New device(s) detected:"
+    for id in $new_ids; do usbguard list-devices 2>/dev/null | grep -E "^$id:" | sed 's/^/  /'; done
+    echo
+    printf 'Authorise the above PERMANENTLY (added to the policy)? [y/N] '
+    read -r a; [ "$a" = y ] || { echo "aborted -- nothing changed"; exit 0; }
+    cp -a "$RULES" "$RULES.bak-$(date +%Y%m%d-%H%M%S)"
+    fail=0
+    for id in $new_ids; do
+      if usbguard allow-device -p "$id"; then echo "  authorised $id"; else echo "  FAILED $id" >&2; fail=1; fi
+    done
+    echo "Policy backup: $RULES.bak-*"
+    [ "$fail" = 0 ] || exit 1
+    ;;
   policy)
     echo "== $RULES =="
     grep -nvE '^\s*(#|$)' "$RULES" 2>/dev/null || echo "(empty)"
@@ -79,6 +114,6 @@ case "${1:-help}" in
     echo "Policy regenerated from attached devices; daemon restarted."
     echo "Backup: $RULES.bak-*"
     ;;
-  help|-h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//' ;;
+  help|-h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command '$1' -- try: it-usb help" ;;
 esac

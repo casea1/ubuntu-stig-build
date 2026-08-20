@@ -84,14 +84,15 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   `it-oscap` + a systemd timer) precisely because `auto_audit` is locked and
   cannot sudo unattended. If nothing else needs the account, dropping it from
   `sudo` is the least-privilege end state.
-- **USBGuard is off for EMI** until its approved-device list is agreed. The
-  policy must be generated with those devices attached, or an external keyboard
-  is locked out.
+- **USBGuard is on for every profile including EMI.** The initial policy is
+  generated from attached devices, so the built-in keyboard is always
+  authorised; peripherals are enrolled with `it-usb enroll`.
 - **GRUB password is inert until a hash is vaulted** — `grub_password_pbkdf2` is
-  still the CHANGEME sentinel, so the role skips. Note this matters more here
-  than usual: LUKS is TPM-sealed to PCR 7 only, which does not measure the kernel
-  command line, so without the GRUB password physical access → root shell on
-  decrypted data.
+  still the CHANGEME sentinel, so the role skips. Activate with `it-grub hash`
+  (fleet) or `it-grub set` (one box); check with `it-grub status`. This matters
+  more here than usual: LUKS is TPM-sealed to PCR 7 only, which does not measure
+  the kernel command line, so without the GRUB password physical access → root
+  shell on decrypted data.
 - **openwiki generation** is wired to System 1's vLLM but has never produced a
   real wiki. Getting the repo into `/work` and publishing output where the viewer
   reads it is still a manual three-step.
