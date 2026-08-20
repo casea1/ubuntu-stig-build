@@ -18,11 +18,12 @@ InsertedDevicePolicy={{ usbguard_inserted_device_policy | default('apply-policy'
 RestoreControllerDeviceState=false
 DeviceManagerBackend=uevent
 
-# Who may talk to the daemon. Root always can; the admin group is added by the
-# role with an explicit ACL (see tasks/main.yml).
+# Who may talk to the daemon. IPCAllowedUsers/IPCAllowedGroups grant EVERY
+# privilege, so the admin group is deliberately NOT listed there -- it gets a
+# least-privilege ACL file instead (see tasks/main.yml). Root keeps full access,
+# which is all `it-usb` needs since it self-elevates.
 IPCAllowedUsers=root
-IPCAllowedGroups={{ ia_it_group | default('sudo') }}
-IPCAccessControlFiles=/var/lib/usbguard/IPCAccessControl.d/
+IPCAccessControlFiles=/etc/usbguard/IPCAccessControl.d/
 
 # Audit trail of authorisation decisions (AU controls).
 AuditBackend=LinuxAudit

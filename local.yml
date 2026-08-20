@@ -187,13 +187,13 @@
     # re-runs `usg audit` so the report reflects the fully-built box.
     # -------------------------------------------------------------------------
     - role: usg_remediate           # idempotent residual STIG fixes + smartcard/pam_pkcs11 cleanup + re-audit
+      when: usg_remediate_enabled | default(true)
 
     - role: grub_password           # GRUB2 superuser + PBKDF2 password (skips until a real hash is vaulted)
       when: grub_password_enabled | default(true) | bool
 
     - role: usbguard                # USB device allow-listing (opt-in per profile; see usbguard_enabled)
       when: usbguard_enabled | default(false) | bool
-      when: usg_remediate_enabled | default(true)
 
     # -------------------------------------------------------------------------
     # POST-HARDENING  (desktop branding, optional TPM)

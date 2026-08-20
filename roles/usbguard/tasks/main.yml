@@ -60,16 +60,30 @@
         mode: "0600"
       notify: restart usbguard
 
+    - name: "USBGUARD | IPC access-control directory"
+      ansible.builtin.file:
+        path: /etc/usbguard/IPCAccessControl.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    # Written directly rather than via `usbguard add-user`, which is not
+    # idempotent and takes the privileges as CLI flags. Note the section
+    # privileges are NOT interchangeable: Exceptions only accepts `listen`
+    # (see usbguard-daemon.conf(5), "IPC ACCESS CONTROL"). A leading ':' in the
+    # basename is what marks the name as a GROUP.
     - name: "USBGUARD | Allow the admin group to query/authorise devices"
-      # Without this only root can talk to the daemon, so `it-usb` (which
-      # self-elevates) works but the IPC ACL is still explicit and auditable.
-      ansible.builtin.command:
-        cmd: "usbguard add-user -g {{ ia_it_group | default('sudo') }} --devices modify,list --policy list --exceptions list"
-      register: _usbg_acl
-      changed_when: _usbg_acl.rc == 0
-      failed_when:
-        - _usbg_acl.rc != 0
-        - "'already' not in (_usbg_acl.stderr | default('') | lower)"
+      ansible.builtin.copy:
+        dest: "/etc/usbguard/IPCAccessControl.d/:{{ ia_it_group | default('sudo') }}"
+        content: |
+          Devices=modify,list,listen
+          Policy=list
+          Exceptions=listen
+        owner: root
+        group: root
+        mode: "0600"
+      notify: restart usbguard
 
     - name: "USBGUARD | Enable and start the daemon"
       ansible.builtin.systemd:
