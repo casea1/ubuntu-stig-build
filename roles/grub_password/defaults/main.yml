@@ -1,0 +1,9 @@
+---
+# Master switch for the role (set false per box in site.yml to skip entirely).
+grub_password_enabled: true
+
+# True only when the role is switched on AND a real hash has replaced the
+# CHANGEME sentinel. Every task keys off this, so a half-configured box is a
+# no-op rather than an unbootable one. Single line on purpose: a folded scalar
+# would render with surrounding whitespace and break the `| bool` conversion.
+_grub_pw_ready: "{{ (grub_password_enabled | default(true) | bool) and ('CHANGEME' not in (grub_password_pbkdf2 | default('CHANGEME'))) }}"

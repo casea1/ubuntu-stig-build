@@ -1,0 +1,29 @@
+# Managed by ansible (usbguard) -- do not edit by hand.
+RuleFile=/etc/usbguard/rules.conf
+RuleFolder=/etc/usbguard/rules.d/
+
+# Devices already attached when the daemon starts: run them through the policy.
+# (`keep` would leave them at whatever the kernel already authorised, which
+# weakens enforcement at boot. The initial policy was generated from the
+# attached devices, so apply-policy does not disconnect them.)
+PresentDevicePolicy={{ usbguard_present_device_policy | default('apply-policy') }}
+PresentControllerPolicy={{ usbguard_present_controller_policy | default('keep') }}
+
+# Anything not matched by a rule.
+#   block  = device is not authorised but stays visible (preferred: auditable)
+#   reject = device is logically removed
+ImplicitPolicyTarget={{ usbguard_implicit_policy | default('block') }}
+
+InsertedDevicePolicy={{ usbguard_inserted_device_policy | default('apply-policy') }}
+RestoreControllerDeviceState=false
+DeviceManagerBackend=uevent
+
+# Who may talk to the daemon. Root always can; the admin group is added by the
+# role with an explicit ACL (see tasks/main.yml).
+IPCAllowedUsers=root
+IPCAllowedGroups={{ ia_it_group | default('sudo') }}
+IPCAccessControlFiles=/var/lib/usbguard/IPCAccessControl.d/
+
+# Audit trail of authorisation decisions (AU controls).
+AuditBackend=LinuxAudit
+AuditFilePath=/var/log/usbguard/usbguard-audit.log

@@ -1,0 +1,11 @@
+---
+# OFF by default: enabling it on a box whose policy has not been reviewed can
+# lock out an external keyboard. Turned on per profile in group_vars.
+usbguard_enabled: false
+
+# block  = unauthorised device stays visible but unusable (auditable, preferred)
+# reject = device is logically detached
+usbguard_implicit_policy: block
+usbguard_present_device_policy: apply-policy
+usbguard_present_controller_policy: keep
+usbguard_inserted_device_policy: apply-policy

@@ -33,6 +33,8 @@
     - set-classification.sh
     - model-export.sh
     - model-import.sh
+    - oscap-scan.sh
+    - usb-guard.sh
 
 - name: "IT-SCRIPTS | Expose short it-* commands in /usr/local/sbin"
   ansible.builtin.file:
@@ -53,6 +55,8 @@
     - { link: it-set-classification, target: set-classification.sh }
     - { link: it-model-export, target: model-export.sh }
     - { link: it-model-import, target: model-import.sh }
+    - { link: it-oscap, target: oscap-scan.sh }
+    - { link: it-usb, target: usb-guard.sh }
 
 - name: "IT-SCRIPTS | Where the scripts are"
   ansible.builtin.debug:

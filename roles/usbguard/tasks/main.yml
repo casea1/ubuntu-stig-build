@@ -1,0 +1,87 @@
+---
+# =============================================================================
+# usbguard -- device-authorisation allow-list for USB.
+#
+# This is a DIFFERENT layer from the existing `dta` USB controls: those gate
+# MOUNTING (polkit/udisks2 + the udev node owner). USBGuard gates whether the
+# kernel authorises the DEVICE at all. Both are kept; document both.
+#
+# LOCKOUT IS THE RISK. The initial policy is generated from the devices attached
+# AT THAT MOMENT, so the box's own keyboard/trackpad are captured and keep
+# working. External HID is NOT blanket-allowed -- a keystroke-injection device
+# (BadUSB) presents as a keyboard, so allowing the whole HID class would defeat
+# the control. An external keyboard therefore needs authorising once, from the
+# console, with `it-usb allow <id> --permanent`.
+#
+# RECOVERY, if a box is ever locked out: boot to recovery / single-user and run
+#   systemctl disable --now usbguard
+# then re-generate the policy with the right devices attached (`it-usb regenerate`).
+# =============================================================================
+
+- name: "USBGUARD | Configure device allow-listing"
+  when: usbguard_enabled | default(false) | bool
+  block:
+    - name: "USBGUARD | Install usbguard"
+      ansible.builtin.apt:
+        name: usbguard
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: "USBGUARD | Does a policy already exist?"
+      ansible.builtin.stat:
+        path: /etc/usbguard/rules.conf
+      register: _usbg_rules
+
+    # Generated ONCE. Re-running must never regenerate silently: that would
+    # re-baseline the allow-list against whatever happens to be plugged in now,
+    # quietly authorising a device someone left in. `it-usb regenerate` is the
+    # deliberate, backed-up way to redo it.
+    - name: "USBGUARD | Generate the initial allow-list from attached devices"
+      ansible.builtin.shell:
+        cmd: 'umask 077 && usbguard generate-policy > /etc/usbguard/rules.conf'
+      when: not _usbg_rules.stat.exists or _usbg_rules.stat.size == 0
+      register: _usbg_gen
+      changed_when: _usbg_gen.rc == 0
+
+    - name: "USBGUARD | Lock down the policy file"
+      ansible.builtin.file:
+        path: /etc/usbguard/rules.conf
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: "USBGUARD | Daemon configuration"
+      ansible.builtin.template:
+        src: usbguard-daemon.conf.j2
+        dest: /etc/usbguard/usbguard-daemon.conf
+        owner: root
+        group: root
+        mode: "0600"
+      notify: restart usbguard
+
+    - name: "USBGUARD | Allow the admin group to query/authorise devices"
+      # Without this only root can talk to the daemon, so `it-usb` (which
+      # self-elevates) works but the IPC ACL is still explicit and auditable.
+      ansible.builtin.command:
+        cmd: "usbguard add-user -g {{ ia_it_group | default('sudo') }} --devices modify,list --policy list --exceptions list"
+      register: _usbg_acl
+      changed_when: _usbg_acl.rc == 0
+      failed_when:
+        - _usbg_acl.rc != 0
+        - "'already' not in (_usbg_acl.stderr | default('') | lower)"
+
+    - name: "USBGUARD | Enable and start the daemon"
+      ansible.builtin.systemd:
+        name: usbguard
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: "USBGUARD | Summary"
+      ansible.builtin.debug:
+        msg: >-
+          USBGuard active. Unknown devices are {{ usbguard_implicit_policy | default('block') }}ed.
+          The devices attached when the policy was generated are authorised.
+          Manage with `it-usb` (list / allow / block / regenerate).
+          Lockout recovery: boot to recovery, `systemctl disable --now usbguard`.

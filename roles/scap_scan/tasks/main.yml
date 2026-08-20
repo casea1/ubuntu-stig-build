@@ -96,3 +96,93 @@
       HTML report:     {{ scap_report_dir }}/stig-report-{{ ansible_date_time.date }}.html
       STIG Viewer XML: {{ scap_report_dir }}/stig-viewer-{{ ansible_date_time.date }}.xml
       Collect these before air-gapping the machine.
+
+# =============================================================================
+# SCHEDULED RE-SCAN -- the build-time scan above is a point-in-time artifact.
+# This keeps producing evidence on a cadence, into the IA collection point.
+# Runs as ROOT deliberately: oscap needs to read privileged config, and running
+# it as auto_audit would need a sudo credential that account does not have.
+# =============================================================================
+- name: "SCAP | Scheduled re-scan"
+  when: scap_schedule_enabled | default(true) | bool
+  block:
+    - name: "SCAP | Ensure the report dir exists ({{ scap_report_dir }})"
+      ansible.builtin.file:
+        path: "{{ scap_report_dir }}"
+        state: directory
+        owner: root
+        group: "{{ ia_it_group | default('sudo') }}"
+        mode: "2750"        # setgid: results stay readable by the admin group
+
+    # ---- systemd timer (default) --------------------------------------------
+    - name: "SCAP | Scheduled scan service unit"
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/oscap-scan.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=OpenSCAP DISA-STIG evaluation
+          Documentation=file://{{ scap_report_dir }}
+          [Service]
+          Type=oneshot
+          Nice=10
+          IOSchedulingClass=idle
+          ExecStart=/usr/local/sbin/it-oscap --dir {{ scap_report_dir }} --profile {{ scap_profile }} --keep {{ scap_schedule_keep | default(12) }}
+      when: scap_schedule_method | default('timer') == 'timer'
+
+    - name: "SCAP | Scheduled scan timer unit"
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/oscap-scan.timer
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Run the OpenSCAP STIG evaluation on a schedule
+          [Timer]
+          OnCalendar={{ scap_schedule_oncalendar | default('weekly') }}
+          Persistent=true
+          RandomizedDelaySec=30m
+          [Install]
+          WantedBy=timers.target
+      when: scap_schedule_method | default('timer') == 'timer'
+      notify: reload systemd
+
+    - name: "SCAP | Enable the scan timer"
+      ansible.builtin.systemd:
+        name: oscap-scan.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: scap_schedule_method | default('timer') == 'timer'
+
+    # ---- cron.d (literal "crontab" compliance) ------------------------------
+    - name: "SCAP | Scheduled scan cron entry"
+      ansible.builtin.copy:
+        dest: /etc/cron.d/oscap-scan
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by ansible (scap_scan) -- OpenSCAP DISA-STIG evaluation.
+          SHELL=/bin/bash
+          PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          {{ scap_schedule_cron }} root /usr/local/sbin/it-oscap --dir {{ scap_report_dir }} --profile {{ scap_profile }} --keep {{ scap_schedule_keep | default(12) }} >/dev/null 2>&1
+      when: scap_schedule_method | default('timer') == 'cron'
+
+    # ---- remove the method that is NOT in use, so only one scheduler runs ----
+    - name: "SCAP | Remove the unused scheduler"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ ['/etc/cron.d/oscap-scan'] if (scap_schedule_method | default('timer')) == 'timer' else ['/etc/systemd/system/oscap-scan.timer', '/etc/systemd/system/oscap-scan.service'] }}"
+
+    - name: "SCAP | Scheduled scan summary"
+      ansible.builtin.debug:
+        msg: >-
+          OpenSCAP re-scan scheduled via {{ scap_schedule_method | default('timer') }}
+          ({{ scap_schedule_oncalendar if (scap_schedule_method | default('timer')) == 'timer' else scap_schedule_cron }});
+          results -> {{ scap_report_dir }}, keeping {{ scap_schedule_keep | default(12) }} sets.
+          Run on demand: sudo it-oscap

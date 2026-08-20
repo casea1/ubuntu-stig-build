@@ -272,7 +272,7 @@ ubtu24stig_disruption_high: false
 # SCAP SCAN
 # =============================================================================
 # Where to drop the compliance report. Collect this BEFORE air-gapping.
-scap_report_dir: /var/log/stig-scan
+scap_report_dir: /opt/ia/oscap        # IA collection point (ia_dir); admin-group readable
 # Profile id inside the SSG datastream. Verified present in the pinned SSG
 # release below (products/ubuntu2404 ships stig.profile).
 scap_profile: xccdf_org.ssgproject.content_profile_stig
@@ -284,6 +284,19 @@ scap_profile: xccdf_org.ssgproject.content_profile_stig
 # deliberately and re-test (note the GitHub tag is v-prefixed: v{{ ssg_content_version }}).
 scap_content_dir: /usr/share/xml/scap/ssg/content
 ssg_content_version: "0.1.81"
+
+# ---- Scheduled OpenSCAP re-scan (checklist: "add OSCAP job to crontab") ------
+# The build-time scan is a point-in-time artifact; this keeps producing evidence.
+# method: 'timer' (systemd) or 'cron' (/etc/cron.d).
+#   timer -- Persistent=true, so a run missed while the box was POWERED OFF fires
+#            at the next boot. Correct for the EMI laptop.
+#   cron  -- literal "crontab" compliance if an assessor greps for it; a missed
+#            run while powered off is simply lost.
+scap_schedule_enabled: true
+scap_schedule_method: timer          # timer | cron
+scap_schedule_oncalendar: weekly     # systemd OnCalendar (timer method)
+scap_schedule_cron: "17 3 * * 0"     # Sun 03:17 (cron method)
+scap_schedule_keep: 12               # how many result sets to retain
 ssg_release_base: "https://github.com/ComplianceAsCode/content/releases/download"
 
 # =============================================================================
@@ -590,6 +603,17 @@ grub_superuser: "bootadmin"
 #       --name 'grub_password_pbkdf2'
 #   Paste the resulting !vault block in place of the line below.
 grub_password_pbkdf2: "grub.pbkdf2.sha512.10000.CHANGEME_RUN_grub-mkpasswd-pbkdf2_AND_VAULT_THE_HASH"
+
+# ---- USBGuard (device authorisation allow-list) ------------------------------
+# A DIFFERENT layer from the `dta` USB controls below: those gate MOUNTING,
+# USBGuard gates whether the kernel authorises the DEVICE at all. Both apply.
+# ON for ai + development. OFF for EMI until its approved-device list is agreed
+# and the policy is generated with those devices attached -- the EMI laptop is
+# the machine most likely to need peripherals, and a bad policy locks out an
+# external keyboard. Flip usbguard_enabled: true in that box's site.yml when
+# ready; the internal keyboard/trackpad are captured by the initial policy, so
+# the console is never lost.
+usbguard_enabled: "{{ (is_ai | default(false) | bool) or (is_development | default(false) | bool) }}"
 
 # =============================================================================
 # LOCAL ACCOUNTS / ACCESS GROUPS / SHARED FOLDERS / USB POLICY (local_accounts)

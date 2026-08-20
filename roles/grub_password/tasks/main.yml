@@ -1,0 +1,158 @@
+---
+# =============================================================================
+# grub_password -- GRUB2 superuser + PBKDF2 password (STIG: "Set Boot Loader
+# Password in grub2" / "Set the UEFI Boot Loader Password").
+#
+# WHAT IT PROTECTS: editing a menu entry (`e`) or dropping to the GRUB shell
+# (`c`). Without it, anyone at the console can append `init=/bin/bash` to the
+# kernel command line and get a root shell with no authentication.
+#
+# WHY IT MATTERS ON THIS FLEET SPECIFICALLY: tpm_luks_unlock seals the LUKS key
+# to PCR 7 (Secure Boot state) with NO PIN. PCR 7 does not measure the kernel
+# command line, so editing it does NOT change the PCR -- the TPM still releases
+# the key and the disk auto-decrypts. The GRUB password is therefore the ONLY
+# control between physical access and a root shell on decrypted data.
+#
+# DEFAULT BOOT STAYS PASSWORD-FREE: setting `superusers` makes GRUB require auth
+# for EVERY entry unless entries are marked `--unrestricted`. This role adds that
+# flag, so unattended reboot still works. If it could not, the role FAILS rather
+# than installing a config that would hang every boot waiting for input.
+# =============================================================================
+
+- name: "GRUB | Not configured -- skipping (open finding until a hash is vaulted)"
+  # CHANGEME sentinel = nothing configured yet. Skipping is deliberate: writing a
+  # bogus credential can make the box unbootable. The rule then shows as an open
+  # finding / POA&M until a real hash is vaulted, which is the honest state.
+  ansible.builtin.debug:
+    msg: >-
+      GRUB password NOT set (grub_password_pbkdf2 is the CHANGEME sentinel or
+      grub_password_enabled is false). Generate one with `grub-mkpasswd-pbkdf2`,
+      vault it, and re-run. See docs/operate.md.
+  when: not (_grub_pw_ready | bool)
+
+- name: "GRUB | Configure the bootloader password"
+  when: _grub_pw_ready | bool
+  block:
+    - name: "GRUB | Validate the superuser name against the SSG OVAL regex"
+      # SSG checks ^[\s]*set[\s]+superusers=("?)[a-zA-Z_]+\1$ -- letters/underscore
+      # ONLY. A digit or hyphen leaves a working password that still fails the scan.
+      ansible.builtin.assert:
+        that:
+          - grub_superuser is match('^[a-zA-Z_]+$')
+        fail_msg: >-
+          grub_superuser '{{ grub_superuser }}' must be letters/underscores only
+          ([a-zA-Z_]+) or the SSG grub2_password check fails even though the
+          password works.
+        quiet: true
+
+    - name: "GRUB | Validate the hash looks like a grub-mkpasswd-pbkdf2 token"
+      ansible.builtin.assert:
+        that:
+          - grub_password_pbkdf2 is match('^grub\.pbkdf2\.sha512\.[0-9]+\.[0-9A-Fa-f]+\.[0-9A-Fa-f]+$')
+        fail_msg: >-
+          grub_password_pbkdf2 does not look like the token from
+          `grub-mkpasswd-pbkdf2` (grub.pbkdf2.sha512.<rounds>.<salt>.<hash>).
+          Copy ONLY that token, not the surrounding sentence.
+        quiet: true
+
+    - name: "GRUB | Place the superuser + password drop-in (/etc/grub.d/01_superusers)"
+      # Files in /etc/grub.d are SCRIPTS whose stdout becomes grub.cfg. 01_ so it is
+      # emitted before the menu entries. 0755 root: grub-mkconfig only runs the
+      # executable ones. Contains a credential -> not world-readable would break
+      # grub-mkconfig (it runs as root, so 0700 is fine and is what we use).
+      ansible.builtin.copy:
+        dest: /etc/grub.d/01_superusers
+        owner: root
+        group: root
+        mode: "0700"
+        content: |
+          #!/bin/sh
+          # Managed by ansible (grub_password) -- do not edit by hand.
+          cat <<'EOF'
+          set superusers="{{ grub_superuser }}"
+          password_pbkdf2 {{ grub_superuser }} {{ grub_password_pbkdf2 }}
+          EOF
+      register: _grub_dropin
+      no_log: true
+
+    - name: "GRUB | Make generated menu entries --unrestricted"
+      # With `superusers` set, GRUB demands the password for EVERY entry unless the
+      # entry carries --unrestricted. Debian/Ubuntu's 10_linux builds each entry from
+      # $CLASS, so injecting the flag there covers all generated entries.
+      # NOTE: a grub-common package update can revert this file; the next pull
+      # re-applies it, and the verification below catches it in the meantime.
+      ansible.builtin.replace:
+        path: /etc/grub.d/10_linux
+        regexp: '^CLASS="(?!--unrestricted)'
+        replace: 'CLASS="--unrestricted '
+      register: _grub_class
+
+    - name: "GRUB | Generate a candidate grub.cfg to a temp file (do NOT install yet)"
+      # Never point grub-mkconfig at /boot/grub/grub.cfg directly here: if the result
+      # is wrong we would have already overwritten a working bootloader config.
+      ansible.builtin.command:
+        cmd: grub-mkconfig -o /tmp/grub.cfg.candidate
+      changed_when: false
+      register: _grub_mkconfig
+
+    - name: "GRUB | Read the candidate back for verification"
+      ansible.builtin.slurp:
+        src: /tmp/grub.cfg.candidate
+      register: _grub_candidate
+      no_log: true
+
+    - name: "GRUB | Verify the candidate before installing it"
+      # Three things must hold, or we refuse to install:
+      #   1. the credential is present (else the control is not met)
+      #   2. at least one menuentry exists (else the box has nothing to boot)
+      #   3. NO menuentry lacks --unrestricted (else every boot prompts for a
+      #      password and unattended reboot is impossible)
+      ansible.builtin.assert:
+        that:
+          - "'password_pbkdf2' in _cfg"
+          - "'set superusers=' in _cfg"
+          - _menuentries | int > 0
+          - _restricted | int == 0
+        fail_msg: >-
+          Refusing to install the generated grub.cfg.
+          credential_present={{ 'password_pbkdf2' in _cfg }}
+          menuentries={{ _menuentries }} restricted_entries={{ _restricted }}.
+          A restricted entry would make EVERY boot prompt for the GRUB password.
+          /boot/grub/grub.cfg was left untouched; candidate kept at
+          /tmp/grub.cfg.candidate for inspection.
+        quiet: true
+      vars:
+        _cfg: "{{ _grub_candidate.content | b64decode }}"
+        _menuentries: "{{ _cfg | regex_findall('^\\s*menuentry ', multiline=True) | length }}"
+        _restricted: "{{ (_cfg | regex_findall('^\\s*menuentry (?!.*--unrestricted).*$', multiline=True)) | length }}"
+
+    - name: "GRUB | Back up the working grub.cfg before replacing it"
+      ansible.builtin.copy:
+        src: /boot/grub/grub.cfg
+        dest: "/boot/grub/grub.cfg.pre-grubpw"
+        remote_src: true
+        force: false          # keep the FIRST known-good copy, never overwrite it
+        mode: "0600"
+
+    - name: "GRUB | Install the verified grub.cfg"
+      ansible.builtin.copy:
+        src: /tmp/grub.cfg.candidate
+        dest: /boot/grub/grub.cfg
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0600"          # STIG: grub.cfg must not be group/world readable
+      register: _grub_installed
+
+    - name: "GRUB | Remove the candidate"
+      ansible.builtin.file:
+        path: /tmp/grub.cfg.candidate
+        state: absent
+
+    - name: "GRUB | Result"
+      ansible.builtin.debug:
+        msg: >-
+          GRUB superuser '{{ grub_superuser }}' configured; menu entries are
+          --unrestricted so normal boot needs no password. Editing an entry (e) or
+          the GRUB shell (c) now require it. Recovery copy of the previous config:
+          /boot/grub/grub.cfg.pre-grubpw

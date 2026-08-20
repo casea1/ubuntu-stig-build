@@ -134,6 +134,8 @@ The `it_scripts` + `inventory_report` roles install short admin commands into `/
 | `it-luks` | `status-luks.sh` | LUKS/TPM auto-unlock status (binding, clevis-in-initramfs, Secure Boot) with a verdict. |
 | `it-luks-rebind` | `luks-rebind.sh` | Re-seals the TPM2 keyslot to the **current** PCR 7 when the box prompts for the passphrase despite a stale binding. Binds a fresh slot before removing the old one (no lockout). |
 | `it-restart` | `restart-docker.sh` | Restart the AI stacks under `/opt/stacks/`. `--up` uses `docker compose up -d` (apply `.env`/compose edits); a **stack** name limits it to one. (Thin wrapper over `it-ai restart|up`.) |
+| `it-oscap` | `oscap-scan.sh` | Run the OpenSCAP DISA-STIG evaluation now; results to `/opt/ia/oscap`. Also runs on a schedule (`oscap-scan.timer` or `/etc/cron.d/oscap-scan`). |
+| `it-usb` | `usb-guard.sh` | USBGuard device allow-list: `status`/`list`/`blocked`/`allow`/`block`/`policy`/`regenerate`. |
 | `it-ai` | `ai-stack.sh` | One control surface for the per-service AI stacks (`/opt/stacks/<stack>/`), runnable from anywhere: `up`/`down`/`stop`/`restart`/`status`/`logs`/`pull` (all, or one `[STACK]`), `stacks` (list), `oikb` (opt-in sync), `model gpt-oss|granite|status` (System 1 chat-model switch), and `run <stack>` for the on-demand `tools` utilities (`hfcli`/`openwiki`). `it-ai tools` lists them. |
 | `it-set-classification` | `set-classification.sh` | Change the on-screen classification banner level (interactive menu or arg). Updates the autostart entry + `site.yml`, and restarts the banner live in each GUI session. GUI profiles. |
 | `it-set-ip` | `set-ip.sh` | Renumber the node when it leaves the lab: repoints the peer/cross-node IP (`site.yml` + `.env` + `/etc/hosts` + ufw + recreates containers) and/or this box's own static IP via netplan. Interactive or `--peer` / `--self`. |
@@ -544,6 +546,78 @@ Notes:
   - DOCLING_SERVE_DEFAULT_VLM_PRESET=lab_granite_vision
   ```
   This is derived from docling's `ApiVlmOptions` shape but has **not** been verified against a running conversion — test one before relying on it.
+### GRUB2 bootloader password
+
+**What it protects:** editing a GRUB menu entry (`e`) or dropping to the GRUB shell (`c`). Without it, anyone at the console appends `init=/bin/bash` to the kernel command line and gets a root shell with no authentication.
+
+> **Why this matters more here than on a typical box.** `tpm_luks_unlock` seals the LUKS key to **PCR 7 (Secure Boot state) with no PIN**. PCR 7 does **not** measure the kernel command line, so editing it does not change the PCR — the TPM still releases the key and the disk auto-decrypts. The GRUB password is therefore the only control between physical access and a root shell on decrypted data. It is not redundant with LUKS on this fleet.
+
+**Normal boot stays password-free.** Setting `superusers` makes GRUB demand the password for *every* entry unless entries carry `--unrestricted`; the role adds that flag, so unattended reboot still works.
+
+**Setup** (once, then it applies fleet-wide):
+
+```bash
+grub-mkpasswd-pbkdf2            # enter the password twice
+# copy ONLY the token: grub.pbkdf2.sha512.10000.<salt>.<hash>
+ansible-vault encrypt_string 'grub.pbkdf2.sha512.10000.…' --name 'grub_password_pbkdf2'
+```
+
+Paste the vault block over `grub_password_pbkdf2` in `group_vars/all.yml`. Until you do, the value is a `CHANGEME` sentinel and **the role skips entirely** — deliberately, because writing a bogus credential can make a box unbootable. The rule shows as an open finding until then.
+
+**Safety built into the role.** It generates a candidate `grub.cfg` to a temp file, then refuses to install it unless the credential is present, at least one menu entry exists, and **no** entry lacks `--unrestricted`. A restricted entry would make every boot hang waiting for input, so that check is a hard failure rather than a warning. The first known-good config is preserved at `/boot/grub/grub.cfg.pre-grubpw`.
+
+**Caveats.** `grub_superuser` must be letters/underscores only — SSG's check regex rejects digits and hyphens, and you would get a working password that still fails the scan. A `grub-common` package update can revert the `--unrestricted` edit in `/etc/grub.d/10_linux`; the next pull re-applies it.
+
+**Recovery:** boot from install media, `chroot`, and either restore `/boot/grub/grub.cfg.pre-grubpw` or remove `/etc/grub.d/01_superusers` and re-run `update-grub`.
+
+### Scheduled OpenSCAP scan (`it-oscap`)
+
+The build-time SCAP scan is a point-in-time artifact. A scheduled re-scan keeps producing evidence into the IA collection point.
+
+```bash
+sudo it-oscap                      # run now -> /opt/ia/oscap
+sudo it-oscap --keep 24            # retain more result sets
+systemctl list-timers oscap-scan.timer
+```
+
+Each run writes three timestamped files to **`/opt/ia/oscap`**: an HTML report, the full ARF results, and a STIG-Viewer-importable XML. Old sets are pruned to `scap_schedule_keep` (default 12).
+
+It runs as **root**, not `auto_audit`: `oscap` needs to read privileged configuration, and `auto_audit` is created with a locked password so it cannot use `sudo` unattended.
+
+**Scheduler choice** — `scap_schedule_method`:
+
+| Value | Behaviour |
+|---|---|
+| `timer` (default) | systemd timer with `Persistent=true`, so a run missed while the box was **powered off** fires at next boot. Correct for the EMI laptop. |
+| `cron` | `/etc/cron.d/oscap-scan` — literal "crontab" compliance if an assessor greps for it. A run missed while powered off is lost. |
+
+Only one is ever installed; switching methods removes the other.
+
+### USB device allow-listing (`it-usb`)
+
+USBGuard gates whether the kernel **authorises a device at all**. This is a separate layer from the `dta` controls, which gate **mounting** — both are in force, and both should be cited.
+
+Unknown devices are **blocked** (visible but unusable, so the attempt is auditable). The devices attached when the policy was generated are authorised, which is why the box's own keyboard and trackpad keep working.
+
+```bash
+sudo it-usb status                    # daemon + policy summary
+sudo it-usb list                      # every device, with its id
+sudo it-usb blocked                   # just what is being blocked
+sudo it-usb allow 14                  # authorise now (until unplugged)
+sudo it-usb allow 14 --permanent      # authorise and add to the policy
+sudo it-usb block 14
+sudo it-usb policy                    # show the saved allow-list
+sudo it-usb regenerate                # re-baseline from attached devices
+```
+
+**Adding an approved device:** plug it in → `sudo it-usb blocked` to get its id → `sudo it-usb allow <id> --permanent`. The policy is backed up before every change.
+
+**External HID is not blanket-allowed, on purpose.** A keystroke-injection device (BadUSB) presents as a keyboard, so allowing the HID class would defeat the control. An external keyboard is authorised once, from the console, using the internal one.
+
+**Profiles:** on for `ai` and `development`. **Off for EMI** until its approved-device list is agreed and the policy is generated with those devices attached — that laptop is the most likely to need peripherals, and a bad policy locks out an external keyboard. Set `usbguard_enabled: true` in that box's `site.yml` when ready.
+
+> **Lockout recovery:** boot to recovery/single-user and `systemctl disable --now usbguard`, then `it-usb regenerate` with the right devices attached.
+
 - **Model switching (System 1).** gpt-oss-120b and Granite-4.1-30b are alternates (one at a time). See "Switching System 1's chat model" below.
 
 **Hands-off imaging: normally NOTHING to edit per box.** On the ai profile the stack is enabled automatically and everything per-node auto-derives, so a freshly-imaged, correctly-named box comes up configured with no `site.yml` editing:
