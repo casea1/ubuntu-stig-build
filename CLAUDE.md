@@ -111,3 +111,4 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
 | `docs/compliance.md` | IA / DCSA posture, POA&M |
 | `docs/patching.md` | where updates come from, cadence, known gaps |
 | `docs/compose-changes.md` | why the compose files differ from the originals |
+| `docs/checklist.md` | org Linux checklist: status + verify command per item (`it-checklist`) |

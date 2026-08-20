@@ -36,6 +36,7 @@
     - oscap-scan.sh
     - usb-guard.sh
     - grub-password.sh
+    - checklist.sh
 
 - name: "IT-SCRIPTS | Expose short it-* commands in /usr/local/sbin"
   ansible.builtin.file:
@@ -59,6 +60,7 @@
     - { link: it-oscap, target: oscap-scan.sh }
     - { link: it-usb, target: usb-guard.sh }
     - { link: it-grub, target: grub-password.sh }
+    - { link: it-checklist, target: checklist.sh }
 
 - name: "IT-SCRIPTS | Where the scripts are"
   ansible.builtin.debug:

@@ -37,6 +37,7 @@ This README is orientation. Detail lives under [`docs/`](docs/).
 | **[Operations & Reference](docs/operate.md)** | Operator manual: run steps, gotchas, STIG-gap remediation, accounts, TPM/LUKS, RDP, AI-stack quick reference + deep ops, USG/SCAP scans. |
 | **[Security & Compliance](docs/compliance.md)** | For IA / DCSA: hardening posture, NIST 800-53 mapping, POA&M, "why no Docker STIG." |
 | **[Patching & Updates](docs/patching.md)** | Where each component comes from, what is pinned, how to patch it connected or air-gapped, suggested cadence, and the known gaps. |
+| **[Linux Checklist](docs/checklist.md)** | The org checklist: met / not met / N-A per item, with the command to verify each. Run `sudo it-checklist`. |
 
 Per-node config template: **[`docs/site.yml.example`](docs/site.yml.example)**.
 
