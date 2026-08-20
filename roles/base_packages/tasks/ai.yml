@@ -8,10 +8,10 @@
 # roles assume are present (curl/gnupg/ca-certificates for adding the Docker &
 # NVIDIA apt repos; openssh-server for remote admin of a headless box).
 #
-# We intentionally do NOT install the desktop app set (clamav GUI stack,
-# wireshark, putty, VS Code, PowerStrux/PowerShell, PXE provisioning services) --
-# they're workstation tooling and would only add attack surface + STIG findings
-# on a server.
+# We intentionally do NOT install the desktop app set (wireshark, putty, VS Code,
+# PXE provisioning services) -- workstation tooling that would only add attack
+# surface + STIG findings on a server. ClamAV IS installed (checklist: AV on every
+# box) but headless: the daemon + CLI, no GUI front-end.
 
 - name: "SERVER | Install the lean headless baseline"
   ansible.builtin.apt:
@@ -34,3 +34,19 @@
     name: ssh
     enabled: true
     state: started
+
+# ---- Anti-virus (checklist: installed, maintained, tuned on every box) -------
+# Headless: clamav-daemon + clamav (CLI). No GUI package.
+# TUNING MATTERS HERE: an untuned clamd walks /var/lib/docker/volumes, which on
+# these nodes holds ~60GB+ of model weights and the databases -- enormous I/O for
+# zero detection value. The exclusions below are applied by app_config.
+# AIR-GAP: freshclam cannot reach the internet, so signatures go stale. Stage the
+# CVD files with the USB workflow (see docs/patching.md) or accept a POA&M.
+- name: "SERVER | Install ClamAV (headless: daemon + CLI, no GUI)"
+  ansible.builtin.apt:
+    name:
+      - clamav
+      - clamav-daemon
+      - clamav-freshclam
+    state: present
+  when: clamav_enabled | default(true) | bool

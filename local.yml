@@ -138,8 +138,8 @@
     # -------------------------------------------------------------------------
     # DEVELOPMENT-ONLY PROVISIONING  (GUI engineering box, RDP-accessible)
     # -------------------------------------------------------------------------
-    - role: app_config              # clamav daemon/freshclam, wireshark group, etc. (development + emi)
-      when: is_development or is_emi
+    - role: app_config              # clamav daemon/freshclam (all profiles); wireshark group (development + emi)
+      when: is_development or is_emi or is_ai
     - role: dev_tools               # compilers/SDKs, /opt/eng-venv, VS Code extensions, docker.io (development + emi)
       when: is_development or is_emi
     - role: remote_desktop          # GNOME desktop + xrdp (RDP into the dev GUI); runs before hardening. development only -- emi/baseline are local-GUI.

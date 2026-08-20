@@ -157,6 +157,17 @@ it_scripts_enabled: true
 
 # ---- ClamAV ----------------------------------------------------------------
 clamav_run_daemon: true       # enable clamav-daemon (on-access/scheduled scans)
+# Paths clamd and the weekly scan skip. /var/lib/docker/volumes holds the model
+# weights (~60GB+) and the databases on the AI nodes -- scanning them is enormous
+# I/O for no detection value. Add site-specific paths here rather than editing
+# clamd.conf on a box (ansible rewrites it).
+clamav_exclude_paths:
+  - "^/sys"
+  - "^/proc"
+  - "^/var/lib/docker/volumes"
+  - "^/var/lib/docker/overlay2"
+# Same exclusions rendered as clamscan CLI args for the weekly full scan.
+clamav_scan_exclude_args: "{{ clamav_exclude_paths | map('regex_replace', '^', '--exclude-dir=') | join(' ') }}"
 clamav_freshclam_enabled: true
 # How often freshclam checks for definition updates per day (cron/systemd).
 clamav_freshclam_checks_per_day: 12

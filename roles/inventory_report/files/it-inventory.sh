@@ -102,6 +102,37 @@ else
   echo "(nvidia-smi not available -- the driver loads after the post-build reboot)"
 fi
 
+sec "Listening ports -> process -> package"
+# Checklist: "capture port traffic and associated processes to a report file for
+# installed software". Every LISTENING socket, the process behind it, and the
+# package that owns that binary. Needs root for the pid/process columns.
+if have ss; then
+  printf '  %-5s %-24s %-22s %s\n' PROTO LISTEN PROCESS PACKAGE
+  ss -H -tulpn 2>/dev/null | while read -r proto _ _ _ local _ rest; do
+    pname=$(printf '%s' "$rest" | sed -n 's/.*users:((\"\([^\"]*\)\".*/\1/p')
+    pid=$(printf '%s' "$rest"  | sed -n 's/.*pid=\([0-9]*\).*/\1/p')
+    pkg="-"
+    if [ -n "$pid" ] && [ -r "/proc/$pid/exe" ]; then
+      exe=$(readlink -f "/proc/$pid/exe" 2>/dev/null)
+      if [ -n "$exe" ] && have dpkg; then
+        pkg=$(dpkg -S "$exe" 2>/dev/null | cut -d: -f1 | head -1)
+        [ -z "$pkg" ] && pkg="(unpackaged: $exe)"
+      fi
+    fi
+    printf '  %-5s %-24s %-22s %s\n' "$proto" "$local" "${pname:-?}${pid:+/$pid}" "$pkg"
+  done
+  echo
+  echo "  NOTE: container-published ports show as docker-proxy/dockerd, not the"
+  echo "  service inside. Cross-reference with: docker ps --format '{{.Names}} {{.Ports}}'"
+  if have docker; then
+    echo
+    echo "  Container port publications:"
+    docker ps --format '    {{.Names}}  {{.Ports}}' 2>/dev/null || echo "    (docker present, not queryable as this user)"
+  fi
+else
+  echo "(ss not available -- install iproute2)"
+fi
+
 sec "Operating system"
 kv "Hostname" "$HOST"
 if have lsb_release; then kv "Distro" "$(lsb_release -ds 2>/dev/null)"; fi

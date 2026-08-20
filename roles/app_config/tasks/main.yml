@@ -8,6 +8,7 @@
   ansible.builtin.group:
     name: wireshark
     state: present
+  when: is_development | default(false) | bool or is_emi | default(false) | bool
 
 - name: Add authorized users to wireshark group
   ansible.builtin.user:
@@ -15,6 +16,7 @@
     groups: wireshark
     append: true
   loop: "{{ wireshark_users }}"
+  when: is_development | default(false) | bool or is_emi | default(false) | bool
 
 - name: Lock down dumpcap to root:wireshark, no world access
   ansible.builtin.file:
@@ -22,8 +24,10 @@
     owner: root
     group: wireshark
     mode: "0750"
+  when: is_development | default(false) | bool or is_emi | default(false) | bool
 
 # --- ClamAV: freshclam definition updates -----------------------------------
+
 - name: Configure freshclam update frequency
   ansible.builtin.lineinfile:
     path: /etc/clamav/freshclam.conf
@@ -50,6 +54,21 @@
   failed_when: false        # don't fail the build if already up to date / locked
   when: clamav_run_daemon
 
+- name: Exclude large immutable data from clamd (model weights, container volumes)
+  # An untuned clamd walks /var/lib/docker/volumes, which on the AI nodes holds
+  # ~60GB+ of model weights plus the databases: huge I/O, no detection value
+  # (the weights are staged from controlled media and are not executable content).
+  ansible.builtin.blockinfile:
+    path: /etc/clamav/clamd.conf
+    marker: "# {mark} ANSIBLE MANAGED -- scan exclusions"
+    block: |
+      {% for p in clamav_exclude_paths %}
+      ExcludePath {{ p }}
+      {% endfor %}
+    create: false
+  notify: restart clamav-daemon
+  when: clamav_run_daemon
+
 - name: Enable and start clamav-daemon
   ansible.builtin.systemd:
     name: clamav-daemon
@@ -67,7 +86,7 @@
       Description=Weekly ClamAV full filesystem scan
       [Service]
       Type=oneshot
-      ExecStart=/usr/bin/clamscan -r -i / --exclude-dir=^/sys --exclude-dir=^/proc --log=/var/log/clamav/weekly-scan.log
+      ExecStart=/usr/bin/clamscan -r -i / {{ clamav_scan_exclude_args }} --log=/var/log/clamav/weekly-scan.log
   when: clamav_run_daemon
 
 - name: Deploy weekly clamav scan timer unit
