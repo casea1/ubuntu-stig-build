@@ -34,12 +34,18 @@
 #
 # It also prompts (hidden) for the disk encryption password to enable TPM
 # auto-unlock (either profile). Press Enter at any prompt to skip.
-# Edit REPO_URL before baking into your image.
+# REPO_URL/BRANCH are environment-overridable, so a mirror needs no edit:
+#     curl -fsSL https://git.example.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh \
+#       | sudo REPO_URL=https://git.example.com/austin/ubuntu-stig-build.git PROFILE=emi bash
+# If the server uses an internal CA, install it first (or pass CA_CERT=/path/ca.crt).
 
 set -euo pipefail
 
+# Overridable from the environment so the same script works against another
+# mirror, or back at GitHub during a transition, without editing it:
+#   sudo REPO_URL=https://git.example.com/austin/ubuntu-stig-build.git PROFILE=emi bash
 REPO_URL="${REPO_URL:-https://git.ASPLAB.com/austin/ubuntu-stig-build.git}"
-BRANCH="main"
+BRANCH="${BRANCH:-main}"
 PROFILE="${PROFILE:-development}"
 
 if [[ $EUID -ne 0 ]]; then
@@ -132,13 +138,41 @@ fi
 
 echo "[*] Installing Ansible + git + curl..."
 apt-get update
-apt-get install -y ansible git curl
+apt-get install -y ansible git curl ca-certificates
+
+# Internal CA (private Forgejo/GitLab, TLS-inspecting proxy). Point CA_CERT at a
+# PEM file already on the box; it is installed into the system trust store so
+# git, curl and apt all trust it. Needed BEFORE the clone below.
+if [ -n "${CA_CERT:-}" ]; then
+  if [ -f "$CA_CERT" ]; then
+    install -m 0644 "$CA_CERT" "/usr/local/share/ca-certificates/$(basename "${CA_CERT%.*}").crt"
+    update-ca-certificates >/dev/null
+    echo "[*] Installed CA into the system trust store: $CA_CERT"
+  else
+    echo "ERROR: CA_CERT=$CA_CERT not found." >&2; exit 1
+  fi
+fi
 
 echo "[*] Installing roles + collections from requirements.yml..."
-TMP_REQ="$(mktemp --suffix=.yml)"   # ansible-galaxy requires a .yml/.yaml extension
-curl -fsSL "https://git.ASPLAB.com/austin/ubuntu-stig-build/raw/branch/${BRANCH}/requirements.yml" -o "$TMP_REQ"
-ansible-galaxy install -r "$TMP_REQ"
-rm -f "$TMP_REQ"
+# Fetched with GIT, not a raw-file URL. Every forge spells raw URLs differently
+# (GitHub raw.githubusercontent.com vs Forgejo/Gitea /raw/branch/<b>/ vs GitLab
+# /-/raw/<b>/), and hardcoding one of them meant a mirror silently pulled its
+# requirements from the ORIGINAL host -- or failed outright on an internal-only
+# network. Cloning uses the same URL, auth and TLS trust as the ansible-pull below.
+TMP_CLONE="$(mktemp -d)"
+git clone --quiet --depth 1 --branch "$BRANCH" "$REPO_URL" "$TMP_CLONE" || {
+  echo "ERROR: could not clone $REPO_URL (branch $BRANCH)." >&2
+  echo "  TLS 'unable to get local issuer certificate' => the box does not trust" >&2
+  echo "  the server's CA. Install it first (see docs/build.md):" >&2
+  echo "    sudo cp your-ca.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates" >&2
+  exit 1
+}
+if [ -f "$TMP_CLONE/requirements.yml" ]; then
+  ansible-galaxy install -r "$TMP_CLONE/requirements.yml"
+else
+  echo "[!] no requirements.yml in the repo -- skipping galaxy install"
+fi
+rm -rf "$TMP_CLONE"
 
 # Run the build DETACHED as a transient systemd service. On desktop the hardening
 # restarts GDM mid-run; a foreground process launched from the GUI session (e.g.

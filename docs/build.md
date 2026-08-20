@@ -12,6 +12,60 @@ Follow the one track that matches your profile. [README.md](../README.md) is the
 
 ---
 
+## Building from a different mirror, or behind an internal CA
+
+The normal path is the [README quick start](../README.md#quick-start) — trust the lab CA (step 2, with the fingerprint check), then run the one-liner. This section covers the edge cases.
+
+**Pointing a build at a different forge.** `REPO_URL` and `BRANCH` are environment-overridable, so no edit to the script is needed:
+
+```bash
+curl -fsSL https://git.example.com/austin/ubuntu-stig-build/raw/branch/main/bootstrap.sh \
+  | sudo REPO_URL=https://git.example.com/austin/ubuntu-stig-build.git PROFILE=emi bash
+```
+
+Set `REPO_URL` whenever you fetch the script from somewhere other than the default forge. Without it the build clones from the **default** even though you fetched the script from your mirror — and it looks like it worked.
+
+**`SSL certificate problem: unable to get local issuer certificate`** means the box does not trust the CA that signed the forge's certificate. Install it (README step 2). Do **not** use `curl -k` or `GIT_SSL_NO_VERIFY` — they disable verification entirely and are a STIG finding.
+
+Two things that silently break a CA install:
+
+- The file **must** end in `.crt` and be **PEM**-encoded, or `update-ca-certificates` ignores it without complaint. Convert DER with `openssl x509 -inform der -in ca.der -out lab-root-ca.crt`.
+- It must be in `/usr/local/share/ca-certificates/`, not `/etc/ssl/certs/` — the latter is generated *from* the former and is rewritten.
+
+Installing it there covers `curl`, `git`, `apt` and Ansible at once, and persists across reboots and pulls. Bake it into the image to avoid repeating it per box.
+
+**If the CA is on removable media** and you already have `bootstrap.sh` on the box, it can install it for you before cloning:
+
+```bash
+sudo CA_CERT=/media/usb/lab-root-ca.crt PROFILE=emi bash bootstrap.sh
+```
+
+## `SSL certificate problem: unable to get local issuer certificate`
+
+The box does not trust the CA that signed your Git server's certificate. Install the CA — do **not** use `curl -k` or `GIT_SSL_NO_VERIFY`, which disable verification entirely and are a STIG finding.
+
+Get the CA certificate onto the box (USB, `scp`, or from your PKI), then:
+
+```bash
+sudo cp your-internal-ca.crt /usr/local/share/ca-certificates/
+sudo update-ca-certificates
+curl -fsSI https://git.example.com/ >/dev/null && echo "trust OK"
+```
+
+The file **must** end in `.crt` and be PEM-encoded, or `update-ca-certificates` ignores it. Convert DER with:
+
+```bash
+openssl x509 -inform der -in ca.der -out your-internal-ca.crt
+```
+
+This covers `curl`, `git`, `apt` and Ansible at once — they all read the system trust store. It persists across reboots and pulls, so it is a one-time step per box; bake it into your image to avoid repeating it.
+
+If you already have `bootstrap.sh` on the box, it can install the CA for you:
+
+```bash
+sudo CA_CERT=/path/to/ca.crt REPO_URL=https://git.example.com/... PROFILE=emi bash bootstrap.sh
+```
+
 ## Contents
 
 - [Track A: Development Workstation](#track-a-development-workstation)
