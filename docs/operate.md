@@ -123,26 +123,28 @@ it-ai run hfcli hf download <repo> --local-dir /llm/<name>   # download an extra
 
 ### Admin scripts (`it-*`)
 
-The `it_scripts` + `inventory_report` roles install short admin commands into `/usr/local/sbin` (both profiles); the `it_scripts` ones live in `/opt/it/scripts` and are symlinked, while `it-inventory` is installed directly. Each **self-elevates with `sudo`**, so you can run them as a normal admin. Run `it-status` for the at-a-glance rollup; the rest are focused.
+The `it_scripts` + `inventory_report` roles install short admin commands into `/usr/local/sbin`; the `it_scripts` ones live in `/opt/it/scripts` and are symlinked, while `it-inventory` is installed directly. Each **self-elevates with `sudo`**, so you can run them as a normal admin. Run `it-status` for the at-a-glance rollup; the rest are focused.
+
+The rows marked **ai only** are the AI-stack tooling. They are placed on the `ai` profile alone, and **actively removed** on every other profile — so a `development` or `emi` box that received them from an older build loses them on the next pull. Override with `it_scripts_ai_enabled: true` in `site.yml` if a dev box genuinely needs them.
 
 | Command | Script | What it does |
 |---|---|---|
-| `it-status` | `status.sh` | Runs all the checks below in one rollup (host, docker, models, LUKS). |
+| `it-status` | `status.sh` | Runs all the checks below in one rollup (host, LUKS, plus docker/models on an AI node). |
 | `it-host` | `status-host.sh` | Host state: hostname, FIPS, Secure Boot, kernel, uptime, disk. |
-| `it-docker` | `status-docker.sh` | `docker compose ps` across the per-service AI stacks (`/opt/stacks/<stack>/`) + flags any container not up/healthy. |
-| `it-models` | `status-models.sh` | Model volumes (populated?) + probes the local vLLM/Docling/Tika endpoints. |
+| `it-docker` | `status-docker.sh` | `docker compose ps` across the per-service AI stacks (`/opt/stacks/<stack>/`) + flags any container not up/healthy. *(ai only)* |
+| `it-models` | `status-models.sh` | Model volumes (populated?) + probes the local vLLM/Docling/Tika endpoints. *(ai only)* |
 | `it-luks` | `status-luks.sh` | LUKS/TPM auto-unlock status (binding, clevis-in-initramfs, Secure Boot) with a verdict. |
 | `it-luks-rebind` | `luks-rebind.sh` | Re-seals the TPM2 keyslot to the **current** PCR 7 when the box prompts for the passphrase despite a stale binding. Binds a fresh slot before removing the old one (no lockout). |
-| `it-restart` | `restart-docker.sh` | Restart the AI stacks under `/opt/stacks/`. `--up` uses `docker compose up -d` (apply `.env`/compose edits); a **stack** name limits it to one. (Thin wrapper over `it-ai restart|up`.) |
+| `it-restart` | `restart-docker.sh` | Restart the AI stacks under `/opt/stacks/`. `--up` uses `docker compose up -d` (apply `.env`/compose edits); a **stack** name limits it to one. (Thin wrapper over `it-ai restart|up`.) *(ai only)* |
 | `it-oscap` | `oscap-scan.sh` | Run the OpenSCAP DISA-STIG evaluation now; results to `/opt/ia/oscap`. Also runs on a schedule (`oscap-scan.timer` or `/etc/cron.d/oscap-scan`). |
 | `it-usb` | `usb-guard.sh` | USBGuard device allow-list: `enroll` (guided whitelist), `status`/`list`/`blocked`/`allow`/`block`/`policy`/`regenerate`. |
 | `it-checklist` | `checklist.sh` | Run the org Linux checklist against this box; one PASS/FAIL/N-A line per item. `--fail-only`, `--out FILE`. See [checklist.md](checklist.md). |
 | `it-grub` | `grub-password.sh` | GRUB bootloader password: `status` (is it configured + will it pass the scan), `hash` (generate one to vault), `set` (apply to this box), `remove`. |
-| `it-ai` | `ai-stack.sh` | One control surface for the per-service AI stacks (`/opt/stacks/<stack>/`), runnable from anywhere: `up`/`down`/`stop`/`restart`/`status`/`logs`/`pull` (all, or one `[STACK]`), `stacks` (list), `oikb` (opt-in sync), `model gpt-oss|granite|status` (System 1 chat-model switch), and `run <stack>` for the on-demand `tools` utilities (`hfcli`/`openwiki`). `it-ai tools` lists them. |
+| `it-ai` | `ai-stack.sh` | One control surface for the per-service AI stacks (`/opt/stacks/<stack>/`), runnable from anywhere: `up`/`down`/`stop`/`restart`/`status`/`logs`/`pull` (all, or one `[STACK]`), `stacks` (list), `oikb` (opt-in sync), `model gpt-oss|granite|status` (System 1 chat-model switch), and `run <stack>` for the on-demand `tools` utilities (`hfcli`/`openwiki`). `it-ai tools` lists them. *(ai only)* |
 | `it-set-classification` | `set-classification.sh` | Change the on-screen classification banner level (interactive menu or arg). Updates the autostart entry + `site.yml`, and restarts the banner live in each GUI session. GUI profiles. |
-| `it-set-ip` | `set-ip.sh` | Renumber the node when it leaves the lab: repoints the peer/cross-node IP (`site.yml` + `.env` + `/etc/hosts` + ufw + recreates containers) and/or this box's own static IP via netplan. Interactive or `--peer` / `--self`. |
-| `it-model-export` | `model-export.sh` | **Air-gap gather side** (online box): `hf download` the models + tiktoken encodings (+ `--images` to `docker save` the containers) onto a USB with a manifest. Completeness-checked. |
-| `it-model-import` | `model-import.sh` | **Air-gap install side** (fielded box): read the USB manifest and load models/encodings straight into their external Docker volumes (+ `--images` to `docker load`). No internet/repo/helper-image needed. |
+| `it-set-ip` | `set-ip.sh` | Renumber the node when it leaves the lab: repoints the peer/cross-node IP (`site.yml` + `.env` + `/etc/hosts` + ufw + recreates containers) and/or this box's own static IP via netplan. Interactive or `--peer` / `--self`. *(ai only)* |
+| `it-model-export` | `model-export.sh` | **Air-gap gather side** (online box): `hf download` the models + tiktoken encodings (+ `--images` to `docker save` the containers) onto a USB with a manifest. Completeness-checked. *(ai only)* |
+| `it-model-import` | `model-import.sh` | **Air-gap install side** (fielded box): read the USB manifest and load models/encodings straight into their external Docker volumes (+ `--images` to `docker load`). No internet/repo/helper-image needed. *(ai only)* |
 | `it-inventory` | `it-inventory.sh` | Writes `/opt/it/inventory-<host>.txt`: service tag, BIOS, DIMM/SSD serials, MACs, GPU, LVM/LUKS layout. |
 
 ### If something's wrong (things we've already handled in the tool)

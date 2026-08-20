@@ -1,5 +1,35 @@
 ---
 # it_scripts -- drop admin status/health scripts into /opt/it/scripts and expose
-# them as short `it-*` commands. Both profiles.
+# them as short `it-*` commands.
 it_scripts_enabled: true
 it_scripts_dir: "{{ it_dir | default('/opt/it') }}/scripts"
+
+# The AI-stack tooling is placed on the `ai` profile ONLY. On every other
+# profile these are actively REMOVED, so a box that received them from an
+# earlier build is cleaned up on the next pull rather than keeping dead
+# AI commands. Override in site.yml if a dev box genuinely needs them.
+it_scripts_ai_enabled: "{{ is_ai | default(false) | bool }}"
+
+# Placed on every profile.
+it_scripts_common:
+  - { file: status.sh,             link: it-status }
+  - { file: status-host.sh,        link: it-host }
+  - { file: status-luks.sh,        link: it-luks }
+  - { file: luks-rebind.sh,        link: it-luks-rebind }
+  - { file: set-classification.sh, link: it-set-classification }
+  - { file: oscap-scan.sh,         link: it-oscap }
+  - { file: usb-guard.sh,          link: it-usb }
+  - { file: grub-password.sh,      link: it-grub }
+  - { file: checklist.sh,          link: it-checklist }
+
+# AI profile only. Every one of these is written around the AI stack: the
+# Dockge stacks under /opt/stacks, the model volumes, or the cross-node wiring
+# between System 1 and System 2.
+it_scripts_ai:
+  - { file: ai-stack.sh,       link: it-ai }
+  - { file: status-models.sh,  link: it-models }
+  - { file: status-docker.sh,  link: it-docker }
+  - { file: restart-docker.sh, link: it-restart }
+  - { file: set-ip.sh,         link: it-set-ip }
+  - { file: model-export.sh,   link: it-model-export }
+  - { file: model-import.sh,   link: it-model-import }

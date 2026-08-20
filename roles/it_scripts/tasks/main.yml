@@ -2,7 +2,13 @@
 # =============================================================================
 # it_scripts -- admin status/health scripts in /opt/it/scripts, plus short
 # `it-*` commands in /usr/local/sbin. Each script self-elevates with sudo, so
-# an admin can just run e.g. `it-status`. Runs on both profiles.
+# an admin can just run e.g. `it-status`.
+#
+# The AI-stack tooling (it-ai, it-models, it-model-export/import, it-set-ip,
+# it-docker, it-restart) is placed on the `ai` profile ONLY, and REMOVED
+# everywhere else -- ansible's copy/link tasks only ever create, so without an
+# explicit `state: absent` a box that got them from an earlier build would keep
+# them forever. See it_scripts_ai_enabled in defaults/main.yml.
 # =============================================================================
 
 - name: "IT-SCRIPTS | Ensure the scripts dir exists ({{ it_scripts_dir }})"
@@ -13,57 +19,43 @@
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "2750"
 
-- name: "IT-SCRIPTS | Install the status scripts"
+- name: "IT-SCRIPTS | Install the admin scripts"
   ansible.builtin.copy:
-    src: "{{ item }}"
-    dest: "{{ it_scripts_dir }}/{{ item }}"
+    src: "{{ item.file }}"
+    dest: "{{ it_scripts_dir }}/{{ item.file }}"
     owner: root
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "0750"
-  loop:
-    - status.sh
-    - status-host.sh
-    - status-docker.sh
-    - status-models.sh
-    - status-luks.sh
-    - luks-rebind.sh
-    - restart-docker.sh
-    - ai-stack.sh
-    - set-ip.sh
-    - set-classification.sh
-    - model-export.sh
-    - model-import.sh
-    - oscap-scan.sh
-    - usb-guard.sh
-    - grub-password.sh
-    - checklist.sh
+  loop: "{{ it_scripts_common + (it_scripts_ai if it_scripts_ai_enabled | bool else []) }}"
+  loop_control:
+    label: "{{ item.file }}"
 
 - name: "IT-SCRIPTS | Expose short it-* commands in /usr/local/sbin"
   ansible.builtin.file:
-    src: "{{ it_scripts_dir }}/{{ item.target }}"
+    src: "{{ it_scripts_dir }}/{{ item.file }}"
     dest: "/usr/local/sbin/{{ item.link }}"
     state: link
     force: true
-  loop:
-    - { link: it-status, target: status.sh }
-    - { link: it-host,   target: status-host.sh }
-    - { link: it-docker, target: status-docker.sh }
-    - { link: it-models, target: status-models.sh }
-    - { link: it-luks,   target: status-luks.sh }
-    - { link: it-luks-rebind, target: luks-rebind.sh }
-    - { link: it-restart, target: restart-docker.sh }
-    - { link: it-ai, target: ai-stack.sh }
-    - { link: it-set-ip, target: set-ip.sh }
-    - { link: it-set-classification, target: set-classification.sh }
-    - { link: it-model-export, target: model-export.sh }
-    - { link: it-model-import, target: model-import.sh }
-    - { link: it-oscap, target: oscap-scan.sh }
-    - { link: it-usb, target: usb-guard.sh }
-    - { link: it-grub, target: grub-password.sh }
-    - { link: it-checklist, target: checklist.sh }
+  loop: "{{ it_scripts_common + (it_scripts_ai if it_scripts_ai_enabled | bool else []) }}"
+  loop_control:
+    label: "{{ item.link }}"
+
+# Cleanup for non-AI profiles. Also catches a box that was built as `ai` and
+# later rebuilt under another profile.
+- name: "IT-SCRIPTS | Remove the AI-stack tooling (not an AI node)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ (it_scripts_ai | map(attribute='file') | map('regex_replace', '^', it_scripts_dir ~ '/') | list)
+            + (it_scripts_ai | map(attribute='link') | map('regex_replace', '^', '/usr/local/sbin/') | list) }}"
+  when: not (it_scripts_ai_enabled | bool)
 
 - name: "IT-SCRIPTS | Where the scripts are"
   ansible.builtin.debug:
     msg: >-
-      Status scripts in {{ it_scripts_dir }}. Run `it-status` (all),
-      or it-host / it-docker / it-models / it-luks. They self-elevate with sudo.
+      Status scripts in {{ it_scripts_dir }}. Run `it-status` (all), or
+      it-host / it-luks / it-checklist / it-usb / it-grub / it-oscap.
+      {{ 'AI-stack tooling (it-ai, it-models, ...) installed.'
+         if it_scripts_ai_enabled | bool
+         else 'AI-stack tooling is not installed on this profile.' }}
+      They self-elevate with sudo.
