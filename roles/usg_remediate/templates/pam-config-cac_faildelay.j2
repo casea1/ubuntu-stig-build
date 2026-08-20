@@ -1,0 +1,8 @@
+# Managed by usg_remediate -- do not edit by hand.
+Name: Enable faildelay
+Conflicts: faildelay
+Default: yes
+Priority: 513
+Auth-Type: Primary
+Auth:
+	required pam_faildelay.so delay={{ usg_pam_faildelay_us }}

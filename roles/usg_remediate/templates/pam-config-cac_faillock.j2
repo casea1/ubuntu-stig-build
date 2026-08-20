@@ -1,0 +1,9 @@
+# Managed by usg_remediate -- do not edit by hand.
+# Priority 0 puts `authfail` at the BOTTOM of the auth stack, below pam_unix.
+Name: Enable pam_faillock to deny access
+Default: yes
+Conflicts: faillock
+Priority: 0
+Auth-Type: Primary
+Auth:
+	[default=die] pam_faillock.so authfail

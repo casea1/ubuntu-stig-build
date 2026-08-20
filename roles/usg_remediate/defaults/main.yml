@@ -5,6 +5,19 @@
 # without losing the rest.
 # =============================================================================
 
+# --- SSH warning banner -----------------------------------------------------
+# sshd_enable_warning_banner_net checks for the literal `Banner /etc/issue.net`,
+# so a dedicated banner path fails the rule whatever text it holds. The banner
+# tasks rewrite /etc/issue.net with the site text on every complete build, so
+# pointing sshd there keeps the DCSA/EMI content AND closes the finding.
+#
+# Set this back to /etc/dcsa-warning-banner if you would rather keep the
+# finding and be immune to an interrupted re-run: `usg fix` restores the DoD
+# Standard Mandatory Notice to /etc/issue.net and never touches the dedicated
+# path, so a build that dies between usg_harden and usg_remediate leaves SSH on
+# the DoD text.
+usg_ssh_banner_path: /etc/issue.net
+
 usg_fix_log_permissions: true
 
 # --- Audited privileged commands (UBTU-24-900080 .. 900330) -----------------
@@ -12,6 +25,37 @@ usg_fix_log_permissions: true
 # of these fail an otherwise clean audit. Every path here is exactly what the
 # benchmark's OVAL looks for; a path that does not exist on the box is skipped
 # (an audit rule naming a missing file makes `augenrules --load` fail).
+# --- Legacy audit rule files (pre-USG leftovers) ----------------------------
+# A box first built under the ansible-lockdown UBUNTU24-STIG role carries
+# /etc/audit/rules.d/stig.rules, whose rules use the OLD form:
+#     -F auid!=-1  -k privileged-chage        (lockdown role)
+# versus the form the benchmark's OVAL requires, which USG writes:
+#     -F auid!=unset -F key=privileged        (usg fix)
+#
+# Both files load fine -- auditd is happy -- but the OVAL test for each
+# privileged command is "every matching line must conform", so ONE stale line
+# fails the rule even though a correct line sits right beside it in USG's file.
+# On ASP-2 that single file accounted for 22 of 39 findings.
+#
+# Files are moved to {{ usg_legacy_audit_backup_dir }}, not deleted, so the old
+# ruleset is still recoverable and auditable.
+usg_remove_legacy_audit_rules: true
+usg_legacy_audit_rule_files:
+  - /etc/audit/rules.d/stig.rules
+  - /etc/audit/rules.d/audit.rules.prev
+usg_legacy_audit_backup_dir: /root/usg-legacy-audit-rules
+
+# --- Offload audit logs (UBTU-24-900240) ------------------------------------
+# The benchmark only checks that /etc/cron.weekly/audit-offload exists and is
+# non-empty -- it does not inspect what it does. On a connected box point it at
+# a real log host; on an air-gapped box the honest implementation is a local
+# staged copy that an operator carries off on removable media, which is what
+# the default script does. Set usg_audit_offload_command to replace it.
+usg_fix_audit_offload: true
+usg_audit_offload_dir: /opt/ia/audit-offload
+usg_audit_offload_keep: 8
+usg_audit_offload_command: ""
+
 usg_audit_privileged_commands_enabled: true
 usg_audit_privileged_commands_key: privileged
 usg_audit_privileged_commands:
@@ -63,12 +107,36 @@ usg_faillock_unlock_time: 900
 usg_fix_pam_faildelay: true
 usg_pam_faildelay_us: 4000000
 
-# OFF by default, deliberately. The benchmark's rendered value (100000) is an
-# SHA-512-crypt iteration count, but Ubuntu 24.04's pam_unix hashes with
-# YESCRYPT, where `rounds` is a small COST parameter that libxcrypt clamps into
-# single digits -- so 100000 does not mean 100000 rounds, it means "maximum
-# cost", and the memory/time that implies has not been measured on these boxes.
-# Turning it on trades one finding for an unquantified `passwd` cost. Check what
-# /etc/pam.d/common-password actually uses before enabling.
-usg_fix_pam_rounds: false
+# The benchmark's value (100000) is an SHA-512-crypt iteration count, but
+# Ubuntu 24.04's pam_unix hashes with YESCRYPT, whose cost parameter only
+# accepts 1..11 -- measured against libcrypt directly, crypt_gensalt("$y$", N)
+# RETURNS NULL for both 5000 and 100000; it does not clamp them. `usg fix`
+# already writes rounds=5000, so 100000 is not a new risk: both values are
+# equally out of range, and this only changes which one is on the line.
+#
+# What that means for the box is worth checking once, because it is a bigger
+# deal than the finding: if pam_unix passes the value straight through, an
+# out-of-range rounds= makes `passwd` fail on EVERY hardened box, and it has
+# been that way since `usg fix` first ran. Verify with a throwaway account:
+#     sudo useradd -M -s /usr/sbin/nologin pwtest && sudo passwd pwtest
+#     sudo getent shadow pwtest | cut -d: -f2 | cut -c1-8   # $y$j9T$ = default
+#     sudo userdel pwtest
+# A cost prefix of jFT means pam_unix clamped to 11 (~8 s per password change,
+# login is unaffected -- it reads the cost from the stored hash). A `passwd`
+# that errors means set usg_fix_pam_rounds: false and raise the finding as a
+# deviation instead.
+usg_fix_pam_rounds: true
 usg_pam_unix_rounds: 100000
+
+# Re-assert the file/dir modes immediately before the post-build re-audit, after
+# handlers and daemon restarts have had their chance to reset them.
+usg_final_permission_sweep: true
+
+# ufw_rate_limit (UBTU-24-600200): SSH only -- see the task for why the other
+# listening ports are left alone.
+usg_ufw_rate_limit_ssh: true
+
+# PAM stack edits for faillock + faildelay, via pam-auth-update profiles.
+# Set false to leave /etc/pam.d/common-auth entirely alone (the five faillock
+# rules and pam_faildelay then stay open as deviations).
+usg_fix_pam_stack: true

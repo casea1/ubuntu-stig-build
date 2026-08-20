@@ -1,0 +1,12 @@
+# Managed by usg_remediate -- do not edit by hand.
+# Priority 1025 puts `preauth` at the TOP of the auth stack, above pam_unix.
+Name: Notify of failed login attempts and reset count upon success
+Default: yes
+Conflicts: faillock_notify
+Priority: 1025
+Auth-Type: Primary
+Auth:
+	requisite pam_faillock.so preauth
+Account-Type: Primary
+Account:
+	required pam_faillock.so

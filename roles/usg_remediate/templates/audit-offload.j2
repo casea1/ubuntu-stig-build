@@ -1,0 +1,37 @@
+#!/bin/sh
+# Managed by usg_remediate -- do not edit by hand.
+# Weekly offload of the audit trail (AU-4(1) / UBTU-24-900240).
+#
+# These boxes have no reachable syslog/SIEM host, so "offload" means: take the
+# rotated audit logs off auditd's own filesystem, compress them, and stage them
+# where an operator collects them. Set usg_audit_offload_command in site.yml to
+# push to a log host instead.
+set -eu
+
+SRC=/var/log/audit
+DEST={{ usg_audit_offload_dir }}
+KEEP={{ usg_audit_offload_keep }}
+{% if usg_audit_offload_command | default('') | length > 0 %}
+
+{{ usg_audit_offload_command }}
+exit $?
+{% else %}
+
+[ -d "$SRC" ] || exit 0
+install -d -m 0750 -o root "$DEST"
+
+stamp=$(date +%Y%m%d)
+out="$DEST/audit-$(hostname -s)-$stamp.tar.gz"
+
+# Only the ROTATED logs: audit.log itself is open and being written.
+set -- "$SRC"/audit.log.*
+[ -e "$1" ] || exit 0
+
+tar -czf "$out.tmp" -C "$SRC" -- $(cd "$SRC" && ls audit.log.*) && mv -f "$out.tmp" "$out"
+chmod 0640 "$out"
+
+# Keep the last N archives; the originals stay until auditd rotates them out.
+ls -1t "$DEST"/audit-*.tar.gz 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r old; do
+    rm -f -- "$old"
+done
+{% endif %}

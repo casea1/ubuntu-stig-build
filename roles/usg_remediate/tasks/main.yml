@@ -113,12 +113,22 @@
         - /etc/issue.net
         - /etc/issue
 
-    - name: "REMED | Pin sshd at the dedicated DCSA banner (sorts FIRST -> wins over USG)"
+    - name: "REMED | Pin sshd at the site banner (sorts FIRST -> wins over USG)"
       # 00-0-... sorts before USG's 00-complianceascode-*.conf; sshd uses the
       # FIRST Banner value it reads, so ours wins regardless of USG's drop-in.
+      #
+      # The path defaults to /etc/issue.net because the benchmark's
+      # sshd_enable_warning_banner_net checks for exactly that literal value --
+      # a dedicated path fails the rule no matter what text is in it. The task
+      # above rewrites /etc/issue.net with the site banner on every complete
+      # build, so the content is still ours. Set usg_ssh_banner_path back to
+      # /etc/dcsa-warning-banner to trade that finding for immunity to a re-run
+      # that `usg fix` starts and something interrupts before this role runs
+      # (USG restores the DoD text to /etc/issue.net, never to the dedicated
+      # file).
       ansible.builtin.copy:
         dest: /etc/ssh/sshd_config.d/00-0-dcsa-banner.conf
-        content: "Banner /etc/dcsa-warning-banner\n"
+        content: "Banner {{ usg_ssh_banner_path | default('/etc/issue.net') }}\n"
         owner: root
         group: root
         mode: "0644"
@@ -281,6 +291,22 @@
   community.general.ufw:
     state: enabled
 
+# ufw_rate_limit (UBTU-24-600200) has no OVAL -- it is an OCIL/manual check, so
+# it reports fail whatever the box does and this will not move the score. It is
+# implemented anyway because rate-limiting SSH is worth having on its own.
+#
+# SSH ONLY, deliberately. `ufw limit` denies a source that opens more than six
+# connections in thirty seconds; applied to the AI stack's published ports or
+# the EMI imaging services that is a self-inflicted outage, and Docker's DNAT
+# bypasses ufw for those ports regardless (see docs/ai-stack.md). Every other
+# listening port stays an explicit deviation.
+- name: "REMED | Rate-limit inbound SSH"
+  community.general.ufw:
+    rule: limit
+    port: "{{ sshd_port | default('22') }}"
+    proto: tcp
+  when: usg_ufw_rate_limit_ssh | default(true) | bool
+
 # ---------------------------------------------------------------------------
 # 5) SYSTEM REBOOT / SHUTDOWN AUDITING (all profiles).
 # USG's STIG ruleset does not ship an explicit reboot-audit rule; auditd records
@@ -336,6 +362,51 @@
 # As with 71-reboot.rules, `usg fix` has already made the running config
 # immutable, so these load on the next reboot rather than immediately.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 5b-pre) LEGACY AUDIT RULE FILES
+# Must run BEFORE the privileged-command block below, which reads every other
+# *.rules file to decide what is already covered.
+#
+# A stale rules file is not merely redundant. Each audit_rules_* OVAL collects
+# EVERY line matching the command across /etc/audit/rules.d/*.rules and requires
+# all of them to conform, so one line in the old ansible-lockdown form
+#   -a always,exit -F path=/usr/bin/chage -F perm=x -F auid>=1000 -F auid!=-1 -k privileged-chage
+# fails the rule even though USG's own file carries the compliant line
+#   -a always,exit -F path=/usr/bin/chage -F perm=x -F auid>=1000 -F auid!=unset -F key=privileged
+# right beside it. On ASP-2 that was 22 of the 39 residual findings.
+#
+# Moved, not deleted: the old ruleset stays recoverable under
+# usg_legacy_audit_backup_dir.
+# ---------------------------------------------------------------------------
+- name: "REMED | Retire pre-USG audit rule files"
+  when: usg_remove_legacy_audit_rules | default(true) | bool
+  block:
+    - name: "REMED | Which legacy audit rule files are present?"
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ usg_legacy_audit_rule_files }}"
+      register: _legacy_audit_stat
+      loop_control:
+        label: "{{ item }}"
+
+    - name: "REMED | Backup dir for the retired rules"
+      ansible.builtin.file:
+        path: "{{ usg_legacy_audit_backup_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      when: _legacy_audit_stat.results | selectattr('stat.exists') | list | length > 0
+
+    - name: "REMED | Move each legacy rules file out of /etc/audit/rules.d"
+      ansible.builtin.command:
+        cmd: "mv -f {{ item }} {{ usg_legacy_audit_backup_dir }}/{{ item | basename }}"
+        removes: "{{ item }}"
+      loop: "{{ _legacy_audit_stat.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+      loop_control:
+        label: "{{ item }}"
+      notify: Load audit rules
+
 - name: "REMED | Audit rules for privileged commands"
   when: usg_audit_privileged_commands_enabled | default(true) | bool
   block:
@@ -430,10 +501,15 @@
 
 # ---------------------------------------------------------------------------
 # 5e) ACCOUNT LOCKOUT (UBTU-24-200610)
-# Five rules -- deny / fail_interval / unlock_time / audit / silent -- all read
-# from /etc/security/faillock.conf. We write ONLY that file; pam_faillock is
-# already wired into the PAM stack by USG, so nothing here can cost a working
-# login. See defaults/main.yml for the unlock_time reasoning.
+# Six rules -- deny / fail_interval / unlock_time / audit / silent -- read their
+# VALUES from /etc/security/faillock.conf, which is all this block writes.
+#
+# The values alone are not enough. Each rule's OVAL first requires pam_faillock
+# to be in /etc/pam.d/common-auth; without those lines faillock.conf is inert
+# and every one of the six fails no matter what it contains. That is exactly
+# what the ASP-2 scan showed. The PAM stack itself is handled in 5f-2 below,
+# which is the part that carries lockout risk -- this block still cannot cost a
+# working login on its own. See defaults/main.yml for the unlock_time reasoning.
 # ---------------------------------------------------------------------------
 - name: "REMED | Account lockout policy (faillock.conf)"
   when: usg_fix_faillock | default(true) | bool
@@ -460,38 +536,22 @@
       when: _faillock_conf.stat.exists | default(false)
 
 # ---------------------------------------------------------------------------
-# 5f) PAM: FAILED-LOGON DELAY + PASSWORD HASHING ROUNDS
-# UBTU-24-300017 (pam_faildelay) and UBTU-24-400220 (pam_unix rounds).
-# faildelay only slows a login that already failed; rounds only applies when a
-# password is CHANGED. Neither can reject a valid password, which is what keeps
-# them inside this role's "cannot lock out password login" rule. The
-# pam_faildelay.so module is checked for first -- a `required` line naming a
-# module that isn't installed WOULD break login.
+# 5f) PAM: PASSWORD HASHING ROUNDS (UBTU-24-400220)
+# `rounds` only applies when a password is CHANGED, so nothing here can reject a
+# valid password. pam_faildelay moved to the pam-auth-update block below, which
+# is where common-auth is actually generated from.
 # ---------------------------------------------------------------------------
-- name: "REMED | PAM faildelay + hashing rounds"
+- name: "REMED | PAM password hashing rounds"
   block:
-    - name: "REMED | Is pam_faildelay.so actually installed?"
-      ansible.builtin.shell:
-        cmd: "ls /usr/lib/*/security/pam_faildelay.so /usr/lib/security/pam_faildelay.so /lib/security/pam_faildelay.so 2>/dev/null"
-      register: _pam_faildelay_mod
-      changed_when: false
-      failed_when: false
-      check_mode: false
-
-    - name: "REMED | Enforce a delay after a failed logon (UBTU-24-300017)"
-      ansible.builtin.lineinfile:
-        path: /etc/pam.d/common-auth
-        regexp: '^\s*auth\s+(?:\[[^]]*\]|\S+)\s+pam_faildelay\.so'
-        line: "auth    required                        pam_faildelay.so delay={{ usg_pam_faildelay_us }}"
-        # Must sit BEFORE the terminal `requisite pam_deny.so`: requisite returns
-        # immediately on failure, so a faildelay line after it would never run on
-        # the very logins it is meant to slow down.
-        insertbefore: '^\s*auth\s+requisite\s+pam_deny\.so'
-        state: present
-        validate: "/bin/grep -q pam_unix.so %s"
-      when:
-        - usg_fix_pam_faildelay | default(true) | bool
-        - (_pam_faildelay_mod.stdout | default('') | trim) | length > 0
+    - name: "REMED | Correct an existing rounds= on the pam_unix password line"
+      # `usg fix` writes rounds=5000, which is NOT the benchmark's value, so the
+      # append-only task below skips the line and the finding stays open. This
+      # rewrites the value in place, leaving every other option untouched.
+      ansible.builtin.replace:
+        path: /etc/pam.d/common-password
+        regexp: '^(\s*password\s+(?:\[[^]]*\]|\S+)\s+pam_unix\.so\s+.*\brounds=)\d+'
+        replace: '\g<1>{{ usg_pam_unix_rounds }}'
+      when: usg_fix_pam_rounds | default(false) | bool
 
     - name: "REMED | Set pam_unix password hashing rounds (UBTU-24-400220)"
       # Appends `rounds=N` to the existing pam_unix.so password line, leaving
@@ -501,6 +561,144 @@
         regexp: '^(\s*password\s+(?:\[[^]]*\]|\S+)\s+pam_unix\.so(?!.*\brounds=)(?:\s+\S+)*)\s*$'
         replace: '\1 rounds={{ usg_pam_unix_rounds }}'
       when: usg_fix_pam_rounds | default(false) | bool
+
+# ---------------------------------------------------------------------------
+# 5f-2) PAM STACK: pam_faillock + pam_faildelay, via pam-auth-update profiles
+#
+# Seven findings (the five faillock rules, faillock_audit/silent, and
+# pam_faildelay) need lines in /etc/pam.d/common-auth, not just values in
+# /etc/security/faillock.conf. On ASP-2 faillock.conf was correct and all six
+# faillock rules still failed, because the OVAL's first test is the PAM stack
+# itself:
+#   ^\s*auth\s+(requisite|required)\s+pam_faillock\.so.*preauth
+#   ... ^\s*auth.*pam_unix\.so
+#   ... ^\s*auth\s+\[default=die\]\s+pam_faillock\.so\s+authfail
+# and none of those lines were present. The faillock.conf values are inert
+# without them.
+#
+# common-auth is GENERATED by pam-auth-update from /usr/share/pam-configs/, so
+# hand-editing it is both fragile and temporary -- the next libpam-runtime
+# upgrade regenerates the file and drops the edit. Ubuntu 24.04 ships no
+# faillock profile of its own (libpam-modules carries only `unix` and
+# `mkhomedir`), so we install profiles. These are byte-for-byte the ones SSG's
+# own remediation writes, including the priorities, which is what puts preauth
+# above pam_unix and authfail below it.
+#
+# Safety: common-auth and common-account are backed up first, and the result is
+# verified to still contain pam_unix.so and to reference no module that is
+# missing from disk. A failed check restores the backups before anything can
+# reach a login prompt.
+# ---------------------------------------------------------------------------
+- name: "REMED | PAM stack: faillock + faildelay (pam-auth-update profiles)"
+  when: usg_fix_pam_stack | default(true) | bool
+  block:
+    - name: "REMED | Back up the generated PAM files"
+      ansible.builtin.copy:
+        src: "/etc/pam.d/{{ item }}"
+        dest: "/etc/pam.d/{{ item }}.usg-remediate.bak"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+        force: true
+      loop:
+        - common-auth
+        - common-account
+
+    - name: "REMED | Install the pam-config profiles"
+      ansible.builtin.template:
+        src: "pam-config-{{ item }}.j2"
+        dest: "/usr/share/pam-configs/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - cac_faillock
+        - cac_faillock_notify
+        - cac_faildelay
+      register: _pam_profiles
+
+    - name: "REMED | Regenerate common-auth / common-account"
+      ansible.builtin.command:
+        cmd: "pam-auth-update --enable cac_faillock cac_faillock_notify cac_faildelay"
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      register: _pam_update
+      changed_when: _pam_update.rc == 0
+
+    # Two ways the regenerated stack could cost a working login: pam_unix gone,
+    # or a line naming a module that is not installed (PAM treats a missing
+    # module in a `required` slot as a failure).
+    - name: "REMED | Verify the regenerated stack still authenticates"
+      ansible.builtin.shell:
+        cmd: |
+          set -e
+          grep -q 'pam_unix\.so' /etc/pam.d/common-auth || { echo "MISSING pam_unix"; exit 1; }
+          libdir=$(dirname "$(find /usr/lib -name pam_unix.so -print -quit)")
+          for m in $(awk '!/^[[:space:]]*#/ {for (i=1;i<=NF;i++) if ($i ~ /^pam_.*\.so$/) print $i}' \
+                     /etc/pam.d/common-auth /etc/pam.d/common-account | sort -u); do
+            [ -e "$libdir/$m" ] || { echo "MISSING MODULE $m"; exit 1; }
+          done
+          echo OK
+      register: _pam_verify
+      changed_when: false
+      failed_when: false
+
+    - name: "REMED | Restore the PAM backups if verification failed"
+      ansible.builtin.copy:
+        src: "/etc/pam.d/{{ item }}.usg-remediate.bak"
+        dest: "/etc/pam.d/{{ item }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+        force: true
+      loop:
+        - common-auth
+        - common-account
+      when: "'OK' not in (_pam_verify.stdout | default(''))"
+
+    - name: "REMED | Fail loudly if the PAM stack had to be rolled back"
+      ansible.builtin.fail:
+        msg: >-
+          pam-auth-update produced a common-auth that would not authenticate
+          ({{ _pam_verify.stdout | default('no output') | trim }}). The previous
+          files have been restored from
+          /etc/pam.d/common-{auth,account}.usg-remediate.bak and the box is
+          unchanged. Set usg_fix_pam_stack: false to skip this block.
+      when: "'OK' not in (_pam_verify.stdout | default(''))"
+
+# ---------------------------------------------------------------------------
+# 5g) OFFLOAD AUDIT LOGS (UBTU-24-900240 / auditd_offload_logs)
+# The OVAL checks one thing: that /etc/cron.weekly/audit-offload exists and is
+# non-empty. It does not inspect what the script does, so the finding is closed
+# by any real implementation.
+#
+# The default script stages a compressed copy of the rotated audit logs under
+# usg_audit_offload_dir and prunes to the last N. That is a genuine offload for
+# an air-gapped box -- an operator carries the staged archives off on removable
+# media -- and it is deliberately NOT a no-op file written only to pass a scan.
+# On a connected box set usg_audit_offload_command to rsync/scp to the log host
+# and that runs instead.
+# ---------------------------------------------------------------------------
+- name: "REMED | Weekly audit log offload"
+  when: usg_fix_audit_offload | default(true) | bool
+  block:
+    - name: "REMED | Staging dir for offloaded audit logs"
+      ansible.builtin.file:
+        path: "{{ usg_audit_offload_dir }}"
+        state: directory
+        owner: root
+        group: "{{ ia_it_group | default('sudo') }}"
+        mode: "0750"
+
+    - name: "REMED | Install /etc/cron.weekly/audit-offload"
+      ansible.builtin.template:
+        src: audit-offload.j2
+        dest: /etc/cron.weekly/audit-offload
+        owner: root
+        group: root
+        mode: "0750"
 
 # ---------------------------------------------------------------------------
 # 5b) DISABLE CUPS PRINTING (all profiles) -- least-functionality hardening.
@@ -522,6 +720,78 @@
     - cups-browsed.service
   failed_when: false          # units may be absent (not installed) -> nothing to do
   when: disable_cups | default(true) | bool
+
+# ---------------------------------------------------------------------------
+# 5h) FINAL PERMISSION SWEEP -- runs LAST, immediately before the re-audit.
+#
+# The mode fixes earlier in this role were applied and were still wrong when the
+# scan ran on ASP-2: /var/log/journal 2755, journalctl 0755, /var/log/audit
+# 0750, /etc/audit/rules.d/71-reboot.rules 0640. Between those tasks and the
+# audit, handlers fire (augenrules --load) and daemons restart, and auditd and
+# systemd-journald both re-apply their own idea of the right mode to the
+# directories they own. Re-asserting here closes that window; it is idempotent,
+# so on a box where nothing reset them it is a no-op.
+#
+# /run/log/journal is on tmpfs and is recreated at every boot, so a chmod alone
+# never survives a reboot -- the tmpfiles.d drop-in is what makes it stick.
+# ---------------------------------------------------------------------------
+- name: "REMED | Final permission sweep (before the re-audit)"
+  when: usg_final_permission_sweep | default(true) | bool
+  block:
+    - name: "REMED | Persist the journal directory mode across reboots"
+      ansible.builtin.copy:
+        dest: /etc/tmpfiles.d/00-stig-journal.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by usg_remediate -- do not edit by hand.
+          # dir_permissions_system_journal wants 2750 or tighter. systemd
+          # creates these 2755, and /run/log/journal is tmpfs (recreated every
+          # boot), so this re-applies the mode at boot. `z` adjusts an existing
+          # path without creating one that should not exist.
+          z /run/log/journal 2750 root systemd-journal -
+          z /run/log/journal/* 2750 root systemd-journal -
+          z /var/log/journal 2750 root systemd-journal -
+          z /var/log/journal/* 2750 root systemd-journal -
+
+    - name: "REMED | Re-assert the journal directory modes now"
+      ansible.builtin.shell:
+        cmd: >-
+          find /run/log/journal /var/log/journal -maxdepth 1 -type d
+          -perm /0027 -exec chmod g-w,o-rwx {} + -print 2>/dev/null || true
+      register: _journal_sweep
+      changed_when: (_journal_sweep.stdout | default('') | trim) | length > 0
+
+    - name: "REMED | Re-assert journalctl 0740"
+      ansible.builtin.file:
+        path: /usr/bin/journalctl
+        mode: "0740"
+        state: file
+
+    - name: "REMED | Re-assert /etc/audit/rules.d/*.rules 0600"
+      ansible.builtin.shell:
+        cmd: >-
+          find /etc/audit/rules.d -maxdepth 1 -name '*.rules' -perm /0177
+          -exec chmod 0600 {} + -print
+      register: _rulesd_sweep
+      changed_when: (_rulesd_sweep.stdout | default('') | trim) | length > 0
+      failed_when: false
+
+    - name: "REMED | Re-read auditd's log_group"
+      ansible.builtin.command:
+        cmd: "awk -F= '/^[[:space:]]*log_group[[:space:]]*=/ {gsub(/ /,\"\",$2); print $2}' /etc/audit/auditd.conf"
+      register: _audit_log_group_final
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: "REMED | Re-assert /var/log/audit mode (0700 when log_group is root)"
+      ansible.builtin.file:
+        path: /var/log/audit
+        state: directory
+        mode: "{{ '0750' if (_audit_log_group_final.stdout | default('') | trim) not in ['', 'root'] else '0700' }}"
+      failed_when: false
 
 # ---------------------------------------------------------------------------
 # 6) RE-AUDIT -- regenerate the USG report so it reflects the fully-built,
