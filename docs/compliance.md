@@ -60,7 +60,12 @@ sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml
 | --- | --- | --- |
 | Smart Card Logins in PAM (`smartcard_pam_enabled`) | n/a | comment `pam_pkcs11.so` out of the auth stack → stops the "no smart card found" spam (this fleet is **password-login only**) |
 | `/var/log` file perms (`file_permissions_var_log_stig`) | UBTU-24-700010 | strip setuid/exec/other bits off log files |
-| `/var/log/audit` mode (`directory_permissions_var_log_audit`) | n/a | `chmod 0750` |
+| `/var/log/audit` mode (`directory_permissions_var_log_audit`) | UBTU-24-901380 | `0750` when auditd's `log_group` is non-root, `0700` when it is root — the required mode is conditional, and a flat `0750` fails the scan on a `log_group = root` box |
+| **Privileged-command audit rules** (`audit_rules_privileged_commands_*`, `audit_rules_execution_*`) | UBTU-24-900080…900330 | `usg fix` writes only part of the set (`su`/`fdisk`/`kmod`/`modprobe`/`unix_update` pass, ~19 others fail). We write the remainder to `/etc/audit/rules.d/72-privileged-commands.rules` — existing paths only, skipping any command another file already covers |
+| audit rules.d perms (`file_permissions_etc_audit_rulesd`) | UBTU-24-900040 | `chmod 0600` on anything with user-exec or group/other bits |
+| journal dir + `journalctl` perms (`dir_permissions_system_journal`, `file_permissions_journalctl`) | UBTU-24-700020/700030 | journal dirs to `2750` or tighter; `journalctl` to `0740` (root-execute only — read logs with `sudo journalctl`) |
+| Account lockout (`accounts_passwords_pam_faillock_*`) | UBTU-24-200610 | `deny`/`fail_interval`/`unlock_time`/`audit`/`silent` in `/etc/security/faillock.conf`. **`unlock_time` defaults to 900 s, not 0** — the benchmark accepts any value ≥ 0, and a permanent lock on a standalone laptop is a self-inflicted outage. Set `usg_faillock_unlock_time: 0` if your ISSM requires the literal reading |
+| Failed-logon delay (`accounts_passwords_pam_faildelay_delay`) | UBTU-24-300017 | `pam_faildelay.so delay=4000000` in `common-auth`, placed **before** the terminal `requisite pam_deny.so` so it actually runs on a failed login |
 | Remote time server (`chronyd_specify_remote_server`, `chronyd_server_directive`) | UBTU-24-600160 | write `server <host> iburst` to `sources.d`, drop `pool` (see **NTP** below) |
 | ufw active (`check_ufw_active`) | UBTU-24-300041 | firewall roles enable ufw; re-asserted here |
 
@@ -71,13 +76,17 @@ sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml
 | Smart Card / CAC + SSSD (`smartcard_pam_enabled`, `service_sssd_enabled`, `sssd_enable_user_cert`) | password-login only; local accounts, no directory/CAC → **de-selected in the USG tailoring** so they don't count against you | `usg_disable_smartcard*` |
 | ufw rate-limit **all** ports (`ufw_rate_limit`, UBTU-24-600200) | on `ai`, rate-limiting the Open WebUI / vLLM / Docling ports throttles inference. Only **management** ports (SSH/RDP/Cockpit/Dockge) are `ufw limit`ed | firewall roles |
 | GNOME login-banner **text**, blank-screensaver, USB→`dta` *(development profile only; the AI nodes disable USB storage)* | mission requirements (DCSA banner, org wallpaper, USB data-transfer) | operate.md POA&M |
+| Banner **text** rules (`banner_etc_issue_net`, `dconf_gnome_login_banner_text`, `banner_etc_profiled_ssh_confirm`) | these check for the **exact DoD** string; we deliberately show the DCSA banner instead. Three permanent findings, accepted by choice — they close only by abandoning the DCSA text | `usg_remediate` §1b |
+| SSH banner **path** (`sshd_enable_warning_banner_net`) | the rule wants `Banner /etc/issue.net`; we point sshd at `/etc/dcsa-warning-banner`, a file USG never rewrites, so an interrupted re-run can't silently restore the DoD text. One finding traded for banner durability | `usg_remediate` §1b |
+| USB storage driver (`kernel_module_usb-storage_disabled`) | the EMI laptop's data-transfer (`dta`) workflow needs USB mass storage. USBGuard now gates which devices are authorised at all, which is the compensating control | `usbguard` role |
 
 ### ❌ Open POA&M: need a secret or infra (NOT auto-applied)
 
 | Finding | To close it |
 | --- | --- |
-| **UEFI/GRUB boot-loader password** (`grub2_uefi_password`) | provide a hashed password (`grub2-mkpasswd-pbkdf2`) out-of-band |
-| **Audit-log offload** (`auditd_offload_logs`) | point at a remote collector (`stig_audit_remote_server`) |
+| **UEFI/GRUB boot-loader password** (`grub2_uefi_password`, UBTU-24-102000) | The **only `high` finding left.** The `grub_password` role is written and skips until a hash is vaulted — generate one with `it-grub hash` and set `grub_password_pbkdf2`. This matters more here than the severity suggests: LUKS is TPM-sealed to PCR 7 only, which does not measure the kernel command line, so without it physical access → root shell on decrypted data |
+| **Audit-log offload** (`auditd_offload_logs`, UBTU-24-900950) | The rule wants *"a crontab script running weekly to offload audit events of standalone systems"* — **not** necessarily a remote collector, so this is closable on an air-gapped box with a weekly offload to removable media. Needs a destination decision first |
+| **Password hashing rounds** (`accounts_password_pam_unix_rounds_password_auth`, UBTU-24-400220) | Implemented but **off by default** (`usg_fix_pam_rounds`). The benchmark's value (100000) is an SHA-512 iteration count, but Ubuntu 24.04 hashes with **yescrypt**, where `rounds` is a small cost parameter libxcrypt clamps into single digits. Measure `passwd` cost on a test box before enabling |
 | **Full-disk encryption** (`Encrypt Partitions`) | bake LUKS into the Ubuntu autoinstall (pre-install; see operate.md) |
 
 > **FIPS mode (`is_fips_mode_enabled`) is ENABLED** (`usg_enable_fips: true`). `usg_harden` runs `pro enable fips-updates` (installs the FIPS kernel/modules) and flags a reboot. The check passes **after that reboot**. It swaps the running kernel: validate on a throwaway box if you run unusual crypto/dev tooling. Set `usg_enable_fips: false` to defer it (POA&M).

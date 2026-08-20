@@ -200,11 +200,22 @@
         path: /var/log/audit
       register: _audit_dir
 
-    - name: "REMED | /var/log/audit must be mode 0750 or less permissive"
+    # The required mode is CONDITIONAL, which is why a flat 0750 failed the
+    # scan: the benchmark wants 0750 only when auditd.conf's log_group is a
+    # group other than root, and 0700 when it is root (or unset).
+    - name: "REMED | Read auditd's log_group"
+      ansible.builtin.command:
+        cmd: "awk -F= '/^[[:space:]]*log_group[[:space:]]*=/ {gsub(/ /,\"\",$2); print $2}' /etc/audit/auditd.conf"
+      register: _audit_log_group
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: "REMED | /var/log/audit mode (0750 with a non-root log_group, else 0700)"
       ansible.builtin.file:
         path: /var/log/audit
         state: directory
-        mode: "0750"
+        mode: "{{ '0750' if (_audit_log_group.stdout | default('') | trim) not in ['', 'root'] else '0700' }}"
       when:
         - _audit_dir.stat.exists | default(false)
         - _audit_dir.stat.isdir | default(false)
@@ -295,7 +306,7 @@
         dest: /etc/audit/rules.d/71-reboot.rules
         owner: root
         group: root
-        mode: "0640"
+        mode: "0600"          # file_permissions_etc_audit_rulesd wants 0600
         content: |
           ## Managed by usg_remediate -- do not edit by hand.
           ## Audit system reboot / shutdown / power-off / kexec. reboot(2) is the
@@ -306,6 +317,190 @@
           -a always,exit -F arch=b32 -S reboot -S kexec_load -k {{ audit_reboot_rules_key | default('reboot') }}
       when: _audit_rulesd.stat.exists | default(false)
       notify: Load audit rules
+
+# ---------------------------------------------------------------------------
+# 5c) AUDIT THE PRIVILEGED COMMANDS THE BENCHMARK CHECKS (UBTU-24-900080..900330)
+# `usg fix` writes this class of rule for only part of the set -- su, fdisk,
+# kmod, modprobe and unix_update pass while chfn/chsh/chage/passwd/gpasswd/
+# usermod/newgrp/crontab/mount/umount/sudo/sudoedit/ssh-agent/ssh-keysign/
+# pam_timestamp_check/apparmor_parser/chcon/setfacl/chacl all fail. That single
+# gap is the majority of the residual findings on a fully built box.
+#
+# Only paths that EXIST are written: auditctl rejects a path rule for a missing
+# file, which would make `augenrules --load` fail as a whole. Commands already
+# covered by another rules.d file are skipped too, so we never load a duplicate
+# rule (auditctl errors on "Rule exists"); our own file is excluded from that
+# scan or the block would delete its own rules on the next run.
+#
+# 72- keeps this after USG's own files and before its 99-*-finalize `-e 2`.
+# As with 71-reboot.rules, `usg fix` has already made the running config
+# immutable, so these load on the next reboot rather than immediately.
+# ---------------------------------------------------------------------------
+- name: "REMED | Audit rules for privileged commands"
+  when: usg_audit_privileged_commands_enabled | default(true) | bool
+  block:
+    - name: "REMED | Is auditd's rules.d present?"
+      ansible.builtin.stat:
+        path: /etc/audit/rules.d
+      register: _privcmd_rulesd
+
+    - name: "REMED | Which privileged-command binaries exist on this box?"
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ usg_audit_privileged_commands }}"
+      register: _privcmd_stat
+      loop_control:
+        label: "{{ item }}"
+      when: _privcmd_rulesd.stat.exists | default(false)
+
+    - name: "REMED | Read the audit rules USG already wrote (excluding our own file)"
+      ansible.builtin.shell:
+        cmd: >-
+          find /etc/audit/rules.d -maxdepth 1 -name '*.rules'
+          ! -name '72-privileged-commands.rules' -exec cat {} +
+      register: _privcmd_existing
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: _privcmd_rulesd.stat.exists | default(false)
+
+    # Two steps, not one expression with vars: `difference` on a real list is
+    # unambiguous. Paths are compared whole, so /usr/bin/su is never mistaken
+    # for the /usr/bin/sudo rule the way a substring match would.
+    - name: "REMED | Which commands does an existing rule already cover?"
+      ansible.builtin.set_fact:
+        _privcmd_covered: "{{ _privcmd_existing.stdout | default('') | regex_findall('-F path=(\\S+)') }}"
+      when: _privcmd_rulesd.stat.exists | default(false)
+
+    - name: "REMED | Build the list of commands still needing a rule"
+      ansible.builtin.set_fact:
+        _privcmd_missing: >-
+          {{ _privcmd_stat.results
+             | selectattr('stat.exists', 'defined') | selectattr('stat.exists')
+             | map(attribute='item') | list
+             | difference(_privcmd_covered) }}
+      when: _privcmd_rulesd.stat.exists | default(false)
+
+    - name: "REMED | Install the privileged-command audit rules (key={{ usg_audit_privileged_commands_key }})"
+      ansible.builtin.copy:
+        dest: /etc/audit/rules.d/72-privileged-commands.rules
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          ## Managed by usg_remediate -- do not edit by hand.
+          ## Privileged commands the DISA benchmark checks that `usg fix` did not
+          ## cover. Find them with: ausearch -k {{ usg_audit_privileged_commands_key }}
+          {% for cmd in _privcmd_missing %}
+          -a always,exit -F path={{ cmd }} -F perm=x -F auid>=1000 -F auid!=unset -F key={{ usg_audit_privileged_commands_key }}
+          {% endfor %}
+      when: _privcmd_rulesd.stat.exists | default(false)
+      notify: Load audit rules
+
+    - name: "REMED | /etc/audit/rules.d/*.rules must be 0600 (UBTU-24-900040)"
+      ansible.builtin.shell:
+        cmd: >-
+          find /etc/audit/rules.d -maxdepth 1 -name '*.rules' -perm /0177
+          -exec chmod 0600 {} + -print
+      register: _rulesd_perm
+      changed_when: (_rulesd_perm.stdout | default('') | trim) | length > 0
+
+# ---------------------------------------------------------------------------
+# 5d) SYSTEMD-JOURNAL PERMISSIONS (UBTU-24-700020 / 700030)
+# The journal directories must be 2750 or tighter and `journalctl` itself 0740.
+# 0740 means journalctl is root-execute-only -- admins read logs with `sudo
+# journalctl`, which is what every it-* script already does.
+# ---------------------------------------------------------------------------
+- name: "REMED | systemd-journal permissions"
+  when: usg_fix_journal_permissions | default(true) | bool
+  block:
+    - name: "REMED | Journal directories must be 2750 or less permissive"
+      ansible.builtin.shell:
+        cmd: >-
+          find /run/log/journal /var/log/journal -maxdepth 1 -type d
+          -perm /0027 -exec chmod g-w,o-rwx {} + -print 2>/dev/null || true
+      register: _journal_dirs
+      changed_when: (_journal_dirs.stdout | default('') | trim) | length > 0
+
+    - name: "REMED | journalctl must be mode 0740"
+      ansible.builtin.file:
+        path: /usr/bin/journalctl
+        mode: "0740"
+        state: file
+
+# ---------------------------------------------------------------------------
+# 5e) ACCOUNT LOCKOUT (UBTU-24-200610)
+# Five rules -- deny / fail_interval / unlock_time / audit / silent -- all read
+# from /etc/security/faillock.conf. We write ONLY that file; pam_faillock is
+# already wired into the PAM stack by USG, so nothing here can cost a working
+# login. See defaults/main.yml for the unlock_time reasoning.
+# ---------------------------------------------------------------------------
+- name: "REMED | Account lockout policy (faillock.conf)"
+  when: usg_fix_faillock | default(true) | bool
+  block:
+    - name: "REMED | Is faillock.conf present? (skip where pam_faillock is absent)"
+      ansible.builtin.stat:
+        path: /etc/security/faillock.conf
+      register: _faillock_conf
+
+    - name: "REMED | Set the faillock directives"
+      ansible.builtin.lineinfile:
+        path: /etc/security/faillock.conf
+        regexp: "{{ item.re }}"
+        line: "{{ item.line }}"
+        state: present
+      loop:
+        - { re: '^\s*#?\s*deny\s*=', line: "deny = {{ usg_faillock_deny }}" }
+        - { re: '^\s*#?\s*fail_interval\s*=', line: "fail_interval = {{ usg_faillock_fail_interval }}" }
+        - { re: '^\s*#?\s*unlock_time\s*=', line: "unlock_time = {{ usg_faillock_unlock_time }}" }
+        - { re: '^\s*#?\s*audit\s*$', line: "audit" }
+        - { re: '^\s*#?\s*silent\s*$', line: "silent" }
+      loop_control:
+        label: "{{ item.line }}"
+      when: _faillock_conf.stat.exists | default(false)
+
+# ---------------------------------------------------------------------------
+# 5f) PAM: FAILED-LOGON DELAY + PASSWORD HASHING ROUNDS
+# UBTU-24-300017 (pam_faildelay) and UBTU-24-400220 (pam_unix rounds).
+# faildelay only slows a login that already failed; rounds only applies when a
+# password is CHANGED. Neither can reject a valid password, which is what keeps
+# them inside this role's "cannot lock out password login" rule. The
+# pam_faildelay.so module is checked for first -- a `required` line naming a
+# module that isn't installed WOULD break login.
+# ---------------------------------------------------------------------------
+- name: "REMED | PAM faildelay + hashing rounds"
+  block:
+    - name: "REMED | Is pam_faildelay.so actually installed?"
+      ansible.builtin.shell:
+        cmd: "ls /usr/lib/*/security/pam_faildelay.so /usr/lib/security/pam_faildelay.so /lib/security/pam_faildelay.so 2>/dev/null"
+      register: _pam_faildelay_mod
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: "REMED | Enforce a delay after a failed logon (UBTU-24-300017)"
+      ansible.builtin.lineinfile:
+        path: /etc/pam.d/common-auth
+        regexp: '^\s*auth\s+(?:\[[^]]*\]|\S+)\s+pam_faildelay\.so'
+        line: "auth    required                        pam_faildelay.so delay={{ usg_pam_faildelay_us }}"
+        # Must sit BEFORE the terminal `requisite pam_deny.so`: requisite returns
+        # immediately on failure, so a faildelay line after it would never run on
+        # the very logins it is meant to slow down.
+        insertbefore: '^\s*auth\s+requisite\s+pam_deny\.so'
+        state: present
+        validate: "/bin/grep -q pam_unix.so %s"
+      when:
+        - usg_fix_pam_faildelay | default(true) | bool
+        - (_pam_faildelay_mod.stdout | default('') | trim) | length > 0
+
+    - name: "REMED | Set pam_unix password hashing rounds (UBTU-24-400220)"
+      # Appends `rounds=N` to the existing pam_unix.so password line, leaving
+      # every other option on it untouched. Skips a line that already has it.
+      ansible.builtin.replace:
+        path: /etc/pam.d/common-password
+        regexp: '^(\s*password\s+(?:\[[^]]*\]|\S+)\s+pam_unix\.so(?!.*\brounds=)(?:\s+\S+)*)\s*$'
+        replace: '\1 rounds={{ usg_pam_unix_rounds }}'
+      when: usg_fix_pam_rounds | default(false) | bool
 
 # ---------------------------------------------------------------------------
 # 5b) DISABLE CUPS PRINTING (all profiles) -- least-functionality hardening.

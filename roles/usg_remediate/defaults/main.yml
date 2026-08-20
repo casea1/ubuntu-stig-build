@@ -1,0 +1,74 @@
+---
+# =============================================================================
+# usg_remediate defaults -- residual DISA-STIG findings closed after `usg fix`.
+# Each block below is individually switchable so a box can opt out of one fix
+# without losing the rest.
+# =============================================================================
+
+usg_fix_log_permissions: true
+
+# --- Audited privileged commands (UBTU-24-900080 .. 900330) -----------------
+# `usg fix` writes rules for only part of the set the benchmark checks, so ~19
+# of these fail an otherwise clean audit. Every path here is exactly what the
+# benchmark's OVAL looks for; a path that does not exist on the box is skipped
+# (an audit rule naming a missing file makes `augenrules --load` fail).
+usg_audit_privileged_commands_enabled: true
+usg_audit_privileged_commands_key: privileged
+usg_audit_privileged_commands:
+  - /sbin/apparmor_parser
+  - /usr/bin/chacl
+  - /usr/bin/chage
+  - /usr/bin/chcon
+  - /usr/bin/chfn
+  - /usr/bin/chsh
+  - /usr/bin/crontab
+  - /usr/bin/gpasswd
+  - /usr/bin/kmod
+  - /usr/bin/mount
+  - /usr/bin/newgrp
+  - /usr/bin/passwd
+  - /usr/bin/setfacl
+  - /usr/bin/ssh-agent
+  - /usr/bin/su
+  - /usr/bin/sudo
+  - /usr/bin/sudoedit
+  - /usr/bin/umount
+  - /usr/lib/openssh/ssh-keysign
+  - /usr/sbin/pam_timestamp_check
+  - /usr/sbin/unix_update
+  - /usr/sbin/usermod
+
+# --- systemd-journal permissions (UBTU-24-700020 / 700030) ------------------
+# NOTE: journalctl at 0740 is root-execute-only. That is what the benchmark
+# requires; admins read logs through `sudo journalctl` (the it-* scripts
+# already self-elevate).
+usg_fix_journal_permissions: true
+
+# --- Account lockout (UBTU-24-200610) ---------------------------------------
+# Written to /etc/security/faillock.conf ONLY -- the PAM stack itself is not
+# touched, so this cannot cost anyone a working login.
+#
+# unlock_time: the STIG's own wording is "until released by an administrator",
+# i.e. 0. We default to 900 s instead -- the benchmark accepts any value >= 0,
+# and a permanent lock on a standalone laptop is a self-inflicted outage. Set
+# it to 0 per box if your ISSM requires the literal reading.
+usg_fix_faillock: true
+usg_faillock_deny: 3
+usg_faillock_fail_interval: 900
+usg_faillock_unlock_time: 900
+
+# --- PAM (UBTU-24-300017 / 400220) ------------------------------------------
+# faildelay only slows a failed login; rounds only affects password CHANGES.
+# Neither can deny an otherwise valid login.
+usg_fix_pam_faildelay: true
+usg_pam_faildelay_us: 4000000
+
+# OFF by default, deliberately. The benchmark's rendered value (100000) is an
+# SHA-512-crypt iteration count, but Ubuntu 24.04's pam_unix hashes with
+# YESCRYPT, where `rounds` is a small COST parameter that libxcrypt clamps into
+# single digits -- so 100000 does not mean 100000 rounds, it means "maximum
+# cost", and the memory/time that implies has not been measured on these boxes.
+# Turning it on trades one finding for an unquantified `passwd` cost. Check what
+# /etc/pam.d/common-password actually uses before enabling.
+usg_fix_pam_rounds: false
+usg_pam_unix_rounds: 100000
