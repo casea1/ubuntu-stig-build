@@ -74,13 +74,37 @@ status() {
   return "$rc"
 }
 
+# grub-mkpasswd-pbkdf2 writes its "Enter password:" prompts to STDOUT, not
+# stderr. Running it as `out=$(grub-mkpasswd-pbkdf2)` therefore captures the
+# prompts along with the hash and the terminal shows NOTHING -- the command
+# looks hung when it is actually waiting for a password nobody can see. That is
+# what it did, and it cost someone a hard reset mid-run.
+#
+# So: prompt here, on stderr where it is always visible, and feed the answer in
+# on stdin. Piped (not a tty) grub-mkpasswd-pbkdf2 reads both lines from stdin
+# and only the hash comes back on stdout. The password never appears in the
+# process table -- it goes through the pipe, not the argument list.
 make_hash() {
   command -v grub-mkpasswd-pbkdf2 >/dev/null || { echo "grub-mkpasswd-pbkdf2 not found (apt install grub-common)" >&2; exit 1; }
-  echo "You will be asked for the GRUB password twice. It is NOT a Linux account;"
-  echo "it only gates editing boot entries. Store it in your password vault."
-  echo
-  local out hash
-  out=$(grub-mkpasswd-pbkdf2) || exit 1
+  {
+    echo "Set the GRUB password. It is NOT a Linux account and it is NOT your"
+    echo "LUKS passphrase -- it only gates editing a boot entry. Vault it."
+    echo
+  } >&2
+
+  # Read from the controlling terminal when there is one, so this still works
+  # if stdin was redirected; fall back to stdin when there is not (a box with
+  # no tty would otherwise fail here with "No such device or address").
+  local pw pw2 out hash
+  { exec 3</dev/tty; } 2>/dev/null || exec 3<&0
+  printf 'GRUB password: ' >&2;  read -rs pw  <&3; echo >&2
+  printf 'Confirm      : ' >&2;  read -rs pw2 <&3; echo >&2
+  exec 3<&-
+  [ -n "$pw" ]        || { echo "empty password -- aborted" >&2; exit 1; }
+  [ "$pw" = "$pw2" ]  || { echo "passwords do not match -- aborted" >&2; exit 1; }
+
+  echo "Deriving the PBKDF2 hash (a few seconds)..." >&2
+  out=$(printf '%s\n%s\n' "$pw" "$pw2" | grub-mkpasswd-pbkdf2 2>/dev/null) || exit 1
   hash=$(printf '%s' "$out" | grep -o 'grub\.pbkdf2\.sha512\.[0-9]*\.[0-9A-Fa-f]*\.[0-9A-Fa-f]*' | head -1)
   [ -n "$hash" ] || { echo "could not parse a hash out of grub-mkpasswd-pbkdf2" >&2; exit 1; }
   printf '%s' "$hash"
