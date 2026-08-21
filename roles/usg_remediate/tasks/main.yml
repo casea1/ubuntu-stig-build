@@ -589,6 +589,46 @@
 # missing from disk. A failed check restores the backups before anything can
 # reach a login prompt.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 5f-1) PAM PRE-FLIGHT -- runs on EVERY box, whatever else is enabled.
+#
+# ASP-2 shipped a /etc/pam.d/common-auth, written by the pre-USG
+# ansible-lockdown role in June, that denied every login on the box: pam_unix
+# was present, every module existed, the file parsed -- and pam_faillock had
+# been inserted twice without recalculating pam_unix's success=2, so a correct
+# password was walked straight into pam_deny. It cost the operator a full
+# recovery from a live USB.
+#
+# Nothing in a normal build would have caught that, so check it explicitly and
+# say so loudly. This only READS the file.
+# ---------------------------------------------------------------------------
+- name: "REMED | Install the PAM auth-stack checker"
+  ansible.builtin.copy:
+    src: pam-auth-check.py
+    dest: "{{ pam_auth_check_path }}"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: "REMED | Pre-flight: can this box's PAM stack authenticate at all?"
+  ansible.builtin.command:
+    cmd: "{{ pam_auth_check_path }} /etc/pam.d/common-auth"
+  register: _pam_preflight
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "REMED | WARN -- the PAM auth stack rejects every password"
+  ansible.builtin.debug:
+    msg: >-
+      {{ _pam_preflight.stdout_lines | default(['(no output)']) }}
+      ---
+      This box CANNOT authenticate any local password, and that is true right
+      now, before this role changes anything. It is almost always a pre-USG
+      ansible-lockdown leftover. Repair with `sudo pam-auth-update --force`,
+      then TEST A LOGIN ON A SECOND TTY BEFORE CLOSING YOUR SESSION.
+  when: _pam_preflight.rc | default(0) != 0
+
 - name: "REMED | PAM stack: faillock + faildelay (pam-auth-update profiles)"
   when: usg_fix_pam_stack | default(true) | bool
   block:
@@ -626,20 +666,19 @@
       register: _pam_update
       changed_when: _pam_update.rc == 0
 
-    # Two ways the regenerated stack could cost a working login: pam_unix gone,
-    # or a line naming a module that is not installed (PAM treats a missing
-    # module in a `required` slot as a failure).
+    # "pam_unix is present and every module exists" is NOT enough -- that is
+    # exactly what the broken stack on ASP-2 looked like while denying every
+    # login. The offsets are what matter, so walk them.
     - name: "REMED | Verify the regenerated stack still authenticates"
       ansible.builtin.shell:
         cmd: |
           set -e
-          grep -q 'pam_unix\.so' /etc/pam.d/common-auth || { echo "MISSING pam_unix"; exit 1; }
           libdir=$(dirname "$(find /usr/lib -name pam_unix.so -print -quit)")
           for m in $(awk '!/^[[:space:]]*#/ {for (i=1;i<=NF;i++) if ($i ~ /^pam_.*\.so$/) print $i}' \
                      /etc/pam.d/common-auth /etc/pam.d/common-account | sort -u); do
             [ -e "$libdir/$m" ] || { echo "MISSING MODULE $m"; exit 1; }
           done
-          echo OK
+          {{ pam_auth_check_path }} /etc/pam.d/common-auth
       register: _pam_verify
       changed_when: false
       failed_when: false

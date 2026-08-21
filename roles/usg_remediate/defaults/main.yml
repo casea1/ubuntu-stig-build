@@ -137,6 +137,27 @@ usg_final_permission_sweep: true
 usg_ufw_rate_limit_ssh: true
 
 # PAM stack edits for faillock + faildelay, via pam-auth-update profiles.
-# Set false to leave /etc/pam.d/common-auth entirely alone (the five faillock
-# rules and pam_faildelay then stay open as deviations).
-usg_fix_pam_stack: true
+#
+# OFF until it has been proven on a throwaway box. This closes seven findings
+# and it is the right mechanism -- pam-auth-update, not a line edit -- but it
+# regenerates /etc/pam.d/common-auth, and the failure mode is an operator who
+# cannot log in. That is not hypothetical here: ASP-2 spent an afternoon
+# unloggable because a pre-USG role inserted pam_faillock lines without
+# recalculating pam_unix's jump offset, and recovery needed a live USB.
+#
+# The specific thing not yet verified is how pam-auth-update computes
+# `success=N` for pam_unix once the two faillock profiles join the Primary
+# block. If it counts only the entries it assigns jumps to, pam_unix could
+# land on `[default=die] pam_faillock.so authfail` and deny every login --
+# byte-identical in shape to the bug that just bit us.
+#
+# To enable safely: set true on ONE non-production box, run the build, then
+# BEFORE logging out of your session open a second TTY and log in there. Or
+# check without logging out at all:
+#     sudo pam-auth-check /etc/pam.d/common-auth
+# The role runs that check itself and rolls back from a backup on failure, but
+# a second TTY is the test that cannot lie to you.
+usg_fix_pam_stack: false
+
+# Where the PAM auth-stack checker is installed.
+pam_auth_check_path: /usr/local/sbin/pam-auth-check
