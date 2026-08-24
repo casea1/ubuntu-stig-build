@@ -120,3 +120,85 @@ UBTU-24-300004:
     lsblk -f (FSTYPE crypto_LUKS on the underlying partition).
   comments: Verified per box during build; see the inventory report.
 {% endif %}
+
+# =============================================================================
+# THE MANUAL / OCIL RULES
+#
+# These carry no automated check, so SCAP leaves them Not_Reviewed and an
+# assessor expects a human's evidence. Most of that evidence is one command's
+# output, so `evidence_cmd` runs it and embeds the real result in the checklist
+# -- what the box actually reports, not a claim in prose. Read the output before
+# accepting the status: these are pre-filled with the answer that is correct for
+# a standard build, and a box that has drifted will show it here.
+# =============================================================================
+
+# Emergency / temporary accounts (V-270682)
+UBTU-24-200250:
+  status: not_applicable
+  finding_details: |
+    No emergency or temporary accounts are provisioned on this system. All
+    accounts are permanent, created by the local_accounts role from the
+    version-controlled account list, and reviewed as part of the build. The
+    control applies to accounts created for a limited period, of which there
+    are none.
+  evidence_cmd: "awk -F: '$3>=1000 && $3<65534 {print $1\" uid=\"$3}' /etc/passwd; echo '-- expiring accounts:'; for u in $(awk -F: '$3>=1000 && $3<65534 {print $1}' /etc/passwd); do e=$(chage -l $u 2>/dev/null | grep -i 'account expires'); echo \"$u: $e\"; done"
+  comments: Confirm the list matches the approved account baseline.
+
+# Restrict functions / ports / protocols / services (V-270719)
+UBTU-24-300041:
+  status: not_a_finding
+  finding_details: |
+    ufw is enabled with a default-deny inbound policy. The only inbound rules
+    are the documented service ports required by this profile, applied by the
+    firewall role from version control; SSH is additionally rate-limited. No
+    unauthorized listening service is permitted, and the listening set is
+    recorded in the box's inventory report.
+  evidence_cmd: "ufw status verbose; echo; echo '-- listening:'; ss -H -tulpn | awk '{print $1, $5, $7}'"
+  comments: Compare the listening set against the approved services list.
+
+# DoD PKI-established CAs (V-270745)
+UBTU-24-600060:
+  status: not_applicable
+  finding_details: |
+    This system performs no PKI-based authentication and terminates no TLS for
+    DoD users: it is standalone, uses local accounts with password
+    authentication, and is not joined to a directory service. There is no
+    trust path for which DoD PKI CAs would be the required anchors. Should
+    PKI-based authentication be introduced, this rule becomes applicable and
+    must be re-assessed.
+  comments: Tied to the same de-scoping as the smart card / CAC rules.
+
+# Only necessary members in the sudo group (V-270748)
+UBTU-24-600130:
+  status: not_a_finding
+  finding_details: |
+    Membership of the sudo group is defined in version control (the
+    local_accounts role) and is limited to named administrator accounts. No
+    service or application account holds sudo, and NOPASSWD is not permitted --
+    sudo_remove_nopasswd and sudo_require_authentication both pass in the
+    automated scan.
+  evidence_cmd: "getent group sudo; echo; echo '-- sudoers.d:'; ls -l /etc/sudoers.d/; echo; grep -rn NOPASSWD /etc/sudoers /etc/sudoers.d/ 2>/dev/null || echo 'no NOPASSWD entries'"
+  comments: Review each member against the approved administrator list.
+
+# Audit storage capacity (V-270816)
+UBTU-24-900920:
+  status: not_a_finding
+  finding_details: |
+    /var/log/audit is sized to retain the required audit record volume, with
+    auditd configured to alert and act before the filesystem fills
+    (space_left_action and admin_space_left_action are set, and the
+    corresponding automated rules pass). Rotated logs are staged off weekly by
+    /etc/cron.weekly/audit-offload, which bounds on-disk growth.
+  evidence_cmd: "df -h /var/log/audit /var/log 2>/dev/null; echo; grep -E '^(max_log_file|num_logs|space_left|admin_space_left|space_left_action|admin_space_left_action|disk_full_action)' /etc/audit/auditd.conf"
+  comments: Confirm the partition size meets the org's retention requirement.
+
+# Cryptographic protection of audit tool integrity (V-270831)
+UBTU-24-909890:
+  status: not_a_finding
+  finding_details: |
+    AIDE is installed and its database includes the audit tools, so any change
+    to them is detected by cryptographic hash. The related automated rules
+    (package_aide_installed, aide_build_database, aide_check_audit_tools) all
+    pass, and AIDE runs on a schedule with notification enabled.
+  evidence_cmd: "grep -E '/usr/sbin/(auditctl|auditd|ausearch|aureport|autrace|augenrules)' /etc/aide/aide.conf /etc/aide/aide.conf.d/* 2>/dev/null | head -20 || echo 'no explicit audit-tool entries found'"
+  comments: Evidence must show the audit tools covered by an AIDE rule.

@@ -35,6 +35,7 @@ Everything has a default; on a built box `sudo it-ckl` is enough.
               Default: the SSG content on the box. Only needed when scanning
               with SSG content -- see below.
   --answers   the repo's adjudications. Default: /opt/ia/stig/answers.yml
+  --no-evidence  do not run the answer file's evidence_cmd entries
 
 WHY --map EXISTS: the manual STIG names rules UBTU-24-200640 / V-270691, but a
 scan run against ComplianceAsCode SSG content names the same rule
@@ -308,7 +309,14 @@ def load_answers(path):
                 if val in ("|", ">"):
                     block = []
                 else:
-                    answers[key][field] = val.strip('"\'')
+                    # Strip only a MATCHED surrounding pair. A blanket
+                    # .strip('"\'') eats the closing quote of a value that
+                    # legitimately ends in one -- an evidence_cmd finishing in
+                    # `echo 'x'` came out missing its final quote and would not
+                    # have run.
+                    if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+                        val = val[1:-1]
+                    answers[key][field] = val
     return answers
 
 
@@ -317,6 +325,29 @@ def lookup(rule, table):
         if k and k in table:
             return table[k]
     return None
+
+
+def run_evidence(cmd):
+    """Run an answer file's evidence command and return its output.
+
+    The answer file is root-owned, rendered by ansible from this repo, so its
+    commands carry the same trust as the playbook itself. Kept short-lived and
+    non-fatal: evidence that cannot be gathered is recorded as such rather than
+    failing the checklist. --no-evidence skips this entirely.
+    """
+    try:
+        p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+        out = (p.stdout + p.stderr).strip()
+        if not out:
+            return f"(no output, exit {p.returncode})"
+        lines = out.splitlines()
+        if len(lines) > 40:
+            lines = lines[:40] + [f"... ({len(out.splitlines()) - 40} more lines)"]
+        return "\n".join("    " + ln for ln in lines)
+    except subprocess.TimeoutExpired:
+        return "    (evidence command timed out after 30s)"
+    except Exception as exc:
+        return f"    (evidence command failed: {exc})"
 
 
 def target_data():
@@ -343,7 +374,7 @@ def target_data():
     }
 
 
-def build(meta, rules, results, answers, contributors=None):
+def build(meta, rules, results, answers, contributors=None, evidence=True):
     contributors = contributors or {}
     out, counts = [], {}
     for r in rules:
@@ -381,6 +412,12 @@ def build(meta, rules, results, answers, contributors=None):
                     status = want
             if ans.get("finding_details"):
                 details = (details + "\n\n" if details else "") + ans["finding_details"]
+            # An OCIL rule's evidence is usually one command's output. Capturing
+            # it here beats asserting compliance in prose an assessor cannot
+            # check, and beats an operator pasting it by hand on every box.
+            if ans.get("evidence_cmd") and evidence:
+                captured = run_evidence(ans["evidence_cmd"])
+                details += f"\n\nEvidence -- `{ans['evidence_cmd']}`:\n{captured}"
             if ans.get("comments"):
                 comments = (comments + "\n\n" if comments else "") + ans["comments"]
 
@@ -478,6 +515,7 @@ def main():
     ap.add_argument("--format", default="cklb", choices=("cklb", "ckl", "both"))
     ap.add_argument("--summary", action="store_true")
     ap.add_argument("--debug", action="store_true")
+    ap.add_argument("--no-evidence", action="store_true")
     ap.add_argument("-h", "--help", action="store_true")
     args = ap.parse_args()
     if args.help:
@@ -536,7 +574,7 @@ def main():
     mapped, contributors = apply_id_map(res, id_map) if id_map else (0, {})
 
     ans = load_answers(args.answers)
-    built, counts = build(meta, rules, res, ans, contributors)
+    built, counts = build(meta, rules, res, ans, contributors, not args.no_evidence)
 
     if args.debug:
         print("=" * 72)

@@ -337,6 +337,19 @@ UBTU-24-600200:
   comments: Manual/OCIL rule -- always reports fail in SCAP.
 ```
 
+An entry can also carry **`evidence_cmd`**, whose output is captured into `finding_details`. That is how the manual/OCIL rules get answered without an operator pasting terminal output into STIG Viewer on every box — and it keeps the checklist honest, since the evidence is what the machine actually reported rather than a claim in prose:
+
+```yaml
+UBTU-24-600130:
+  status: not_a_finding
+  finding_details: |
+    Membership of the sudo group is defined in version control and limited to
+    named administrator accounts.
+  evidence_cmd: "getent group sudo; grep -rn NOPASSWD /etc/sudoers /etc/sudoers.d/ || echo 'none'"
+```
+
+Output is trimmed to 40 lines, a 30-second timeout applies, and a command that fails records the failure rather than breaking the run. The answer file is root-owned and rendered from this repo, so its commands carry the same trust as the playbook; `--no-evidence` skips them all. **Read the captured output before accepting the status** — the entries are pre-filled with what is correct for a standard build, so a box that has drifted will show it there.
+
 **A SCAP failure always beats the answer file** unless the entry sets `override: true`. Without that rule a stale adjudication could quietly mark a broken control compliant, which is the one mistake that makes a checklist worthless. When an entry proposes a pass over a real failure the rule stays **Open** and the reason is written into its comments.
 
 After answering the `Not_Reviewed` list by hand, push anything reusable back into the template. That list should shrink every cycle; if it does not, the answers are not being captured.
