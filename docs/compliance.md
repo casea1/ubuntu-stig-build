@@ -304,7 +304,9 @@ ID map    : 1832 SSG->STIG references from ssg-ubuntu2404-ds.xml  -> 171 STIG id
 Answers   : 9 adjudications loaded from /opt/ia/stig/answers.yml
 ```
 
-**`-> 0 rules matched` means the checklist is meaningless** — every rule falls through to Not_Reviewed. The tool says so loudly and names the likely cause.
+**`-> 0 rules matched` means the checklist is meaningless** — every rule falls through to Not_Reviewed. The tool says so loudly and names the likely cause. `it-ckl --debug` prints the three id namespaces side by side (scan idrefs, id-map entries, the keys the manual STIG looks up) and the size of their intersection, which shows immediately which join is failing.
+
+**On the results file.** `oscap --stig-viewer` looked like the obvious input and turned out, on this content, to produce a file with **zero** rule-results — so the checklist came out empty regardless of the id mapping. `it-ckl` therefore tries candidates newest-first — `stig-viewer-*`, `stig-arf-*`, then the `usg audit` output in `/opt/ia` — and uses the first that actually contains results, reporting what it skipped and why. `--results` forces a specific file.
 
 #### Why an ID map is needed
 

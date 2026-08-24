@@ -26,8 +26,11 @@ Everything has a default; on a built box `sudo it-ckl` is enough.
   --stig      manual STIG XCCDF (*Manual-xccdf.xml). Default: newest in
               /opt/ia/stig/. Download once from cyber.mil and drop it there --
               it is public, and it is the only input this cannot generate.
-  --results   oscap results. Default: newest /opt/ia/oscap/stig-viewer-*.xml
-              (written by it-oscap).
+  --results   oscap results. Default: the newest file that actually contains
+              rule-results, tried in order -- stig-viewer-*, stig-arf-*, then
+              the `usg audit` output in /opt/ia. `oscap --stig-viewer` output
+              can be empty of rule-results depending on the content, which is
+              why this falls through rather than trusting one filename.
   --map       SCAP datastream used to translate SSG rule ids to STIG ids.
               Default: the SSG content on the box. Only needed when scanning
               with SSG content -- see below.
@@ -487,12 +490,39 @@ def main():
         sys.exit(f"no manual STIG XCCDF found in {STIG_DIR}.\n"
                  f"Download the Ubuntu 24.04 STIG from https://public.cyber.mil/stigs/downloads/,\n"
                  f"unzip it, and put the *Manual-xccdf.xml into {STIG_DIR}/ (once per STIG release).")
-    results = args.results or newest(os.path.join(OSCAP_DIR, "stig-viewer-*.xml"))
-    if not results:
+    # Pick a results file that actually CONTAINS rule-results.
+    #
+    # `oscap --stig-viewer` was the obvious input and turned out to produce a
+    # file with zero parseable rule-results on this content -- the checklist
+    # came out empty twice before that was visible. So rather than trusting one
+    # filename, try the candidates newest-first and take the first that yields
+    # results. The ARF and the `usg audit` output both carry them.
+    if args.results:
+        candidates = [args.results]
+    else:
+        candidates = [c for c in (
+            newest(os.path.join(OSCAP_DIR, "stig-viewer-*.xml")),
+            newest(os.path.join(OSCAP_DIR, "stig-arf-*.xml")),
+            newest(os.path.join(OSCAP_DIR, "stig-results-*.xml")),
+            newest("/opt/ia/usg-results-*.xml"),
+        ) if c]
+    if not candidates:
         sys.exit(f"no scan results in {OSCAP_DIR}. Run `sudo it-oscap` first.")
 
     meta, rules = parse_stig(stig)
-    res = parse_results(results)
+    results, res, tried = None, {}, []
+    for cand in candidates:
+        got = parse_results(cand)
+        tried.append((cand, len(got)))
+        if got:
+            results, res = cand, got
+            break
+    if results is None:
+        print("None of the available results files contained any rule-results:",
+              file=sys.stderr)
+        for c, n in tried:
+            print(f"  {c}  ({n})", file=sys.stderr)
+        sys.exit("nothing to build a checklist from.")
 
     # Translate SSG rule ids onto STIG ids. Skipped harmlessly when the scan
     # already used DISA content, since nothing will match the mapping.
@@ -545,7 +575,10 @@ def main():
 
     print(f"STIG      : {meta['title']}  ({meta['release_info']})")
     print(f"Rules     : {len(rules)}")
-    print(f"Scan      : {os.path.basename(results)}  -> {matched} rules matched")
+    print(f"Scan      : {os.path.basename(results)}  "
+          f"({len(res)} result keys)  -> {matched} rules matched")
+    for c, n in tried[:-1]:
+        print(f"            (skipped {os.path.basename(c)}: no rule-results in it)")
     if id_map:
         print(f"ID map    : {len(id_map)} SSG->STIG references from "
               f"{os.path.basename(map_paths[0])}  -> {mapped} STIG ids resolved")
