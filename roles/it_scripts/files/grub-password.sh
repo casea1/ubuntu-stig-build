@@ -235,8 +235,22 @@ Applied.
 MSG
 }
 
+# Validate every argument. The previous version matched only $1 and silently
+# dropped the rest, so `it-grub set --drop-extras` on a box running an older
+# copy behaved exactly like a bare `set` -- same output, no hint that the flag
+# had been ignored. An unrecognised option must be an error, not a no-op.
+_seen_cmd=0
 for a in "$@"; do
-  [ "$a" = "--drop-extras" ] && DROP_EXTRAS=1
+  case "$a" in
+    --drop-extras) DROP_EXTRAS=1 ;;
+    status|set|hash|remove|help|-h|--help)
+      [ "$_seen_cmd" = 0 ] && _seen_cmd=1 || {
+        echo "only one command at a time (got '$a' as well)" >&2; exit 2; }
+      ;;
+    *) echo "unknown option: $a" >&2
+       echo "try: it-grub help" >&2
+       exit 2 ;;
+  esac
 done
 
 drop_extras() {
