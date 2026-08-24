@@ -4,7 +4,11 @@
 # oscap-scan.timer / cron.d entry the scap_scan role installs.
 #
 # Usage:  sudo it-oscap [--dir DIR] [--profile PROFILE] [--keep N] [--content FILE]
-#   --dir      output dir (default /opt/ia/oscap)
+#   --dir      output dir (default /opt/ia/oscap/manual -- ad-hoc runs. The
+#              weekly timer passes /opt/ia/oscap/scheduled, and the build-time
+#              scan the scap_scan role runs lands in /opt/ia/oscap/build. One
+#              directory per writer, so --keep retention can never prune an
+#              artifact a different process owns.)
 #   --profile  XCCDF profile id (default: the SSG STIG profile, or the sole
 #              profile in --content when that datastream has exactly one)
 #   --keep     how many result SETS to retain (default 12; 0 = keep everything)
@@ -39,7 +43,7 @@
 set -uo pipefail
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
-DIR="/opt/ia/oscap"
+DIR="/opt/ia/oscap/manual"
 PROFILE="xccdf_org.ssgproject.content_profile_stig"
 KEEP=12
 DS_ARG=""

@@ -69,7 +69,7 @@
 
 - name: Create report directory
   ansible.builtin.file:
-    path: "{{ scap_report_dir }}"
+    path: "{{ scap_build_dir }}"
     state: directory
     mode: "0750"
 
@@ -81,9 +81,9 @@
       oscap xccdf eval
       --profile {{ scap_profile }}
       --fetch-remote-resources
-      --results-arf {{ scap_report_dir }}/stig-arf-{{ ansible_date_time.date }}.xml
-      --report {{ scap_report_dir }}/stig-report-{{ ansible_date_time.date }}.html
-      --stig-viewer {{ scap_report_dir }}/stig-viewer-{{ ansible_date_time.date }}.xml
+      --results-arf {{ scap_build_dir }}/stig-arf-{{ ansible_date_time.date }}.xml
+      --report {{ scap_build_dir }}/stig-report-{{ ansible_date_time.date }}.html
+      --stig-viewer {{ scap_build_dir }}/stig-viewer-{{ ansible_date_time.date }}.xml
       {{ scap_datastream }}
   register: oscap_run
   failed_when: oscap_run.rc not in [0, 2]
@@ -93,8 +93,8 @@
   ansible.builtin.debug:
     msg: >
       SCAP scan complete (rc={{ oscap_run.rc }}).
-      HTML report:     {{ scap_report_dir }}/stig-report-{{ ansible_date_time.date }}.html
-      STIG Viewer XML: {{ scap_report_dir }}/stig-viewer-{{ ansible_date_time.date }}.xml
+      HTML report:     {{ scap_build_dir }}/stig-report-{{ ansible_date_time.date }}.html
+      STIG Viewer XML: {{ scap_build_dir }}/stig-viewer-{{ ansible_date_time.date }}.xml
       Collect these before air-gapping the machine.
 
 # =============================================================================
@@ -106,9 +106,9 @@
 - name: "SCAP | Scheduled re-scan"
   when: scap_schedule_enabled | default(true) | bool
   block:
-    - name: "SCAP | Ensure the report dir exists ({{ scap_report_dir }})"
+    - name: "SCAP | Ensure the scheduled-scan dir exists ({{ scap_scheduled_dir }})"
       ansible.builtin.file:
-        path: "{{ scap_report_dir }}"
+        path: "{{ scap_scheduled_dir }}"
         state: directory
         owner: root
         group: "{{ ia_it_group | default('sudo') }}"
@@ -124,12 +124,12 @@
         content: |
           [Unit]
           Description=OpenSCAP DISA-STIG evaluation
-          Documentation=file://{{ scap_report_dir }}
+          Documentation=file://{{ scap_scheduled_dir }}
           [Service]
           Type=oneshot
           Nice=10
           IOSchedulingClass=idle
-          ExecStart=/usr/local/sbin/it-oscap --dir {{ scap_report_dir }} --profile {{ scap_profile }} --keep {{ scap_schedule_keep | default(12) }}
+          ExecStart=/usr/local/sbin/it-oscap --dir {{ scap_scheduled_dir }} --profile {{ scap_profile }} --keep {{ scap_schedule_keep | default(12) }}
       when: scap_schedule_method | default('timer') == 'timer'
 
     - name: "SCAP | Scheduled scan timer unit"
@@ -169,7 +169,7 @@
           # Managed by ansible (scap_scan) -- OpenSCAP DISA-STIG evaluation.
           SHELL=/bin/bash
           PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-          {{ scap_schedule_cron }} root /usr/local/sbin/it-oscap --dir {{ scap_report_dir }} --profile {{ scap_profile }} --keep {{ scap_schedule_keep | default(12) }} >/dev/null 2>&1
+          {{ scap_schedule_cron }} root /usr/local/sbin/it-oscap --dir {{ scap_scheduled_dir }} --profile {{ scap_profile }} --keep {{ scap_schedule_keep | default(12) }} >/dev/null 2>&1
       when: scap_schedule_method | default('timer') == 'cron'
 
     # ---- remove the method that is NOT in use, so only one scheduler runs ----
@@ -184,7 +184,7 @@
         msg: >-
           OpenSCAP re-scan scheduled via {{ scap_schedule_method | default('timer') }}
           ({{ scap_schedule_oncalendar if (scap_schedule_method | default('timer')) == 'timer' else scap_schedule_cron }});
-          results -> {{ scap_report_dir }}, keeping {{ scap_schedule_keep | default(12) }} sets.
+          results -> {{ scap_scheduled_dir }}, keeping {{ scap_schedule_keep | default(12) }} sets.
           Run on demand: sudo it-oscap
 
 # ---------------------------------------------------------------------------
@@ -218,7 +218,7 @@
 
 - name: "SCAP | Is DISA's manual STIG XCCDF staged?"
   ansible.builtin.find:
-    paths: "{{ scap_stig_dir }}"
+    paths: "{{ scap_stig_content_dir }}"
     patterns: "*xccdf*.xml"
   register: _stig_manual
 
@@ -227,7 +227,7 @@
     msg: >-
       {{ 'Checklist ready: run `sudo it-oscap` then `sudo it-ckl`.'
          if (_stig_manual.files | length) > 0
-         else 'No manual STIG XCCDF in ' ~ scap_stig_dir ~ '. Download the Ubuntu 24.04
+         else 'No manual STIG XCCDF in ' ~ scap_stig_content_dir ~ '. Download the Ubuntu 24.04
                STIG from https://public.cyber.mil/stigs/downloads/, unzip it, and copy the
                *Manual-xccdf.xml there (once per STIG release). Until then `it-ckl` has no
                skeleton to fill in, though `it-oscap` still produces the STIG Viewer import.' }}

@@ -36,9 +36,9 @@ This is a fast indicator — the authoritative evidence is `usg audit disa_stig`
 | 21 | Splunk agent | **N/A** | Not used in this environment. | — |
 | 22 | DNS records (COMPASS) | **Manual** | Org infrastructure. | `dig +short <host>` |
 | 23 | Backup + restore | **Not met** | No backup tooling installed. Macrium SiteBackup's Linux agent is **Insider-preview only**, not GA — unsuitable for an accredited system. restic/borg are the offline-friendly options; blocked on target + scope. | — |
-| 24 | Scheduled OSCAP job | **Met** | `it-oscap` on a systemd timer (or `/etc/cron.d`, via `scap_schedule_method`). Results → `/opt/ia/oscap`. Runs as **root** because `auto_audit` is locked and can't sudo unattended. | `systemctl list-timers oscap-scan.timer` |
+| 24 | Scheduled OSCAP job | **Met** | `it-oscap` on a systemd timer (or `/etc/cron.d`, via `scap_schedule_method`). Results → `/opt/ia/oscap/scheduled`. Runs as **root** because `auto_audit` is locked and can't sudo unattended. | `systemctl list-timers oscap-scan.timer` |
 | 25 | iDRAC / OME | **Manual** | Server hardware, out-of-band. | iDRAC web UI |
-| 26 | Current vulnerability scan | **Met (process)** | Scheduled scan produces the artifact; reviewing it is a human step. | `ls -t /opt/ia/oscap/stig-report-*.html \| head -1` |
+| 26 | Current vulnerability scan | **Met (process)** | Scheduled scan produces the artifact; reviewing it is a human step. | `ls -t /opt/ia/oscap/*/stig-report-*.html \| head -1` |
 | 27 | Latest STIG version | **Met** | USG content ships via Pro; SSG datastream pinned in `group_vars`. Confirm the benchmark version you're held to. | `dpkg-query -W usg` |
 
 ## Open items
@@ -55,7 +55,7 @@ The table above is the **org** Linux checklist. The **DISA STIG** checklist (`.c
 
 ```bash
 sudo it-stig status   # is everything staged?
-sudo it-stig run      # scan + checklist -> /opt/ia/stig/<host>-<ts>.cklb
+sudo it-stig run      # scan + checklist -> /opt/ia/stig/checklists/<host>-<ts>.cklb
 ```
 
 `it-ckl` merges DISA's manual STIG, the scan results, and the adjudications this repo carries, so `Not_Reviewed` means "needs a human on this box" rather than "not typed in yet". Full process, including which DISA downloads you need and which to avoid: [compliance.md](compliance.md#scanning-and-building-the-stig-checklist).

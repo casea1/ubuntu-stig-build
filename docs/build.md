@@ -523,7 +523,7 @@ Don't `it-ai up` both vLLM stacks while on Granite; bringing up `vllm-gptoss` al
 
 ### Collect the compliance report
 
-- After the build, the USG/SCAP report is in **`/opt/ia/`** (`usg-report-*.html` + XCCDF `.xml`).
+- After the build, the USG report is in **`/opt/ia/usg/`** (`usg-report-*.html` + XCCDF `.xml`), and the build-time OpenSCAP scan in **`/opt/ia/oscap/build/`**.
 - Grab it while online.
 - Re-run on demand: `sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml`.
 - Full detail: [operate.md](operate.md) → "Running a USG / SCAP compliance scan."

@@ -22,6 +22,14 @@ set -uo pipefail
 
 OSCAP_DIR="${OSCAP_DIR:-/opt/ia/oscap}"
 STIG_DIR="${STIG_DIR:-/opt/ia/stig}"
+# One directory per writer: build-time scans, the weekly timer and ad-hoc runs
+# never share a directory, so retention in one cannot prune another's evidence.
+SCAN_BUILD="$OSCAP_DIR/build"
+SCAN_SCHED="$OSCAP_DIR/scheduled"
+SCAN_MANUAL="$OSCAP_DIR/manual"
+CONTENT_DIR="$STIG_DIR/content"
+CHECKLIST_DIR="$STIG_DIR/checklists"
+EVIDENCE_DIR="$STIG_DIR/evidence"
 TAILORING="/etc/usg/managed-tailoring.xml"
 FORMAT="both"
 PASS_SCAN=()
@@ -50,9 +58,9 @@ done
 
 newest() { ls -1t $1 2>/dev/null | head -1; }
 
-manual_xccdf() { newest "$STIG_DIR/*Manual-xccdf.xml"; }
-last_scan()    { newest "$OSCAP_DIR/stig-viewer-*.xml"; }
-last_ckl()     { newest "$STIG_DIR/*.cklb"; }
+manual_xccdf() { newest "$CONTENT_DIR/*Manual-xccdf.xml $STIG_DIR/*Manual-xccdf.xml"; }
+last_scan()    { newest "$SCAN_MANUAL/stig-*.xml $SCAN_SCHED/stig-*.xml $SCAN_BUILD/stig-*.xml $OSCAP_DIR/stig-*.xml"; }
+last_ckl()     { newest "$CHECKLIST_DIR/*.cklb $STIG_DIR/*.cklb"; }
 
 status() {
   echo "STIG evidence status  ($(hostname))"
@@ -66,10 +74,10 @@ status() {
   f=$(manual_xccdf)
   if [ -n "$f" ]; then ok "manual STIG: $(basename "$f")"
   else
-    no "no manual STIG XCCDF in $STIG_DIR"
+    no "no manual STIG XCCDF in $CONTENT_DIR"
     echo "         Download 'Canonical Ubuntu 24.04 LTS STIG' from"
     echo "         https://public.cyber.mil/stigs/downloads/ , unzip, and copy the"
-    echo "         *Manual-xccdf.xml into $STIG_DIR/ . Unclassified -- USB is fine."
+    echo "         *Manual-xccdf.xml into $CONTENT_DIR/ . Unclassified -- USB is fine."
     rc=1
   fi
 
@@ -80,8 +88,13 @@ status() {
   [ -f "$TAILORING" ] && ok "USG tailoring: $TAILORING (smartcard/SSSD de-selected)" \
                       || wa "no $TAILORING -- scans will include rules the baseline de-scopes"
 
+  local n
+  for d in "$SCAN_BUILD:build" "$SCAN_SCHED:scheduled" "$SCAN_MANUAL:manual"; do
+    n=$(ls -1 "${d%%:*}"/stig-*.* 2>/dev/null | wc -l)
+    printf '  %s %s scans: %s\n' "$([ "$n" -gt 0 ] && printf '\033[32mOK\033[0m  ' || printf '\033[33mWARN\033[0m')" "${d##*:}" "$n file(s)"
+  done
   f=$(last_scan)
-  [ -n "$f" ] && ok "last scan: $(basename "$f")  ($(date -r "$f" '+%Y-%m-%d %H:%M'))" \
+  [ -n "$f" ] && ok "newest scan: $(basename "$f")  ($(date -r "$f" '+%Y-%m-%d %H:%M'))" \
               || wa "no scan results yet -- run: it-stig scan"
 
   f=$(last_ckl)
@@ -127,7 +140,9 @@ case "$CMD" in
     do_scan && do_checklist
     ;;
   archive)
-    ts=$(date +%Y%m%d-%H%M%S); out="$STIG_DIR/stig-evidence-$(hostname -s)-$ts.tar.gz"
+    ts=$(date +%Y%m%d-%H%M%S)
+    mkdir -p "$EVIDENCE_DIR"
+    out="$EVIDENCE_DIR/stig-evidence-$(hostname -s)-$ts.tar.gz"
     # A manifest instead of the XCCDF itself: DISA's manual STIG is ~40 MB of
     # public content, so shipping it in every evidence bundle wastes the media.
     # Recording WHICH release was used is the part that matters for the audit.

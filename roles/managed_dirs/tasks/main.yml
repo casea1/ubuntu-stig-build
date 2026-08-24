@@ -58,6 +58,58 @@
 # Drop a ready-to-edit per-node override template where admins actually look
 # (/opt/it), so site.yml is easy to find. force:false = NEVER clobber a real one.
 # The playbook loads /opt/it/site.yml automatically (see local.yml pre_tasks).
+# ---------------------------------------------------------------------------
+# ONE-TIME MIGRATION into the subdivided /opt/ia.
+#
+# Everything used to land flat: usg-report-*.html and usg-results-*.xml in
+# /opt/ia itself, and every OpenSCAP artifact in /opt/ia/oscap regardless of
+# what produced it. Moving them means an existing box's history stays with the
+# new layout instead of the old files sitting alongside as a second, stale set.
+#
+# Matched by NAME, and only names this baseline writes. `mv -n` never
+# overwrites, so re-running is a no-op and a file already in place wins.
+# ---------------------------------------------------------------------------
+- name: "DIRS | Migrate legacy IA artifacts into the subdivided layout"
+  ansible.builtin.shell:
+    cmd: |
+      set -e
+      moved=0
+      # usg audit output: /opt/ia/*.{html,xml} -> /opt/ia/usg/
+      for f in {{ ia_dir }}/usg-report-*.html {{ ia_dir }}/usg-results-*.xml; do
+        [ -e "$f" ] || continue
+        mv -n "$f" {{ ia_usg_dir }}/ && moved=$((moved+1))
+      done
+      # OpenSCAP artifacts sitting directly in the oscap parent. The role wrote
+      # date-only stamps (stig-arf-2026-08-24.xml); it-oscap writes date-time
+      # (stig-arf-20260824-143656.xml). That is how the two are told apart.
+      for f in {{ scap_report_dir }}/stig-*-*.*; do
+        [ -f "$f" ] || continue
+        b=$(basename "$f")
+        case "$b" in
+          *-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].*) d={{ scap_build_dir }} ;;
+          *) d={{ scap_manual_dir }} ;;
+        esac
+        mv -n "$f" "$d/" && moved=$((moved+1))
+      done
+      # DISA content and generated checklists were both loose in stig/.
+      for f in {{ scap_stig_dir }}/*xccdf*.xml {{ scap_stig_dir }}/*Benchmark*.xml; do
+        [ -f "$f" ] || continue
+        mv -n "$f" {{ scap_stig_content_dir }}/ && moved=$((moved+1))
+      done
+      for f in {{ scap_stig_dir }}/*.cklb {{ scap_stig_dir }}/*.ckl; do
+        [ -f "$f" ] || continue
+        mv -n "$f" {{ scap_stig_checklist_dir }}/ && moved=$((moved+1))
+      done
+      for f in {{ scap_stig_dir }}/stig-evidence-*.tar.gz; do
+        [ -f "$f" ] || continue
+        mv -n "$f" {{ scap_stig_evidence_dir }}/ && moved=$((moved+1))
+      done
+      echo "moved=$moved"
+    executable: /bin/bash
+  register: _ia_migrate
+  changed_when: "'moved=0' not in (_ia_migrate.stdout | default('moved=0'))"
+  when: managed_dirs_migrate | default(true) | bool
+
 - name: "DIRS | Drop a starter site.yml override template in {{ it_dir | default('/opt/it') }}"
   ansible.builtin.copy:
     src: site.yml.starter

@@ -251,20 +251,41 @@ The whole process, end to end. Two scanners run on these boxes and they answer d
 | Content | Canonical's USG (SSG-derived) | the SSG datastream `scap_scan` stages |
 | Tailoring | uses `/etc/usg/managed-tailoring.xml` | now uses it too (`--no-tailoring` to skip) |
 | Runs | inside the build, after `usg_remediate` | by hand, and weekly by timer |
-| Output | `/opt/ia/usg-report-*.html` + `usg-results-*.xml` | `/opt/ia/oscap/stig-{report,arf,viewer}-*` |
+| Output | `/opt/ia/usg/usg-report-*.html` + `usg-results-*.xml` | `/opt/ia/oscap/{build,scheduled,manual}/stig-{report,arf,viewer}-*` |
 | Use it for | the compliance score and the accreditation artifact | the checklist, and ad-hoc re-checks |
 
 **They must be tailored the same way or they disagree.** `usg_harden` de-selects the smart-card and SSSD rules — this fleet is password-login only with no CAC reader — and a raw `oscap` run ignores that, reporting `smartcard_pam_enabled`, `service_sssd_enabled` and `sssd_enable_user_cert` as findings the accredited baseline has formally de-scoped. `it-oscap` now picks up the tailoring file automatically.
 
+#### Where everything lives
+
+`/opt/ia` is subdivided so **each directory has exactly one writer**. Everything used to land in two flat directories, which is how a build-time scan and an ad-hoc scan ended up side by side in `/opt/ia/oscap` under near-identical names — and `it-ckl` picked the wrong one. Separating by writer also makes retention safe: pruning ad-hoc runs can no longer delete the build-time artifact an accreditation package refers to.
+
+```
+/opt/ia/
+  usg/                  `usg audit` reports + results -- the compliance score
+  oscap/
+    build/              scan taken during a build/pull      (scap_scan role)
+    scheduled/          the weekly timer                    (oscap-scan.timer)
+    manual/             ad-hoc runs                         (it-oscap)
+  stig/
+    content/            DISA-published input YOU stage (manual XCCDF, SCAP benchmark)
+    answers.yml         the adjudications, rendered per profile
+    checklists/         generated .ckl / .cklb
+    evidence/           `it-stig archive` bundles
+  audit-offload/        weekly staged audit logs
+```
+
+Tell the two scan styles apart by their filename: the role stamps date-only (`stig-arf-2026-08-24.xml`), `it-oscap` stamps date **and time** (`stig-arf-20260824-143656.xml`). `it-ckl` reads from all three scan directories, newest first — any of them is valid input.
+
+Existing boxes are migrated automatically on the next pull: `managed_dirs` moves the legacy flat files into place with `mv -n`, so it never overwrites and re-running is a no-op.
+
 #### One-time setup per box
 
 ```bash
-sudo mkdir -p /opt/ia/stig
-# copy in DISA's manual STIG XCCDF (see below), then:
-ls /opt/ia/stig/          # *Manual-xccdf.xml and answers.yml
+sudo it-stig status       # names anything missing, and how to fix it
 ```
 
-`answers.yml` is rendered by the `scap_scan` role; if it is missing, that role has not run yet.
+The directories are created by the `managed_dirs` role and `answers.yml` is rendered by `scap_scan`; if either is missing, run a pull. The one thing neither can produce is DISA's manual STIG XCCDF — stage that in `/opt/ia/stig/content/`.
 
 #### Getting DISA's content
 
@@ -277,7 +298,7 @@ From [public.cyber.mil/stigs/downloads](https://public.cyber.mil/stigs/downloads
 | **STIG for Ansible** | **Do not run** | Supplemental automation that *applies* the STIG — a remediation engine, like `usg fix` and this repo. Running it puts a third engine on the same files. That is exactly how ASP-2 ended up with a `common-auth` that denied every login. Useful as a **reference** for DISA's canonical fix: `grep -rl 'UBTU-24-600200' <unzipped>/`. |
 | **STIG for Chef** | No | Not used here. |
 
-Copy the XML into `/opt/ia/stig/` — unclassified, so USB is fine for the air-gapped boxes.
+Copy the XML into `/opt/ia/stig/content/` — unclassified, so USB is fine for the air-gapped boxes.
 
 #### The routine
 
@@ -291,7 +312,7 @@ sudo it-stig archive    # tar the evidence set for hand-off
 
 ```bash
 sudo it-oscap                        # scan; a few minutes
-sudo it-ckl --format both --summary  # -> /opt/ia/stig/<host>-<ts>.cklb and .ckl
+sudo it-ckl --format both --summary  # -> /opt/ia/stig/checklists/<host>-<ts>.cklb and .ckl
 ```
 
 Read the `it-ckl` header before trusting the output:
@@ -306,7 +327,7 @@ Answers   : 9 adjudications loaded from /opt/ia/stig/answers.yml
 
 **`-> 0 rules matched` means the checklist is meaningless** — every rule falls through to Not_Reviewed. The tool says so loudly and names the likely cause. `it-ckl --debug` prints the three id namespaces side by side (scan idrefs, id-map entries, the keys the manual STIG looks up) and the size of their intersection, which shows immediately which join is failing.
 
-**On the results file.** `oscap --stig-viewer` looked like the obvious input and turned out, on this content, to produce a file with **zero** rule-results — so the checklist came out empty regardless of the id mapping. `it-ckl` therefore tries candidates newest-first — `stig-viewer-*`, `stig-arf-*`, then the `usg audit` output in `/opt/ia` — and uses the first that actually contains results, reporting what it skipped and why. `--results` forces a specific file.
+**On the results file.** `oscap --stig-viewer` looked like the obvious input and turned out, on this content, to produce a file with **zero** rule-results — so the checklist came out empty regardless of the id mapping. `it-ckl` therefore tries candidates newest-first across all three scan directories — `stig-arf-*`, `stig-viewer-*`, then the `usg audit` output — and uses the first that actually contains results, reporting what it skipped and why. `--results` forces a specific file.
 
 #### Why an ID map is needed
 
@@ -358,7 +379,7 @@ After answering the `Not_Reviewed` list by hand, push anything reusable back int
 
 | When | What |
 |---|---|
-| Weekly, automatic | `oscap-scan.timer` re-scans to `/opt/ia/oscap` (`Persistent=true`, so a run missed while powered off fires at next boot) |
+| Weekly, automatic | `oscap-scan.timer` re-scans to `/opt/ia/oscap/scheduled` (`Persistent=true`, so a run missed while powered off fires at next boot) |
 | Before you start | `sudo it-stig status` — confirms the manual STIG, SSG content, tailoring file and `answers.yml` are all in place |
 | After any change | `sudo it-oscap` and compare against the last run |
 | Monthly / on demand | `sudo it-ckl`, answer the remainder, archive the `.cklb` |

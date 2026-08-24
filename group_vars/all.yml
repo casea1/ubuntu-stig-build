@@ -275,7 +275,11 @@ ubtu24stig_disruption_high: false
 # Set false on a box that is already air-gapped and has no SSG content staged:
 # the first run downloads the datastream and cannot complete without internet.
 scap_scan_enabled: true
-scap_report_dir: /opt/ia/oscap        # IA collection point (ia_dir); admin-group readable
+# One directory per writer -- see the IA/IT MANAGED DIRECTORIES section for why.
+scap_report_dir: /opt/ia/oscap        # parent; the three below are what actually gets written
+scap_build_dir: "{{ scap_report_dir }}/build"          # the scap_scan role, during a pull
+scap_scheduled_dir: "{{ scap_report_dir }}/scheduled"  # the weekly timer
+scap_manual_dir: "{{ scap_report_dir }}/manual"        # ad-hoc `it-oscap`
 # Profile id inside the SSG datastream. Verified present in the pinned SSG
 # release below (products/ubuntu2404 ships stig.profile).
 scap_profile: xccdf_org.ssgproject.content_profile_stig
@@ -289,6 +293,9 @@ scap_content_dir: /usr/share/xml/scap/ssg/content
 # STIG checklist (.ckl/.cklb) working dir: holds the rendered answers.yml, the
 # DISA manual STIG XCCDF you stage there once per release, and `it-ckl` output.
 scap_stig_dir: /opt/ia/stig
+scap_stig_content_dir: "{{ scap_stig_dir }}/content"      # DISA input you stage
+scap_stig_checklist_dir: "{{ scap_stig_dir }}/checklists"  # generated .ckl/.cklb
+scap_stig_evidence_dir: "{{ scap_stig_dir }}/evidence"     # it-stig archive bundles
 ssg_content_version: "0.1.81"
 
 # ---- Scheduled OpenSCAP re-scan (checklist: "add OSCAP job to crontab") ------
@@ -1212,7 +1219,8 @@ usg_disable_smartcard_rules:
 # collection point (see IA/IT MANAGED DIRECTORIES below). The dir + files are owned
 # root and group-readable by the admin (sudo) group. Override usg_report_dir to send
 # them elsewhere (e.g. back to scap_report_dir / /var/log/stig-scan).
-usg_report_dir: "{{ ia_dir }}"
+ia_usg_dir: "{{ ia_dir }}/usg"
+usg_report_dir: "{{ ia_usg_dir }}"
 usg_report_dir_owner: root
 usg_report_dir_group: "{{ ia_it_group }}"      # admin (sudo) group can read the reports
 usg_report_dir_mode: "{{ ia_it_dir_mode }}"    # 2770: setgid, sudo-group rwx, others denied
@@ -1321,7 +1329,32 @@ ia_it_group: sudo                 # group allowed into the dirs (Ubuntu admin gr
 ia_it_dir_mode: "2770"            # setgid + rwx for the group, nothing for others
 ia_dir: /opt/ia
 it_dir: /opt/it
+#
+# /opt/ia is subdivided so each directory has exactly ONE writer. Everything
+# used to land in two flat directories, which is how a build-time scan and an
+# on-demand scan ended up side by side in /opt/ia/oscap under near-identical
+# names -- and `it-ckl` picked the wrong one. Separating them by WHO WROTE IT
+# also makes retention safe: pruning ad-hoc runs can no longer delete the
+# build-time artifact an accreditation package refers to.
+#
+#   /opt/ia/usg/              `usg audit` reports + results (the compliance score)
+#   /opt/ia/oscap/build/      OpenSCAP scan taken during a build/pull
+#   /opt/ia/oscap/scheduled/  the weekly timer
+#   /opt/ia/oscap/manual/     ad-hoc `it-oscap` runs
+#   /opt/ia/stig/content/     DISA-published input you stage (manual XCCDF, SCAP benchmark)
+#   /opt/ia/stig/checklists/  generated .ckl / .cklb
+#   /opt/ia/stig/evidence/    `it-stig archive` bundles
+#   /opt/ia/audit-offload/    weekly staged audit logs
 managed_dirs:
   - "{{ ia_dir }}"
+  - "{{ ia_usg_dir }}"
+  - "{{ scap_report_dir }}"
+  - "{{ scap_build_dir }}"
+  - "{{ scap_scheduled_dir }}"
+  - "{{ scap_manual_dir }}"
+  - "{{ scap_stig_dir }}"
+  - "{{ scap_stig_content_dir }}"
+  - "{{ scap_stig_checklist_dir }}"
+  - "{{ scap_stig_evidence_dir }}"
   - "{{ it_dir }}"
   - "{{ it_dir }}/installers"   # staging area for installer files/archives (admin-only)

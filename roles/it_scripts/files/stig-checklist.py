@@ -61,7 +61,12 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
 STIG_DIR = "/opt/ia/stig"
+CONTENT_DIR = os.path.join(STIG_DIR, "content")       # DISA input you stage
+CHECKLIST_DIR = os.path.join(STIG_DIR, "checklists")  # generated output
 OSCAP_DIR = "/opt/ia/oscap"
+# Newest-first across all three writers. Kept separate on disk so retention in
+# one cannot prune another's artifacts, but any of them is a valid input here.
+SCAN_DIRS = [os.path.join(OSCAP_DIR, d) for d in ("manual", "scheduled", "build")] + [OSCAP_DIR]
 
 # oscap result -> checklist status. Anything not listed stays not_reviewed:
 # "notchecked" and "error" genuinely mean a human has to look.
@@ -522,12 +527,15 @@ def main():
         print(__doc__)
         return 0
 
-    stig = args.stig or newest(os.path.join(STIG_DIR, "*Manual-xccdf.xml")) \
+    stig = args.stig \
+        or newest(os.path.join(CONTENT_DIR, "*Manual-xccdf.xml")) \
+        or newest(os.path.join(CONTENT_DIR, "*xccdf*.xml")) \
+        or newest(os.path.join(STIG_DIR, "*Manual-xccdf.xml")) \
         or newest(os.path.join(STIG_DIR, "*xccdf*.xml"))
     if not stig:
-        sys.exit(f"no manual STIG XCCDF found in {STIG_DIR}.\n"
+        sys.exit(f"no manual STIG XCCDF found in {CONTENT_DIR}.\n"
                  f"Download the Ubuntu 24.04 STIG from https://public.cyber.mil/stigs/downloads/,\n"
-                 f"unzip it, and put the *Manual-xccdf.xml into {STIG_DIR}/ (once per STIG release).")
+                 f"unzip it, and put the *Manual-xccdf.xml into {CONTENT_DIR}/ (once per STIG release).")
     # Pick a results file that actually CONTAINS rule-results.
     #
     # `oscap --stig-viewer` was the obvious input and turned out to produce a
@@ -538,14 +546,22 @@ def main():
     if args.results:
         candidates = [args.results]
     else:
-        candidates = [c for c in (
-            newest(os.path.join(OSCAP_DIR, "stig-viewer-*.xml")),
-            newest(os.path.join(OSCAP_DIR, "stig-arf-*.xml")),
-            newest(os.path.join(OSCAP_DIR, "stig-results-*.xml")),
-            newest("/opt/ia/usg-results-*.xml"),
-        ) if c]
+        pats = []
+        for d in SCAN_DIRS:
+            pats += [os.path.join(d, "stig-arf-*.xml"),
+                     os.path.join(d, "stig-viewer-*.xml"),
+                     os.path.join(d, "stig-results-*.xml")]
+        pats.append("/opt/ia/usg/usg-results-*.xml")
+        pats.append("/opt/ia/usg-results-*.xml")
+        seen, candidates = set(), []
+        for hit in (newest(p) for p in pats):
+            if hit and hit not in seen:
+                seen.add(hit)
+                candidates.append(hit)
+        # Newest first overall -- a scan from any writer is equally valid input.
+        candidates.sort(key=os.path.getmtime, reverse=True)
     if not candidates:
-        sys.exit(f"no scan results in {OSCAP_DIR}. Run `sudo it-oscap` first.")
+        sys.exit(f"no scan results under {OSCAP_DIR}. Run `sudo it-oscap` first.")
 
     meta, rules = parse_stig(stig)
     results, res, tried = None, {}, []
@@ -600,7 +616,8 @@ def main():
 
     matched = sum(1 for r in rules if lookup(r, res) is not None)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    base = args.out or os.path.join(STIG_DIR, f"{socket.gethostname()}-{stamp}")
+    outdir = CHECKLIST_DIR if os.path.isdir(CHECKLIST_DIR) else STIG_DIR
+    base = args.out or os.path.join(outdir, f"{socket.gethostname()}-{stamp}")
     base = re.sub(r"\.(cklb|ckl)$", "", base)
 
     written = []

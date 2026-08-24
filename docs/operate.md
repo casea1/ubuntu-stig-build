@@ -136,7 +136,7 @@ The rows marked **ai only** are the AI-stack tooling. They are placed on the `ai
 | `it-luks` | `status-luks.sh` | LUKS/TPM auto-unlock status (binding, clevis-in-initramfs, Secure Boot) with a verdict. |
 | `it-luks-rebind` | `luks-rebind.sh` | Re-seals the TPM2 keyslot to the **current** PCR 7 when the box prompts for the passphrase despite a stale binding. Binds a fresh slot before removing the old one (no lockout). |
 | `it-restart` | `restart-docker.sh` | Restart the AI stacks under `/opt/stacks/`. `--up` uses `docker compose up -d` (apply `.env`/compose edits); a **stack** name limits it to one. (Thin wrapper over `it-ai restart|up`.) *(ai only)* |
-| `it-oscap` | `oscap-scan.sh` | Run the OpenSCAP DISA-STIG evaluation now; results to `/opt/ia/oscap`. Also runs on a schedule (`oscap-scan.timer` or `/etc/cron.d/oscap-scan`). |
+| `it-oscap` | `oscap-scan.sh` | Run the OpenSCAP DISA-STIG evaluation now; results to `/opt/ia/oscap/manual`. The weekly timer writes to `oscap/scheduled` and the build-time scan to `oscap/build` — one directory per writer, so retention never prunes another's evidence. `--content` scans DISA's own SCAP benchmark; `--no-tailoring` skips the USG tailoring file. |
 | `it-usb` | `usb-guard.sh` | USBGuard device allow-list: `enroll` (guided whitelist), `status`/`list`/`blocked`/`allow`/`block`/`policy`/`regenerate`. |
 | `it-checklist` | `checklist.sh` | Run the org Linux checklist against this box; one PASS/FAIL/N-A line per item. `--fail-only`, `--out FILE`. See [checklist.md](checklist.md). |
 | `it-grub` | `grub-password.sh` | GRUB bootloader password: `status` (is it configured + will it pass the scan), `hash` (generate one to vault), `set` (apply to this box), `remove`. |
@@ -481,7 +481,7 @@ sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml    # if that file
 sudo usg audit disa_stig                                          # otherwise, stock DISA STIG profile
 
 # Copy the fresh results to the IA drop with the others:
-sudo cp /var/lib/usg/usg-report-*.{html,xml} /opt/ia/ 2>/dev/null || true
+sudo cp /var/lib/usg/usg-report-*.{html,xml} /opt/ia/usg/ 2>/dev/null || true
 ```
 
 - **Tailoring vs. profile: pick ONE, never both** (USG errors if you pass a profile *and* a tailoring file). This build de-selects the smart-card/SSSD rules via a tailoring file, so use the tailoring form above when that file exists; `ls /etc/usg/managed-tailoring.xml` to check.
@@ -495,7 +495,7 @@ ls -lt /opt/ia/                       # newest report first
 #   usg-report-YYYYMMDD.HHMM.xml      <- XCCDF results (import into DISA STIG Viewer / eMASS)
 ```
 
-`/opt/ia` is admin-only (group `sudo`/`ia_it_group`, mode `2770`). **Collect the report while the box is still online / before air-gapping.** To read it from your workstation: `sudo cp /opt/ia/usg-report-*.html ~/ && chown $USER ~/usg-report-*.html`, or pull it over your admin channel (Cockpit's file browser, `scp`).
+`/opt/ia` is admin-only (group `sudo`/`ia_it_group`, mode `2770`). **Collect the report while the box is still online / before air-gapping.** To read it from your workstation: `sudo cp /opt/ia/usg/usg-report-*.html ~/ && chown $USER ~/usg-report-*.html`, or pull it over your admin channel (Cockpit's file browser, `scp`).
 
 - **Score / findings:** open the HTML for the pass/fail summary; the XCCDF `.xml` is the machine-readable evidence for the A&A package. Open findings that remain are the documented POA&Ms (see below).
 - **Override the drop location** with `usg_report_dir` (e.g. back to `/var/log/stig-scan`).
@@ -612,7 +612,7 @@ sudo it-oscap --keep 24            # retain more result sets
 systemctl list-timers oscap-scan.timer
 ```
 
-Each run writes three timestamped files to **`/opt/ia/oscap`**: an HTML report, the full ARF results, and a STIG-Viewer-importable XML. Old sets are pruned to `scap_schedule_keep` (default 12).
+Each run writes three timestamped files: an HTML report, the full ARF results, and a STIG-Viewer-importable XML. They go to **`/opt/ia/oscap/scheduled`** for the timer, `oscap/manual` for an ad-hoc `it-oscap`, and `oscap/build` for the scan the build itself runs — one directory per writer, so pruning to `scap_schedule_keep` (default 12) can never delete an artifact a different process owns.
 
 It runs as **root**, not `auto_audit`: `oscap` needs to read privileged configuration, and `auto_audit` is created with a locked password so it cannot use `sudo` unattended.
 
