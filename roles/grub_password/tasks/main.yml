@@ -98,14 +98,16 @@
         paths: /etc/grub.d
         patterns: "*"
         excludes: "00_header,01_users,40_custom,41_custom,README,*.pre-grubpw,*.bak,*.dpkg-*,*~"
-        contains: '^[[:space:]]*menuentry '
+        # Both emission styles: a literal line in a heredoc, and a quoted line
+        # inside echo/printf. Matching only the first skips 30_uefi-firmware.
+        contains: '(^[[:space:]]*|["\''])menuentry '
         file_type: file
       register: _grub_gens
 
     - name: "GRUB | Make those entries --unrestricted too"
       ansible.builtin.replace:
         path: "{{ item.path }}"
-        regexp: '^([ \t]*)menuentry (?!--unrestricted)'
+        regexp: '(^[ \t]*|["\''])menuentry (?!--unrestricted)'
         replace: '\1menuentry --unrestricted '
       loop: "{{ _grub_gens.files | default([]) }}"
       loop_control:

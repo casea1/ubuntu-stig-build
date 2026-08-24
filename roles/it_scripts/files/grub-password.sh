@@ -145,10 +145,19 @@ EOF
       00_header|01_users|*_custom|README) continue ;;
     esac
     [ -f "$gen" ] || continue
-    grep -qE '^[[:space:]]*menuentry ' "$gen" || continue
-    grep -qE '^[[:space:]]*menuentry .*--unrestricted' "$gen" && continue
+    # Detection must cover BOTH emission styles or the file is skipped before
+    # the patch runs -- which is what left 30_uefi-firmware (`echo "menuentry
+    # '$LABEL' ..."`) restricted while the heredoc generators were fixed.
+    grep -qE '(^[[:space:]]*|["'"'"'])menuentry ' "$gen" || continue
+    grep -q 'menuentry --unrestricted' "$gen" && continue
     cp -a "$gen" "$gen.pre-grubpw" 2>/dev/null || true
-    sed -i -E 's/^([[:space:]]*)menuentry /\1menuentry --unrestricted /' "$gen"
+    # Two emission styles in the wild: a literal line inside a heredoc, and a
+    # quoted line inside echo/printf. Patching only the first left memtest and
+    # the UEFI entry restricted on ASP-2.
+    sed -i -E \
+      -e 's/^([[:space:]]*)menuentry ([^-]|--[^u])/\1menuentry --unrestricted \2/' \
+      -e 's/(["'"'"'])menuentry ([^-]|--[^u])/\1menuentry --unrestricted \2/g' \
+      "$gen"
     echo "  patched $(basename "$gen") for --unrestricted"
   done
 
@@ -166,12 +175,22 @@ EOF
       # the operator sees a count and has nowhere to go.
       echo >&2
       echo "These entries would demand the password on EVERY boot:" >&2
-      grep -E '^\s*menuentry ' /tmp/grub.cfg.candidate | grep -v -- '--unrestricted' \
-        | sed -E "s/^\s*menuentry\s+'?([^']*)'?.*/    - \1/" >&2
+      grep -E '^[[:space:]]*menuentry ' /tmp/grub.cfg.candidate \
+        | grep -v -- '--unrestricted' > /tmp/grub.restricted.$$
+      while IFS= read -r line; do
+        # Title is the first single- or double-quoted string on the line.
+        title=$(printf '%s' "$line" | sed -E "s/^[[:space:]]*menuentry[[:space:]]+//; s/^'([^']*)'.*/\1/; s/^\"([^\"]*)\".*/\1/; s/[[:space:]]*\{.*//")
+        # Map it back to the generator, so this is actionable rather than a list.
+        src=$(grep -Fls "$title" /etc/grub.d/* 2>/dev/null | grep -v '\.pre-grubpw$' | head -1)
+        printf '    - %-52s %s\n' "$title" "${src:+<- ${src##*/}}" >&2
+      done < /tmp/grub.restricted.$$
+      rm -f /tmp/grub.restricted.$$
       echo >&2
-      echo "Find which generator emits each, then either add --unrestricted to it" >&2
-      echo "or remove the entry:" >&2
-      echo "    grep -ln 'menuentry' /etc/grub.d/*" >&2
+      echo "Each is emitted by the generator named above. Options:" >&2
+      echo "  * add --unrestricted to its menuentry line by hand, or" >&2
+      echo "  * drop the entry entirely -- memtest and firmware-setup entries are" >&2
+      echo "    not needed on a hardened box:  sudo chmod -x /etc/grub.d/<file>" >&2
+      echo "then re-run: sudo it-grub set" >&2
     fi
     echo "Candidate left at /tmp/grub.cfg.candidate; $CFG untouched; drop-in removed." >&2
     rm -f "$DROPIN"; exit 1
