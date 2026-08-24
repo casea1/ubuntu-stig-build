@@ -125,7 +125,32 @@ EOF
 
   # Without --unrestricted, setting superusers makes EVERY entry require the
   # password -- unattended reboot would be impossible.
+  #
+  # 10_linux builds its entries from $CLASS, so patching that covers the kernel
+  # entries and the "Advanced options" submenu. It does NOT cover entries from
+  # the other generators -- UEFI Firmware Settings, memtest, os-prober -- which
+  # emit `menuentry` literally. Those are why a first run reports
+  # "entries=8 restricted=3" and refuses: three entries no CLASS edit can reach.
   grep -q -- '--unrestricted' "$LINUX_TPL" || sed -i 's/^CLASS="/CLASS="--unrestricted /' "$LINUX_TPL"
+
+  # Patch the literal `menuentry` lines the other generators emit. 40_custom and
+  # 41_custom are the operator's own and are left alone -- a site may want an
+  # entry that IS password-gated, and silently unrestricting it would remove a
+  # control someone chose on purpose.
+  for gen in /etc/grub.d/*; do
+    case "$(basename "$gen")" in
+      # Our own backups must be skipped or a second run patches THEM, and the
+      # revert then restores an already-patched generator.
+      *.pre-grubpw|*.bak|*.dpkg-*|*.ucf-*|*~) continue ;;
+      00_header|01_users|*_custom|README) continue ;;
+    esac
+    [ -f "$gen" ] || continue
+    grep -qE '^[[:space:]]*menuentry ' "$gen" || continue
+    grep -qE '^[[:space:]]*menuentry .*--unrestricted' "$gen" && continue
+    cp -a "$gen" "$gen.pre-grubpw" 2>/dev/null || true
+    sed -i -E 's/^([[:space:]]*)menuentry /\1menuentry --unrestricted /' "$gen"
+    echo "  patched $(basename "$gen") for --unrestricted"
+  done
 
   echo "Generating a candidate grub.cfg (not installing it yet)..."
   grub-mkconfig -o /tmp/grub.cfg.candidate >/dev/null 2>&1 || { echo "grub-mkconfig failed" >&2; rm -f "$DROPIN"; exit 1; }
@@ -136,6 +161,18 @@ EOF
   restricted=$(grep -E '^\s*menuentry ' /tmp/grub.cfg.candidate 2>/dev/null | grep -cv -- '--unrestricted' || true); restricted=${restricted:-0}
   if ! grep -q password_pbkdf2 /tmp/grub.cfg.candidate || [ "$total" -eq 0 ] || [ "${restricted:-0}" -gt 0 ]; then
     echo "REFUSING to install: credential=$(grep -qc password_pbkdf2 /tmp/grub.cfg.candidate && echo yes || echo no) entries=$total restricted=$restricted" >&2
+    if [ "${restricted:-0}" -gt 0 ]; then
+      # Naming them is the difference between a dead end and a fix. Without this
+      # the operator sees a count and has nowhere to go.
+      echo >&2
+      echo "These entries would demand the password on EVERY boot:" >&2
+      grep -E '^\s*menuentry ' /tmp/grub.cfg.candidate | grep -v -- '--unrestricted' \
+        | sed -E "s/^\s*menuentry\s+'?([^']*)'?.*/    - \1/" >&2
+      echo >&2
+      echo "Find which generator emits each, then either add --unrestricted to it" >&2
+      echo "or remove the entry:" >&2
+      echo "    grep -ln 'menuentry' /etc/grub.d/*" >&2
+    fi
     echo "Candidate left at /tmp/grub.cfg.candidate; $CFG untouched; drop-in removed." >&2
     rm -f "$DROPIN"; exit 1
   fi
@@ -195,6 +232,15 @@ MSG
     echo "This removes the GRUB password from THIS box (recovery use)."
     printf 'Continue? [y/N] '; read -r a; [ "$a" = y ] || { echo aborted; exit 0; }
     rm -f "$DROPIN"
+    # Put the generators back, or they keep emitting --unrestricted after the
+    # password is gone -- harmless, but it is not the state we found.
+    for b in /etc/grub.d/*.pre-grubpw; do
+      [ -f "$b" ] || continue
+      case "$(basename "$b")" in *.pre-grubpw.pre-grubpw) rm -f "$b"; continue ;; esac
+      mv -f "$b" "${b%.pre-grubpw}"
+      echo "  reverted $(basename "${b%.pre-grubpw}")"
+    done
+    sed -i 's/^CLASS="--unrestricted /CLASS="/' "$LINUX_TPL" 2>/dev/null || true
     grub-mkconfig -o "$CFG" >/dev/null 2>&1 && chmod 0600 "$CFG"
     echo "Removed. NOTE: the grub_password role re-applies it on the next"
     echo "ansible-pull if a real hash is vaulted in group_vars."

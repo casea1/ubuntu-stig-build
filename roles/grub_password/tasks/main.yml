@@ -78,7 +78,8 @@
     - name: "GRUB | Make generated menu entries --unrestricted"
       # With `superusers` set, GRUB demands the password for EVERY entry unless the
       # entry carries --unrestricted. Debian/Ubuntu's 10_linux builds each entry from
-      # $CLASS, so injecting the flag there covers all generated entries.
+      # $CLASS, so injecting the flag there covers the kernel entries and the
+      # "Advanced options" submenu.
       # NOTE: a grub-common package update can revert this file; the next pull
       # re-applies it, and the verification below catches it in the meantime.
       ansible.builtin.replace:
@@ -86,6 +87,30 @@
         regexp: '^CLASS="(?!--unrestricted)'
         replace: 'CLASS="--unrestricted '
       register: _grub_class
+
+    # $CLASS does NOT reach the other generators -- UEFI Firmware Settings,
+    # memtest, os-prober -- which emit `menuentry` literally. On ASP-2 that was
+    # 3 of 8 entries, enough for the verification below to refuse the install.
+    # 40_custom / 41_custom are the operator's own and are left alone: a site
+    # may want an entry that IS password-gated.
+    - name: "GRUB | Which other generators emit a literal menuentry?"
+      ansible.builtin.find:
+        paths: /etc/grub.d
+        patterns: "*"
+        excludes: "00_header,01_users,40_custom,41_custom,README,*.pre-grubpw,*.bak,*.dpkg-*,*~"
+        contains: '^[[:space:]]*menuentry '
+        file_type: file
+      register: _grub_gens
+
+    - name: "GRUB | Make those entries --unrestricted too"
+      ansible.builtin.replace:
+        path: "{{ item.path }}"
+        regexp: '^([ \t]*)menuentry (?!--unrestricted)'
+        replace: '\1menuentry --unrestricted '
+      loop: "{{ _grub_gens.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      register: _grub_gens_patched
 
     - name: "GRUB | Generate a candidate grub.cfg to a temp file (do NOT install yet)"
       # Never point grub-mkconfig at /boot/grub/grub.cfg directly here: if the result
