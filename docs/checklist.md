@@ -54,8 +54,8 @@ This is a fast indicator — the authoritative evidence is `usg audit disa_stig`
 The table above is the **org** Linux checklist. The **DISA STIG** checklist (`.ckl` / `.cklb` for STIG Viewer) is a separate artifact, generated rather than hand-filled:
 
 ```bash
-sudo it-oscap                        # scan
-sudo it-ckl --format both --summary  # -> /opt/ia/stig/<host>-<ts>.cklb
+sudo it-stig status   # is everything staged?
+sudo it-stig run      # scan + checklist -> /opt/ia/stig/<host>-<ts>.cklb
 ```
 
 `it-ckl` merges DISA's manual STIG, the scan results, and the adjudications this repo carries, so `Not_Reviewed` means "needs a human on this box" rather than "not typed in yet". Full process, including which DISA downloads you need and which to avoid: [compliance.md](compliance.md#scanning-and-building-the-stig-checklist).

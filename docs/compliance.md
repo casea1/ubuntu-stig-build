@@ -282,6 +282,14 @@ Copy the XML into `/opt/ia/stig/` — unclassified, so USB is fine for the air-g
 #### The routine
 
 ```bash
+sudo it-stig status     # is everything staged? when did it last run?
+sudo it-stig run        # scan + checklist
+sudo it-stig archive    # tar the evidence set for hand-off
+```
+
+`it-stig` wraps the two underlying tools and refuses to start if a prerequisite is missing, rather than failing halfway. `scan` and `checklist` run either half on its own. The underlying commands still work directly when you want them:
+
+```bash
 sudo it-oscap                        # scan; a few minutes
 sudo it-ckl --format both --summary  # -> /opt/ia/stig/<host>-<ts>.cklb and .ckl
 ```
@@ -336,6 +344,7 @@ After answering the `Not_Reviewed` list by hand, push anything reusable back int
 | When | What |
 |---|---|
 | Weekly, automatic | `oscap-scan.timer` re-scans to `/opt/ia/oscap` (`Persistent=true`, so a run missed while powered off fires at next boot) |
+| Before you start | `sudo it-stig status` — confirms the manual STIG, SSG content, tailoring file and `answers.yml` are all in place |
 | After any change | `sudo it-oscap` and compare against the last run |
 | Monthly / on demand | `sudo it-ckl`, answer the remainder, archive the `.cklb` |
 | Per STIG release | Re-stage the manual XCCDF, regenerate, re-answer what moved |
