@@ -26,7 +26,7 @@ Everything is provisioned by the version-controlled `ubuntu-stig-build` Ansible 
   - [Configuration Management (CM family)](#configuration-management-cm-family)
   - [AI-specific risk considerations](#ai-specific-risk-considerations)
   - [Open items / POA&M (stated honestly)](#open-items--poam-stated-honestly)
-  - [Building the STIG checklist (it-ckl)](#building-the-stig-checklist-it-ckl)
+  - [Scanning and building the STIG checklist](#scanning-and-building-the-stig-checklist)
   - [Assessment artifacts we can provide](#assessment-artifacts-we-can-provide)
 - [Container-runtime compliance (why "no Docker STIG")](#container-runtime-compliance-why-no-docker-stig)
   - [1. USG hardens the OS, not Docker](#1-usg-hardens-the-os-not-docker)
@@ -242,34 +242,80 @@ Known deviations to remediate or risk-accept with the AO. None hidden; each is d
 | **FIPS inside inference containers** | **Host is fully FIPS**; the inference/extraction containers (vLLM, and docling via its bundled OpenCV/OpenSSL) use standard crypto. Those images ship no FIPS provider and aren't FIPS-validated, so on the FIPS host their OpenSSL selftest aborts unless carved out. Container traffic is host-local/enclave-internal. Documented POA&M; host-level FIPS is what the STIG assesses. |
 | **AI/ML software assurance** | vLLM, Open WebUI, Docling, etc. are open-source and not separately accredited; recommend internal image scanning + registry mirroring as part of the SSP. |
 
-### Building the STIG checklist (`it-ckl`)
+### Scanning and building the STIG checklist
 
-The usual workflow is: run a SCAP scan, import the results into STIG Viewer, then hand-answer everything SCAP did not cover. The second half is the slow part — and most of it is the *same answer on every box*: the same deviations, the same compensating controls, the same POA&M wording. That does not need retyping per machine; it belongs in the repo.
+The whole process, end to end. Two scanners run on these boxes and they answer different questions — knowing which is which prevents a lot of confusion.
 
-Three inputs, one command:
+| | `usg audit` | `it-oscap` |
+|---|---|---|
+| Content | Canonical's USG (SSG-derived) | the SSG datastream `scap_scan` stages |
+| Tailoring | uses `/etc/usg/managed-tailoring.xml` | now uses it too (`--no-tailoring` to skip) |
+| Runs | inside the build, after `usg_remediate` | by hand, and weekly by timer |
+| Output | `/opt/ia/usg-report-*.html` + `usg-results-*.xml` | `/opt/ia/oscap/stig-{report,arf,viewer}-*` |
+| Use it for | the compliance score and the accreditation artifact | the checklist, and ad-hoc re-checks |
 
-| Input | Where it comes from |
-|---|---|
-| Manual STIG XCCDF | **You stage this once per STIG release.** Download the Ubuntu 24.04 STIG from [public.cyber.mil/stigs/downloads](https://public.cyber.mil/stigs/downloads/), unzip, copy `*Manual-xccdf.xml` into `/opt/ia/stig/`. It is published by DISA and cannot be derived from the box. |
-| SCAP results | `sudo it-oscap` → `/opt/ia/oscap/stig-viewer-<ts>.xml` (already the STIG Viewer import format) |
-| Adjudications | `/opt/ia/stig/answers.yml`, rendered per profile from `roles/scap_scan/templates/ckl-answers.yml.j2` |
-| ID map | The SSG datastream already on the box — found automatically. See below. |
+**They must be tailored the same way or they disagree.** `usg_harden` de-selects the smart-card and SSSD rules — this fleet is password-login only with no CAC reader — and a raw `oscap` run ignores that, reporting `smartcard_pam_enabled`, `service_sssd_enabled` and `sssd_enable_user_cert` as findings the accredited baseline has formally de-scoped. `it-oscap` now picks up the tailoring file automatically.
 
-**Why an ID map is needed.** The manual STIG names a rule `UBTU-24-200640` / `V-270691`. A scan run against ComplianceAsCode SSG content names the same rule `xccdf_org.ssgproject.content_rule_banner_etc_issue_net`. The two share no key, so a naive join matches **nothing** — the first run of this produced a checklist with all 194 rules `Not_Reviewed`. SSG's datastream carries the link as an xccdf `<reference>` on each Rule, so `it-ckl` reads it and builds the mapping itself. Scanning with DISA's own SCAP benchmark instead (`it-oscap --content ...`) makes the ids line up directly; both routes work.
-
-Several SSG rules routinely cover one STIG id — `setxattr` and its siblings are seven SSG rules and one STIG rule. **The worst result wins:** if any contributing rule failed, the STIG rule is Open, and `finding_details` names each contributing rule and its result so an assessor can see why.
+#### One-time setup per box
 
 ```bash
-sudo it-oscap            # scan
-sudo it-ckl              # -> /opt/ia/stig/<host>-<ts>.cklb
-sudo it-ckl --format both --summary
+sudo mkdir -p /opt/ia/stig
+# copy in DISA's manual STIG XCCDF (see below), then:
+ls /opt/ia/stig/          # *Manual-xccdf.xml and answers.yml
 ```
 
-Output is a STIG Viewer 3 `.cklb` (or `.ckl` for Viewer 2, or both), with asset fields — hostname, IP, MAC, FQDN — filled in from the box. Every automated rule carries its status from the scan; every rule we have already argued out carries its adjudication and evidence text. **`Not_Reviewed` then means "genuinely needs a human on this box"**, not "nobody has typed it in yet" — and `it-ckl --summary` lists exactly those.
+`answers.yml` is rendered by the `scap_scan` role; if it is missing, that role has not run yet.
 
-**A SCAP failure always beats the answer file** unless the entry says `override: true`. Without that rule a stale adjudication could quietly mark a genuinely broken control as compliant, which is the one mistake that makes a checklist worthless. When an entry proposes a pass over a real failure, the rule stays **Open** and the reason is written into its comments.
+#### Getting DISA's content
 
-Adding an adjudication is a repo change, keyed by STIG id, V-ID, or SSG rule name:
+From [public.cyber.mil/stigs/downloads](https://public.cyber.mil/stigs/downloads/), for Canonical Ubuntu 24.04 LTS:
+
+| Download | Take it? | Why |
+|---|---|---|
+| **Canonical Ubuntu 24.04 LTS STIG** | **Required** | The manual STIG. Its `*Manual-xccdf.xml` is the checklist skeleton — every V-ID, check text and fix text. |
+| **STIG SCAP Benchmark** | Recommended | DISA's own SCAP content. Its rule ids match the manual STIG exactly, so `it-ckl` maps 1:1 instead of by inference: `it-oscap --content <benchmark>.xml`. Often a release behind the manual STIG; rules only in the newer release simply stay Not_Reviewed. |
+| **STIG for Ansible** | **Do not run** | Supplemental automation that *applies* the STIG — a remediation engine, like `usg fix` and this repo. Running it puts a third engine on the same files. That is exactly how ASP-2 ended up with a `common-auth` that denied every login. Useful as a **reference** for DISA's canonical fix: `grep -rl 'UBTU-24-600200' <unzipped>/`. |
+| **STIG for Chef** | No | Not used here. |
+
+Copy the XML into `/opt/ia/stig/` — unclassified, so USB is fine for the air-gapped boxes.
+
+#### The routine
+
+```bash
+sudo it-oscap                        # scan; a few minutes
+sudo it-ckl --format both --summary  # -> /opt/ia/stig/<host>-<ts>.cklb and .ckl
+```
+
+Read the `it-ckl` header before trusting the output:
+
+```
+STIG      : Canonical Ubuntu 24.04 LTS STIG  (Release: 6 Benchmark Date: 01 Jul 2026)
+Rules     : 194
+Scan      : stig-viewer-20260824-134321.xml  -> 171 rules matched
+ID map    : 1832 SSG->STIG references from ssg-ubuntu2404-ds.xml  -> 171 STIG ids resolved
+Answers   : 9 adjudications loaded from /opt/ia/stig/answers.yml
+```
+
+**`-> 0 rules matched` means the checklist is meaningless** — every rule falls through to Not_Reviewed. The tool says so loudly and names the likely cause.
+
+#### Why an ID map is needed
+
+The manual STIG names a rule `UBTU-24-200640` / `V-270691`. A scan against SSG content names the same rule `xccdf_org.ssgproject.content_rule_banner_etc_issue_net`. They share no key, and `oscap --stig-viewer` does **not** rewrite ids into DISA's namespace when the content is SSG. SSG's datastream carries the link as an xccdf `<reference>` on each Rule, so `it-ckl` reads it and builds the mapping, finding the datastream on the box automatically. Scanning with DISA's benchmark makes the ids line up directly and needs no map.
+
+Several SSG rules routinely cover one STIG id — `setxattr` and siblings are seven SSG rules and one STIG rule. **The worst result wins**, and `finding_details` names every contributing rule and its result:
+
+```
+V-270784   UBTU-24-900130   Open
+    Automated: OpenSCAP evaluated this rule as 'fail'.
+    SCAP rules checked: audit_rules_dac_modification_fsetxattr=fail,
+                        audit_rules_dac_modification_setxattr=pass
+```
+
+A STIG rule is not satisfied because part of it passed.
+
+#### Baking the answers in
+
+Everything already adjudicated lives in `roles/scap_scan/templates/ckl-answers.yml.j2` and is rendered per profile, so an entry can differ between an AI node and the EMI laptop. Keyed by STIG id, V-ID, or SSG rule name:
 
 ```yaml
 UBTU-24-600200:
@@ -281,7 +327,20 @@ UBTU-24-600200:
   comments: Manual/OCIL rule -- always reports fail in SCAP.
 ```
 
-The template is Jinja, so an entry can differ per profile — which matters, since several deviations (USB storage, for one) apply only to the EMI laptop.
+**A SCAP failure always beats the answer file** unless the entry sets `override: true`. Without that rule a stale adjudication could quietly mark a broken control compliant, which is the one mistake that makes a checklist worthless. When an entry proposes a pass over a real failure the rule stays **Open** and the reason is written into its comments.
+
+After answering the `Not_Reviewed` list by hand, push anything reusable back into the template. That list should shrink every cycle; if it does not, the answers are not being captured.
+
+#### Cadence
+
+| When | What |
+|---|---|
+| Weekly, automatic | `oscap-scan.timer` re-scans to `/opt/ia/oscap` (`Persistent=true`, so a run missed while powered off fires at next boot) |
+| After any change | `sudo it-oscap` and compare against the last run |
+| Monthly / on demand | `sudo it-ckl`, answer the remainder, archive the `.cklb` |
+| Per STIG release | Re-stage the manual XCCDF, regenerate, re-answer what moved |
+
+Keep the generated `.cklb` alongside the `usg audit` report — together they are the evidence that the box matches its documented baseline.
 
 ### Assessment artifacts we can provide
 

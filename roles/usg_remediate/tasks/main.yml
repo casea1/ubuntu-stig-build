@@ -367,20 +367,48 @@
 # Must run BEFORE the privileged-command block below, which reads every other
 # *.rules file to decide what is already covered.
 #
-# A stale rules file is not merely redundant. Each audit_rules_* OVAL collects
-# EVERY line matching the command across /etc/audit/rules.d/*.rules and requires
-# all of them to conform, so one line in the old ansible-lockdown form
-#   -a always,exit -F path=/usr/bin/chage -F perm=x -F auid>=1000 -F auid!=-1 -k privileged-chage
-# fails the rule even though USG's own file carries the compliant line
-#   -a always,exit -F path=/usr/bin/chage -F perm=x -F auid>=1000 -F auid!=unset -F key=privileged
-# right beside it. On ASP-2 that was 22 of the 39 residual findings.
+# A box first built under the pre-USG ansible-lockdown role carries
+# /etc/audit/rules.d/stig.rules, whose privileged-command rules use the old form
+#   -a always,exit -F path=/usr/bin/chage ... -F auid!=-1 -k privileged-chage
+# where the benchmark's OVAL requires USG's form
+#   -a always,exit -F path=/usr/bin/chage ... -F auid!=unset -F key=privileged
+# Both load fine, but the OVAL requires EVERY matching line to conform, so the
+# legacy line fails a rule the compliant line beside it already satisfies. That
+# was 22 findings on ASP-2.
 #
-# Moved, not deleted: the old ruleset stays recoverable under
-# usg_legacy_audit_backup_dir.
+# Retiring the whole file closed those 22 and OPENED 21 others: the same file
+# was the only source of the session-event, usergroup-modification, xattr,
+# sudoers, login-event and cron.d rules, which USG does not write at all. It
+# also carried modprobe, whose OVAL is not strict and was passing on the legacy
+# line alone. Deleting the file traded one set of findings for another.
+#
+# So prune rather than delete, and only where it is provably safe: a legacy
+# line goes only when another rules file already covers that exact path in the
+# compliant form. Anything else stays, and the run says which and why.
 # ---------------------------------------------------------------------------
-- name: "REMED | Retire pre-USG audit rule files"
+- name: "REMED | Prune legacy audit rules (surgical, not wholesale)"
   when: usg_remove_legacy_audit_rules | default(true) | bool
   block:
+    - name: "REMED | Install the audit-rule pruner"
+      ansible.builtin.copy:
+        src: audit-rules-prune.py
+        dest: /usr/local/sbin/audit-rules-prune
+        owner: root
+        group: root
+        mode: "0750"
+
+    # An earlier version of this role MOVED these files out wholesale. Put them
+    # back before pruning, or the rules it should have kept stay lost.
+    - name: "REMED | Restore any file the wholesale retirement moved out"
+      ansible.builtin.command:
+        cmd: "mv -n {{ usg_legacy_audit_backup_dir }}/{{ item | basename }} {{ item }}"
+        creates: "{{ item }}"
+        removes: "{{ usg_legacy_audit_backup_dir }}/{{ item | basename }}"
+      loop: "{{ usg_legacy_audit_rule_files }}"
+      loop_control:
+        label: "{{ item | basename }}"
+      notify: Load audit rules
+
     - name: "REMED | Which legacy audit rule files are present?"
       ansible.builtin.stat:
         path: "{{ item }}"
@@ -389,23 +417,20 @@
       loop_control:
         label: "{{ item }}"
 
-    - name: "REMED | Backup dir for the retired rules"
-      ansible.builtin.file:
-        path: "{{ usg_legacy_audit_backup_dir }}"
-        state: directory
-        owner: root
-        group: root
-        mode: "0700"
-      when: _legacy_audit_stat.results | selectattr('stat.exists') | list | length > 0
-
-    - name: "REMED | Move each legacy rules file out of /etc/audit/rules.d"
+    - name: "REMED | Prune the non-compliant privileged-command lines"
       ansible.builtin.command:
-        cmd: "mv -f {{ item }} {{ usg_legacy_audit_backup_dir }}/{{ item | basename }}"
-        removes: "{{ item }}"
+        cmd: "/usr/local/sbin/audit-rules-prune {{ item }} /etc/audit/rules.d"
       loop: "{{ _legacy_audit_stat.results | selectattr('stat.exists') | map(attribute='item') | list }}"
       loop_control:
-        label: "{{ item }}"
+        label: "{{ item | basename }}"
+      register: _legacy_prune
+      changed_when: "'dropping' in (_legacy_prune.stdout | default(''))"
       notify: Load audit rules
+
+    - name: "REMED | What the pruner did"
+      ansible.builtin.debug:
+        msg: "{{ _legacy_prune.results | default([]) | map(attribute='stdout_lines') | list }}"
+      when: _legacy_prune.results | default([]) | length > 0
 
 - name: "REMED | Audit rules for privileged commands"
   when: usg_audit_privileged_commands_enabled | default(true) | bool

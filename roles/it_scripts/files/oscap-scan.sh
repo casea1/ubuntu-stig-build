@@ -10,6 +10,16 @@
 #   --keep     how many result SETS to retain (default 12; 0 = keep everything)
 #   --content  SCAP datastream to evaluate against (default: the ComplianceAsCode
 #              SSG content the scap_scan role stages)
+#   --tailoring FILE | --no-tailoring
+#              XCCDF tailoring file. Defaults to the one usg_harden generates
+#              (/etc/usg/managed-tailoring.xml) when it exists.
+#
+# TAILORING MATTERS: usg_harden de-selects the smart-card / SSSD rules, because
+# this fleet is password-login only with no CAC reader. `usg audit` honours that
+# file; a raw `oscap` run does not, so without it this scan reports findings
+# (smartcard_pam_enabled, service_sssd_enabled, sssd_enable_user_cert) that the
+# accredited baseline has formally de-scoped -- and the two reports disagree for
+# no real reason. Use --no-tailoring to see the untailored benchmark on purpose.
 #
 # WHICH CONTENT: the default SSG datastream automates MORE rules, but its rule
 # ids are SSG ids, so building a checklist means mapping them onto DISA's V-IDs.
@@ -34,12 +44,15 @@ PROFILE="xccdf_org.ssgproject.content_profile_stig"
 KEEP=12
 DS_ARG=""
 PROFILE_SET=0
+TAILOR="/etc/usg/managed-tailoring.xml"
 while [ $# -gt 0 ]; do
   case "$1" in
     --dir)     DIR="${2:?}"; shift 2 ;;
     --profile) PROFILE="${2:?}"; PROFILE_SET=1; shift 2 ;;
     --keep)    KEEP="${2:?}"; shift 2 ;;
     --content) DS_ARG="${2:?}"; shift 2 ;;
+    --tailoring) TAILOR="${2:?}"; shift 2 ;;
+    --no-tailoring) TAILOR=""; shift ;;
     -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -63,8 +76,25 @@ fi
 # The default profile id is SSG's. Any other datastream (DISA's benchmark, for
 # one) uses different ids, so a stale default would fail with an unhelpful
 # error. Resolve it against the content actually being evaluated.
+# A tailoring file declares its OWN profile id (usg generate-tailoring appends
+# a _customized suffix). Passing the base profile alongside it makes oscap fail
+# with "profile not found", so read the id out of the tailoring file and use
+# that instead -- unless the operator named a profile explicitly.
+TAILOR_ARG=""
+if [ -n "$TAILOR" ] && [ -f "$TAILOR" ]; then
+  TAILOR_ARG="--tailoring-file $TAILOR"
+  tprof=$(oscap info "$TAILOR" 2>/dev/null | sed -n 's/^[[:space:]]*Id:[[:space:]]*\(xccdf_[^[:space:]]*\)$/\1/p' | head -1)
+  if [ -n "$tprof" ] && [ "$PROFILE_SET" = 0 ]; then
+    PROFILE="$tprof"
+  elif [ -z "$tprof" ]; then
+    echo "WARNING: could not read a profile id from $TAILOR; scanning untailored." >&2
+    TAILOR_ARG=""; TAILOR=""
+  fi
+elif [ -n "$TAILOR" ]; then
+  TAILOR=""
+fi
 avail=$(oscap info "$DS" 2>/dev/null | sed -n 's/^[[:space:]]*Id:[[:space:]]*\(xccdf_[^[:space:]]*profile[^[:space:]]*\)$/\1/p')
-if [ -n "$avail" ] && ! printf '%s\n' "$avail" | grep -qx -- "$PROFILE"; then
+if [ -z "$TAILOR_ARG" ] && [ -n "$avail" ] && ! printf '%s\n' "$avail" | grep -qx -- "$PROFILE"; then
   if [ "$PROFILE_SET" = 1 ]; then
     echo "profile '$PROFILE' is not in $DS. Available:" >&2
     printf '  %s\n' $avail >&2
@@ -82,6 +112,7 @@ if [ -n "$avail" ] && ! printf '%s\n' "$avail" | grep -qx -- "$PROFILE"; then
 fi
 echo "Content : $DS"
 echo "Profile : $PROFILE"
+echo "Tailorng: ${TAILOR:-none (untailored benchmark)}"
 
 mkdir -p "$DIR" && chmod 0750 "$DIR"
 TS="$(date +%Y%m%d-%H%M%S)"
@@ -89,6 +120,7 @@ TS="$(date +%Y%m%d-%H%M%S)"
 # --fetch-remote-resources is deliberately NOT used: these boxes are air-gapped
 # or heading there, and it would stall the scan waiting on a network fetch.
 oscap xccdf eval \
+  $TAILOR_ARG \
   --profile "$PROFILE" \
   --results-arf "$DIR/stig-arf-$TS.xml" \
   --report      "$DIR/stig-report-$TS.html" \

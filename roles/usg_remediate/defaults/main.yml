@@ -37,8 +37,10 @@ usg_fix_log_permissions: true
 # fails the rule even though a correct line sits right beside it in USG's file.
 # On ASP-2 that single file accounted for 22 of 39 findings.
 #
-# Files are moved to {{ usg_legacy_audit_backup_dir }}, not deleted, so the old
-# ruleset is still recoverable and auditable.
+# Pruned in place, NOT moved: the same file is the only source of the
+# session-event, usergroup-modification, xattr, sudoers, login-event and cron.d
+# rules, so removing it wholesale opens 21 findings to close 22. The original is
+# kept alongside as <file>.pre-prune.
 usg_remove_legacy_audit_rules: true
 usg_legacy_audit_rule_files:
   - /etc/audit/rules.d/stig.rules
@@ -78,6 +80,7 @@ usg_audit_privileged_commands:
   - /usr/bin/sudoedit
   - /usr/bin/umount
   - /usr/lib/openssh/ssh-keysign
+  - /usr/sbin/modprobe
   - /usr/sbin/pam_timestamp_check
   - /usr/sbin/unix_update
   - /usr/sbin/usermod
