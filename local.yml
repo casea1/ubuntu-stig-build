@@ -214,3 +214,11 @@
       when: inventory_report_enabled | default(true)
     - role: it_scripts              # both: admin status scripts in /opt/it/scripts (+ it-* commands)
       when: it_scripts_enabled | default(true)
+
+    # OpenSCAP evaluation + the STIG-checklist inputs. Runs LAST, after
+    # it_scripts, so `it-oscap` and `it-ckl` are already installed. Needs
+    # INTERNET on the first run -- it fetches the Ubuntu 24.04 SSG datastream
+    # (~175 MB), which the distro package does not ship. Do this before the box
+    # goes air-gapped; afterwards the content is on disk and scans run offline.
+    - role: scap_scan               # SSG content + build-time scan + scheduled re-scan + answers.yml
+      when: scap_scan_enabled | default(true) | bool

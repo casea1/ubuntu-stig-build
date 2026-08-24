@@ -272,6 +272,9 @@ ubtu24stig_disruption_high: false
 # SCAP SCAN
 # =============================================================================
 # Where to drop the compliance report. Collect this BEFORE air-gapping.
+# Set false on a box that is already air-gapped and has no SSG content staged:
+# the first run downloads the datastream and cannot complete without internet.
+scap_scan_enabled: true
 scap_report_dir: /opt/ia/oscap        # IA collection point (ia_dir); admin-group readable
 # Profile id inside the SSG datastream. Verified present in the pinned SSG
 # release below (products/ubuntu2404 ships stig.profile).
