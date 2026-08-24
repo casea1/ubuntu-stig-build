@@ -143,8 +143,27 @@ EOF
   [ -f "$CFG.pre-grubpw" ] || cp -a "$CFG" "$CFG.pre-grubpw"
   install -o root -g root -m 0600 /tmp/grub.cfg.candidate "$CFG"
   rm -f /tmp/grub.cfg.candidate
-  echo "Applied. Normal boot needs no password; editing an entry now does."
-  echo "Recovery copy: $CFG.pre-grubpw"
+  cat <<MSG
+
+Applied.
+
+  Username : $SUPERUSER      <-- NOT a Linux account, and not your login name
+  Prompted : only when you press 'e' or 'c' at the GRUB menu.
+             A normal boot does NOT prompt (every menu entry is --unrestricted,
+             verified above before this was installed).
+
+  This CANNOT affect logging in to Ubuntu. GRUB runs before the kernel; it has
+  no connection to PAM, your password, or your account.
+
+  If anything is wrong, you can still boot normally and undo it:
+      sudo it-grub remove
+  Or restore the pre-password config directly:
+      sudo cp $CFG.pre-grubpw $CFG
+
+  Vault the username and password now -- '$SUPERUSER' plus what you typed.
+  Losing them costs you the ability to edit boot entries, which is the
+  recovery path for a broken initramfs or fstab.
+MSG
 }
 
 case "${1:-status}" in
@@ -159,7 +178,18 @@ case "${1:-status}" in
   set)
     h=$(make_hash) || exit 1
     apply "$h"
-    echo; echo "This box only. For the fleet, vault the hash -- see: it-grub hash"
+    # Print the token too. Without this an operator who ran `set` has no way to
+    # get the hash for the rest of the fleet short of typing the password again.
+    cat <<MSG
+
+  For the FLEET, vault this same hash so every box gets it on the next pull:
+      ansible-vault encrypt_string '$h' --name 'grub_password_pbkdf2'
+  ...then paste the !vault block over grub_password_pbkdf2 in group_vars/all.yml.
+  Until you do, the grub_password role SKIPS (the CHANGEME sentinel), so this
+  box's local setting is not overwritten.
+
+  Verify now:  sudo it-grub status
+MSG
     ;;
   remove)
     echo "This removes the GRUB password from THIS box (recovery use)."
