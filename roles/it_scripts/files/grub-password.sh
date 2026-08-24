@@ -14,6 +14,11 @@
 # Usage:
 #   it-grub status      what is configured now, and whether it will pass the scan
 #   it-grub set         generate a password + apply it to THIS box (interactive)
+#     --drop-extras     disable the memtest / UEFI-firmware menu generators
+#                       instead of trying to unrestrict them. On a hardened box
+#                       these boot paths are not wanted anyway, and removing an
+#                       entry is more reliable than patching whichever way its
+#                       generator happens to emit it. Reversible: chmod +x.
 #   it-grub hash        just print a PBKDF2 hash to vault for fleet-wide rollout
 #   it-grub remove      remove the password from this box (recovery)
 #
@@ -26,6 +31,12 @@
 set -uo pipefail
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
+DROP_EXTRAS=0
+# Boot-menu entries a hardened box has no use for. Dropping them is a real
+# hardening improvement (fewer boot paths), not just a way around the
+# --unrestricted problem -- firmware setup is still reachable with the vendor
+# key, which the BIOS admin password protects.
+EXTRA_GENERATORS="20_memtest86+ 30_uefi-firmware 35_fwupd"
 DROPIN=/etc/grub.d/01_superusers
 CFG=/boot/grub/grub.cfg
 LINUX_TPL=/etc/grub.d/10_linux
@@ -188,9 +199,11 @@ EOF
       echo >&2
       echo "Each is emitted by the generator named above. Options:" >&2
       echo "  * add --unrestricted to its menuentry line by hand, or" >&2
-      echo "  * drop the entry entirely -- memtest and firmware-setup entries are" >&2
-      echo "    not needed on a hardened box:  sudo chmod -x /etc/grub.d/<file>" >&2
-      echo "then re-run: sudo it-grub set" >&2
+      echo "  * drop those entries entirely, which is the reliable answer -- a" >&2
+      echo "    hardened box has no use for memtest or a firmware-setup shortcut," >&2
+      echo "    and removing an entry beats patching however its generator emits it:" >&2
+      echo "        sudo it-grub set --drop-extras" >&2
+      echo "    (reversible: sudo chmod +x /etc/grub.d/<file>)" >&2
     fi
     echo "Candidate left at /tmp/grub.cfg.candidate; $CFG untouched; drop-in removed." >&2
     rm -f "$DROPIN"; exit 1
@@ -222,6 +235,21 @@ Applied.
 MSG
 }
 
+for a in "$@"; do
+  [ "$a" = "--drop-extras" ] && DROP_EXTRAS=1
+done
+
+drop_extras() {
+  local any=0 g
+  for name in $EXTRA_GENERATORS; do
+    g="/etc/grub.d/$name"
+    [ -f "$g" ] || continue
+    [ -x "$g" ] || continue
+    chmod -x "$g" && echo "  disabled $name (re-enable with: sudo chmod +x $g)" && any=1
+  done
+  [ "$any" = 1 ] || echo "  (no extra generators were enabled)"
+}
+
 case "${1:-status}" in
   status) status ;;
   hash)
@@ -232,6 +260,7 @@ case "${1:-status}" in
     echo "  ...then paste the !vault block over grub_password_pbkdf2 in group_vars/all.yml"
     ;;
   set)
+    [ "$DROP_EXTRAS" = 1 ] && drop_extras
     h=$(make_hash) || exit 1
     apply "$h"
     # Print the token too. Without this an operator who ran `set` has no way to
