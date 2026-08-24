@@ -283,6 +283,9 @@ scap_profile: xccdf_org.ssgproject.content_profile_stig
 # Security Guide release instead. Pinned for reproducible images — bump
 # deliberately and re-test (note the GitHub tag is v-prefixed: v{{ ssg_content_version }}).
 scap_content_dir: /usr/share/xml/scap/ssg/content
+# STIG checklist (.ckl/.cklb) working dir: holds the rendered answers.yml, the
+# DISA manual STIG XCCDF you stage there once per release, and `it-ckl` output.
+scap_stig_dir: /opt/ia/stig
 ssg_content_version: "0.1.81"
 
 # ---- Scheduled OpenSCAP re-scan (checklist: "add OSCAP job to crontab") ------

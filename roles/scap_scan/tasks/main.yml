@@ -186,3 +186,48 @@
           ({{ scap_schedule_oncalendar if (scap_schedule_method | default('timer')) == 'timer' else scap_schedule_cron }});
           results -> {{ scap_report_dir }}, keeping {{ scap_schedule_keep | default(12) }} sets.
           Run on demand: sudo it-oscap
+
+# ---------------------------------------------------------------------------
+# STIG CHECKLIST (.ckl/.cklb) INPUTS
+# `it-oscap` already writes the oscap --stig-viewer XML that STIG Viewer
+# imports, which covers the automated rules. The manual rules are the slow half
+# of building a checklist, and most of those answers are the SAME on every box
+# -- the deviations and compensating controls we have already adjudicated. They
+# belong in the repo, not retyped per machine, so render them here and let
+# `it-ckl` merge them over the scan results.
+#
+# The one input we cannot generate is DISA's manual STIG XCCDF: it is published
+# by DISA, not derived from anything on the box. Drop it into scap_stig_dir
+# once per STIG release.
+# ---------------------------------------------------------------------------
+- name: "SCAP | Checklist working dir ({{ scap_stig_dir }})"
+  ansible.builtin.file:
+    path: "{{ scap_stig_dir }}"
+    state: directory
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "2750"
+
+- name: "SCAP | Render the checklist adjudications for this profile"
+  ansible.builtin.template:
+    src: ckl-answers.yml.j2
+    dest: "{{ scap_stig_dir }}/answers.yml"
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "0640"
+
+- name: "SCAP | Is DISA's manual STIG XCCDF staged?"
+  ansible.builtin.find:
+    paths: "{{ scap_stig_dir }}"
+    patterns: "*xccdf*.xml"
+  register: _stig_manual
+
+- name: "SCAP | How to finish the checklist setup"
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'Checklist ready: run `sudo it-oscap` then `sudo it-ckl`.'
+         if (_stig_manual.files | length) > 0
+         else 'No manual STIG XCCDF in ' ~ scap_stig_dir ~ '. Download the Ubuntu 24.04
+               STIG from https://public.cyber.mil/stigs/downloads/, unzip it, and copy the
+               *Manual-xccdf.xml there (once per STIG release). Until then `it-ckl` has no
+               skeleton to fill in, though `it-oscap` still produces the STIG Viewer import.' }}

@@ -26,6 +26,7 @@ Everything is provisioned by the version-controlled `ubuntu-stig-build` Ansible 
   - [Configuration Management (CM family)](#configuration-management-cm-family)
   - [AI-specific risk considerations](#ai-specific-risk-considerations)
   - [Open items / POA&M (stated honestly)](#open-items--poam-stated-honestly)
+  - [Building the STIG checklist (it-ckl)](#building-the-stig-checklist-it-ckl)
   - [Assessment artifacts we can provide](#assessment-artifacts-we-can-provide)
 - [Container-runtime compliance (why "no Docker STIG")](#container-runtime-compliance-why-no-docker-stig)
   - [1. USG hardens the OS, not Docker](#1-usg-hardens-the-os-not-docker)
@@ -240,6 +241,42 @@ Known deviations to remediate or risk-accept with the AO. None hidden; each is d
 | **Audit-log offload (AU-4/AU-6)** | Local audit logging is on; central `audisp-remote` collector not yet configured (needs a log server). POA&M until a collector exists. |
 | **FIPS inside inference containers** | **Host is fully FIPS**; the inference/extraction containers (vLLM, and docling via its bundled OpenCV/OpenSSL) use standard crypto. Those images ship no FIPS provider and aren't FIPS-validated, so on the FIPS host their OpenSSL selftest aborts unless carved out. Container traffic is host-local/enclave-internal. Documented POA&M; host-level FIPS is what the STIG assesses. |
 | **AI/ML software assurance** | vLLM, Open WebUI, Docling, etc. are open-source and not separately accredited; recommend internal image scanning + registry mirroring as part of the SSP. |
+
+### Building the STIG checklist (`it-ckl`)
+
+The usual workflow is: run a SCAP scan, import the results into STIG Viewer, then hand-answer everything SCAP did not cover. The second half is the slow part — and most of it is the *same answer on every box*: the same deviations, the same compensating controls, the same POA&M wording. That does not need retyping per machine; it belongs in the repo.
+
+Three inputs, one command:
+
+| Input | Where it comes from |
+|---|---|
+| Manual STIG XCCDF | **You stage this once per STIG release.** Download the Ubuntu 24.04 STIG from [public.cyber.mil/stigs/downloads](https://public.cyber.mil/stigs/downloads/), unzip, copy `*Manual-xccdf.xml` into `/opt/ia/stig/`. It is published by DISA and cannot be derived from the box. |
+| SCAP results | `sudo it-oscap` → `/opt/ia/oscap/stig-viewer-<ts>.xml` (already the STIG Viewer import format) |
+| Adjudications | `/opt/ia/stig/answers.yml`, rendered per profile from `roles/scap_scan/templates/ckl-answers.yml.j2` |
+
+```bash
+sudo it-oscap            # scan
+sudo it-ckl              # -> /opt/ia/stig/<host>-<ts>.cklb
+sudo it-ckl --format both --summary
+```
+
+Output is a STIG Viewer 3 `.cklb` (or `.ckl` for Viewer 2, or both), with asset fields — hostname, IP, MAC, FQDN — filled in from the box. Every automated rule carries its status from the scan; every rule we have already argued out carries its adjudication and evidence text. **`Not_Reviewed` then means "genuinely needs a human on this box"**, not "nobody has typed it in yet" — and `it-ckl --summary` lists exactly those.
+
+**A SCAP failure always beats the answer file** unless the entry says `override: true`. Without that rule a stale adjudication could quietly mark a genuinely broken control as compliant, which is the one mistake that makes a checklist worthless. When an entry proposes a pass over a real failure, the rule stays **Open** and the reason is written into its comments.
+
+Adding an adjudication is a repo change, keyed by STIG id, V-ID, or SSG rule name:
+
+```yaml
+UBTU-24-600200:
+  status: not_a_finding
+  override: true
+  finding_details: |
+    ufw rate-limits inbound SSH. Remaining listening ports are application
+    service ports whose normal traffic exceeds ufw's threshold.
+  comments: Manual/OCIL rule -- always reports fail in SCAP.
+```
+
+The template is Jinja, so an entry can differ per profile — which matters, since several deviations (USB storage, for one) apply only to the EMI laptop.
 
 ### Assessment artifacts we can provide
 

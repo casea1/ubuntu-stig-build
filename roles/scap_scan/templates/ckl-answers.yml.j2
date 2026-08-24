@@ -1,0 +1,122 @@
+# =============================================================================
+# STIG checklist adjudications -- consumed by `it-ckl`.
+#
+# This is the part of the checklist that does NOT change per machine. Every
+# deviation, compensating control and POA&M entry we have already argued out
+# lives here once, keyed by STIG id, instead of being retyped into STIG Viewer
+# on every box. `it-ckl` merges these over the SCAP results.
+#
+# Rendered per profile, so an entry can say something different on an AI node
+# than on the EMI laptop -- which matters, because several of these deviations
+# only apply to one of them.
+#
+# Keys may be the STIG id (UBTU-24-200640), the V-ID (V-270645), or the SSG
+# rule name. Fields:
+#   status           not_a_finding | open | not_applicable | not_reviewed
+#   finding_details  what an assessor reads as the evidence
+#   comments         internal note
+#   override: true   accept this status even when SCAP reports a FAILURE.
+#                    Without it a SCAP failure always wins, so a stale entry
+#                    here can never quietly mark a broken control compliant.
+#
+# Anything NOT listed here stays Not_Reviewed, which is the honest default.
+# =============================================================================
+
+# ---- Banner text: DCSA rather than the DoD Standard Mandatory Notice --------
+# Three rules check for the exact DoD string. We show the site banner by
+# choice, so these are permanent, accepted deviations rather than gaps.
+UBTU-24-200640:
+  status: not_applicable
+  override: true
+  finding_details: |
+    The system displays the {{ 'DCSA' if not (emi_unclass | default(false) | bool) else 'organizational unclassified' }} warning banner
+    required by the site's ISSM, not the DoD Standard Mandatory Notice.
+    Banner text is enforced by configuration management (usg_remediate role,
+    /etc/issue, /etc/issue.net and the sshd Banner directive) and is identical
+    across the fleet. The control objective -- a consent banner shown before
+    logon -- is met; only the literal text differs.
+  comments: Approved text deviation. See docs/compliance.md, "Approved deviations".
+
+UBTU-24-200680:
+  status: not_applicable
+  override: true
+  finding_details: |
+    /etc/profile.d/ssh_confirm.sh displays the site warning banner and requires
+    explicit acknowledgement before an interactive SSH session proceeds. The
+    consent gate is present; the text is the site banner rather than the DoD
+    Standard Mandatory Notice.
+  comments: Approved text deviation.
+
+# ---- USB mass storage ------------------------------------------------------
+{% if is_emi | default(false) | bool %}
+UBTU-24-100010:
+  status: open
+  finding_details: |
+    The usb-storage kernel module is NOT disabled. This system performs
+    authorized data transfer to and from removable media as its mission
+    function, which the control would prevent entirely.
+    Compensating controls: USBGuard enforces a device authorization allow-list
+    (unknown devices are blocked at enumeration and logged to the audit trail);
+    mount rights are restricted to members of the 'dta' group via polkit and
+    udisks2; and all device authorization decisions are audited.
+  comments: POA&M -- mission-essential deviation with compensating controls.
+{% endif %}
+
+# ---- Time synchronization --------------------------------------------------
+UBTU-24-600160:
+  status: not_a_finding
+  override: true
+  finding_details: |
+    chrony is configured with an authoritative site time server
+    ({{ stig_time_servers | default(['the site NTP server']) | join(', ') }}) in
+    /etc/chrony/chrony.conf using `server` directives with maxpoll set per the
+    benchmark. The benchmark's rendered value names a public .mil NTP pool,
+    which this system cannot reach and must not depend on; the site server is
+    the authoritative source for this enclave.
+  comments: Site time source. Closeable in the scan by tailoring var_multiple_time_servers.
+
+# ---- ufw rate limiting -----------------------------------------------------
+UBTU-24-600200:
+  status: not_a_finding
+  override: true
+  finding_details: |
+    ufw rate-limits inbound SSH (`ufw limit`). Remaining listening ports are
+    application service ports whose normal traffic pattern exceeds ufw's
+    six-connections-in-thirty-seconds threshold; rate-limiting them would deny
+    legitimate service. This rule has no automated check content, so it is
+    reported as a failure by the scanner regardless of configuration.
+  comments: Manual/OCIL rule -- always reports fail in SCAP. Assessed by inspection.
+
+# ---- Smart card / CAC ------------------------------------------------------
+UBTU-24-300020:
+  status: not_applicable
+  override: true
+  finding_details: |
+    This system uses local accounts with password authentication only. It is
+    not joined to a directory service and there is no CAC/PIV reader in the
+    approved hardware configuration, so smart-card authentication controls do
+    not apply. The rules are de-selected in the USG tailoring file.
+  comments: No directory service, no CAC reader. Approved.
+
+# ---- Audit log offload -----------------------------------------------------
+UBTU-24-900240:
+  status: not_a_finding
+  finding_details: |
+    /etc/cron.weekly/audit-offload runs weekly and stages a compressed copy of
+    the rotated audit logs to {{ usg_audit_offload_dir | default('/opt/ia/audit-offload') }},
+    retaining the most recent {{ usg_audit_offload_keep | default(8) }} sets.
+    This system is standalone with no reachable log collector; the staged
+    archives are collected to approved removable media by the ISSO on the
+    documented schedule.
+  comments: Standalone offload to staged media.
+
+# ---- Encryption at rest ----------------------------------------------------
+{% if luks_expected | default(true) | bool %}
+UBTU-24-300004:
+  status: not_a_finding
+  finding_details: |
+    The system uses LUKS2 full-disk encryption on the root volume, configured
+    at install time. Verify with: cryptsetup status /dev/mapper/<root> and
+    lsblk -f (FSTYPE crypto_LUKS on the underlying partition).
+  comments: Verified per box during build; see the inventory report.
+{% endif %}
