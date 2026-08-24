@@ -253,6 +253,11 @@ Three inputs, one command:
 | Manual STIG XCCDF | **You stage this once per STIG release.** Download the Ubuntu 24.04 STIG from [public.cyber.mil/stigs/downloads](https://public.cyber.mil/stigs/downloads/), unzip, copy `*Manual-xccdf.xml` into `/opt/ia/stig/`. It is published by DISA and cannot be derived from the box. |
 | SCAP results | `sudo it-oscap` → `/opt/ia/oscap/stig-viewer-<ts>.xml` (already the STIG Viewer import format) |
 | Adjudications | `/opt/ia/stig/answers.yml`, rendered per profile from `roles/scap_scan/templates/ckl-answers.yml.j2` |
+| ID map | The SSG datastream already on the box — found automatically. See below. |
+
+**Why an ID map is needed.** The manual STIG names a rule `UBTU-24-200640` / `V-270691`. A scan run against ComplianceAsCode SSG content names the same rule `xccdf_org.ssgproject.content_rule_banner_etc_issue_net`. The two share no key, so a naive join matches **nothing** — the first run of this produced a checklist with all 194 rules `Not_Reviewed`. SSG's datastream carries the link as an xccdf `<reference>` on each Rule, so `it-ckl` reads it and builds the mapping itself. Scanning with DISA's own SCAP benchmark instead (`it-oscap --content ...`) makes the ids line up directly; both routes work.
+
+Several SSG rules routinely cover one STIG id — `setxattr` and its siblings are seven SSG rules and one STIG rule. **The worst result wins:** if any contributing rule failed, the STIG rule is Open, and `finding_details` names each contributing rule and its result so an assessor can see why.
 
 ```bash
 sudo it-oscap            # scan

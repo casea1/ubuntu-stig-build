@@ -26,9 +26,23 @@ Everything has a default; on a built box `sudo it-ckl` is enough.
   --stig      manual STIG XCCDF (*Manual-xccdf.xml). Default: newest in
               /opt/ia/stig/. Download once from cyber.mil and drop it there --
               it is public, and it is the only input this cannot generate.
-  --results   oscap --stig-viewer output. Default: newest
-              /opt/ia/oscap/stig-viewer-*.xml (written by it-oscap).
+  --results   oscap results. Default: newest /opt/ia/oscap/stig-viewer-*.xml
+              (written by it-oscap).
+  --map       SCAP datastream used to translate SSG rule ids to STIG ids.
+              Default: the SSG content on the box. Only needed when scanning
+              with SSG content -- see below.
   --answers   the repo's adjudications. Default: /opt/ia/stig/answers.yml
+
+WHY --map EXISTS: the manual STIG names rules UBTU-24-200640 / V-270691, but a
+scan run against ComplianceAsCode SSG content names the same rule
+xccdf_org.ssgproject.content_rule_banner_etc_issue_net. There is no shared key,
+so a naive join matches nothing. SSG's datastream carries the link as an xccdf
+<reference> on each Rule, so this reads it and builds the mapping. Scanning with
+DISA's own SCAP benchmark instead makes the ids line up directly and no mapping
+is needed; both work.
+
+Several SSG rules can map to one STIG id. In that case ANY failure makes the
+STIG rule Open -- a rule is not satisfied just because part of it is.
 """
 import argparse
 import glob
@@ -150,6 +164,44 @@ def parse_stig(path):
     return meta, rules
 
 
+SSG_CONTENT = [
+    "/usr/share/xml/scap/ssg/content/ssg-ubuntu24*-ds*.xml",
+    "/usr/local/share/scap/ssg-ubuntu24*-ds*.xml",
+]
+# Worst-to-best. When several SSG rules map to one STIG id, the worst wins:
+# a STIG rule is not satisfied because part of it passed.
+SEVERITY = ["fail", "error", "unknown", "notchecked", "informational",
+            "pass", "fixed", "notapplicable", "notselected"]
+
+
+def build_id_map(paths):
+    """{ssg_rule_id: STIG id} from the <reference> elements in a datastream."""
+    mapping = {}
+    for path in paths:
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            root = ET.parse(path).getroot()
+        except ET.ParseError:
+            continue
+        for rule in root.iter():
+            if strip_ns(rule.tag) != "Rule":
+                continue
+            rid = rule.get("id", "")
+            if not rid:
+                continue
+            for child in rule:
+                if strip_ns(child.tag) != "reference":
+                    continue
+                val = (child.text or "").strip()
+                if re.fullmatch(r"[A-Z]{2,6}-\d\d-\d{6}", val):
+                    mapping[rid] = val
+                    if "content_rule_" in rid:
+                        mapping[rid.split("content_rule_", 1)[1]] = val
+                    break
+    return mapping
+
+
 def parse_results(path):
     """oscap XCCDF results -> {identifier: result}, indexed every way we can.
 
@@ -186,6 +238,29 @@ def parse_results(path):
         if "content_rule_" in idref:
             idx.setdefault(idref.split("content_rule_", 1)[1], res)
     return idx
+
+
+def rank(res):
+    return SEVERITY.index(res) if res in SEVERITY else len(SEVERITY)
+
+
+def apply_id_map(idx, mapping):
+    """Fold SSG-keyed results onto their STIG ids, the WORST result winning.
+
+    Several SSG rules routinely cover one STIG id (setxattr and friends are one
+    STIG rule and seven SSG rules). If any of them failed, the STIG rule is not
+    satisfied, so the worst result is the honest one to carry forward.
+    """
+    contributors = {}
+    for ssg_id, res in list(idx.items()):
+        stig_id = mapping.get(ssg_id)
+        if not stig_id:
+            continue
+        contributors.setdefault(stig_id, []).append((ssg_id, res))
+        cur = idx.get(stig_id)
+        if cur is None or rank(res) < rank(cur):
+            idx[stig_id] = res
+    return len(contributors), contributors
 
 
 def load_answers(path):
@@ -265,7 +340,8 @@ def target_data():
     }
 
 
-def build(meta, rules, results, answers):
+def build(meta, rules, results, answers, contributors=None):
+    contributors = contributors or {}
     out, counts = [], {}
     for r in rules:
         status = "not_reviewed"
@@ -276,6 +352,14 @@ def build(meta, rules, results, answers):
         if res is not None:
             status = RESULT_MAP.get(res, "not_reviewed")
             details = f"Automated: OpenSCAP evaluated this rule as '{res}'."
+            who = contributors.get(r["rule_version"]) or contributors.get(r["group_id"])
+            if who:
+                # The map indexes each SSG rule under both its full id and its
+                # short name, so collapse to the short name or every rule is
+                # listed twice.
+                uniq = {n.split("content_rule_", 1)[-1]: v for n, v in who}
+                shown = ", ".join(f"{n}={v}" for n, v in sorted(uniq.items()))
+                details += f"\nSCAP rules checked: {shown}"
 
         ans = lookup(r, answers)
         if ans:
@@ -386,6 +470,7 @@ def main():
     ap.add_argument("--stig")
     ap.add_argument("--results")
     ap.add_argument("--answers", default=os.path.join(STIG_DIR, "answers.yml"))
+    ap.add_argument("--map")
     ap.add_argument("--out")
     ap.add_argument("--format", default="cklb", choices=("cklb", "ckl", "both"))
     ap.add_argument("--summary", action="store_true")
@@ -407,8 +492,20 @@ def main():
 
     meta, rules = parse_stig(stig)
     res = parse_results(results)
+
+    # Translate SSG rule ids onto STIG ids. Skipped harmlessly when the scan
+    # already used DISA content, since nothing will match the mapping.
+    map_paths = [args.map] if args.map else []
+    if not map_paths:
+        for pat in SSG_CONTENT:
+            hit = newest(pat)
+            if hit:
+                map_paths.append(hit)
+    id_map = build_id_map(map_paths)
+    mapped, contributors = apply_id_map(res, id_map) if id_map else (0, {})
+
     ans = load_answers(args.answers)
-    built, counts = build(meta, rules, res, ans)
+    built, counts = build(meta, rules, res, ans, contributors)
 
     matched = sum(1 for r in rules if lookup(r, res) is not None)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -426,6 +523,9 @@ def main():
     print(f"STIG      : {meta['title']}  ({meta['release_info']})")
     print(f"Rules     : {len(rules)}")
     print(f"Scan      : {os.path.basename(results)}  -> {matched} rules matched")
+    if id_map:
+        print(f"ID map    : {len(id_map)} SSG->STIG references from "
+              f"{os.path.basename(map_paths[0])}  -> {mapped} STIG ids resolved")
     print(f"Answers   : {len(ans)} adjudications loaded from {args.answers}")
     print()
     for k in ("not_a_finding", "open", "not_applicable", "not_reviewed"):
@@ -434,8 +534,17 @@ def main():
     for f in written:
         print(f"Wrote {f}")
     if matched == 0:
-        print("\nWARNING: no rule matched the scan results. Wrong results file?"
-              "\n         Use the oscap --stig-viewer output, not the ARF.", file=sys.stderr)
+        print("\nWARNING: no rule matched the scan results -- the checklist is empty.",
+              file=sys.stderr)
+        if not id_map:
+            print("         No SSG->STIG id map was loaded. A scan run against SSG\n"
+                  "         content uses SSG rule ids, which share no key with the\n"
+                  "         manual STIG. Point --map at the SSG datastream:\n"
+                  "           it-ckl --map /usr/share/xml/scap/ssg/content/ssg-ubuntu2404-ds.xml",
+                  file=sys.stderr)
+        else:
+            print("         An id map WAS loaded, so the results file is probably not\n"
+                  "         from this STIG's content. Check --results.", file=sys.stderr)
     if counts.get("not_reviewed"):
         print(f"\n{counts['not_reviewed']} rules still need a human. List them with:"
               f"\n  it-ckl --summary")
