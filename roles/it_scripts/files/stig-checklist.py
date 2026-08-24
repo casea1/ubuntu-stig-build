@@ -474,6 +474,7 @@ def main():
     ap.add_argument("--out")
     ap.add_argument("--format", default="cklb", choices=("cklb", "ckl", "both"))
     ap.add_argument("--summary", action="store_true")
+    ap.add_argument("--debug", action="store_true")
     ap.add_argument("-h", "--help", action="store_true")
     args = ap.parse_args()
     if args.help:
@@ -506,6 +507,28 @@ def main():
 
     ans = load_answers(args.answers)
     built, counts = build(meta, rules, res, ans, contributors)
+
+    if args.debug:
+        print("=" * 72)
+        print("DEBUG -- the three key namespaces, so a zero match can be diagnosed")
+        print("=" * 72)
+        print("\n1. rule-result idrefs in the scan (first 5):")
+        for k in list(res)[:5]:
+            print(f"     {k}  = {res[k]}")
+        print(f"   ({len(res)} keys total)")
+        print("\n2. id map entries built from the datastream (first 5):")
+        for k in list(id_map)[:5]:
+            print(f"     {k}\n       -> {id_map[k]}")
+        print(f"   ({len(id_map)} entries)")
+        print("\n3. keys the manual STIG will look up (first 5 rules):")
+        for r in rules[:5]:
+            print(f"     version={r['rule_version']}  group={r['group_id']}  rule={r['rule_id']}")
+        overlap = set(res) & set(id_map)
+        print(f"\n4. scan keys that appear in the id map: {len(overlap)}")
+        for k in list(overlap)[:5]:
+            print(f"     {k} -> {id_map[k]}")
+        print("=" * 72)
+        print()
 
     matched = sum(1 for r in rules if lookup(r, res) is not None)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
