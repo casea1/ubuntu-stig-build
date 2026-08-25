@@ -1,0 +1,53 @@
+# System 1 -- PgBouncer in front of pgvector. Open WebUI runs 9 uvicorn workers,
+# each with its own SQLAlchemy pool, which exhausted Postgres' connection slots;
+# every DB URL now points at `pg-bouncer` instead of `pgvector`.
+#
+# NOT published. Postgres has no business on the LAN, and a published port cannot
+# be filtered by ufw (Docker's DNAT runs before ufw's INPUT chain) -- the `oi`
+# network is the only path in. Password comes from the sibling root-only .env.
+#
+# Transaction pooling means session state does NOT persist between statements.
+# Anything needing it (session-level SET, advisory locks, LISTEN/NOTIFY) must
+# talk to pgvector:5432 directly.
+name: pgbouncer
+networks:
+  oi: { external: true }
+services:
+  pg-bouncer:
+    image: edoburu/pgbouncer:v1.25.1-p0
+    container_name: pg-bouncer
+    environment:
+      DATABASE_URL: "postgres://postgres:${POSTGRES_PASSWORD:?set in .env}@pgvector:5432/openwebui"
+      AUTH_TYPE: "plain"
+      POOL_MODE: "transaction"
+      LISTEN_PORT: "5432"
+      LISTEN_ADDR: "0.0.0.0"
+      # 9 Open WebUI workers x 30 = 270 client connections, plus headroom.
+      # Backend side stays well under pgvector's max_connections=200.
+      MAX_CLIENT_CONN: "400"
+      DEFAULT_POOL_SIZE: "50"
+      MIN_POOL_SIZE: "20"
+      RESERVE_POOL_SIZE: "15"
+      MAX_DB_CONNECTIONS: "150"
+      MAX_USER_CONNECTIONS: "150"
+      SERVER_LIFETIME: "7200"
+      SERVER_IDLE_TIMEOUT: "900"
+      CLIENT_IDLE_TIMEOUT: "1200"
+      SERVER_CONNECT_TIMEOUT: "20"
+      QUERY_TIMEOUT: "300"          # RAG/embedding queries can be slow
+      QUERY_WAIT_TIMEOUT: "120"
+      SERVER_RESET_QUERY: "DISCARD ALL"
+      SERVER_CHECK_QUERY: "select 1"
+      SERVER_CHECK_DELAY: "30"
+      # Open WebUI sends both; neither survives transaction pooling.
+      IGNORE_STARTUP_PARAMETERS: "extra_float_digits,search_path"
+      TCP_KEEPALIVE: "1"
+      TCP_KEEPIDLE: "60"
+      TCP_KEEPINTVL: "10"
+      TCP_KEEPCNT: "5"
+      LOG_CONNECTIONS: "0"
+      LOG_DISCONNECTIONS: "0"
+      LOG_POOLER_ERRORS: "1"
+      STATS_PERIOD: "60"
+    networks: [oi]
+    restart: unless-stopped

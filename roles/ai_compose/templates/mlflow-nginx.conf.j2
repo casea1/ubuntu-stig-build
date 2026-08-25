@@ -36,8 +36,15 @@ http {
 {% endfor %}
         deny  all;
 
+        # The mlflow service is REPLICATED. nginx resolves a literal upstream name
+        # once at startup and would pin every request to one replica, so go
+        # through Docker's embedded DNS (127.0.0.11) with the address in a
+        # variable -- that re-resolves on the TTL below and spreads the load.
+        resolver 127.0.0.11 valid=10s ipv6=off;
+
         location / {
-            proxy_pass http://mlflow:5000;
+            set $mlflow_upstream http://mlflow:5000;
+            proxy_pass $mlflow_upstream;
             proxy_http_version 1.1;
             proxy_set_header Host              $host;
             proxy_set_header X-Real-IP         $remote_addr;

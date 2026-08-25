@@ -20,7 +20,7 @@ services:
       GITLAB_URL: "${GITLAB_URL:-}"
       GITLAB_TOKEN: "${GITLAB_TOKEN:-}"
       LOG_FORMAT: "json"
-    command: oikb daemon
+    command: ["daemon"]      # image ENTRYPOINT is already `oikb`
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://0.0.0.0:8080/health/ready"]
       interval: 30s

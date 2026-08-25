@@ -53,6 +53,7 @@ All stacks on a node share:
 | `vllm-gptoss` | `:8000` | default | Chat model (gpt-oss-120B) |
 | `vllm-granite` | `:8001` | `granite` | Alternate chat model (Granite-4.1-30B) |
 | `pgvector` | internal | default | Accounts, chats, settings + vector index |
+| `pgbouncer` | internal | default | Connection pooler in front of `pgvector` (every DB URL points here) |
 | `redis` | internal | default | Websocket coordination + cache |
 | `open-webui` | `:3000` | default | The chat website |
 
@@ -113,7 +114,9 @@ docker network create oi 2>/dev/null || true
 for d in /opt/stacks/*/; do (cd "$d" && docker compose up -d); done
 ```
 
-**Start order matters.** `open-webui` is a separate stack from `pgvector`/`redis`, so it can't `depends_on` them. `it-ai up` handles the ordering; if you start `open-webui` first anyway, it retries the DB connection until `pgvector` appears.
+**Start order matters.** `open-webui` is a separate stack from `pgvector`/`pgbouncer`/`redis`, so it can't `depends_on` them. `it-ai up` handles the ordering; if you start `open-webui` first anyway, it retries the DB connection until the pooler appears.
+
+**Postgres is reached through PgBouncer.** Open WebUI runs 9 uvicorn workers, each with its own SQLAlchemy pool, which exhausted Postgres' connection slots — so `DATABASE_URL` and `VECTOR_DB_URL` point at `pg-bouncer:5432`, not `pgvector:5432`. The pooler runs in **transaction** mode, so session state does not persist between statements: anything needing it (session-level `SET`, advisory locks, `LISTEN`/`NOTIFY`) has to talk to `pgvector:5432` directly. Neither the pooler nor Postgres publishes a port — the `oi` network is the only way in, which is deliberate, since ufw cannot filter a published container port. MLflow on System 2 has its own pooler (`mlflow-pgbouncer`) in front of `mlflow-db`, and runs **5 MLflow replicas** behind the nginx proxy.
 
 **Break-glass fallback.** The pre-split single-file compose stays on the box at `/opt/it/docker/docker-compose.consolidated.yaml` — not deployed, and deliberately not named `docker-compose.yaml` so nothing picks it up. It uses the same volumes, so `docker compose -f docker-compose.consolidated.yaml up -d` brings the whole node up as one project with no data move.
 
@@ -234,6 +237,7 @@ IA / DCSA inventory. Versions are pinned in `group_vars/all.yml`, the compose fi
 | open-webui | v0.10.2 | Open WebUI | Chat web UI (S1) |
 | pgvector/pgvector | pg16-trixie | pgvector project | Database + vector store (S1) |
 | redis | 7.2.14-bookworm | Redis | Websocket coordination + cache (S1) |
+| edoburu/pgbouncer | v1.25.1-p0 | edoburu (PgBouncer) | Postgres connection pooler (S1, S2) |
 | apache/tika | 3.3.1.0 | Apache Software Foundation | Text/metadata extraction (S2) |
 | docling-serve | v1.24.0 (cu128) | IBM / Docling project | Document structure + OCR (S2) |
 | grafana/otel-lgtm | 0.29.0 | Grafana Labs | Monitoring / telemetry (S2) |

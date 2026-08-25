@@ -44,6 +44,7 @@ emit() {
     n=$(basename "$d")
     [ -f "$d/compose.override.yaml" ] && extra="  +override"
     [ -f "$d/.env" ] && extra="$extra  +env(not shown)"
+    ls "$d"compose.y*ml "$d"docker-compose.y*ml >/dev/null 2>&1 || extra="$extra  NO-COMPOSE-FILE"
     printf '  %-18s%s\n' "$n" "$extra"
   done
   echo
@@ -53,9 +54,18 @@ emit() {
     local n f r
     n=$(basename "$d")
     [ -n "$ONLY" ] && [ "$n" != "$ONLY" ] && continue
-    f="$d/compose.yaml"
-    [ -f "$f" ] || continue
-    r="$REPO/$n/compose.yaml"
+    # Dockge writes compose.yaml, but a hand-made or pre-split stack dir may use
+    # any of the other three names -- skipping them silently hides a whole stack.
+    f=""
+    for c in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
+      [ -f "$d/$c" ] && { f="$d/$c"; break; }
+    done
+    if [ -z "$f" ]; then
+      echo "=== $n: NO COMPOSE FILE (stale dir? $(ls -A "$d" 2>/dev/null | tr '\n' ' '))"
+      echo
+      continue
+    fi
+    r="$REPO/$n/$(basename "$f")"
     if [ "$FULL" = 0 ] && [ -n "$REPO" ] && [ -f "$r" ]; then
       if diff -q "$r" "$f" >/dev/null 2>&1; then
         echo "=== $n: UNCHANGED"

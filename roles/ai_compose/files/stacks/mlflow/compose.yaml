@@ -1,7 +1,7 @@
-# System 2 -- MLflow tracking + model registry (:5000) with its own Postgres.
-# Both live here so depends_on can health-gate; only mlflow talks to mlflow-db.
-# MLflow has NO auth, and ufw cannot filter a published container port, so :5000
-# is published by the nginx proxy (source allow-list) and not by mlflow itself.
+# System 2 -- MLflow tracking + model registry (:5000) with its own Postgres and
+# a PgBouncer in front of it. MLflow has NO auth, and ufw cannot filter a
+# published container port, so :5000 is published by the nginx proxy (source
+# allow-list) and not by mlflow itself.
 name: mlflow
 networks:
   oi: { external: true }
@@ -16,6 +16,30 @@ services:
       POSTGRES_USER: mlflow
       POSTGRES_PASSWORD: ${MLFLOW_DB_PASSWORD:?set in .env}
       POSTGRES_DB: mlflow
+    # max_connections stays above the pooler's MAX_DB_CONNECTIONS (100) so
+    # PgBouncer, not Postgres, is what rejects a flood.
+    command:
+      - postgres
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=1GB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "work_mem=4MB"
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "default_statistics_target=100"
     volumes:
       - postgres_mlflow_data:/var/lib/postgresql/data
     healthcheck:
@@ -26,22 +50,60 @@ services:
     networks: [oi]
     restart: unless-stopped
 
+  # Not published: the `oi` network is the only path in, and a published port
+  # cannot be filtered by ufw (Docker's DNAT runs before ufw's INPUT chain).
+  # Named for its stack -- System 1 has its own `pg-bouncer` in front of pgvector.
+  mlflow-pgbouncer:
+    image: edoburu/pgbouncer:v1.25.1-p0
+    container_name: mlflow-pgbouncer
+    environment:
+      DATABASE_URL: "postgres://mlflow:${MLFLOW_DB_PASSWORD:?set in .env}@mlflow-db:5432/mlflow"
+      AUTH_TYPE: "plain"
+      POOL_MODE: "transaction"
+      LISTEN_PORT: "5432"
+      LISTEN_ADDR: "0.0.0.0"
+      MAX_CLIENT_CONN: "500"        # 5 mlflow replicas x 100
+      DEFAULT_POOL_SIZE: "50"
+      MIN_POOL_SIZE: "10"
+      RESERVE_POOL_SIZE: "10"
+      MAX_DB_CONNECTIONS: "100"
+      MAX_USER_CONNECTIONS: "100"
+      SERVER_LIFETIME: "7200"
+      SERVER_IDLE_TIMEOUT: "600"
+      CLIENT_IDLE_TIMEOUT: "900"
+      SERVER_CONNECT_TIMEOUT: "15"
+      QUERY_TIMEOUT: "7200"         # model logging/artifact registration can be long
+      QUERY_WAIT_TIMEOUT: "120"
+      SERVER_RESET_QUERY: "DISCARD ALL"
+      SERVER_CHECK_QUERY: "select 1"
+      IGNORE_STARTUP_PARAMETERS: "extra_float_digits,search_path"
+      LOG_CONNECTIONS: "0"
+      LOG_DISCONNECTIONS: "0"
+      LOG_POOLER_ERRORS: "1"
+      STATS_PERIOD: "60"
+    depends_on:
+      mlflow-db:
+        condition: service_healthy
+    networks: [oi]
+    restart: unless-stopped
+
+  # Replicated, so NO container_name. nginx round-robins across the replicas --
+  # see the resolver note in mlflow-nginx.conf.j2.
   mlflow:
     image: mlflow:v3.15.1-psycopg2      # built on the box by ansible (ai_compose)
-    container_name: mlflow
     # No published port ON PURPOSE -- reachable only via mlflow-proxy below.
     command: >
       mlflow server
-      --backend-store-uri postgresql://mlflow:${MLFLOW_DB_PASSWORD}@mlflow-db:5432/mlflow
+      --backend-store-uri postgresql://mlflow:${MLFLOW_DB_PASSWORD}@mlflow-pgbouncer:5432/mlflow
       --default-artifact-root /mlflow/artifacts
       --host 0.0.0.0
       --port 5000
       --disable-security-middleware
     volumes:
       - mlflow-artifacts:/mlflow/artifacts
-    depends_on:
-      mlflow-db:
-        condition: service_healthy
+    depends_on: [mlflow-pgbouncer]
+    deploy:
+      replicas: 5
     networks: [oi]
     restart: unless-stopped
     # If this ever crash-loops on a FIPS selftest, add the same fips_off mount

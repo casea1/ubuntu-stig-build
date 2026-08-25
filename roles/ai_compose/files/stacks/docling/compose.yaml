@@ -18,7 +18,11 @@ services:
       - DOCLING_SERVE_MAX_SYNC_WAIT=6000
       - DOCLING_SERVE_ENABLE_UI=false
       - OMP_NUM_THREADS=4
-      - UVICORN_WORKERS=1
+      - MKL_NUM_THREADS=4
+      - DOCLING_NUM_THREADS=4
+      # 4 workers: Open WebUI submits a whole knowledge base at once and one
+      # worker serialised the batch.
+      - UVICORN_WORKERS=4
       # Permit a network-hosted VLM (both default false upstream).
       - DOCLING_SERVE_ENABLE_REMOTE_SERVICES=true
       - DOCLING_SERVE_ALLOW_CUSTOM_VLM_CONFIG=true

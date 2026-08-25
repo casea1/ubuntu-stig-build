@@ -1075,7 +1075,7 @@ ai_mlflow_allow_cidrs:
 #   ...or just:  it-ai up
 ai_stack_network: oi
 ai_stacks_by_role:
-  system1: [vllm-gptoss, vllm-granite, pgvector, redis, open-webui]
+  system1: [vllm-gptoss, vllm-granite, pgvector, pgbouncer, redis, open-webui]
   system2: [vllm-embed, vllm-vision, docling, tika, grafana-otel, mlflow, oikb, hfcli, openwiki, openwiki-view]
 # Stacks whose compose bind-mounts ./fips_off (the host-FIPS carve-out for the
 # vLLM / OpenCV-bearing containers). The `fips_off` file is placed into each of
