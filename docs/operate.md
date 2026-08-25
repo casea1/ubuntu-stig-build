@@ -110,6 +110,8 @@ it-set-ip --peer 10.0.5.20             #   ...just repoint the cross-node/peer I
 it-set-ip --self 10.0.5.11/24 --gateway 10.0.5.1 --dns 10.0.5.2   # ...this box's own static IP (netplan)
 it-model-export /mnt/usb [--images]    # AIR-GAP gather (online box): models+encodings (+images) -> USB
 it-model-import /mnt/usb [--images]    # AIR-GAP install (fielded box): USB -> external volumes
+it-stack-diff                          # what the engineers changed in /opt/stacks vs the repo baseline
+it-stack-diff --out /tmp/stacks.txt    #   ...also write it to a file to send back
 
 # The AI stack is split into one Dockge stack per service under /opt/stacks/<stack>/:
 it-ai status                           # what's running / healthy across all stacks
@@ -145,6 +147,7 @@ The rows marked **ai only** are the AI-stack tooling. They are placed on the `ai
 | `it-set-ip` | `set-ip.sh` | Renumber the node when it leaves the lab: repoints the peer/cross-node IP (`site.yml` + `.env` + `/etc/hosts` + ufw + recreates containers) and/or this box's own static IP via netplan. Interactive or `--peer` / `--self`. *(ai only)* |
 | `it-model-export` | `model-export.sh` | **Air-gap gather side** (online box): `hf download` the models + tiktoken encodings (+ `--images` to `docker save` the containers) onto a USB with a manifest. Completeness-checked. *(ai only)* |
 | `it-model-import` | `model-import.sh` | **Air-gap install side** (fielded box): read the USB manifest and load models/encodings straight into their external Docker volumes (+ `--images` to `docker load`). No internet/repo/helper-image needed. *(ai only)* |
+| `it-stack-diff` | `stack-diff.sh` | Shows how `/opt/stacks/` on this box differs from what the repo would deploy: a unified diff per `compose.yaml`, the full file for a stack the repo does not know about, and any `compose.override.yaml`. Use it to capture on-box edits **before** the next pull overwrites them (gotcha 2). Reads no `.env` — only reports that one exists — so the output is safe to paste. `--full`, `--out FILE`, or a single stack name. *(ai only)* |
 | `it-stig` | `stig-run.sh` | The whole STIG evidence cycle in one command: `status` (what is staged, what is missing, when it last ran), `run` (scan + checklist), `scan`, `checklist`, `archive` (tar the evidence set for hand-off). Wraps `it-oscap` and `it-ckl` and checks prerequisites before running anything. |
 | `it-ckl` | `stig-checklist.py` | Builds a DISA STIG checklist (`.cklb` / `.ckl`) from the manual STIG XCCDF + the SCAP results + the repo's adjudications, with asset fields filled in. `--summary` lists what still needs a human. See [compliance.md](compliance.md#building-the-stig-checklist-it-ckl). |
 | `it-powerstrux` | `run-powerstrux.sh` | Runs the PowerStrux LA audit (`pwsh -NoProfile -File Initiate-PowerstruxLA.ps1`), logs to `/opt/_AuditFiles/logs/`, and reports where the HTML landed. Auditors double-click **PowerStrux Audit** in the app menu instead. Runs weekly on its own — **Wednesday 03:00**, `powerstrux-audit.timer`. `status` shows the schedule, last run and next run; `schedule "<spec>"` changes it — writing both the live timer **and** `/opt/it/site.yml`, so a pull does not revert it — and `enable`/`disable` turn the weekly run off and on. `--where` prints the paths without running anything. |

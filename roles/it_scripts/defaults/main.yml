@@ -36,3 +36,4 @@ it_scripts_ai:
   - { file: set-ip.sh,         link: it-set-ip }
   - { file: model-export.sh,   link: it-model-export }
   - { file: model-import.sh,   link: it-model-import }
+  - { file: stack-diff.sh,     link: it-stack-diff }
