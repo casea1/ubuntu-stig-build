@@ -210,6 +210,11 @@ EOF
       echo "    and removing an entry beats patching however its generator emits it:" >&2
       echo "        sudo it-grub set --drop-extras" >&2
       echo "    (reversible: sudo chmod +x /etc/grub.d/<file>)" >&2
+      echo "  * or by hand -- but use 'chmod a-x', NOT 'chmod -x'. With no 'who'," >&2
+      echo "    chmod applies the umask, and under this baseline's umask 077 that" >&2
+      echo "    clears only the USER execute bit. grub-mkconfig runs any file with" >&2
+      echo "    ANY execute bit set, so the generator keeps running:" >&2
+      echo "        sudo chmod a-x /etc/grub.d/<file>" >&2
     fi
     echo "Candidate left at /tmp/grub.cfg.candidate; $CFG untouched; drop-in removed." >&2
     rm -f "$DROPIN"; exit 1
