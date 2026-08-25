@@ -49,7 +49,7 @@ UBTU-24-200680:
 
 # ---- USB mass storage ------------------------------------------------------
 {% if is_emi | default(false) | bool %}
-UBTU-24-100010:
+UBTU-24-300039:
   status: open
   finding_details: |
     The usb-storage kernel module is NOT disabled. This system performs
@@ -202,3 +202,52 @@ UBTU-24-909890:
     pass, and AIDE runs on a schedule with notification enabled.
   evidence_cmd: "grep -E '/usr/sbin/(auditctl|auditd|ausearch|aureport|autrace|augenrules)' /etc/aide/aide.conf /etc/aide/aide.conf.d/* 2>/dev/null | head -20 || echo 'no explicit audit-tool entries found'"
   comments: Evidence must show the audit tools covered by an AIDE rule.
+
+# ---- Smart card / PKI family (V-270663, V-270721, V-270736) ----------------
+# usg_harden de-selects these in the tailoring file, so a TAILORED scan does not
+# raise them. An untailored scan does, and an assessor reading the checklist
+# still needs the reason, so carry the adjudication explicitly.
+UBTU-24-100660:
+  status: not_applicable
+  override: true
+  finding_details: |
+    SSSD is installed but not enabled: this system is standalone with local
+    accounts and password authentication, is joined to no directory service,
+    and has no CAC/PIV reader in its approved hardware configuration. There is
+    no multifactor authentication service for SSSD to provide. De-selected in
+    the USG tailoring file.
+  comments: Same de-scoping as the smart card rules. Re-assess if a reader is added.
+
+UBTU-24-400020:
+  status: not_applicable
+  override: true
+  finding_details: |
+    Smart card logins are not implemented: no CAC/PIV reader is present in the
+    approved hardware configuration and the system uses local password
+    authentication only. pam_pkcs11 is deliberately removed from the auth stack
+    -- with no reader attached it produced a "no smart card found" failure on
+    every authentication.
+  comments: Approved. Re-assess if CAC is introduced.
+
+UBTU-24-400370:
+  status: not_applicable
+  override: true
+  finding_details: |
+    No PKI-based authentication is performed on this system, so there is no
+    authenticated certificate identity to map to a local account. Applies only
+    once smart card / PKI authentication is in use.
+  comments: Dependent on the smart card rules above.
+
+# ---- Session lock image (V-274871) -----------------------------------------
+UBTU-24-200043:
+  status: not_applicable
+  override: true
+  finding_details: |
+    The session lock conceals all previously visible information. The rule's
+    automated check requires the screensaver picture-uri to be EMPTY; this
+    system instead displays the organizational lock-screen image, applied and
+    LOCKED by configuration management (desktop_branding), which conceals the
+    display just as completely. The control objective is met; only the
+    prescribed means of meeting it differs.
+  evidence_cmd: "gsettings get org.gnome.desktop.screensaver picture-uri 2>/dev/null; grep -rn 'picture-uri\\|lock-enabled\\|idle-delay' /etc/dconf/db/*.d/ 2>/dev/null | head -10"
+  comments: Deliberate site deviation -- the org wallpaper is a mandated control of its own.

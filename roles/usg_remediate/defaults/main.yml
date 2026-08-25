@@ -164,3 +164,7 @@ usg_fix_pam_stack: false
 
 # Where the PAM auth-stack checker is installed.
 pam_auth_check_path: /usr/local/sbin/pam-auth-check
+
+# Remove `nullok` from the PAM stack (UBTU-24-300028). Only narrows what
+# pam_unix accepts, so it cannot reject a currently-valid password.
+usg_fix_pam_nullok: true

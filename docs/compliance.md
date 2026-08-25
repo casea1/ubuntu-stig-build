@@ -124,6 +124,20 @@ A worked example of what the residual findings on a fully built box actually are
 >
 > Note the date on that file: `Updated by Ansible - 2026-06-04`. Both this and the `stig.rules` finding above are the same thing — pre-USG leftovers the current baseline neither writes nor removes. Worth assuming there are others.
 
+### The seven open findings, and which are fixable
+
+From ASP-2's first complete checklist (194 rules: 179 NotAFinding, 8 N/A, 7 Open, **0 Not_Reviewed**):
+
+| Finding | Cause | Fixable in the build? |
+| --- | --- | --- |
+| UBTU-24-102000 *(high)* — boot loader password | `grub_password_pbkdf2` was the CHANGEME sentinel | **Fixed.** `it-grub set` applied; vault the hash to roll it fleet-wide |
+| UBTU-24-300028 *(high)* — no PAM accounts with null passwords | Ubuntu's `pam-auth-update` writes `pam_unix.so nullok` | **Fixed in the build.** `usg_remediate` strips `nullok`, then re-verifies the auth stack. Only narrows what pam_unix accepts, so it cannot reject a currently-valid password |
+| UBTU-24-100660, 400020, 400370 — SSSD / smart card / PKI mapping | No CAC reader, no directory service, password auth only | **No.** Permanent deviation. De-selected in the USG tailoring, and now adjudicated in `answers.yml` so an untailored scan still reads correctly |
+| UBTU-24-300039 — USB mass storage driver | The EMI `dta` workflow needs removable media | **No.** Mission deviation; USBGuard is the compensating control |
+| UBTU-24-200043 — session lock conceals the display | The check wants `picture-uri` **empty**; `desktop_branding` sets the org lock-screen image | **No.** The objective — concealing the display — is met; only the prescribed means differs. Both are mandated controls that happen to conflict |
+
+So of seven: two close in the build, five are deviations that will never close and now carry their reasoning in the checklist rather than being re-argued each cycle.
+
 **The lesson worth keeping:** the score barely moved during that build (88.476 → 88.703 after remediation) even though the remediation role ran every task. Two whole categories of fix were being written correctly and still failing — a stale file poisoning rules that were otherwise satisfied, and PAM values written into a config file that nothing read because the module was not in the stack. Neither shows up as an Ansible failure. **A green playbook is not evidence; the re-audit is.**
 
 ### NTP / time source

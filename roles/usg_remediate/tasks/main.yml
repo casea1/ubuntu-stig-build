@@ -588,6 +588,51 @@
       when: usg_fix_pam_rounds | default(false) | bool
 
 # ---------------------------------------------------------------------------
+# 5f-0) PAM: remove `nullok` (UBTU-24-300028 / no_empty_passwords) -- HIGH
+#
+# Ubuntu's pam-auth-update writes `pam_unix.so nullok`, which permits login to
+# an account whose password field is EMPTY. Nothing on these boxes has an empty
+# password (no_empty_passwords_etc_shadow passes), so removing it changes no
+# working login -- it removes the possibility that a future account created
+# without a password becomes remotely usable.
+#
+# Safe by construction: this only narrows what pam_unix accepts. It cannot
+# reject a password that is currently valid. The stack is re-verified after,
+# because it is still an edit to the file that locked this fleet out once.
+#
+# pam-auth-update regenerates common-auth with nullok on a libpam-runtime
+# upgrade, so this re-applies on every build, like the 10_linux GRUB edit.
+# ---------------------------------------------------------------------------
+- name: "REMED | Remove `nullok` from the PAM stack (no empty-password logins)"
+  when: usg_fix_pam_nullok | default(true) | bool
+  block:
+    - name: "REMED | Strip nullok from common-auth / common-password"
+      ansible.builtin.replace:
+        path: "/etc/pam.d/{{ item }}"
+        regexp: '(\s)nullok(_secure)?\b'
+        replace: '\1'
+      loop:
+        - common-auth
+        - common-password
+      register: _nullok_strip
+
+    - name: "REMED | Re-verify the auth stack after the nullok edit"
+      ansible.builtin.command:
+        cmd: "{{ pam_auth_check_path }} /etc/pam.d/common-auth"
+      register: _nullok_verify
+      changed_when: false
+      failed_when: false
+
+    - name: "REMED | Fail loudly if the nullok edit broke the auth stack"
+      ansible.builtin.fail:
+        msg: >-
+          Removing nullok left an auth stack that cannot authenticate:
+          {{ _nullok_verify.stdout | default('no output') | trim }}.
+          Restore with `pam-auth-update --force` and set
+          usg_fix_pam_nullok: false.
+      when: "'OK' not in (_nullok_verify.stdout | default(''))"
+
+# ---------------------------------------------------------------------------
 # 5f-2) PAM STACK: pam_faillock + pam_faildelay, via pam-auth-update profiles
 #
 # Seven findings (the five faillock rules, faillock_audit/silent, and
