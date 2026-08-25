@@ -6,8 +6,15 @@
 #
 # Usage:
 #   it-usb status                 daemon state + policy summary
-#   it-usb list                   all devices, with allow/block state and IDs
+#   it-usb list                   all devices as a tree: state, class, port
+#   it-usb list --raw             usbguard's own output, unformatted
 #   it-usb blocked                only the devices currently being blocked
+#
+# `list` decodes the USB class byte (hub / HID / MASS STORAGE / network / ...)
+# and nests each device under what it is plugged into, so a flash drive behind
+# a dock is visibly behind that dock. A "!" marks the classes that can act on
+# their own -- keyboards (keystroke injection), storage (data movement) and
+# radios. Those are the ones to look twice at before authorising.
 #   it-usb enroll                 GUIDED: plug a device in, it gets whitelisted
 #   it-usb allow <id>             authorise NOW (until it is unplugged)
 #   it-usb allow <id> --permanent authorise now AND add it to the policy
@@ -32,6 +39,7 @@ set -uo pipefail
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
 RULES=/etc/usbguard/rules.conf
+RENDER="$(dirname "$(readlink -f "$0")")/usb-render.py"
 have() { command -v "$1" >/dev/null 2>&1; }
 have usbguard || { echo "usbguard not installed (usbguard_enabled is false?)" >&2; exit 1; }
 
@@ -44,11 +52,12 @@ die() { echo "$*" >&2; exit 2; }
 # Flags are positional-agnostic: `allow 19 --permanent` and
 # `allow 0e90:0065 --all --permanent` both work, and an unknown flag is an
 # error rather than being silently ignored.
-PERMANENT=0; ALL_MATCHES=0; ALL_FLAG=""; ARGS=()
+PERMANENT=0; ALL_MATCHES=0; ALL_FLAG=""; RAW=0; ARGS=()
 for a in "$@"; do
   case "$a" in
     --permanent) PERMANENT=1 ;;
     --all)       ALL_MATCHES=1; ALL_FLAG="--all " ;;
+    --raw)       RAW=1 ;;
     --*)         echo "unknown option: $a  (try: it-usb help)" >&2; exit 2 ;;
     *)           ARGS+=("$a") ;;
   esac
@@ -90,11 +99,19 @@ case "${1:-help}" in
     printf 'devices present : %s\n' "$(usbguard list-devices 2>/dev/null | wc -l)"
     printf 'currently blocked: %s\n' "$(usbguard list-devices -b 2>/dev/null | wc -l)"
     ;;
-  list)      usbguard list-devices ;;
+  list)
+    # --raw gives usbguard's own output, for scripting or when the renderer is
+    # unavailable. Everything else gets the readable tree.
+    if [ "$RAW" = 1 ] || [ ! -x "$RENDER" ]; then usbguard list-devices
+    else usbguard list-devices 2>/dev/null | "$RENDER"; fi
+    ;;
   blocked)
     out="$(usbguard list-devices -b 2>/dev/null)"
-    if [ -z "$out" ]; then echo "No blocked devices."; else
+    if [ -z "$out" ]; then echo "No blocked devices."
+    elif [ "$RAW" = 1 ] || [ ! -x "$RENDER" ]; then
       echo "$out"; echo; echo "Authorise one with:  sudo it-usb allow <id> --permanent"
+    else
+      printf '%s\n' "$out" | "$RENDER"
     fi
     ;;
   allow)

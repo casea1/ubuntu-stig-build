@@ -19,6 +19,7 @@ it_scripts_common:
   - { file: set-classification.sh, link: it-set-classification }
   - { file: oscap-scan.sh,         link: it-oscap }
   - { file: usb-guard.sh,          link: it-usb }
+  - { file: usb-render.py,         link: '' }
   - { file: grub-password.sh,      link: it-grub }
   - { file: checklist.sh,          link: it-checklist }
   - { file: stig-checklist.py,     link: it-ckl }

@@ -30,13 +30,16 @@
   loop_control:
     label: "{{ item.file }}"
 
+# An entry with an empty `link` is a HELPER invoked by another script, not a
+# command of its own -- it gets installed into the scripts dir but no symlink.
 - name: "IT-SCRIPTS | Expose short it-* commands in /usr/local/sbin"
   ansible.builtin.file:
     src: "{{ it_scripts_dir }}/{{ item.file }}"
     dest: "/usr/local/sbin/{{ item.link }}"
     state: link
     force: true
-  loop: "{{ it_scripts_common + (it_scripts_ai if it_scripts_ai_enabled | bool else []) }}"
+  loop: "{{ (it_scripts_common + (it_scripts_ai if it_scripts_ai_enabled | bool else []))
+            | selectattr('link', 'defined') | rejectattr('link', 'equalto', '') | list }}"
   loop_control:
     label: "{{ item.link }}"
 
