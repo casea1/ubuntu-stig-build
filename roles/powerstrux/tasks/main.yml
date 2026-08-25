@@ -102,7 +102,7 @@
 
               [Timer]
               OnCalendar={{ powerstrux_oncalendar }}
-              # A laptop is shut at 03:00 on a Thursday. Persistent=true runs
+              # A laptop is shut at 03:00 on a Wednesday. Persistent=true runs
               # the missed audit at the next boot instead of skipping the week.
               Persistent=true
               RandomizedDelaySec=300

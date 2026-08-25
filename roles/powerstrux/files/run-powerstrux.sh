@@ -15,7 +15,7 @@
 #   run-powerstrux --where            print script/config/log paths and exit
 #   run-powerstrux status             schedule state, last run, next run
 #   run-powerstrux schedule           show the current schedule
-#   run-powerstrux schedule "<spec>"  change it, e.g. "Thu *-*-* 03:00:00"
+#   run-powerstrux schedule "<spec>"  change it, e.g. "Wed *-*-* 03:00:00"
 #   run-powerstrux enable | disable   turn the scheduled run on or off
 #
 # A schedule change is written to BOTH the live timer and /opt/it/site.yml, so
@@ -69,11 +69,11 @@ set_schedule() {
   local spec="$1"
   # systemd-analyze is the authority on whether a calendar spec is valid AND
   # shows when it would next fire -- better than accepting it and finding out
-  # next Thursday that it never ran.
+  # next week that it never ran.
   if command -v systemd-analyze >/dev/null 2>&1; then
     if ! systemd-analyze calendar "$spec" >/dev/null 2>&1; then
       echo "Not a valid systemd calendar spec: '$spec'" >&2
-      echo "Examples:  \"Thu *-*-* 03:00:00\"   \"daily\"   \"Mon,Thu 02:30\"" >&2
+      echo "Examples:  \"Wed *-*-* 03:00:00\"   \"daily\"   \"Mon,Thu 02:30\"" >&2
       echo "Check one with:  systemd-analyze calendar \"<spec>\"" >&2
       return 2
     fi

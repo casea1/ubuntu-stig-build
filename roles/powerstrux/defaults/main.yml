@@ -17,16 +17,16 @@ powerstrux_log_keep: 26          # ~6 months of weekly runs
 powerstrux_desktop_entry: true
 
 # --- Scheduled run ----------------------------------------------------------
-# Thursday 03:00.
+# Wednesday 03:00.
 #
 # method: 'timer' (systemd) or 'cron' (/etc/cron.d).
 #   timer -- Persistent=true, so a run missed while the box was POWERED OFF
 #            fires at the next boot. On a laptop that is the difference between
-#            a weekly report and no report at all, since 03:00 Thursday is
+#            a weekly report and no report at all, since 03:00 Wednesday is
 #            exactly when a laptop is shut in a bag.
 #   cron  -- literal "cron job" if an assessor greps for one; a run missed
 #            while powered off is simply lost.
 powerstrux_schedule_enabled: true
 powerstrux_schedule_method: timer
-powerstrux_oncalendar: "Thu *-*-* 03:00:00"
-powerstrux_cron: "0 3 * * 4"
+powerstrux_oncalendar: "Wed *-*-* 03:00:00"
+powerstrux_cron: "0 3 * * 3"   # 3 = Wednesday

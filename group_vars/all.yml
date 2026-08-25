@@ -325,7 +325,7 @@ dotnet_sdk_package: dotnet-sdk-8.0      # .NET SDK from the Ubuntu archive (LTS)
 # PowerStruxLAConfig.txt) is installed and tuned BY HAND. The `powerstrux` role
 # never writes those — it only adds the launcher, the desktop icon and the
 # weekly schedule, and self-skips if the module is not present. See that role's
-# defaults for the schedule (Thursday 03:00) and powerstrux_script if it moves.
+# defaults for the schedule (Wednesday 03:00) and powerstrux_script if it moves.
 powershell_version: "7.4.16"
 
 # ---- Node.js (dev_tools) ----------------------------------------------------
