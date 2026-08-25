@@ -160,7 +160,13 @@ EOF
     # the patch runs -- which is what left 30_uefi-firmware (`echo "menuentry
     # '$LABEL' ..."`) restricted while the heredoc generators were fixed.
     grep -qE '(^[[:space:]]*|["'"'"'])menuentry ' "$gen" || continue
-    grep -q 'menuentry --unrestricted' "$gen" && continue
+    # Skip only when NOTHING is left to patch. The previous check skipped as
+    # soon as ANY line carried --unrestricted, so a generator that emits three
+    # entries of which the first run patched one was never revisited -- the file
+    # looked done, and its other entries stayed restricted forever. That is why
+    # re-running kept reporting the same three entries with nothing patched.
+    grep -E '(^[[:space:]]*|["'"'"'])menuentry ' "$gen" \
+      | grep -qv -- '--unrestricted' || continue
     cp -a "$gen" "$gen.pre-grubpw" 2>/dev/null || true
     # Two emission styles in the wild: a literal line inside a heredoc, and a
     # quoted line inside echo/printf. Patching only the first left memtest and
@@ -253,13 +259,37 @@ for a in "$@"; do
   esac
 done
 
+# grub-mkconfig runs every EXECUTABLE file in /etc/grub.d, and `test -x` is true
+# if ANY execute bit is set. On ASP-2 `chmod -x` reported
+#   new permissions are rw-r-xr-x, not rw-r--r--
+# -- an ACL mask kept the group/other execute bits, so the generator still ran
+# and the entry kept coming back. So verify the result instead of trusting the
+# chmod, strip the ACL if one is in the way, and fall back to moving the file
+# out of the directory entirely, which nothing can defeat.
+DISABLED_DIR=/etc/grub.d.disabled
+
 drop_extras() {
   local any=0 g
   for name in $EXTRA_GENERATORS; do
     g="/etc/grub.d/$name"
     [ -f "$g" ] || continue
     [ -x "$g" ] || continue
-    chmod -x "$g" && echo "  disabled $name (re-enable with: sudo chmod +x $g)" && any=1
+
+    chmod a-x "$g" 2>/dev/null
+    if [ -x "$g" ] && command -v setfacl >/dev/null 2>&1; then
+      setfacl -b "$g" 2>/dev/null && chmod a-x "$g" 2>/dev/null
+    fi
+    if [ -x "$g" ]; then
+      mkdir -p "$DISABLED_DIR"
+      chmod 0700 "$DISABLED_DIR"
+      mv -f "$g" "$DISABLED_DIR/$name"
+      echo "  disabled $name -- chmod could not clear the execute bit (ACL?),"
+      echo "             so it was moved to $DISABLED_DIR/$name"
+      echo "             (restore with: sudo mv $DISABLED_DIR/$name $g)"
+    else
+      echo "  disabled $name (re-enable with: sudo chmod +x $g)"
+    fi
+    any=1
   done
   [ "$any" = 1 ] || echo "  (no extra generators were enabled)"
 }

@@ -100,7 +100,7 @@
         excludes: "00_header,01_users,40_custom,41_custom,README,*.pre-grubpw,*.bak,*.dpkg-*,*~"
         # Both emission styles: a literal line in a heredoc, and a quoted line
         # inside echo/printf. Matching only the first skips 30_uefi-firmware.
-        contains: '(^[[:space:]]*|["\''])menuentry '
+        contains: '(^[[:space:]]*|["\''])menuentry (?!--unrestricted)'
         file_type: file
       register: _grub_gens
 
