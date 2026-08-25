@@ -37,6 +37,7 @@ DROP_EXTRAS=0
 # --unrestricted problem -- firmware setup is still reachable with the vendor
 # key, which the BIOS admin password protects.
 EXTRA_GENERATORS="20_memtest86+ 30_uefi-firmware 35_fwupd"
+HASH_FILE=/etc/stig-build/grub.pbkdf2
 DROPIN=/etc/grub.d/01_superusers
 CFG=/boot/grub/grub.cfg
 LINUX_TPL=/etc/grub.d/10_linux
@@ -334,15 +335,28 @@ case "${1:-status}" in
     [ "$DROP_EXTRAS" = 1 ] && drop_extras
     h=$(make_hash) || exit 1
     apply "$h"
-    # Print the token too. Without this an operator who ran `set` has no way to
-    # get the hash for the rest of the fleet short of typing the password again.
+    # The hash is needed for the fleet rollout, but printing it drops a
+    # credential into terminal scrollback, session logs and anything the
+    # operator pastes into a ticket or chat. Write it root-only instead and
+    # print the PATH. `it-grub hash` still prints to stdout -- that is its whole
+    # purpose, and the operator chose it deliberately.
+    umask 077
+    mkdir -p "$(dirname "$HASH_FILE")"
+    printf '%s\n' "$h" > "$HASH_FILE"
+    chmod 0600 "$HASH_FILE"
     cat <<MSG
 
-  For the FLEET, vault this same hash so every box gets it on the next pull:
-      ansible-vault encrypt_string '$h' --name 'grub_password_pbkdf2'
-  ...then paste the !vault block over grub_password_pbkdf2 in group_vars/all.yml.
-  Until you do, the grub_password role SKIPS (the CHANGEME sentinel), so this
-  box's local setting is not overwritten.
+  For the FLEET, vault this same hash so every box gets it on the next pull.
+  It has been written root-only to:
+      $HASH_FILE
+  Not printed here on purpose -- a terminal scrollback is not a vault.
+
+      sudo ansible-vault encrypt_string "\$(sudo cat $HASH_FILE)" --name 'grub_password_pbkdf2'
+
+  ...then paste the !vault block over grub_password_pbkdf2 in group_vars/all.yml,
+  and shred the file:  sudo shred -u $HASH_FILE
+  Until you vault it, the grub_password role SKIPS (the CHANGEME sentinel), so
+  this box's local setting is not overwritten.
 
   Verify now:  sudo it-grub status
 MSG
