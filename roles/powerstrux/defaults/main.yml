@@ -1,0 +1,32 @@
+---
+# powerstrux -- launcher + schedule for the PowerStrux LA audit tool.
+#
+# PowerStrux itself is NOT installed by this repo: the ReportHTML module and
+# Initiate-PowerstruxLA.ps1 are placed by hand, and PowerStruxLAConfig.txt is
+# tuned per site. This role only makes the tool easy to RUN -- one script, one
+# desktop icon, one schedule -- and deliberately does not touch the config, so
+# a hand-tuned config is never overwritten by a pull.
+powerstrux_enabled: true
+
+# Where the hand-installed PowerShell entry point lives.
+powerstrux_script: /opt/microsoft/powershell/7/Modules/ReportHTML/Initiate-PowerstruxLA.ps1
+powerstrux_audit_dir: /opt/_AuditFiles
+powerstrux_log_keep: 26          # ~6 months of weekly runs
+
+# A desktop icon so an auditor can double-click rather than use a shell.
+powerstrux_desktop_entry: true
+
+# --- Scheduled run ----------------------------------------------------------
+# Thursday 03:00.
+#
+# method: 'timer' (systemd) or 'cron' (/etc/cron.d).
+#   timer -- Persistent=true, so a run missed while the box was POWERED OFF
+#            fires at the next boot. On a laptop that is the difference between
+#            a weekly report and no report at all, since 03:00 Thursday is
+#            exactly when a laptop is shut in a bag.
+#   cron  -- literal "cron job" if an assessor greps for one; a run missed
+#            while powered off is simply lost.
+powerstrux_schedule_enabled: true
+powerstrux_schedule_method: timer
+powerstrux_oncalendar: "Thu *-*-* 03:00:00"
+powerstrux_cron: "0 3 * * 4"

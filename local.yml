@@ -222,3 +222,8 @@
     # goes air-gapped; afterwards the content is on disk and scans run offline.
     - role: scap_scan               # SSG content + build-time scan + scheduled re-scan + answers.yml
       when: scap_scan_enabled | default(true) | bool
+
+    # PowerStrux launcher + weekly schedule. Self-skips when the hand-installed
+    # PowerShell module is not present, so it is harmless on a box without it.
+    - role: powerstrux              # auditor-facing audit launcher, desktop icon, Thursday 03:00 run
+      when: powerstrux_enabled | default(true) | bool

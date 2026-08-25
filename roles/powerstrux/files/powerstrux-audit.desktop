@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=PowerStrux Audit
+GenericName=System Audit Report
+Comment=Run the PowerStrux system audit and generate the report
+# Terminal=true is deliberate: the script needs sudo, and a terminal gives the
+# auditor the password prompt, the progress output, and the report path at the
+# end. A silent graphical launch would look like nothing happened.
+Terminal=true
+Exec=/opt/_AuditFiles/run-powerstrux.sh
+Icon=utilities-system-monitor
+Categories=System;Security;
+Keywords=audit;powerstrux;report;compliance;

@@ -1,0 +1,155 @@
+---
+# =============================================================================
+# powerstrux -- make the PowerStrux LA audit runnable by an auditor and run it
+# on a schedule.
+#
+# NOT MANAGED HERE: the ReportHTML module, Initiate-PowerstruxLA.ps1, and
+# PowerStruxLAConfig.txt. Those are installed and tuned by hand, and this role
+# never writes them -- a hand-edited config surviving a pull is the whole point.
+# =============================================================================
+
+- name: "POWERSTRUX | Is the PowerShell entry point present?"
+  ansible.builtin.stat:
+    path: "{{ powerstrux_script }}"
+  register: _ps_script
+
+- name: "POWERSTRUX | Not installed -- skipping"
+  ansible.builtin.debug:
+    msg: >-
+      PowerStrux not found at {{ powerstrux_script }}. The launcher and schedule
+      are skipped. Install the ReportHTML module + Initiate-PowerstruxLA.ps1,
+      then re-run the pull (or set powerstrux_script if it lives elsewhere).
+  when: not _ps_script.stat.exists
+
+- name: "POWERSTRUX | Configure the launcher and schedule"
+  when: _ps_script.stat.exists
+  block:
+    - name: "POWERSTRUX | Audit dir exists ({{ powerstrux_audit_dir }})"
+      ansible.builtin.file:
+        path: "{{ powerstrux_audit_dir }}"
+        state: directory
+        owner: root
+        group: audit
+        mode: "2770"
+
+    # 0750 root:audit -- auditors run it, nobody else can read or edit it. The
+    # script self-elevates, so group-execute is enough.
+    - name: "POWERSTRUX | Install the launcher"
+      ansible.builtin.copy:
+        src: run-powerstrux.sh
+        dest: "{{ powerstrux_audit_dir }}/run-powerstrux.sh"
+        owner: root
+        group: audit
+        mode: "0750"
+
+    - name: "POWERSTRUX | Short command for admins (it-powerstrux)"
+      ansible.builtin.file:
+        src: "{{ powerstrux_audit_dir }}/run-powerstrux.sh"
+        dest: /usr/local/sbin/it-powerstrux
+        state: link
+        force: true
+
+    # In /usr/share/applications it appears in the app grid for every user and
+    # needs no per-user "trust this launcher" step, which a file dropped on the
+    # Desktop does need under GNOME.
+    - name: "POWERSTRUX | Desktop launcher"
+      ansible.builtin.copy:
+        src: powerstrux-audit.desktop
+        dest: /usr/share/applications/powerstrux-audit.desktop
+        owner: root
+        group: root
+        mode: "0644"
+      when: powerstrux_desktop_entry | default(true) | bool
+
+    # ---- schedule ---------------------------------------------------------
+    - name: "POWERSTRUX | Scheduled audit ({{ powerstrux_schedule_method }})"
+      when: powerstrux_schedule_enabled | default(true) | bool
+      block:
+        - name: "POWERSTRUX | systemd service unit"
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/powerstrux-audit.service
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              # Managed by the powerstrux role -- do not edit by hand.
+              [Unit]
+              Description=PowerStrux system audit report
+              Documentation=file://{{ powerstrux_audit_dir }}
+              After=network-online.target
+
+              [Service]
+              Type=oneshot
+              ExecStart={{ powerstrux_audit_dir }}/run-powerstrux.sh --quiet
+              # The audit walks the whole system; give it room rather than
+              # having a slow box produce a truncated report.
+              TimeoutStartSec=3600
+              Nice=10
+              IOSchedulingClass=idle
+          when: powerstrux_schedule_method == 'timer'
+          register: _ps_unit
+
+        - name: "POWERSTRUX | systemd timer unit"
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/powerstrux-audit.timer
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              # Managed by the powerstrux role -- do not edit by hand.
+              [Unit]
+              Description=Weekly PowerStrux audit ({{ powerstrux_oncalendar }})
+
+              [Timer]
+              OnCalendar={{ powerstrux_oncalendar }}
+              # A laptop is shut at 03:00 on a Thursday. Persistent=true runs
+              # the missed audit at the next boot instead of skipping the week.
+              Persistent=true
+              RandomizedDelaySec=300
+              Unit=powerstrux-audit.service
+
+              [Install]
+              WantedBy=timers.target
+          when: powerstrux_schedule_method == 'timer'
+          register: _ps_timer
+
+        - name: "POWERSTRUX | Enable the timer"
+          ansible.builtin.systemd:
+            name: powerstrux-audit.timer
+            enabled: true
+            state: started
+            daemon_reload: true
+          when: powerstrux_schedule_method == 'timer'
+
+        - name: "POWERSTRUX | cron.d entry"
+          ansible.builtin.copy:
+            dest: /etc/cron.d/powerstrux-audit
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              # Managed by the powerstrux role -- do not edit by hand.
+              # A run missed while the box was powered off is LOST; use the
+              # systemd timer (powerstrux_schedule_method: timer) if that
+              # matters, which on a laptop it does.
+              SHELL=/bin/bash
+              PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+              {{ powerstrux_cron }} root {{ powerstrux_audit_dir }}/run-powerstrux.sh --quiet >/dev/null 2>&1
+          when: powerstrux_schedule_method == 'cron'
+
+        # Only one scheduler may be active, or the audit runs twice.
+        - name: "POWERSTRUX | Remove the scheduler that is not in use"
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop: "{{ ['/etc/cron.d/powerstrux-audit'] if powerstrux_schedule_method == 'timer'
+                    else ['/etc/systemd/system/powerstrux-audit.timer'] }}"
+
+    - name: "POWERSTRUX | Where things are"
+      ansible.builtin.debug:
+        msg: >-
+          PowerStrux launcher: {{ powerstrux_audit_dir }}/run-powerstrux.sh
+          (also `sudo it-powerstrux`, and "PowerStrux Audit" in the app menu).
+          Scheduled {{ powerstrux_oncalendar if powerstrux_schedule_method == 'timer' else powerstrux_cron }}
+          via {{ powerstrux_schedule_method }}. Config is NOT managed:
+          {{ powerstrux_script | dirname }}/PowerStruxLAConfig.txt

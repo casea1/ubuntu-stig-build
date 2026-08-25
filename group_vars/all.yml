@@ -321,6 +321,11 @@ eng_venv_path: /opt/eng-venv           # shared Python environment ("eng" comman
 dotnet_sdk_package: dotnet-sdk-8.0      # .NET SDK from the Ubuntu archive (LTS)
 
 # PowerShell LTS — installed in base_packages as a pinned .deb (PowerStrux backend).
+# The PowerStrux tool itself (ReportHTML module + Initiate-PowerstruxLA.ps1 +
+# PowerStruxLAConfig.txt) is installed and tuned BY HAND. The `powerstrux` role
+# never writes those — it only adds the launcher, the desktop icon and the
+# weekly schedule, and self-skips if the module is not present. See that role's
+# defaults for the schedule (Thursday 03:00) and powerstrux_script if it moves.
 powershell_version: "7.4.16"
 
 # ---- Node.js (dev_tools) ----------------------------------------------------
