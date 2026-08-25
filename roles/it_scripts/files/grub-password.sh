@@ -148,6 +148,18 @@ EOF
   # 41_custom are the operator's own and are left alone -- a site may want an
   # entry that IS password-gated, and silently unrestricting it would remove a
   # control someone chose on purpose.
+  # Sweep up backups an earlier version left INSIDE /etc/grub.d. Until these are
+  # gone the box keeps generating duplicate, unpatched entries no amount of
+  # patching can fix.
+  for stale in /etc/grub.d/*.pre-grubpw; do
+    [ -f "$stale" ] || continue
+    mkdir -p "$GRUB_BACKUP_DIR" && chmod 0700 "$GRUB_BACKUP_DIR"
+    base=$(basename "$stale" .pre-grubpw)
+    base=${base%.pre-grubpw}
+    if [ -f "$GRUB_BACKUP_DIR/$base" ]; then rm -f "$stale"; else mv -f "$stale" "$GRUB_BACKUP_DIR/$base"; fi
+    echo "  removed stale in-place backup $(basename "$stale") (it was being RUN by grub-mkconfig)"
+  done
+
   for gen in /etc/grub.d/*; do
     case "$(basename "$gen")" in
       # Our own backups must be skipped or a second run patches THEM, and the
@@ -167,7 +179,9 @@ EOF
     # re-running kept reporting the same three entries with nothing patched.
     grep -E '(^[[:space:]]*|["'"'"'])menuentry ' "$gen" \
       | grep -qv -- '--unrestricted' || continue
-    cp -a "$gen" "$gen.pre-grubpw" 2>/dev/null || true
+    mkdir -p "$GRUB_BACKUP_DIR" && chmod 0700 "$GRUB_BACKUP_DIR"
+    [ -f "$GRUB_BACKUP_DIR/$(basename "$gen")" ] || \
+      cp -a "$gen" "$GRUB_BACKUP_DIR/$(basename "$gen")" 2>/dev/null || true
     # Two emission styles in the wild: a literal line inside a heredoc, and a
     # quoted line inside echo/printf. Patching only the first left memtest and
     # the UEFI entry restricted on ASP-2.
@@ -272,6 +286,14 @@ done
 # chmod, strip the ACL if one is in the way, and fall back to moving the file
 # out of the directory entirely, which nothing can defeat.
 DISABLED_DIR=/etc/grub.d.disabled
+# Backups must live OUTSIDE /etc/grub.d. grub-mkconfig runs every executable
+# file in that directory -- it only skips *.dpkg-*, *~, #*# and README -- so a
+# `cp -a` backup kept there is executable, is run, and emits the UNPATCHED
+# entries alongside the patched ones. That is what defeated four rounds of
+# fixes here: the generator was patched correctly every time and its unpatched
+# twin kept re-adding the restricted entries, inflating the entry count on each
+# run (8 -> 11 -> 16 -> 20).
+GRUB_BACKUP_DIR=/var/backups/grub.d
 
 drop_extras() {
   local any=0 g
@@ -331,12 +353,16 @@ MSG
     rm -f "$DROPIN"
     # Put the generators back, or they keep emitting --unrestricted after the
     # password is gone -- harmless, but it is not the state we found.
-    for b in /etc/grub.d/*.pre-grubpw; do
+    for b in "$GRUB_BACKUP_DIR"/* /etc/grub.d/*.pre-grubpw; do
       [ -f "$b" ] || continue
-      case "$(basename "$b")" in *.pre-grubpw.pre-grubpw) rm -f "$b"; continue ;; esac
-      mv -f "$b" "${b%.pre-grubpw}"
-      echo "  reverted $(basename "${b%.pre-grubpw}")"
+      case "$b" in
+        "$GRUB_BACKUP_DIR"/*) dest="/etc/grub.d/$(basename "$b")" ;;
+        *) dest="${b%.pre-grubpw}" ;;
+      esac
+      mv -f "$b" "$dest"
+      echo "  reverted $(basename "$dest")"
     done
+    rmdir "$GRUB_BACKUP_DIR" 2>/dev/null || true
     sed -i 's/^CLASS="--unrestricted /CLASS="/' "$LINUX_TPL" 2>/dev/null || true
     grub-mkconfig -o "$CFG" >/dev/null 2>&1 && chmod 0600 "$CFG"
     echo "Removed. NOTE: the grub_password role re-applies it on the next"
