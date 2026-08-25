@@ -18,6 +18,12 @@
 #   it-usb enroll                 GUIDED: plug a device in, it gets whitelisted
 #   it-usb allow <id>             authorise NOW (until it is unplugged)
 #   it-usb allow <id> --permanent authorise now AND add it to the policy
+#   it-usb trust <vid:pid> [serial]
+#                                 pre-authorise by vendor:product, WITHOUT the
+#                                 device being plugged in. For hardware that
+#                                 disconnects itself when the host does not
+#                                 authorise it fast enough (write blockers do
+#                                 this), a policy rule beats racing the device.
 #   it-usb block <id>             de-authorise NOW
 #   it-usb policy                 show the saved allow-list
 #   it-usb regenerate             re-baseline the policy from ATTACHED devices
@@ -130,6 +136,33 @@ case "${1:-help}" in
       done
       echo "Make it stick with:  sudo it-usb allow ${2} ${ALL_FLAG}--permanent"
     fi
+    ;;
+  trust)
+    # Pre-authorise a device by vendor:product BEFORE it is plugged in.
+    #
+    # `allow` needs the device present, which does not work for hardware that
+    # gives up when the host does not authorise it: the CRU WriteBlocker
+    # disconnects about six seconds after enumerating unauthorised, so there is
+    # a race to catch it. A policy rule authorises it the instant it appears,
+    # with no window to lose.
+    id="${2:-}"
+    printf '%s' "$id" | grep -qiE '^[0-9a-f]{4}:[0-9a-f]{4}$' \
+      || die "usage: it-usb trust <vendor:product> [serial]  e.g. it-usb trust 0e90:0064"
+    serial="${3:-}"
+    rule="allow id $id"
+    [ -n "$serial" ] && rule="$rule serial \"$serial\""
+    if grep -qF "allow id $id" "$RULES" 2>/dev/null; then
+      echo "Already trusted: $id"; exit 0
+    fi
+    cp -a "$RULES" "$RULES.bak-$(date +%Y%m%d-%H%M%S)"
+    usbguard append-rule "$rule" || die "append-rule failed"
+    echo "Trusted $id -- it is now authorised the moment it is connected."
+    [ -n "$serial" ] && echo "  (restricted to serial $serial)"
+    echo "Policy backup: $RULES.bak-*"
+    echo
+    echo "This is BROADER than allowing one enumerated device: any device"
+    echo "presenting this vendor:product${serial:+ and serial} is accepted. Use it for"
+    echo "standing equipment, not for one-off media."
     ;;
   block)
     resolve_id "${2:-}"
