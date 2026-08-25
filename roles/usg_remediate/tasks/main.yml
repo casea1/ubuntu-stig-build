@@ -864,6 +864,42 @@
           z /var/log/journal 2750 root systemd-journal -
           z /var/log/journal/* 2750 root systemd-journal -
 
+    # tmpfiles runs early and systemd-journald creates/adjusts its own
+    # directories, so on ASP-2 the modes were 2750 in one scan and back to 2755
+    # in the next, across a reboot. A unit ordered AFTER journald re-asserts
+    # them once the daemon has finished creating them, which tmpfiles alone
+    # cannot guarantee.
+    - name: "REMED | Unit that re-asserts journal modes after journald starts"
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/stig-journal-perms.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by usg_remediate -- do not edit by hand.
+          [Unit]
+          Description=Enforce STIG permissions on the systemd journal directories
+          Documentation=man:systemd-journald.service(8)
+          After=systemd-journald.service systemd-tmpfiles-setup.service
+          Wants=systemd-journald.service
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/bin/sh -c 'find /run/log/journal /var/log/journal -maxdepth 1 -type d -perm /0027 -exec chmod g-w,o-rwx {} + 2>/dev/null; exit 0'
+
+          [Install]
+          WantedBy=multi-user.target
+      register: _journal_unit
+
+    - name: "REMED | Enable the journal permission unit"
+      ansible.builtin.systemd:
+        name: stig-journal-perms.service
+        enabled: true
+        state: started
+        daemon_reload: true
+      failed_when: false
+
     - name: "REMED | Re-assert the journal directory modes now"
       ansible.builtin.shell:
         cmd: >-

@@ -37,6 +37,23 @@ UBTU-24-200640:
     logon -- is met; only the literal text differs.
   comments: Approved text deviation. See docs/compliance.md, "Approved deviations".
 
+# The GRAPHICAL logon banner text -- same deviation as the console/SSH banner
+# above. compliance.md has said "three banner-text rules" since the first scan
+# and this one was never actually written down, so it showed as an open finding
+# with no justification attached.
+UBTU-24-200660:
+  status: not_applicable
+  override: true
+  finding_details: |
+    The graphical logon displays the site warning banner required by the
+    ISSM, not the DoD Standard Mandatory Notice. The banner is enabled and
+    LOCKED via dconf by configuration management (desktop_hardening), so a
+    user cannot suppress or alter it. The control objective -- a consent
+    banner shown before granting local graphical access -- is met; only the
+    literal text differs.
+  evidence_cmd: "gsettings get org.gnome.login-screen banner-message-enable 2>/dev/null; gsettings get org.gnome.login-screen banner-message-text 2>/dev/null | head -c 200"
+  comments: Approved text deviation, same basis as UBTU-24-200640 / 200680.
+
 UBTU-24-200680:
   status: not_applicable
   override: true
