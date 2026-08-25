@@ -36,6 +36,10 @@ Everything has a default; on a built box `sudo it-ckl` is enough.
               with SSG content -- see below.
   --answers   the repo's adjudications. Default: /opt/ia/stig/answers.yml
   --no-evidence  do not run the answer file's evidence_cmd entries
+  --unjustified  list every Open / Not_Reviewed rule that has no recorded
+                 reason, with the key to file it under. This is the operator's
+                 to-do list: an assessor should never meet a finding with no
+                 explanation, and the count is printed on every run.
 
 WHY --map EXISTS: the manual STIG names rules UBTU-24-200640 / V-270691, but a
 scan run against ComplianceAsCode SSG content names the same rule
@@ -249,6 +253,44 @@ def parse_results(path):
     return idx
 
 
+# Why a rule ended up Open or Not_Applicable. An assessor reading the checklist
+# should never meet a finding with no explanation, and an operator should never
+# have to diff two checklists to notice one is missing -- UBTU-24-200660 sat
+# Open with no justification for two cycles because its adjudication was simply
+# never written, and nothing in the output said so.
+NO_ADJUDICATION = (
+    "NO SITE ADJUDICATION RECORDED for this rule. The status above comes purely "
+    "from the automated scan. If this is an accepted deviation or a compensating "
+    "control, record it once in roles/scap_scan/templates/ckl-answers.yml.j2 "
+    "keyed on {key} -- it then appears on every box and every future checklist "
+    "instead of being re-argued. If it is a real finding, remediate it in the "
+    "build rather than answering it here."
+)
+NA_AUTOMATIC = (
+    "Marked Not Applicable by the automated scan: the rule's own applicability "
+    "condition is not met on this system (wrong platform, absent package, or a "
+    "configuration the rule does not govern). No site adjudication was needed."
+)
+NOT_REVIEWED_AUTO = (
+    "Neither the scan nor the site adjudications answered this rule. It has no "
+    "automated check content, or the check did not run. A human must assess it "
+    "and record the result -- see it-ckl --unjustified."
+)
+
+
+def default_comment(status, key, adjudicated):
+    """Explain an Open / N-A / Not_Reviewed rule that carries no explanation."""
+    if adjudicated:
+        return ""
+    if status == "open":
+        return NO_ADJUDICATION.format(key=key or "its STIG id")
+    if status == "not_applicable":
+        return NA_AUTOMATIC
+    if status == "not_reviewed":
+        return NOT_REVIEWED_AUTO
+    return ""
+
+
 def rank(res):
     return SEVERITY.index(res) if res in SEVERITY else len(SEVERITY)
 
@@ -381,7 +423,7 @@ def target_data():
 
 def build(meta, rules, results, answers, contributors=None, evidence=True):
     contributors = contributors or {}
-    out, counts = [], {}
+    out, counts, unjustified = [], {}, []
     for r in rules:
         status = "not_reviewed"
         details = ""
@@ -426,12 +468,20 @@ def build(meta, rules, results, answers, contributors=None, evidence=True):
             if ans.get("comments"):
                 comments = (comments + "\n\n" if comments else "") + ans["comments"]
 
+        auto = default_comment(status, r["rule_version"] or r["group_id"], bool(ans))
+        if auto:
+            comments = (comments + "\n\n" if comments else "") + auto
+            if status in ("open", "not_reviewed"):
+                # Carry the resolved status and evidence, not the raw STIG rule:
+                # the loop variable has no status key yet.
+                unjustified.append(dict(r, status=status, finding_details=details))
+
         counts[status] = counts.get(status, 0) + 1
         out.append(dict(r, status=status, finding_details=details, comments=comments,
                         overrides={}, uuid=str(uuid.uuid4()),
                         reference_identifier="", rule_id_src=meta["stig_id"],
                         classification="Unclassified", group_tree=[]))
-    return out, counts
+    return out, counts, unjustified
 
 
 def write_cklb(path, meta, rules):
@@ -521,6 +571,7 @@ def main():
     ap.add_argument("--summary", action="store_true")
     ap.add_argument("--debug", action="store_true")
     ap.add_argument("--no-evidence", action="store_true")
+    ap.add_argument("--unjustified", action="store_true")
     ap.add_argument("-h", "--help", action="store_true")
     args = ap.parse_args()
     if args.help:
@@ -590,7 +641,7 @@ def main():
     mapped, contributors = apply_id_map(res, id_map) if id_map else (0, {})
 
     ans = load_answers(args.answers)
-    built, counts = build(meta, rules, res, ans, contributors, not args.no_evidence)
+    built, counts, unjustified = build(meta, rules, res, ans, contributors, not args.no_evidence)
 
     if args.debug:
         print("=" * 72)
@@ -659,6 +710,21 @@ def main():
     if counts.get("not_reviewed"):
         print(f"\n{counts['not_reviewed']} rules still need a human. List them with:"
               f"\n  it-ckl --summary")
+    if unjustified:
+        print(f"\n{len(unjustified)} rule(s) carry a status with NO recorded reason."
+              f"  List them with:  it-ckl --unjustified")
+    if args.unjustified:
+        print("\nOpen / unreviewed rules with no site adjudication:")
+        print("(add each to roles/scap_scan/templates/ckl-answers.yml.j2, keyed as shown)")
+        for r in unjustified:
+            key = r["rule_version"] or r["group_id"]
+            print(f"\n  {key}   {r['group_id']}   [{r['severity']}]  {r['status']}")
+            print(f"      {r['rule_title'][:100]}")
+            first = (r["finding_details"] or "").splitlines()
+            for ln in first[:2]:
+                if ln.strip():
+                    print(f"      {ln.strip()[:100]}")
+
     if args.summary:
         print("\nNot_Reviewed:")
         for r in built:

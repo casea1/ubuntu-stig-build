@@ -387,6 +387,19 @@ Output is trimmed to 40 lines, a 30-second timeout applies, and a command that f
 
 **A SCAP failure always beats the answer file** unless the entry sets `override: true`. Without that rule a stale adjudication could quietly mark a broken control compliant, which is the one mistake that makes a checklist worthless. When an entry proposes a pass over a real failure the rule stays **Open** and the reason is written into its comments.
 
+**No status goes out unexplained.** Any rule that ends Open, Not Applicable or Not Reviewed *without* a matching answer-file entry gets a generated comment saying so — for an Open rule, naming the key to file it under:
+
+```
+NO SITE ADJUDICATION RECORDED for this rule. The status above comes purely from
+the automated scan. If this is an accepted deviation or a compensating control,
+record it once in roles/scap_scan/templates/ckl-answers.yml.j2 keyed on
+UBTU-24-102000 -- it then appears on every box and every future checklist
+instead of being re-argued. If it is a real finding, remediate it in the build
+rather than answering it here.
+```
+
+A Not Applicable that came from the scanner rather than a human says that too, so an assessor can tell the difference between "the rule does not apply here" and "somebody decided it does not apply". Every run prints the count of unexplained rules, and `it-ckl --unjustified` lists them with the key to file each under — that is the operator's to-do list. UBTU-24-200660 sat Open across two cycles with no justification purely because its adjudication was never written; this makes that impossible to miss.
+
 After answering the `Not_Reviewed` list by hand, push anything reusable back into the template. That list should shrink every cycle; if it does not, the answers are not being captured.
 
 #### Cadence
