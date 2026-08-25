@@ -66,6 +66,7 @@ All stacks on a node share:
 | `docling` | `:5001` | default | Document structure + OCR extraction |
 | `tika` | `:9998` | default | Text extraction (other file types) |
 | `grafana-otel` | `:3001` `:4317` `:4318` | default | Grafana + OTel monitoring |
+| `prometheus` | `:9091` | default | Scrapes the vLLM/docling `/metrics` endpoints |
 | `mlflow` | `:5000` | default | Experiment tracking + model registry (nginx-fronted; MLflow itself publishes nothing) |
 | `openwiki-view` | `:4321` | default | Browse the generated doc wiki |
 | `oikb` | `:8081` | `oikb` | Knowledge-base sync → System 1 |
@@ -165,6 +166,7 @@ Renumbering out of the lab? Run `sudo it-set-ip` on each box. Details: [operate.
 | `granite-embed` | granite-embedding-small-english-r2 weights | `/granite-embed` |
 | `granite-vision` | granite-vision-4.1-4b weights | `/granite-vision` |
 | `lgtm-data` | Grafana state — dashboards, TSDB | `/data` |
+| `prometheus-data` | Scraped-metrics TSDB | `/prometheus` |
 | `mlflow-artifacts` | MLflow artifact store | `/mlflow/artifacts` |
 | `postgres_mlflow_data` | MLflow's internal Postgres | `/var/lib/postgresql/data` |
 | `openwiki-out` | Generated wiki (markdown pages) | `/work` |
@@ -242,6 +244,7 @@ IA / DCSA inventory. Versions are pinned in `group_vars/all.yml`, the compose fi
 | docling-serve | v1.24.0 (cu128) | IBM / Docling project | Document structure + OCR (S2) |
 | grafana/otel-lgtm | 0.29.0 | Grafana Labs | Monitoring / telemetry (S2) |
 | nginx | 1.30.4-alpine | nginx / F5 | Base for the wiki viewer front-end (S2) |
+| prom/prometheus | v3.14.0 | Prometheus | Metrics scraper for vLLM/docling (S2) |
 
 ### Container images (built on the box)
 

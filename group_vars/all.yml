@@ -1030,7 +1030,7 @@ ai_oikb_gitlab_token: ""
 # model weights / DB survive `down -v`). Empty list = role creates none.
 ai_compose_volumes:
   system1: [vllm, granite32b, encodings, pgvector-data, open-webui, redis-data]
-  system2: [granite-embed, granite-vision, lgtm-data, mlflow-artifacts, postgres_mlflow_data, openwiki-out]
+  system2: [granite-embed, granite-vision, lgtm-data, prometheus-data, mlflow-artifacts, postgres_mlflow_data, openwiki-out]
 
 # NOTE (docling VLM / granite-docling-258M): NOT wired in. The -cu128 docling
 # image runs with --artifacts-path (runtime downloads DISABLED) and ships its
@@ -1076,7 +1076,7 @@ ai_mlflow_allow_cidrs:
 ai_stack_network: oi
 ai_stacks_by_role:
   system1: [vllm-gptoss, vllm-granite, pgvector, pgbouncer, redis, open-webui]
-  system2: [vllm-embed, vllm-vision, docling, tika, grafana-otel, mlflow, oikb, hfcli, openwiki, openwiki-view]
+  system2: [vllm-embed, vllm-vision, docling, tika, grafana-otel, prometheus, mlflow, oikb, hfcli, openwiki, openwiki-view]
 # Stacks whose compose bind-mounts ./fips_off (the host-FIPS carve-out for the
 # vLLM / OpenCV-bearing containers). The `fips_off` file is placed into each of
 # these stack dirs so the relative mount resolves.
