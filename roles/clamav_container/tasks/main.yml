@@ -61,20 +61,44 @@
         group: root
         mode: "0755"
 
+    # The image's entrypoint chowns its database directory to the container's
+    # clamav user, so it cannot be the host's /var/lib/clamav -- the two would
+    # fight over ownership on every restart. Give it its own copy.
+    - name: "CLAMAV-CTR | Database directory for the container"
+      ansible.builtin.file:
+        path: "{{ clamav_container_db_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "CLAMAV-CTR | What is already in it?"
+      ansible.builtin.find:
+        paths: "{{ clamav_container_db_dir }}"
+        patterns: ["*.cvd", "*.cld"]
+      register: _cc_ctrdb
+
+    - name: "CLAMAV-CTR | Seed it from the host database on first run"
+      ansible.builtin.shell:
+        cmd: "cp -a /var/lib/clamav/*.cvd /var/lib/clamav/*.cld {{ clamav_container_db_dir }}/ 2>/dev/null; true"
+      when: _cc_ctrdb.matched | int == 0
+      changed_when: true
+
     # Without a database the container's clamd exits at startup and the unit
     # flaps. Better to say so than to leave a restart loop behind.
     - name: "CLAMAV-CTR | Is there a signature database to mount?"
       ansible.builtin.find:
-        paths: /var/lib/clamav
+        paths: "{{ clamav_container_db_dir }}"
         patterns: ["*.cvd", "*.cld"]
       register: _cc_db
 
     - name: "CLAMAV-CTR | Refuse to start without signatures"
       ansible.builtin.debug:
         msg: >-
-          /var/lib/clamav holds no .cvd/.cld files, so the containerised clamd
-          would exit at startup. Stage signatures first -- `it-clamav install`
-          from an archive in /opt/it/clamavsigs -- then re-run the pull.
+          Neither {{ clamav_container_db_dir }} nor /var/lib/clamav holds any
+          .cvd/.cld files, so the containerised clamd would exit at startup.
+          Stage signatures first -- `it-clamav install` from an archive in
+          /opt/it/clamavsigs -- then re-run the pull.
       when: _cc_db.matched | int == 0
 
     - name: "CLAMAV-CTR | Bring up the containerised daemon"
@@ -160,8 +184,8 @@
 
             - name: "CLAMAV-CTR | Wait for the socket"
               ansible.builtin.wait_for:
-                path: "{{ clamav_container_sock_dir }}/clamd.ctl"
-                timeout: 300
+                path: "{{ clamav_container_sock }}"
+                timeout: 600
               register: _cc_sock
               failed_when: false
 
@@ -170,10 +194,35 @@
             # only get to submit a descriptor they could already read.
             - name: "CLAMAV-CTR | Make the socket reachable from the host"
               ansible.builtin.file:
-                path: "{{ clamav_container_sock_dir }}/clamd.ctl"
+                path: "{{ clamav_container_sock }}"
                 mode: "0666"
               failed_when: false
               when: _cc_sock is not failed
+
+            # A silent "socket not answering" cost a round trip last time. If it
+            # did not come up, show what the container itself said.
+            - name: "CLAMAV-CTR | The socket never appeared -- what did the container say?"
+              when: _cc_sock is failed
+              block:
+                - name: "CLAMAV-CTR | Container log"
+                  ansible.builtin.command: docker logs --tail 40 clamav-container
+                  register: _cc_logs
+                  changed_when: false
+                  failed_when: false
+
+                - name: "CLAMAV-CTR | Unit state"
+                  ansible.builtin.command: systemctl --no-pager --lines=20 status clamav-container
+                  register: _cc_unitstate
+                  changed_when: false
+                  failed_when: false
+
+                - name: "CLAMAV-CTR | Diagnosis"
+                  ansible.builtin.debug:
+                    msg: >-
+                      {{ clamav_container_sock }} never appeared, so ANTIVIRUS IS NOT
+                      WORKING on this box.
+                      docker logs: {{ _cc_logs.stdout | default(_cc_logs.stderr) | default('(none)') }}
+                      unit: {{ _cc_unitstate.stdout | default('(none)') | truncate(600) }}
 
             - name: "CLAMAV-CTR | Prove the containerised engine detects"
               when: _cc_sock is not failed

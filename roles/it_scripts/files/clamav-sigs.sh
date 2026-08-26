@@ -18,7 +18,13 @@
 set -uo pipefail
 
 SIG_SRC="${CLAMAV_SIG_SRC:-/opt/it/clamavsigs}"
+# Where the ACTIVE engine reads its signatures. The containerised engine keeps
+# its own copy (the image's entrypoint chowns the directory to its own clamav
+# user, so it cannot share the host's), and installing into the wrong one is a
+# silent no-op.
 DB_DIR=/var/lib/clamav
+[ -d /var/lib/clamav-container ] && [ -r /etc/clamav/clamd-container.conf ] \
+  && DB_DIR=/var/lib/clamav-container
 BACKUP_ROOT=/var/backups/clamav
 LOG=/var/log/clamav-sig-install.log
 FORCE=0
@@ -46,6 +52,16 @@ SIGTOOL_MODE=native
 if ! openssl md5 /dev/null >/dev/null 2>&1 && [ -n "$CTR_IMAGE" ]; then
   SIGTOOL_MODE=container
 fi
+
+# `clamdscan --ping 1` returns 0 even when it cannot connect (seen on ASP-2, where
+# it reported the HOST socket missing and still succeeded), so check the socket
+# exists and use the = form.
+ctr_alive() {
+  local sock
+  sock=$(awk '/^LocalSocket[[:space:]]/{print $2; exit}' "$CTR_CONF" 2>/dev/null)
+  [ -n "$sock" ] && [ -S "$sock" ] || return 1
+  clamdscan -c "$CTR_CONF" --ping=1 >/dev/null 2>&1
+}
 
 sigtool_info() {  # file -> `sigtool --info` output
   if [ "$SIGTOOL_MODE" = container ]; then
@@ -116,10 +132,10 @@ engine_selftest() {  # -> 0 detects, 1 does not.  Sets SELFTEST_ENGINE/SELFTEST_
     > "$td/canary"
   # Same order of preference as dta-log, so the test reflects what a transfer
   # would actually use.
-  if [ -r "$CTR_CONF" ] && clamdscan -c "$CTR_CONF" --ping 1 >/dev/null 2>&1; then
+  if [ -r "$CTR_CONF" ] && ctr_alive; then
     SELFTEST_ENGINE="containerised clamd"
     SELFTEST_OUT=$(clamdscan -c "$CTR_CONF" --fdpass "$td/canary" 2>&1); rc=$?
-  elif clamdscan --ping 1 >/dev/null 2>&1; then
+  elif clamdscan --ping=1 >/dev/null 2>&1; then
     SELFTEST_ENGINE="clamdscan (host daemon)"
     SELFTEST_OUT=$(clamdscan --fdpass "$td/canary" 2>&1); rc=$?
   else
@@ -146,7 +162,7 @@ engine_report() {
 
   if [ -r "$CTR_CONF" ]; then
     ok "containerised clamd : configured (${CTR_IMAGE:-image unknown})"
-    if clamdscan -c "$CTR_CONF" --ping 1 >/dev/null 2>&1; then
+    if ctr_alive; then
       ok "                      socket answering"
     else
       bad "                      socket NOT answering"
@@ -159,6 +175,7 @@ engine_report() {
   fi
 
   printf '  sigtool runs        : %s\n' "$SIGTOOL_MODE"
+  printf '  live database       : %s\n' "$DB_DIR"
 }
 
 # ---- air-gap image staging --------------------------------------------------
@@ -438,8 +455,10 @@ cmd_install() {
 
   # ---- stop services, remembering what was running ----
   local was_daemon=0 was_fresh=0
-  systemctl is-active --quiet clamav-freshclam 2>/dev/null && { was_fresh=1; systemctl stop clamav-freshclam; }
-  systemctl is-active --quiet clamav-daemon    2>/dev/null && { was_daemon=1; systemctl stop clamav-daemon; }
+  if [ "$DB_DIR" != /var/lib/clamav-container ]; then
+    systemctl is-active --quiet clamav-freshclam 2>/dev/null && { was_fresh=1; systemctl stop clamav-freshclam; }
+    systemctl is-active --quiet clamav-daemon    2>/dev/null && { was_daemon=1; systemctl stop clamav-daemon; }
+  fi
 
   # ---- install ----
   head2 "Installing"
@@ -455,14 +474,21 @@ cmd_install() {
 
   # ---- restart and confirm ----
   head2 "Confirming"
-  if [ "$was_daemon" = 1 ] || systemctl is-enabled --quiet clamav-daemon 2>/dev/null; then
+  if [ "$DB_DIR" = /var/lib/clamav-container ]; then
+    say "  restarting the containerised daemon to re-read the database"
+    systemctl restart clamav-container 2>/dev/null || warn "could not restart clamav-container"
+    local i=0
+    while [ $i -lt 120 ]; do ctr_alive && break; i=$((i + 1)); sleep 1; done
+    if ctr_alive; then ok "containerised clamd answering (${i}s)"
+    else bad "containerised clamd did not come back: systemctl status clamav-container"; exit 1; fi
+  elif [ "$was_daemon" = 1 ] || systemctl is-enabled --quiet clamav-daemon 2>/dev/null; then
     systemctl start clamav-daemon
     local i=0
     while [ $i -lt 60 ]; do
-      clamdscan --ping 1 >/dev/null 2>&1 && break
+      clamdscan --ping=1 >/dev/null 2>&1 && break
       i=$((i + 1)); sleep 1
     done
-    if clamdscan --ping 1 >/dev/null 2>&1; then
+    if clamdscan --ping=1 >/dev/null 2>&1; then
       ok "clamav-daemon restarted and answering (${i}s)"
     else
       bad "clamav-daemon did not come back within 60s."

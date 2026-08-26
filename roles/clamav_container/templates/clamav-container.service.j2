@@ -4,16 +4,20 @@
 # FIPS and therefore detects nothing (Cisco-Talos/clamav#1786). The image ships a
 # stock OpenSSL, so MD5 works inside. The host kernel stays in FIPS mode.
 #
-# The signature database is the HOST's, mounted read-only: `it-clamav install`
-# stays the one way signatures are managed. freshclam is off inside the
-# container for the same reason.
+# Two mount details are load-bearing, both from docs.clamav.net Docker manual:
+#   - the image's clamd listens on /tmp/clamd.sock, so the socket directory is
+#     bind-mounted over the container's /tmp (which is also where clamd puts
+#     scan temp files -- bounded by MaxScanSize).
+#   - the database directory must be WRITABLE: the entrypoint chowns it to the
+#     container's clamav user. Hence a dedicated copy, not the host's.
 #
-# Scans arrive over the unix socket as file DESCRIPTORS (clamdscan --fdpass), so
-# nothing being scanned is ever mounted into the container and the daemon reads
-# with the calling user's rights.
+# Scans arrive over the socket as file DESCRIPTORS (clamdscan --fdpass), so
+# nothing being scanned is ever mounted in and the daemon reads with the calling
+# user's rights.
 [Unit]
 Description=ClamAV daemon (containerised -- host engine cannot scan under FIPS)
 Documentation=https://github.com/Cisco-Talos/clamav/issues/1786
+Documentation=https://docs.clamav.net/manual/Installing/Docker.html
 After=docker.service
 Requires=docker.service
 
@@ -21,18 +25,17 @@ Requires=docker.service
 Type=exec
 Restart=on-failure
 RestartSec=10s
-TimeoutStartSec=300
+TimeoutStartSec=600
 ExecStartPre=-/usr/bin/docker rm -f clamav-container
-ExecStartPre=/usr/bin/install -d -m 0755 {{ clamav_container_sock_dir }}
 ExecStart=/usr/bin/docker run --rm --name clamav-container \
   --memory {{ clamav_container_memory }} \
   --network none \
   --security-opt no-new-privileges \
-  -e CLAMAV_NO_FRESHCLAM=true \
+  -e CLAMAV_NO_FRESHCLAMD=true \
   -e CLAMAV_NO_MILTERD=true \
-  -e CLAMD_STARTUP_TIMEOUT=300 \
-  -v {{ clamav_container_sock_dir }}:/run/clamav \
-  -v /var/lib/clamav:/var/lib/clamav:ro \
+  -e CLAMD_STARTUP_TIMEOUT=600 \
+  -v {{ clamav_container_sock_dir }}:/tmp \
+  -v {{ clamav_container_db_dir }}:/var/lib/clamav \
   {{ clamav_container_image }}
 ExecStop=/usr/bin/docker stop -t 30 clamav-container
 
