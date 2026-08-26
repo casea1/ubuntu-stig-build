@@ -16,11 +16,20 @@ clamav_container_enabled: true
 # update -- change the tag here. See docs/patching.md.
 clamav_container_image: "clamav/clamav:1.4.3"
 
-# Where the container's clamd socket lands on the host. 0666 so an unprivileged
-# DTA can submit a scan -- they pass a file DESCRIPTOR (clamdscan --fdpass), so
-# the daemon reads with the caller's rights and needs no access of its own.
+# The image's clamd listens on /tmp/clamd.sock and the documented way to reach it
+# is to bind-mount a host directory over the container's /tmp. So this directory
+# IS the container's /tmp, and the socket lands in it as clamd.sock. 0666 so an
+# unprivileged DTA can submit a scan -- they pass a file DESCRIPTOR
+# (clamdscan --fdpass), so the daemon reads with the caller's rights.
 clamav_container_sock_dir: /run/clamav-container
+clamav_container_sock: /run/clamav-container/clamd.sock
 clamav_container_client_conf: /etc/clamav/clamd-container.conf
+
+# The container gets its OWN copy of the signature database. The image's
+# entrypoint chowns its database directory to the container's clamav user, so
+# sharing the host's /var/lib/clamav would fight with the host's own ownership
+# every restart. `it-clamav install` writes here when the container is in use.
+clamav_container_db_dir: /var/lib/clamav-container
 
 # Memory ceiling. clamd holds the whole signature set resident (~1.5-2 GB).
 clamav_container_memory: "3g"

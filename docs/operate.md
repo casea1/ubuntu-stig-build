@@ -672,9 +672,9 @@ What it stands up:
 | | |
 |---|---|
 | `clamav-container.service` | `clamd` from `clamav/clamav:1.4.3` (pinned — see [patching.md](patching.md)), `--network none`, memory-capped |
-| `/run/clamav-container/clamd.ctl` | its socket, mode `0666` on the host |
+| `/run/clamav-container/clamd.sock` | its socket, mode `0666` on the host. That directory **is** the container's `/tmp` — the image's clamd listens on `/tmp/clamd.sock` and bind-mounting over `/tmp` is the documented way to expose it |
 | `/etc/clamav/clamd-container.conf` | client config so `clamdscan -c … --fdpass` reaches it |
-| `/var/lib/clamav` → container, read-only | the host's signature database stays the one source of truth, still managed by `it-clamav install` |
+| `/var/lib/clamav-container` | the container's **own** signature database, seeded from the host's on first run. It cannot share `/var/lib/clamav`: the image's entrypoint chowns its database directory to the container's `clamav` user, and the two would fight over ownership every restart. `it-clamav` writes here automatically when the container is in use, and restarts it afterwards |
 
 The host `clamav-daemon` is **stopped and masked**: it holds ~2 GB resident and cannot detect anything, so running both is waste.
 

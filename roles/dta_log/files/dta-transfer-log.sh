@@ -124,8 +124,18 @@ engine_selftest() {  # engine name -> 0 detects, 1 does not
 # DESCRIPTOR, so the file never has to exist inside the container and the daemon
 # reads with this user's rights -- which is also why a DTA needs no docker access.
 CTR_CONF=/etc/clamav/clamd-container.conf
+# `clamdscan --ping 1` returns 0 even when it cannot connect (seen on ASP-2, where
+# it reported the HOST socket missing and still succeeded), so check the socket
+# exists and use the = form.
+ctr_alive() {
+  local sock
+  sock=$(awk '/^LocalSocket[[:space:]]/{print $2; exit}' "$CTR_CONF" 2>/dev/null)
+  [ -n "$sock" ] && [ -S "$sock" ] || return 1
+  clamdscan -c "$CTR_CONF" --ping=1 >/dev/null 2>&1
+}
+
 pick_engine() {
-  if [ -r "$CTR_CONF" ] && clamdscan -c "$CTR_CONF" --ping 1 >/dev/null 2>&1; then
+  if [ -r "$CTR_CONF" ] && ctr_alive; then
     echo container
   elif command -v clamdscan >/dev/null 2>&1 && systemctl is-active --quiet clamav-daemon 2>/dev/null; then
     echo clamd

@@ -4,4 +4,4 @@
 # --fdpass is not optional: the client opens the file and hands the daemon the
 # descriptor, so the file never has to exist inside the container and the daemon
 # reads with the caller's rights.
-LocalSocket {{ clamav_container_sock_dir }}/clamd.ctl
+LocalSocket {{ clamav_container_sock }}
