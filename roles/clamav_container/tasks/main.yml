@@ -164,17 +164,6 @@
                 mode: "0644"
               register: _cc_unit
 
-            # The host's own clamd holds ~2 GB resident and cannot detect
-            # anything, so running both is pure waste. Masked rather than
-            # disabled so nothing pulls it back in.
-            - name: "CLAMAV-CTR | Stop and mask the host clamav-daemon"
-              ansible.builtin.systemd:
-                name: clamav-daemon
-                state: stopped
-                enabled: false
-                masked: true
-              failed_when: false
-
             - name: "CLAMAV-CTR | Start the containerised daemon"
               ansible.builtin.systemd:
                 name: clamav-container
@@ -216,6 +205,12 @@
                   changed_when: false
                   failed_when: false
 
+                - name: "CLAMAV-CTR | Leave the host daemon unmasked -- nothing replaced it"
+                  ansible.builtin.systemd:
+                    name: clamav-daemon
+                    masked: false
+                  failed_when: false
+
                 - name: "CLAMAV-CTR | Diagnosis"
                   ansible.builtin.debug:
                     msg: >-
@@ -246,18 +241,40 @@
                     path: /run/clamav-ctr-canary
                     state: absent
 
+                # ONLY once the container is proven. The host daemon is blind
+                # but harmless; masking it before knowing the replacement works
+                # would leave a box with nothing running at all. It holds ~2 GB
+                # resident, so there is no point running both.
+                - name: "CLAMAV-CTR | Stop and mask the host clamav-daemon"
+                  ansible.builtin.systemd:
+                    name: clamav-daemon
+                    state: stopped
+                    enabled: false
+                    masked: true
+                  failed_when: false
+                  when: _cc_eicar.rc == 1
+
+                - name: "CLAMAV-CTR | Unmask the host daemon if the container is not working"
+                  ansible.builtin.systemd:
+                    name: clamav-daemon
+                    masked: false
+                  failed_when: false
+                  when: _cc_eicar.rc != 1
+
                 - name: "CLAMAV-CTR | Result"
                   ansible.builtin.debug:
                     msg: >-
                       {% if _cc_eicar.rc == 1 %}
                       Containerised ClamAV is WORKING -- it detected the EICAR test
-                      file where the host engine could not. dta-log and the weekly
-                      scan use it automatically. Confirm with `sudo it-clamav test`.
+                      file where the host engine could not. The host clamav-daemon
+                      is now masked. dta-log and the weekly scan use the container
+                      automatically. Confirm with `sudo it-clamav test`.
                       {% else %}
                       Containerised clamd started but did NOT detect the EICAR test
                       file (clamdscan rc={{ _cc_eicar.rc }}: {{ _cc_eicar.stdout | default('') | truncate(160) }}).
-                      Antivirus is still not working -- do not rely on any scan
-                      result from this box. Investigate with `sudo it-clamav test`.
+                      The host daemon was left unmasked. Antivirus is NOT working on
+                      this box -- do not rely on any scan result from it.
+                      Investigate with `sudo it-clamav test`.
                       {% endif %}
 
 # The host engine works (or the box is not FIPS): tear the container down again
