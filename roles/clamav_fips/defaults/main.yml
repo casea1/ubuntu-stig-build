@@ -1,0 +1,12 @@
+---
+# clamav_fips -- let ClamAV use MD5 on a FIPS host, so it actually scans.
+#
+# Self-skipping: does nothing unless /proc/sys/crypto/fips_enabled is 1 AND
+# clamav is installed. Set false to leave ClamAV broken-but-pure on FIPS boxes.
+clamav_fips_carveout_enabled: true
+clamav_fips_conf: /etc/clamav/openssl-clamav.cnf
+# Units that scan or verify and therefore need the carve-out.
+clamav_fips_units:
+  - clamav-daemon
+  - clamav-freshclam
+  - clamav-scan

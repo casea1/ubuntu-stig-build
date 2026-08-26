@@ -24,6 +24,13 @@ DO_TEST=1
 
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
+# On a FIPS host OpenSSL refuses to initialise MD5, which ClamAV -- and sigtool,
+# which verifies the CVD signatures -- depend on. The clamav_fips role writes
+# this config (default provider only) after proving it works; use it if present.
+if [ -r /etc/clamav/openssl-clamav.cnf ]; then
+  export OPENSSL_CONF=/etc/clamav/openssl-clamav.cnf
+fi
+
 if [ -t 1 ]; then
   B=$'\e[1m'; DIM=$'\e[2m'; R=$'\e[0m'
   RED=$'\e[31m'; GRN=$'\e[32m'; YEL=$'\e[33m'
@@ -104,6 +111,10 @@ cmd_test() {
   say ""
   printf '%s\n' "$SELFTEST_OUT" | sed 's/^/    /'
   say ""
+  # Leave a canary behind so the operator can re-run the check by hand.
+  CANARY_HINT=/run/clamav-canary
+  printf '%s%s' 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR' '-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' \
+    > "$CANARY_HINT" 2>/dev/null || CANARY_HINT=/path/to/an/eicar/file
   # The single most likely cause on these boxes, and it is silent: the scan
   # reports OK for everything instead of erroring out.
   if printf '%s' "$SELFTEST_OUT" | grep -qiE 'error initializing|hash context' \
@@ -112,10 +123,14 @@ cmd_test() {
     bad "what ClamAV hashes with -- so the engine loads its signatures and then"
     bad "scans nothing, reporting every file clean. ANTIVIRUS IS NOT WORKING."
     say ""
-    say "  Confirm the cause:"
-    say "    cat /proc/sys/crypto/fips_enabled          # 1 = FIPS on"
-    say "    openssl md5 /etc/hostname                  # fails in FIPS mode"
-    say "    OPENSSL_CONF=/dev/null sudo it-clamav test # passes => FIPS is the cause"
+    say "  Confirm the cause (as root -- sudo strips the variable, and it has to"
+    say "  be clamscan: with clamdscan the DAEMON does the hashing, not the client):"
+    say "    cat /proc/sys/crypto/fips_enabled"
+    say "    openssl md5 /etc/hostname                   # fails in FIPS mode"
+    say "    OPENSSL_CONF=/dev/null clamscan $CANARY_HINT"
+    say ""
+    say "  The fix is the clamav_fips role: it points the clamav processes alone"
+    say "  at an OpenSSL config that has MD5. Run an ansible-pull, then re-test."
   fi
   exit 1
 }

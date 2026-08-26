@@ -1,0 +1,29 @@
+# Managed by ansible (clamav_fips) -- do not edit by hand.
+#
+# WHY THIS EXISTS
+# ClamAV fingerprints file content with MD5. MD5 is not a FIPS-approved
+# algorithm, so on a FIPS host OpenSSL refuses to create the digest context and
+# every scan bails before reading a byte -- reporting "Data scanned: 0 B" and
+# marking every file clean, with exit status 0 and the daemon still running.
+# Antivirus silently does nothing while every report says it passed. Confirmed
+# on ASP-2, 2026-08-26.
+#
+# This config activates only OpenSSL's DEFAULT provider, which has MD5. It is
+# pointed at the ClamAV processes alone via OPENSSL_CONF, exactly the way the AI
+# nodes bind a fips_off file over one container's view of the FIPS flag. Nothing
+# else on the host is affected and the kernel stays in FIPS mode.
+#
+# IA position: ClamAV's hashing is content fingerprinting for malware
+# identification, not a cryptographic security function protecting data. The
+# trade is a documented deviation for one service against having no working
+# antivirus at all. Record it on the POA&M.
+openssl_conf = openssl_init
+
+[openssl_init]
+providers = provider_sect
+
+[provider_sect]
+default = default_sect
+
+[default_sect]
+activate = 1

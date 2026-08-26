@@ -21,6 +21,14 @@ RECENT_DAYS="${DTA_RECENT_DAYS:-14}"
 DO_HASH=1
 FORCED_DIR=""
 
+
+# On a FIPS host OpenSSL refuses to initialise MD5, which ClamAV -- and sigtool,
+# which verifies the CVD signatures -- depend on. The clamav_fips role writes
+# this config (default provider only) after proving it works; use it if present.
+if [ -r /etc/clamav/openssl-clamav.cnf ]; then
+  export OPENSSL_CONF=/etc/clamav/openssl-clamav.cnf
+fi
+
 # Records must be readable by the rest of the dta group and by nobody else.
 # The STIG umask is 077, which would make each record private to its author.
 umask 007
