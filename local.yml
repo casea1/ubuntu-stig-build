@@ -139,13 +139,15 @@
     # DEVELOPMENT-ONLY PROVISIONING  (GUI engineering box, RDP-accessible)
     # -------------------------------------------------------------------------
     - role: app_config              # clamav daemon/freshclam (all profiles); wireshark group (development + emi)
+      when: is_development or is_emi or is_ai
 
     # MUST follow app_config: it overrides the clamav units app_config creates.
     # On a FIPS host ClamAV cannot initialise MD5 and silently scans nothing --
     # this points the clamav processes alone at an OpenSSL config that has it.
     - role: clamav_fips             # FIPS MD5 carve-out so ClamAV actually scans (self-skips off FIPS)
-      when: clamav_fips_carveout_enabled | default(true) | bool
-      when: is_development or is_emi or is_ai
+      when:
+        - is_development or is_emi or is_ai
+        - clamav_fips_carveout_enabled | default(true) | bool
     - role: dev_tools               # compilers/SDKs, /opt/eng-venv, VS Code extensions, docker.io (development + emi)
       when: is_development or is_emi
     - role: remote_desktop          # GNOME desktop + xrdp (RDP into the dev GUI); runs before hardening. development only -- emi/baseline are local-GUI.
