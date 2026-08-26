@@ -1,0 +1,115 @@
+---
+# =============================================================================
+# dta_log -- the data-transfer working folders and the record-keeping tool.
+#
+# /opt/dta/incoming and /opt/dta/outgoing are where a DTA stages files; `dta-log`
+# walks through the approval questions, confirms which folder is being moved,
+# scans it with ClamAV, and writes a dated record to /opt/dta/logs.
+#
+# The tool runs AS THE DTA, not as root -- the record has to name the person who
+# did the transfer. That is why the command lands in /usr/local/bin (on a normal
+# user's PATH) rather than /usr/local/sbin with the admin `it-*` scripts, and why
+# the folders are group-writable by `dta` instead of root-only.
+#
+# /opt/dta/logs is 3770: setgid so records inherit the dta group, and STICKY so a
+# DTA cannot delete another DTA's record. Nothing here makes the records
+# tamper-proof against root -- that needs an offload, which the audit rules do
+# separately.
+# =============================================================================
+
+- name: "DTA-LOG | Transfer folders and record tool"
+  when: dta_log_enabled | default(false) | bool
+  block:
+    - name: "DTA-LOG | Base directory ({{ dta_dir }})"
+      ansible.builtin.file:
+        path: "{{ dta_dir }}"
+        state: directory
+        owner: root
+        group: "{{ dta_group }}"
+        mode: "2750"
+
+    # 2770: a DTA stages files here, nobody outside the group can read them.
+    - name: "DTA-LOG | Staging folders"
+      ansible.builtin.file:
+        path: "{{ dta_dir }}/{{ item }}"
+        state: directory
+        owner: root
+        group: "{{ dta_group }}"
+        mode: "2770"
+      loop:
+        - incoming
+        - outgoing
+
+    - name: "DTA-LOG | Record directory (sticky -- a DTA cannot delete another's record)"
+      ansible.builtin.file:
+        path: "{{ dta_dir }}/logs"
+        state: directory
+        owner: root
+        group: "{{ dta_group }}"
+        mode: "3770"
+
+    - name: "DTA-LOG | Install the record tool"
+      ansible.builtin.copy:
+        src: dta-transfer-log.sh
+        dest: "{{ dta_dir }}/dta-transfer-log.sh"
+        owner: root
+        group: "{{ dta_group }}"
+        mode: "0750"
+
+    # /usr/local/bin, NOT /usr/local/sbin: a DTA account is not in sudo and does
+    # not have sbin on its PATH.
+    - name: "DTA-LOG | Short command (dta-log)"
+      ansible.builtin.file:
+        src: "{{ dta_dir }}/dta-transfer-log.sh"
+        dest: /usr/local/bin/dta-log
+        state: link
+        force: true
+
+    - name: "DTA-LOG | Desktop launcher"
+      ansible.builtin.copy:
+        src: dta-transfer-log.desktop
+        dest: /usr/share/applications/dta-transfer-log.desktop
+        owner: root
+        group: root
+        mode: "0644"
+      when: dta_log_desktop_entry | default(true) | bool
+      register: _dta_desktop
+
+    # GNOME reads the desktop DATABASE, not the directory, so a launcher dropped
+    # in without this can stay invisible until the next reboot.
+    - name: "DTA-LOG | Refresh the desktop database"
+      ansible.builtin.command: update-desktop-database /usr/share/applications
+      changed_when: false
+      failed_when: false
+      when: _dta_desktop is changed
+
+    - name: "DTA-LOG | ClamAV is what the scan step calls"
+      ansible.builtin.debug:
+        msg: >-
+          `dta-log` scans with clamdscan (falling back to clamscan). ClamAV comes
+          from base_packages on this profile; if it is ever removed the tool
+          still writes the record but marks the scan SKIPPED.
+      when: not (clamav_enabled | default(true) | bool)
+
+    - name: "DTA-LOG | Where things are"
+      ansible.builtin.debug:
+        msg: >-
+          DTA folders: {{ dta_dir }}/incoming, {{ dta_dir }}/outgoing.
+          Records: {{ dta_dir }}/logs (index: transfers.tsv).
+          Run `dta-log` as a member of `{{ dta_group }}`, or use
+          "Data Transfer Record" in the app menu. Review with
+          `dta-log list` / `dta-log show last`.
+
+# Cleanup for profiles with no dta group (ai, emi-unclass). Ansible's copy/link
+# tasks only ever create, so without this a box rebuilt under another profile
+# would keep the command forever. The folders themselves are left alone -- they
+# may hold data.
+- name: "DTA-LOG | Remove the tool (no dta group on this profile)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /usr/local/bin/dta-log
+    - /usr/share/applications/dta-transfer-log.desktop
+    - "{{ dta_dir }}/dta-transfer-log.sh"
+  when: not (dta_log_enabled | default(false) | bool)

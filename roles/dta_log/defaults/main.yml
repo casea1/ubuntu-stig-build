@@ -1,0 +1,17 @@
+---
+# dta_log -- the DTA transfer folders and the record-keeping tool (`dta-log`).
+#
+# Gated on local_usb_transfer_enabled, which is the set of boxes that HAVE a
+# `dta` group at all: development, baseline, and the CLASSIFIED emi variant.
+# The AI servers and emi-unclass have no dta group, so the folders and the
+# command are neither installed nor kept there.
+dta_log_enabled: "{{ local_usb_transfer_enabled | default(false) | bool }}"
+
+dta_dir: /opt/dta
+dta_group: "{{ usb_access_group | default('dta') }}"
+
+# A desktop icon so a DTA can start a transfer record without a shell.
+dta_log_desktop_entry: true
+
+# How far back `dta-log` looks when auto-detecting the payload folder is set by
+# DTA_RECENT_DAYS in the script (default 14); there is no ansible knob for it.

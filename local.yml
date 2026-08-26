@@ -225,5 +225,10 @@
 
     # PowerStrux launcher + weekly schedule. Self-skips when the hand-installed
     # PowerShell module is not present, so it is harmless on a box without it.
-    - role: powerstrux              # auditor-facing audit launcher, desktop icon, Thursday 03:00 run
+    - role: powerstrux              # auditor-facing audit launcher, desktop icon, Wednesday 03:00 run
       when: powerstrux_enabled | default(true) | bool
+
+    # DTA transfer folders (/opt/dta/incoming|outgoing) and the `dta-log` record
+    # tool. Only on profiles that have a `dta` group -- see dta_log_enabled.
+    - role: dta_log                 # data-transfer staging folders + transfer record/scan tool
+      when: dta_log_enabled | default(false) | bool

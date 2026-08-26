@@ -151,6 +151,7 @@ The rows marked **ai only** are the AI-stack tooling. They are placed on the `ai
 | `it-stig` | `stig-run.sh` | The whole STIG evidence cycle in one command: `status` (what is staged, what is missing, when it last ran), `run` (scan + checklist), `scan`, `checklist`, `archive` (tar the evidence set for hand-off). Wraps `it-oscap` and `it-ckl` and checks prerequisites before running anything. |
 | `it-ckl` | `stig-checklist.py` | Builds a DISA STIG checklist (`.cklb` / `.ckl`) from the manual STIG XCCDF + the SCAP results + the repo's adjudications, with asset fields filled in. `--summary` lists what still needs a human. See [compliance.md](compliance.md#building-the-stig-checklist-it-ckl). |
 | `it-powerstrux` | `run-powerstrux.sh` | Runs the PowerStrux LA audit (`pwsh -NoProfile -File Initiate-PowerstruxLA.ps1`), logs to `/opt/_AuditFiles/logs/`, and reports where the HTML landed. Auditors double-click **PowerStrux Audit** in the app menu instead. Runs weekly on its own — **Wednesday 03:00**, `powerstrux-audit.timer`. `status` shows the schedule, last run and next run; `schedule "<spec>"` changes it — writing both the live timer **and** `/opt/it/site.yml`, so a pull does not revert it — and `enable`/`disable` turn the weekly run off and on. `--where` prints the paths without running anything. |
+| `dta-log` | `dta-transfer-log.sh` | **DTA transfer record.** Asks the approval / DTA name / transfer-type questions, auto-detects the most recent folder under `/opt/dta/incoming` or `/opt/dta/outgoing` for the operator to confirm (or takes a typed path), scans it with ClamAV, and writes a dated record plus a sha256 manifest to `/opt/dta/logs`. `list` / `show last` review past records; `--no-hash` skips the manifest on a large transfer. Runs **as the DTA**, not root, so the record names a person — hence `/usr/local/bin`, not `sbin`. Also **Data Transfer Record** in the app menu. *(profiles with a `dta` group)* |
 | `it-inventory` | `it-inventory.sh` | Writes `/opt/it/inventory-<host>.txt`: service tag, BIOS, DIMM/SSD serials, MACs, GPU, LVM/LUKS layout. |
 
 ### If something's wrong (things we've already handled in the tool)
@@ -628,6 +629,40 @@ It runs as **root**, not `auto_audit`: `oscap` needs to read privileged configur
 | `cron` | `/etc/cron.d/oscap-scan` — literal "crontab" compliance if an assessor greps for it. A run missed while powered off is lost. |
 
 Only one is ever installed; switching methods removes the other.
+
+### Data transfers (`dta-log`)
+
+Files move through `/opt/dta`, and every transfer gets a record. The folders are `2770 root:dta`, so only the `dta` group can see or stage anything in them:
+
+| Path | What |
+|---|---|
+| `/opt/dta/incoming` | files arriving on this box |
+| `/opt/dta/outgoing` | files staged to leave |
+| `/opt/dta/logs` | one record per transfer + `transfers.tsv` index |
+
+Run it **as the DTA account**, not with sudo — the whole point is that the record names the person who did the transfer:
+
+```bash
+dta-log                      # walk through a transfer and write the record
+dta-log list                 # the last 15 transfers, one line each
+dta-log show last            # the full record for the most recent one
+dta-log --dir /media/usb/x   # skip the folder prompt
+dta-log --no-hash            # skip the sha256 manifest on a very large transfer
+```
+
+Or double-click **Data Transfer Record** in the app menu.
+
+It asks five things in order: whether the low-side form is approved by the AO and the ISSM/ISSO; the DTA's name; the transfer type (**L2H** or **H2H**); which folder is moving; and then it scans that folder.
+
+The folder question is answered for you where it can be: `dta-log` finds the most recently modified file under `incoming` and `outgoing`, shows the parent folder with a file count, size and timestamp, and asks you to confirm. Say no and you can type any path.
+
+The scan uses `clamdscan --fdpass` when `clamav-daemon` is up and falls back to `clamscan`. **`--fdpass` is not optional** — it hands the daemon an already-open descriptor so it reads with the DTA's rights; without it the `clamav` user cannot read anything under a `2770 root:dta` folder and every scan fails with a permission error.
+
+The record captures the answers, both timestamps, the scanner engine, **the signature database date and age**, the full scanner output, and a sha256 manifest of every file. Signature age matters here more than usual: on an air-gapped box `freshclam` cannot reach anything, so the tool prints a warning above the scan and writes the age into the record rather than quietly scanning with year-old signatures.
+
+Two outcomes end the run early. Answering **no** to the approval question writes an `ABORTED` record and stops — the attempt is still on file. A scan that comes back **INFECTED** writes a `BLOCKED` record and exits non-zero.
+
+`/opt/dta/logs` is `3770` — setgid so records inherit the group, and **sticky** so one DTA cannot delete another's record. That is not tamper-proofing against root; the audit rules cover that separately.
 
 ### USB device allow-listing (`it-usb`)
 
