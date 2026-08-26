@@ -1,0 +1,11 @@
+# Managed by ansible (clamav_container) -- do not edit by hand.
+# Fires whenever freshclam writes a new database into the host directory.
+[Unit]
+Description=Watch for freshclam signature updates
+
+[Path]
+PathChanged=/var/lib/clamav
+Unit=clamav-container-sync.service
+
+[Install]
+WantedBy=multi-user.target

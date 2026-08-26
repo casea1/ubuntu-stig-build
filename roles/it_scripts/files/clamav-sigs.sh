@@ -12,6 +12,7 @@
 #   it-clamav test               does the engine actually DETECT? (EICAR)
 #   it-clamav image-save <dir>   AIR-GAP: save the scanner image to a USB
 #   it-clamav image-load <dir>   AIR-GAP: load it on the fielded box
+#   it-clamav sync               copy freshclam's host database to the scanner
 #   it-clamav rollback           put the previous signature set back
 #   --force                      install even if it is not newer than what is on disk
 #   --no-test                    skip the EICAR detection test
@@ -216,6 +217,38 @@ engine_report() {
   printf '  live database       : %s\n' "$DB_DIR"
 }
 
+# ---- host -> container database sync ----------------------------------------
+# freshclam keeps /var/lib/clamav current while a box still has a network. The
+# containerised engine reads its own copy, so without this the host looks
+# up-to-date and the thing that actually scans quietly falls behind.
+cmd_sync() {
+  [ "$DB_DIR" = /var/lib/clamav-container ] \
+    || { say "No containerised engine on this box; nothing to sync."; exit 0; }
+  [ -d /var/lib/clamav ] || die "/var/lib/clamav does not exist."
+
+  head2 "Syncing host database -> scanner"
+  local n=0 f
+  for f in /var/lib/clamav/*.cvd /var/lib/clamav/*.cld; do
+    [ -f "$f" ] || continue
+    # Never let a .cvd and a .cld of the same database coexist: clamd loads one
+    # of them and not necessarily the newer.
+    local base; base=$(basename "$f"); base="${base%.*}"
+    if [ "$f" -nt "$DB_DIR/$(basename "$f")" ] || [ ! -f "$DB_DIR/$(basename "$f")" ]; then
+      rm -f "$DB_DIR/$base.cvd" "$DB_DIR/$base.cld"
+      install -o clamav -g clamav -m 0644 "$f" "$DB_DIR/$(basename "$f")" \
+        && { ok "$(basename "$f")  -> $(sig_field "$f" Version)"; n=$((n+1)); }
+    fi
+  done
+  if [ "$n" = 0 ]; then say "  already in step; nothing copied"; say ""; exit 0; fi
+
+  if ctr_alive; then
+    clamdscan -c "$CTR_CONF" --reload >/dev/null 2>&1 \
+      && ok "scanner reloaded" || warn "reload failed -- systemctl restart clamav-container"
+  fi
+  logline "sync: copied $n file(s) from /var/lib/clamav"
+  say ""
+}
+
 # ---- air-gap image staging --------------------------------------------------
 cmd_image_save() {
   local dir="${1:?usage: it-clamav image-save <dir>}"
@@ -327,20 +360,52 @@ age_days() { echo $(( ( $(date +%s) - $(stat -c %Y "$1") ) / 86400 )); }
 # ---- check ------------------------------------------------------------------
 cmd_check() {
   head2 "Installed signature databases  ($DB_DIR)"
-  local any=0 f v b a
+  local any=0 f v b base age
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     any=1
-    v=$(sig_field "$f" Version); b=$(sig_field "$f" 'Build time'); a=$(age_days "$f")
+    base=$(basename "$f"); base="${base%.*}"
+    v=$(sig_field "$f" Version); b=$(sig_field "$f" 'Build time')
+    # Age from the CVD's OWN build time, not the file mtime -- mtime is when the
+    # file happened to be written here, which says nothing about the signatures.
+    age=""
+    [ -n "$b" ] && age=$(( ( $(date +%s) - $(date -d "$b" +%s 2>/dev/null || echo 0) ) / 86400 ))
     printf '  %-16s version %-8s %s\n' "$(basename "$f")" "${v:-?}" "${b:-unknown build time}"
-    if [ "$a" -gt 30 ];  then bad  "    $a days old -- well past the point of being useful"
-    elif [ "$a" -gt 7 ]; then warn "    $a days old"
-    else                      ok   "    $a days old"
-    fi
+    case "$base" in
+      daily)
+        # daily is published several times a DAY; this is the one that carries
+        # new detections and the only one whose age means anything.
+        if   [ -z "$age" ];      then warn "    build time unreadable"
+        elif [ "$age" -gt 30 ];  then bad  "    $age days old -- well past useful"
+        elif [ "$age" -gt 7 ];   then warn "    $age days old"
+        else                          ok   "    $age days old"
+        fi ;;
+      *)
+        # main and bytecode are published a couple of times a YEAR. An old build
+        # date here is normal and is NOT a finding -- freshclam would have
+        # replaced them if newer ones existed.
+        ok "    ${age:-?} days since publication (normal -- $base is published rarely)" ;;
+    esac
     sig_verified "$f" && ok "    digital signature verified" \
                       || bad "    DIGITAL SIGNATURE DID NOT VERIFY"
   done < <(db_files)
   [ "$any" = 1 ] || bad "  No signature database installed at all."
+
+  # freshclam writes to the HOST database. The containerised engine reads its own
+  # copy. Left alone they diverge silently, with the host looking current and the
+  # thing that actually scans falling behind.
+  if [ "$DB_DIR" = /var/lib/clamav-container ] && [ -d /var/lib/clamav ]; then
+    local hv cv
+    hv=$(sig_field /var/lib/clamav/daily.cld Version 2>/dev/null)
+    [ -n "$hv" ] || hv=$(sig_field /var/lib/clamav/daily.cvd Version 2>/dev/null)
+    cv=$(installed_version daily)
+    if [ -n "$hv" ] && [ -n "$cv" ] && [ "$hv" != "$cv" ]; then
+      bad "  Host database is at daily $hv but the SCANNER is at $cv."
+      bad "  Sync with: it-clamav sync"
+    elif [ -n "$hv" ]; then
+      ok "  Scanner matches the host database (daily $cv)"
+    fi
+  fi
 
   head2 "Engine"
   say "  $(clamscan --version 2>/dev/null || echo 'clamscan not installed')"
@@ -602,7 +667,7 @@ while [ $# -gt 0 ]; do
     -h|--help) usage; exit 0 ;;
     --force)   FORCE=1; shift ;;
     --no-test) DO_TEST=0; shift ;;
-    check|list|install|rollback|test|image-save|image-load) CMD="$1"; shift ;;
+    check|list|install|rollback|test|sync|image-save|image-load) CMD="$1"; shift ;;
     -*) die "unknown option: $1  (try --help)" ;;
     *)  [ -z "$CMD" ] && die "unknown command: $1  (try --help)"; ARG="$1"; shift ;;
   esac
@@ -612,7 +677,8 @@ case "${CMD:-check}" in
   check)    cmd_check ;;
   list)     head2 "Archives in $SIG_SRC"; cmd_list ;;
   install)  cmd_install "$ARG" ;;
-  rollback) cmd_rollback ;;
+  rollback)   cmd_rollback ;;
+  sync)       cmd_sync ;;
   test)       cmd_test ;;
   image-save) cmd_image_save "$ARG" ;;
   image-load) cmd_image_load "$ARG" ;;

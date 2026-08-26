@@ -1,0 +1,11 @@
+# Managed by ansible (clamav_container) -- do not edit by hand.
+# freshclam keeps the HOST database current while the box still has a network.
+# The containerised engine reads its own copy, so without this the host looks
+# up-to-date and the thing that actually scans quietly falls behind.
+[Unit]
+Description=Copy freshclam's signature update into the containerised scanner
+After=clamav-container.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/it/scripts/clamav-sigs.sh sync
