@@ -1,0 +1,154 @@
+---
+# =============================================================================
+# clamav_fips -- make ClamAV work on a FIPS host.
+#
+# On a FIPS box OpenSSL will not initialise MD5, which is what ClamAV hashes
+# with, so the engine loads every signature and then scans NOTHING: exit 0,
+# "Data scanned: 0 B", every file reported clean, daemon healthy. There is no
+# error anywhere that an operator would see. This role points the ClamAV
+# processes -- and only those -- at an OpenSSL config with the default provider.
+#
+# It VALIDATES the config before applying it. A bad OPENSSL_CONF would stop
+# clamd starting at all, so if the validation fails nothing is changed and the
+# box is left exactly as it was.
+# =============================================================================
+
+- name: "CLAMAV-FIPS | Is this host in FIPS mode?"
+  ansible.builtin.slurp:
+    src: /proc/sys/crypto/fips_enabled
+  register: _cf_fips
+  failed_when: false
+
+- name: "CLAMAV-FIPS | Is clamav installed?"
+  ansible.builtin.stat:
+    path: /usr/bin/clamscan
+  register: _cf_clamscan
+
+- name: "CLAMAV-FIPS | MD5 carve-out"
+  when:
+    - clamav_fips_carveout_enabled | default(true) | bool
+    - _cf_clamscan.stat.exists
+    - (_cf_fips.content | default('') | b64decode | trim) == '1'
+  block:
+    - name: "CLAMAV-FIPS | Place the OpenSSL config"
+      ansible.builtin.copy:
+        src: openssl-clamav.cnf
+        dest: "{{ clamav_fips_conf }}"
+        owner: root
+        group: root
+        mode: "0644"      # every clamav process reads it, including as the clamav user
+
+    # Prove the config gives us MD5 before anything depends on it. `openssl md5`
+    # is the same code path that was failing.
+    - name: "CLAMAV-FIPS | Verify the config actually restores MD5"
+      ansible.builtin.command: openssl md5 /dev/null
+      environment:
+        OPENSSL_CONF: "{{ clamav_fips_conf }}"
+      register: _cf_md5
+      changed_when: false
+      failed_when: false
+
+    - name: "CLAMAV-FIPS | Abandon the carve-out if the config does not work"
+      ansible.builtin.debug:
+        msg: >-
+          OPENSSL_CONF={{ clamav_fips_conf }} still cannot do MD5
+          (rc={{ _cf_md5.rc }}: {{ _cf_md5.stderr | default('') | truncate(200) }}).
+          Nothing was changed. ClamAV on this box scans NOTHING -- treat it as
+          having no antivirus and raise it with the ISSM.
+      when: _cf_md5.rc != 0
+
+    - name: "CLAMAV-FIPS | Apply to the ClamAV units"
+      when: _cf_md5.rc == 0
+      block:
+        - name: "CLAMAV-FIPS | Drop-in directories"
+          ansible.builtin.file:
+            path: "/etc/systemd/system/{{ item }}.service.d"
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+          loop: "{{ clamav_fips_units }}"
+
+        - name: "CLAMAV-FIPS | Point each unit at the config"
+          ansible.builtin.copy:
+            dest: "/etc/systemd/system/{{ item }}.service.d/fips-md5.conf"
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              # Managed by ansible (clamav_fips). See {{ clamav_fips_conf }}.
+              [Service]
+              Environment=OPENSSL_CONF={{ clamav_fips_conf }}
+          loop: "{{ clamav_fips_units }}"
+          register: _cf_dropins
+
+        - name: "CLAMAV-FIPS | Reload systemd"
+          ansible.builtin.systemd:
+            daemon_reload: true
+          when: _cf_dropins is changed
+
+        - name: "CLAMAV-FIPS | Restart clamav-daemon so it picks the config up"
+          ansible.builtin.systemd:
+            name: clamav-daemon
+            state: restarted
+          when: _cf_dropins is changed
+          failed_when: false
+
+        # The config being valid is not the same as the engine detecting. This is
+        # the check that actually settles it -- same EICAR test `it-clamav test`
+        # runs, assembled here rather than stored so the repo does not carry the
+        # literal string.
+        - name: "CLAMAV-FIPS | Write an EICAR canary"
+          ansible.builtin.copy:
+            dest: /run/clamav-fips-canary
+            mode: "0644"
+            content: "{{ 'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR' ~ '-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' }}"
+
+        - name: "CLAMAV-FIPS | Does the engine detect it now?"
+          ansible.builtin.command: clamscan --no-summary /run/clamav-fips-canary
+          environment:
+            OPENSSL_CONF: "{{ clamav_fips_conf }}"
+          register: _cf_eicar
+          changed_when: false
+          failed_when: false
+
+        - name: "CLAMAV-FIPS | Remove the canary"
+          ansible.builtin.file:
+            path: /run/clamav-fips-canary
+            state: absent
+
+        - name: "CLAMAV-FIPS | Result"
+          ansible.builtin.debug:
+            msg: >-
+              {% if _cf_eicar.rc == 1 %}
+              ClamAV FIPS carve-out active and WORKING -- the engine detected the
+              EICAR test file. Confirm any time with `sudo it-clamav test`.
+              {% else %}
+              CARVE-OUT APPLIED BUT THE ENGINE STILL DOES NOT DETECT
+              (clamscan rc={{ _cf_eicar.rc }}). Do not trust any scan on this box.
+              Investigate with `sudo it-clamav test` before relying on antivirus.
+              {% endif %}
+
+# Remove the carve-out if the box is no longer FIPS or it has been switched off:
+# leaving OPENSSL_CONF pointed at a deleted file would stop clamd starting.
+- name: "CLAMAV-FIPS | Remove the carve-out when it no longer applies"
+  when: >-
+    not (clamav_fips_carveout_enabled | default(true) | bool)
+    or (_cf_fips.content | default('') | b64decode | trim) != '1'
+  block:
+    - name: "CLAMAV-FIPS | Drop the unit overrides"
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}.service.d/fips-md5.conf"
+        state: absent
+      loop: "{{ clamav_fips_units }}"
+      register: _cf_removed
+
+    - name: "CLAMAV-FIPS | Drop the config"
+      ansible.builtin.file:
+        path: "{{ clamav_fips_conf }}"
+        state: absent
+
+    - name: "CLAMAV-FIPS | Reload systemd after removal"
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: _cf_removed is changed

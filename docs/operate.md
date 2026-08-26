@@ -263,6 +263,7 @@ These need a secret, a subscription, install-time action, or an environment this
 
 - **Disk encryption (`Encrypt Partitions`).** LUKS happens in the installer, before ansible-pull runs. See *Full-disk encryption at install time* below.
 - **FIPS mode (`/proc/sys/crypto/fips_enabled`):** **ENABLED** (`usg_enable_fips: true`). `usg_harden` runs `pro enable fips-updates` (installs the FIPS kernel/modules) and flags a reboot; the `is_fips_mode_enabled` check passes **only after that reboot**. Swaps the running kernel. Set `usg_enable_fips: false` to defer it (then it's a POA&M).
+- **ClamAV MD5 on a FIPS host (`clamav_fips`).** ClamAV fingerprints file content with MD5, which is not FIPS-approved, so on a FIPS box OpenSSL refuses the digest and the engine **scans nothing while reporting every file clean** — exit 0, `Data scanned: 0 B`, daemon healthy (confirmed on ASP-2, 2026-08-26). The build points the ClamAV processes alone at an OpenSSL config with the default provider; the kernel stays in FIPS mode and nothing else is affected. The hashing in question is malware fingerprinting, not a cryptographic control protecting data, but it is a deviation and belongs here. Verify per box with `sudo it-clamav test` — see *The FIPS carve-out* above.
 - **Smartcard / CAC + SSSD** (opensc, pam_pkcs11, SSSD enable / cert-mapping / OCSP / cache, "Enable Smart Card Logins in PAM"). This image is **password-login only** by decision. The one harmless smartcard-adjacent control (GNOME *lock-on-smartcard-removal*) IS set.
 
   The DISA rule *Enable Smart Card Logins in PAM* (`smartcard_pam_enabled`) would wire `pam_pkcs11.so` into the auth stack, which on a box with **no CAC reader/card** logs `ERROR:pam_pkcs11.c:365: no suitable token available` / `Error 2308: No smart card found` on **every login, sudo, and screen-unlock**. To avoid that, `usg_harden` auto-generates a USG tailoring file (`usg generate-tailoring`, written to `/etc/usg/managed-tailoring.xml`) and **de-selects** those rules before `usg fix`, so `pam_pkcs11` is never wired in and the audit won't flag it. Controlled by `usg_disable_smartcard` (default **true**) and `usg_disable_smartcard_rules` in `group_vars/all.yml`; set the toggle `false` (or supply your own `usg_tailoring_file`) once you deploy CAC readers + certs and want CAC login.
@@ -635,7 +636,39 @@ Only one is ever installed; switching methods removes the other.
 
 `freshclam` cannot reach anything once the box is off the network, so signatures come in by hand. Drop the archive in `/opt/it/clamavsigs` and run the installer:
 
-> **Check that the engine actually detects — `sudo it-clamav test`.** ClamAV can load every signature and then scan *nothing*. On a **FIPS host** OpenSSL refuses to initialise MD5, which is what ClamAV hashes with, so every file comes back `OK` with `Data scanned: 0 B` and a `cli_scan_fmap: Error initializing md5 hash context` line buried in the output. It does not exit non-zero and it does not stop the daemon — antivirus is simply not working while every report says clean. `it-clamav test` scans an EICAR file and fails loudly if it is not detected; `it-clamav check` runs it too. `dta-log` runs the same test before it scans a payload and records `ENGINE-FAULT` rather than `CLEAN` if it fails.
+> **Check that the engine actually detects — `sudo it-clamav test`.** ClamAV can load every signature and then scan *nothing*. See the FIPS carve-out below for why, and run the test on any box you are about to rely on. `it-clamav check` runs it too, and `dta-log` runs it before scanning a payload — recording `ENGINE-FAULT` rather than `CLEAN` if it fails.
+
+#### The FIPS carve-out (`clamav_fips`)
+
+ClamAV fingerprints file content with **MD5**, which is not a FIPS-approved algorithm. On a FIPS host OpenSSL refuses to create the digest context, so every file scan bails before reading a byte:
+
+```
+LibClamAV Error: cli_scan_fmap: Error initializing md5 hash context
+/opt/it/inventory-ASP-2.txt: OK
+...
+Data read:    2.05 MiB
+Data scanned: 0 B          <-- read 2 MB, scanned nothing
+Infected files: 0
+```
+
+Exit status 0. Daemon healthy. Weekly scan "passing". **Antivirus does nothing while every report says clean.** Confirmed on ASP-2, 2026-08-26; `openssl md5 /etc/hostname` on that box returns `Algorithm (MD5 : 100) ... unsupported`.
+
+The `clamav_fips` role writes `/etc/clamav/openssl-clamav.cnf` — an OpenSSL config activating the **default provider**, which has MD5 — and points `clamav-daemon`, `clamav-freshclam` and `clamav-scan` at it with a systemd `Environment=OPENSSL_CONF=` drop-in. `it-clamav` and `dta-log` export it too, which also matters for `sigtool` when it verifies a CVD signature. The kernel stays in FIPS mode and nothing else on the host is affected — the same shape as the `fips_off` mount the vLLM and Docling containers use.
+
+The role **validates the config before applying it** (`OPENSSL_CONF=… openssl md5 /dev/null`) and changes nothing if that fails, since a bad `OPENSSL_CONF` would stop clamd starting. After applying it runs an EICAR test and says plainly whether the engine now detects. Set `clamav_fips_carveout_enabled: false` to leave ClamAV pure-but-blind; the role then removes the carve-out cleanly, and does the same automatically if the box stops being FIPS.
+
+**This is a documented deviation, not a free lunch.** ClamAV's hashing is content fingerprinting for malware identification, not a cryptographic security function protecting data — but it belongs on the POA&M, and the honest alternative is a box with no working antivirus.
+
+Diagnosing it by hand needs two details that are easy to get wrong:
+
+```bash
+# As ROOT. `sudo` resets the environment, so `OPENSSL_CONF=... sudo ...` is silently dropped.
+printf '%s%s' 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR' '-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > /tmp/canary
+clamscan /tmp/canary                       # OK      -> broken
+OPENSSL_CONF=/dev/null clamscan /tmp/canary  # FOUND -> FIPS confirmed
+```
+
+Use **`clamscan`**, not `clamdscan`: with clamdscan the *daemon* does the hashing in its own process, so a variable set on the client changes nothing.
 
 ```bash
 sudo it-clamav                       # what is installed, how old, is the daemon serving it
