@@ -125,8 +125,25 @@ case "${1:-help}" in
     if [ "$PERMANENT" = 1 ]; then
       cp -a "$RULES" "$RULES.bak-$(date +%Y%m%d-%H%M%S)"
       for d in $RESOLVED; do
-        usbguard allow-device -p "$d" || die "allow failed for device $d"
-        echo "Allowed device $d and appended it to the policy."
+        if usbguard allow-device -p "$d" 2>/dev/null; then
+          echo "Allowed device $d and appended it to the policy."
+          continue
+        fi
+        # usbguard's -p does an UPSERT and refuses when more than one existing
+        # rule already matches the device -- which is what happens with two
+        # identical hubs (same vendor:product, different port). Fall back to
+        # appending this device's own full descriptor, hash and all, so the new
+        # rule is unambiguous.
+        line=$(usbguard list-devices 2>/dev/null | awk -v n="$d:" '$1==n')
+        if [ -z "$line" ]; then
+          die "allow failed for device $d, and it is no longer present"
+        fi
+        rule=$(printf '%s' "$line" | sed 's/^[0-9]\{1,\}: *//; s/^[a-z]\{1,\} /allow /')
+        usbguard append-rule "$rule" \
+          || die "allow failed for device $d and the fallback rule was rejected: $rule"
+        usbguard allow-device "$d" >/dev/null 2>&1
+        echo "Allowed device $d and appended an exact rule for it."
+        echo "  ${rule}"
       done
       echo "Policy backup: $RULES.bak-*"
     else
