@@ -1,0 +1,40 @@
+# Managed by ansible (clamav_container) -- do not edit by hand.
+#
+# clamd in a container, because the host's ClamAV cannot initialise MD5 under
+# FIPS and therefore detects nothing (Cisco-Talos/clamav#1786). The image ships a
+# stock OpenSSL, so MD5 works inside. The host kernel stays in FIPS mode.
+#
+# The signature database is the HOST's, mounted read-only: `it-clamav install`
+# stays the one way signatures are managed. freshclam is off inside the
+# container for the same reason.
+#
+# Scans arrive over the unix socket as file DESCRIPTORS (clamdscan --fdpass), so
+# nothing being scanned is ever mounted into the container and the daemon reads
+# with the calling user's rights.
+[Unit]
+Description=ClamAV daemon (containerised -- host engine cannot scan under FIPS)
+Documentation=https://github.com/Cisco-Talos/clamav/issues/1786
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=exec
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=300
+ExecStartPre=-/usr/bin/docker rm -f clamav-container
+ExecStartPre=/usr/bin/install -d -m 0755 {{ clamav_container_sock_dir }}
+ExecStart=/usr/bin/docker run --rm --name clamav-container \
+  --memory {{ clamav_container_memory }} \
+  --network none \
+  --security-opt no-new-privileges \
+  -e CLAMAV_NO_FRESHCLAM=true \
+  -e CLAMAV_NO_MILTERD=true \
+  -e CLAMD_STARTUP_TIMEOUT=300 \
+  -v {{ clamav_container_sock_dir }}:/run/clamav \
+  -v /var/lib/clamav:/var/lib/clamav:ro \
+  {{ clamav_container_image }}
+ExecStop=/usr/bin/docker stop -t 30 clamav-container
+
+[Install]
+WantedBy=multi-user.target

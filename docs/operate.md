@@ -149,7 +149,7 @@ The rows marked **ai only** are the AI-stack tooling. They are placed on the `ai
 | `it-model-import` | `model-import.sh` | **Air-gap install side** (fielded box): read the USB manifest and load models/encodings straight into their external Docker volumes (+ `--images` to `docker load`). No internet/repo/helper-image needed. *(ai only)* |
 | `it-stack-diff` | `stack-diff.sh` | Shows how `/opt/stacks/` on this box differs from what the repo would deploy: a unified diff per `compose.yaml`, the full file for a stack the repo does not know about, and any `compose.override.yaml`. Use it to capture on-box edits **before** the next pull overwrites them (gotcha 2). Reads no `.env` — only reports that one exists — so the output is safe to paste. `--full`, `--out FILE`, or a single stack name. *(ai only)* |
 | `it-stig` | `stig-run.sh` | The whole STIG evidence cycle in one command: `status` (what is staged, what is missing, when it last ran), `run` (scan + checklist), `scan`, `checklist`, `archive` (tar the evidence set for hand-off). Wraps `it-oscap` and `it-ckl` and checks prerequisites before running anything. |
-| `it-clamav` | `clamav-sigs.sh` | **Manual ClamAV signature updates** for air-gapped boxes. `check` (default) reports installed databases, their age, whether the digital signature verifies, whether the running daemon is actually serving what is on disk, and whether a non-admin DTA can reach the scanner socket. `install` takes the newest `*.tar.gz` from `/opt/it/clamavsigs` — validating and version-checking it **before** touching the live database, backing up, then confirming with the daemon's own reported version and an EICAR detection test. `rollback` restores the previous set. `--force` allows a same/older version, `--no-test` skips the detection test. |
+| `it-clamav` | `clamav-sigs.sh` | **Manual ClamAV signature updates** for air-gapped boxes, plus `test` (does the engine actually detect an EICAR file?) and `image-save`/`image-load` for staging the containerised scanner image. `check` (default) reports installed databases, their age, whether the digital signature verifies, whether the running daemon is actually serving what is on disk, and whether a non-admin DTA can reach the scanner socket. `install` takes the newest `*.tar.gz` from `/opt/it/clamavsigs` — validating and version-checking it **before** touching the live database, backing up, then confirming with the daemon's own reported version and an EICAR detection test. `rollback` restores the previous set. `--force` allows a same/older version, `--no-test` skips the detection test. |
 | `it-ckl` | `stig-checklist.py` | Builds a DISA STIG checklist (`.cklb` / `.ckl`) from the manual STIG XCCDF + the SCAP results + the repo's adjudications, with asset fields filled in. `--summary` lists what still needs a human. See [compliance.md](compliance.md#building-the-stig-checklist-it-ckl). |
 | `it-powerstrux` | `run-powerstrux.sh` | Runs the PowerStrux LA audit (`pwsh -NoProfile -File Initiate-PowerstruxLA.ps1`), logs to `/opt/_AuditFiles/logs/`, and reports where the HTML landed. Auditors double-click **PowerStrux Audit** in the app menu instead. Runs weekly on its own — **Wednesday 03:00**, `powerstrux-audit.timer`. `status` shows the schedule, last run and next run; `schedule "<spec>"` changes it — writing both the live timer **and** `/opt/it/site.yml`, so a pull does not revert it — and `enable`/`disable` turn the weekly run off and on. `--where` prints the paths without running anything. |
 | `dta-log` | `dta-transfer-log.sh` | **DTA transfer record.** Asks the approval / DTA name / transfer-type questions, auto-detects the most recent folder under `/opt/dta/incoming` or `/opt/dta/outgoing` for the operator to confirm (or takes a typed path), scans it with ClamAV, and writes a dated record plus a sha256 manifest to `/opt/dta/logs`. `list` / `show last` review past records; `--no-hash` skips the manifest on a large transfer. Runs **as the DTA**, not root, so the record names a person — hence `/usr/local/bin`, not `sbin`. Also **Data Transfer Record** in the app menu. *(profiles with a `dta` group)* |
@@ -263,7 +263,7 @@ These need a secret, a subscription, install-time action, or an environment this
 
 - **Disk encryption (`Encrypt Partitions`).** LUKS happens in the installer, before ansible-pull runs. See *Full-disk encryption at install time* below.
 - **FIPS mode (`/proc/sys/crypto/fips_enabled`):** **ENABLED** (`usg_enable_fips: true`). `usg_harden` runs `pro enable fips-updates` (installs the FIPS kernel/modules) and flags a reboot; the `is_fips_mode_enabled` check passes **only after that reboot**. Swaps the running kernel. Set `usg_enable_fips: false` to defer it (then it's a POA&M).
-- **ClamAV does not work on a FIPS host — OPEN FINDING, no fix available.** ClamAV fingerprints file content with MD5, which is not FIPS-approved, so OpenSSL refuses the digest: MD5-based signatures cannot be evaluated and **the EICAR test file is not detected**, while the scan still exits 0 and reports every file clean (confirmed on ASP-2, 2026-08-26). This is upstream [Cisco-Talos/clamav#1786](https://github.com/Cisco-Talos/clamav/issues/1786), open with no fix. **It cannot be configured around:** Ubuntu's FIPS OpenSSL takes FIPS mode from the kernel flag rather than from config, so even `OPENSSL_CONF=/dev/null` fails on the box, and the reporter of #1786 found `--fips-limits` / `FIPSCryptoHashLimits` do not help either. The `clamav_fips` role attempts the OpenSSL carve-out on every pull and removes it again when it does not work, so it costs nothing and self-heals if this is ever fixed upstream. Until then a clean scan result from a FIPS box is **not evidence of anything** — check per box with `sudo it-clamav test`, and see *The FIPS carve-out* above for the options open to the ISSM.
+- **ClamAV does not work on a FIPS host — OPEN FINDING, no fix available.** ClamAV fingerprints file content with MD5, which is not FIPS-approved, so OpenSSL refuses the digest: MD5-based signatures cannot be evaluated and **the EICAR test file is not detected**, while the scan still exits 0 and reports every file clean (confirmed on ASP-2, 2026-08-26). This is upstream [Cisco-Talos/clamav#1786](https://github.com/Cisco-Talos/clamav/issues/1786), open with no fix. **It cannot be configured around:** Ubuntu's FIPS OpenSSL takes FIPS mode from the kernel flag rather than from config, so even `OPENSSL_CONF=/dev/null` fails on the box, and the reporter of #1786 found `--fips-limits` / `FIPSCryptoHashLimits` do not help either. The `clamav_fips` role attempts the OpenSSL carve-out on every pull and removes it again when it does not work, so it costs nothing and self-heals if this is ever fixed upstream. **The working fix is `clamav_container`**, which moves clamd into a container whose OpenSSL is a stock build while the host kernel stays in FIPS — see *The fix: a containerised engine* above. Two residual items belong on the POA&M with it: **on-access scanning is lost** (the containerised engine is on-demand only), and the scanning engine is **not a FIPS-validated cryptographic module** — which is the point, since the hashing in question is malware fingerprinting rather than a control protecting data. Check per box with `sudo it-clamav test`; a box where that does not PASS has no working antivirus regardless of what any scan reports.
 - **Smartcard / CAC + SSSD** (opensc, pam_pkcs11, SSSD enable / cert-mapping / OCSP / cache, "Enable Smart Card Logins in PAM"). This image is **password-login only** by decision. The one harmless smartcard-adjacent control (GNOME *lock-on-smartcard-removal*) IS set.
 
   The DISA rule *Enable Smart Card Logins in PAM* (`smartcard_pam_enabled`) would wire `pam_pkcs11.so` into the auth stack, which on a box with **no CAC reader/card** logs `ERROR:pam_pkcs11.c:365: no suitable token available` / `Error 2308: No smart card found` on **every login, sudo, and screen-unlock**. To avoid that, `usg_harden` auto-generates a USG tailoring file (`usg generate-tailoring`, written to `/etc/usg/managed-tailoring.xml`) and **de-selects** those rules before `usg fix`, so `pam_pkcs11` is never wired in and the audit won't flag it. Controlled by `usg_disable_smartcard` (default **true**) and `usg_disable_smartcard_rules` in `group_vars/all.yml`; set the toggle `false` (or supply your own `usg_tailoring_file`) once you deploy CAC readers + certs and want CAC login.
@@ -661,15 +661,46 @@ The role **validates the config before applying it** (`OPENSSL_CONF=… openssl 
 
 This is upstream [Cisco-Talos/clamav#1786](https://github.com/Cisco-Talos/clamav/issues/1786) — open, no fix, no maintainer response. The reporter also tested `--fips-limits` and `FIPSCryptoHashLimits`; neither helps. ClamAV 1.5 did add FIPS-mode work (external `.cvd.sign` signatures replacing the MD5+RSA database check), but that fixes *database verification*, not the MD5 hashing of scanned content.
 
-**So on a FIPS box, a clean ClamAV result is not evidence of anything.** Options, in rough order of how well they fit this fleet — this is an ISSM decision, not a config change:
+#### The fix: a containerised engine (`clamav_container`)
 
-| Option | What it costs |
+The scanning engine moves into a container whose OpenSSL is a stock build, so MD5 works there. **The host kernel stays in FIPS mode** — same shape as the `fips_off` mount the vLLM and Docling containers use, which is already accredited here.
+
+The role **self-skips**: it writes an EICAR file, runs the host `clamscan` against it, and only acts if the host fails to detect. On a box where ClamAV works it does nothing, so it is safe on every profile. If the host engine later starts working, it tears the container down and unmasks `clamav-daemon` again.
+
+What it stands up:
+
+| | |
 |---|---|
-| **Run ClamAV in a container** | The image's OpenSSL is a stock build, so MD5 works; the host stays FIPS. Same shape as the vLLM/Docling carve-out already accredited here, and EMI already has Docker from `dev_tools`. Needs an air-gap path for the image, and `dta-log` would call the container instead of the host binary. |
-| **Accept degraded scanning, document it** | Free, but a DTA transfer gate that cannot detect EICAR is hard to defend, and the checklist item stays Not Met. |
-| **Different AV product on FIPS boxes** | Procurement and accreditation work; nothing obvious and free. |
-| **Drop FIPS on the EMI profile** | Trades one control for another. Almost certainly the wrong trade — `usg_enable_fips` closes `UBTU-24-600030`. |
-| **Wait for upstream** | Not a plan while boxes are fielded. |
+| `clamav-container.service` | `clamd` from `clamav/clamav:1.4.3` (pinned — see [patching.md](patching.md)), `--network none`, memory-capped |
+| `/run/clamav-container/clamd.ctl` | its socket, mode `0666` on the host |
+| `/etc/clamav/clamd-container.conf` | client config so `clamdscan -c … --fdpass` reaches it |
+| `/var/lib/clamav` → container, read-only | the host's signature database stays the one source of truth, still managed by `it-clamav install` |
+
+The host `clamav-daemon` is **stopped and masked**: it holds ~2 GB resident and cannot detect anything, so running both is waste.
+
+**Why `--fdpass` is what makes this work.** The client opens the file and hands the daemon the file *descriptor*, so nothing being scanned is ever mounted into the container, and the daemon reads with the calling user's rights. That matters most for the thing that would otherwise sink this design: **a DTA never needs access to `docker`**, which is root-equivalent. They run the ordinary `clamdscan` client against a socket.
+
+`dta-log`, `it-clamav test` and the weekly scan all prefer the containerised engine when its socket answers, fall back to the host daemon, then to standalone `clamscan`.
+
+**Air-gapped staging.** The pull cannot fetch the image on a fielded box. On an online one:
+
+```bash
+sudo it-clamav image-save /mnt/usb     # docker save + a manifest
+```
+
+then on the fielded box:
+
+```bash
+sudo it-clamav image-load /mnt/usb
+sudo ansible-pull ...                  # clamav_container starts the daemon
+sudo it-clamav test                    # must PASS
+```
+
+**`sigtool` moves too.** Verifying a CVD's digital signature needs MD5, so on a FIPS host `it-clamav install` would reject every archive as unverifiable. It runs `sigtool` in the same image when the host cannot do MD5; `it-clamav test` reports which mode is in use.
+
+**What this does not fix.** The on-access/real-time scanning the host `clamav-daemon` would have done is gone — this is on-demand scanning only. Say so on the POA&M rather than letting it be found.
+
+The options that were considered and rejected: accept degraded scanning (a transfer gate that cannot detect EICAR is indefensible), procure a different AV for FIPS boxes (cost and accreditation), or drop FIPS on EMI (trades away `UBTU-24-600030` — the wrong trade).
 
 Diagnosing it by hand needs two details that are easy to get wrong:
 

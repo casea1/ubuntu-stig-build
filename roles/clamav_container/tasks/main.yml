@@ -1,0 +1,246 @@
+---
+# =============================================================================
+# clamav_container -- containerised clamd for hosts whose own ClamAV is blind.
+#
+# Runs ONLY when the host engine actually fails to detect the EICAR test file.
+# On a box where ClamAV works this role does nothing at all, so it is safe on
+# every profile.
+#
+# The daemon is reached over a unix socket bind-mounted onto the host. Scans are
+# submitted as file DESCRIPTORS (clamdscan --fdpass), which is what makes this
+# workable: nothing being scanned is mounted into the container, the daemon
+# reads with the calling user's rights, and an unprivileged DTA never needs
+# access to docker -- which is root-equivalent and must not be handed out.
+# =============================================================================
+
+- name: "CLAMAV-CTR | Is the host engine able to detect anything?"
+  when: clamav_container_enabled | default(true) | bool
+  block:
+    - name: "CLAMAV-CTR | Write an EICAR canary"
+      ansible.builtin.copy:
+        dest: /run/clamav-hostcheck-canary
+        mode: "0644"
+        content: "{{ 'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR' ~ '-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' }}"
+
+    # rc 1 = detected (the engine works), 0 = "clean" (it does not), 2 = error.
+    - name: "CLAMAV-CTR | Host clamscan against the canary"
+      ansible.builtin.command: clamscan --no-summary /run/clamav-hostcheck-canary
+      register: _cc_host
+      changed_when: false
+      failed_when: false
+
+    - name: "CLAMAV-CTR | Remove the canary"
+      ansible.builtin.file:
+        path: /run/clamav-hostcheck-canary
+        state: absent
+
+    - name: "CLAMAV-CTR | Is docker available?"
+      ansible.builtin.stat:
+        path: /usr/bin/docker
+      register: _cc_docker
+
+- name: "CLAMAV-CTR | Host engine is blind -- stand up the containerised daemon"
+  when:
+    - clamav_container_enabled | default(true) | bool
+    - _cc_host is defined
+    - _cc_host.rc != 1              # anything but "detected"
+    - _cc_docker.stat.exists
+  block:
+    - name: "CLAMAV-CTR | Why this is being done"
+      ansible.builtin.debug:
+        msg: >-
+          The host ClamAV did not detect the EICAR test file (clamscan rc={{ _cc_host.rc }}).
+          Standing up {{ clamav_container_image }} as a containerised clamd instead.
+          Host kernel stays in FIPS mode; only the scanning engine moves.
+
+    - name: "CLAMAV-CTR | Socket directory"
+      ansible.builtin.file:
+        path: "{{ clamav_container_sock_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # Without a database the container's clamd exits at startup and the unit
+    # flaps. Better to say so than to leave a restart loop behind.
+    - name: "CLAMAV-CTR | Is there a signature database to mount?"
+      ansible.builtin.find:
+        paths: /var/lib/clamav
+        patterns: ["*.cvd", "*.cld"]
+      register: _cc_db
+
+    - name: "CLAMAV-CTR | Refuse to start without signatures"
+      ansible.builtin.debug:
+        msg: >-
+          /var/lib/clamav holds no .cvd/.cld files, so the containerised clamd
+          would exit at startup. Stage signatures first -- `it-clamav install`
+          from an archive in /opt/it/clamavsigs -- then re-run the pull.
+      when: _cc_db.matched | int == 0
+
+    - name: "CLAMAV-CTR | Bring up the containerised daemon"
+      when: _cc_db.matched | int > 0
+      block:
+        # Plain command, not community.docker: that collection is not a
+        # dependency of this repo and an air-gapped box cannot fetch it.
+        - name: "CLAMAV-CTR | Is the image already on the box?"
+          ansible.builtin.command: "docker image inspect {{ clamav_container_image }}"
+          register: _cc_have
+          changed_when: false
+          failed_when: false
+
+        - name: "CLAMAV-CTR | Pull the image (no-op air-gapped)"
+          ansible.builtin.command: "docker pull {{ clamav_container_image }}"
+          register: _cc_pull
+          changed_when: "'Downloaded newer image' in (_cc_pull.stdout | default(''))"
+          failed_when: false
+          when: _cc_have.rc != 0
+
+        - name: "CLAMAV-CTR | Is the image on the box now?"
+          ansible.builtin.command: "docker image inspect {{ clamav_container_image }}"
+          register: _cc_img
+          changed_when: false
+          failed_when: false
+
+        - name: "CLAMAV-CTR | No image and no way to fetch one"
+          ansible.builtin.debug:
+            msg: >-
+              {{ clamav_container_image }} is not on this box and could not be
+              pulled (air-gapped?). Stage it with `it-clamav image-load <dir>`
+              from a USB written by `it-clamav image-save <dir>` on an online
+              box, then re-run the pull. Antivirus is NOT working until then.
+          when: _cc_img.rc != 0
+
+        - name: "CLAMAV-CTR | Install the daemon and client config"
+          when: _cc_img.rc == 0
+          block:
+            - name: "CLAMAV-CTR | Client config for host-side tools"
+              ansible.builtin.template:
+                src: clamd-container.conf.j2
+                dest: "{{ clamav_container_client_conf }}"
+                owner: root
+                group: root
+                mode: "0644"
+
+            # So host-side tools (it-clamav) know which image to run sigtool in
+            # without parsing the unit file.
+            - name: "CLAMAV-CTR | Record the image name"
+              ansible.builtin.copy:
+                dest: /etc/clamav/container-image
+                content: "{{ clamav_container_image }}\n"
+                owner: root
+                group: root
+                mode: "0644"
+
+            - name: "CLAMAV-CTR | systemd unit"
+              ansible.builtin.template:
+                src: clamav-container.service.j2
+                dest: /etc/systemd/system/clamav-container.service
+                owner: root
+                group: root
+                mode: "0644"
+              register: _cc_unit
+
+            # The host's own clamd holds ~2 GB resident and cannot detect
+            # anything, so running both is pure waste. Masked rather than
+            # disabled so nothing pulls it back in.
+            - name: "CLAMAV-CTR | Stop and mask the host clamav-daemon"
+              ansible.builtin.systemd:
+                name: clamav-daemon
+                state: stopped
+                enabled: false
+                masked: true
+              failed_when: false
+
+            - name: "CLAMAV-CTR | Start the containerised daemon"
+              ansible.builtin.systemd:
+                name: clamav-container
+                enabled: true
+                state: "{{ 'restarted' if _cc_unit is changed else 'started' }}"
+                daemon_reload: true
+
+            - name: "CLAMAV-CTR | Wait for the socket"
+              ansible.builtin.wait_for:
+                path: "{{ clamav_container_sock_dir }}/clamd.ctl"
+                timeout: 300
+              register: _cc_sock
+              failed_when: false
+
+            # clamd creates the socket with the CONTAINER's umask. Host callers
+            # are unprivileged DTAs, so it has to be world-writable -- they still
+            # only get to submit a descriptor they could already read.
+            - name: "CLAMAV-CTR | Make the socket reachable from the host"
+              ansible.builtin.file:
+                path: "{{ clamav_container_sock_dir }}/clamd.ctl"
+                mode: "0666"
+              failed_when: false
+              when: _cc_sock is not failed
+
+            - name: "CLAMAV-CTR | Prove the containerised engine detects"
+              when: _cc_sock is not failed
+              block:
+                - name: "CLAMAV-CTR | Canary for the container test"
+                  ansible.builtin.copy:
+                    dest: /run/clamav-ctr-canary
+                    mode: "0644"
+                    content: "{{ 'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR' ~ '-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' }}"
+
+                - name: "CLAMAV-CTR | Scan it through the container"
+                  ansible.builtin.command: >-
+                    clamdscan -c {{ clamav_container_client_conf }} --fdpass
+                    --no-summary /run/clamav-ctr-canary
+                  register: _cc_eicar
+                  changed_when: false
+                  failed_when: false
+
+                - name: "CLAMAV-CTR | Remove the canary"
+                  ansible.builtin.file:
+                    path: /run/clamav-ctr-canary
+                    state: absent
+
+                - name: "CLAMAV-CTR | Result"
+                  ansible.builtin.debug:
+                    msg: >-
+                      {% if _cc_eicar.rc == 1 %}
+                      Containerised ClamAV is WORKING -- it detected the EICAR test
+                      file where the host engine could not. dta-log and the weekly
+                      scan use it automatically. Confirm with `sudo it-clamav test`.
+                      {% else %}
+                      Containerised clamd started but did NOT detect the EICAR test
+                      file (clamdscan rc={{ _cc_eicar.rc }}: {{ _cc_eicar.stdout | default('') | truncate(160) }}).
+                      Antivirus is still not working -- do not rely on any scan
+                      result from this box. Investigate with `sudo it-clamav test`.
+                      {% endif %}
+
+# The host engine works (or the box is not FIPS): tear the container down again
+# rather than leaving two daemons and a stale socket behind.
+- name: "CLAMAV-CTR | Not needed here -- remove it"
+  when:
+    - _cc_host is defined
+    - (_cc_host.rc | default(1)) == 1 or not (clamav_container_enabled | default(true) | bool)
+  block:
+    - name: "CLAMAV-CTR | Stop the containerised daemon"
+      ansible.builtin.systemd:
+        name: clamav-container
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: "CLAMAV-CTR | Remove the unit and client config"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/clamav-container.service
+        - "{{ clamav_container_client_conf }}"
+        - /etc/clamav/container-image
+      register: _cc_gone
+
+    - name: "CLAMAV-CTR | Unmask the host daemon"
+      ansible.builtin.systemd:
+        name: clamav-daemon
+        masked: false
+        enabled: true
+        state: started
+        daemon_reload: true
+      failed_when: false
+      when: _cc_gone is changed

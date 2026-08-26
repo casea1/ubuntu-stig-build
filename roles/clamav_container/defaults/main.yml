@@ -1,0 +1,26 @@
+---
+# clamav_container -- a containerised clamd for hosts whose own ClamAV cannot scan.
+#
+# WHY: on a FIPS host OpenSSL refuses to initialise MD5, which is what ClamAV
+# hashes file content with, so the host engine loads every signature and then
+# fails to detect anything -- upstream Cisco-Talos/clamav#1786, open, no fix.
+# The container's OpenSSL is a stock build with the default provider, so MD5
+# works there. The host kernel stays in FIPS mode; same shape as the fips_off
+# mount the vLLM/Docling containers use.
+#
+# Self-skipping: does nothing unless the host engine actually fails its EICAR
+# test AND docker is present. On a box where ClamAV works, this is a no-op.
+clamav_container_enabled: true
+
+# Pinned, like every other image in this repo. `docker compose pull` is not an
+# update -- change the tag here. See docs/patching.md.
+clamav_container_image: "clamav/clamav:1.4.3"
+
+# Where the container's clamd socket lands on the host. 0666 so an unprivileged
+# DTA can submit a scan -- they pass a file DESCRIPTOR (clamdscan --fdpass), so
+# the daemon reads with the caller's rights and needs no access of its own.
+clamav_container_sock_dir: /run/clamav-container
+clamav_container_client_conf: /etc/clamav/clamd-container.conf
+
+# Memory ceiling. clamd holds the whole signature set resident (~1.5-2 GB).
+clamav_container_memory: "3g"

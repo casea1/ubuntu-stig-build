@@ -1,0 +1,7 @@
+# Managed by ansible (clamav_container) -- do not edit by hand.
+# Client-side config so host tools can reach the CONTAINERISED clamd:
+#   clamdscan -c {{ clamav_container_client_conf }} --fdpass <path>
+# --fdpass is not optional: the client opens the file and hands the daemon the
+# descriptor, so the file never has to exist inside the container and the daemon
+# reads with the caller's rights.
+LocalSocket {{ clamav_container_sock_dir }}/clamd.ctl
