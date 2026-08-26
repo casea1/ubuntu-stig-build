@@ -27,6 +27,13 @@ Restart=on-failure
 RestartSec=10s
 TimeoutStartSec=600
 ExecStartPre=-/usr/bin/docker rm -f clamav-container
+# {{ clamav_container_sock_dir }} is on tmpfs, so it is GONE after a reboot and
+# the next ansible-pull may be days away. The unit has to create it itself, with
+# /tmp's permissions: clamd runs as the image's unprivileged clamav user and
+# binds its socket in here. At 0755 root:root it cannot, and the only symptom is
+# "Socket file /tmp/clamd.sock could not be bound: Permission denied" in a log
+# nobody reads.
+ExecStartPre=/usr/bin/install -d -m 1777 -o root -g root {{ clamav_container_sock_dir }}
 ExecStart=/usr/bin/docker run --rm --name clamav-container \
   --memory {{ clamav_container_memory }} \
   --network none \
