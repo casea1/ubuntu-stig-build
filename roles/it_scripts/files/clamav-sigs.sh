@@ -146,6 +146,14 @@ engine_selftest() {  # -> 0 detects, 1 does not.  Sets SELFTEST_ENGINE/SELFTEST_
   [ "$rc" -eq 1 ]
 }
 
+# Up but not listening yet: the unit is running and the container has not
+# exited. clamd is loading signatures.
+ctr_starting() {
+  [ "$(systemctl is-active clamav-container 2>/dev/null)" = active ] || return 1
+  docker ps --filter name=clamav-container --format '{{.Names}}' 2>/dev/null \
+    | grep -q clamav-container
+}
+
 # When the containerised daemon is configured but not answering, the useful
 # information is in the container's own log and in the unit state -- not in
 # anything the host tools can infer. Print it here rather than sending the
@@ -185,6 +193,15 @@ engine_report() {
     ok "containerised clamd : configured (${CTR_IMAGE:-image unknown})"
     if ctr_alive; then
       ok "                      socket answering"
+    elif ctr_starting; then
+      # clamd binds its socket only AFTER loading the signature set -- roughly a
+      # minute for 3.6M signatures. Restart-then-test-immediately looks exactly
+      # like a broken container otherwise.
+      warn "                      still starting -- clamd loads the signature set"
+      warn "                      before it binds the socket (allow ~60-90s after a"
+      warn "                      restart). Re-run this in a minute."
+      say "  ${DIM}--- docker logs (last 10) ---${R}"
+      docker logs --tail 10 clamav-container 2>&1 | sed 's/^/  /' | head -12
     else
       bad "                      socket NOT answering"
       container_postmortem
@@ -241,6 +258,13 @@ cmd_test() {
     ok "PASS -- $SELFTEST_ENGINE detected the EICAR test file."
     say ""
     return 0
+  fi
+  if [ -r "$CTR_CONF" ] && ctr_starting && ! ctr_alive; then
+    warn "The containerised engine is still starting -- clamd loads the signature"
+    warn "set before it binds its socket (~60-90s after a restart). This test used"
+    warn "$SELFTEST_ENGINE instead, which is not the engine that will do the work."
+    warn "Re-run it in a minute."
+    say ""
   fi
   bad "FAIL -- $SELFTEST_ENGINE did NOT detect the EICAR test file."
   say ""

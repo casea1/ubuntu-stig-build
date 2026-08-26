@@ -682,6 +682,8 @@ The host `clamav-daemon` is **stopped and masked**: it holds ~2 GB resident and 
 
 `dta-log`, `it-clamav test` and the weekly scan all prefer the containerised engine when its socket answers, fall back to the host daemon, then to standalone `clamscan`.
 
+**Allow ~60–90s after a restart.** clamd binds its socket only *after* loading the signature set, so a `systemctl restart clamav-container` followed immediately by `it-clamav test` finds no socket and silently falls back to the host engine — which reports FAIL for the usual FIPS reason and looks exactly like a broken container. `it-clamav test` now recognises that window and says so. Confirmed working on ASP-2, 2026-08-26: `PASS -- containerised clamd detected the EICAR test file`.
+
 **Air-gapped staging.** The pull cannot fetch the image on a fielded box. On an online one:
 
 ```bash
