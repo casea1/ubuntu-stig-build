@@ -25,6 +25,7 @@ it_scripts_common:
   - { file: stig-checklist.py,     link: it-ckl }
   - { file: stig-run.sh,           link: it-stig }
   - { file: clamav-sigs.sh,        link: it-clamav }
+  - { file: go-classified.sh,      link: it-goclassified }
 
 # AI profile only. Every one of these is written around the AI stack: the
 # Dockge stacks under /opt/stacks, the model volumes, or the cross-node wiring
