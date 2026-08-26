@@ -168,6 +168,28 @@
                 mode: "0644"
               register: _cc_unit
 
+            # freshclam updates the host database; the scanner reads its own
+            # copy. Without this they diverge and the box reports current
+            # signatures while scanning with old ones.
+            - name: "CLAMAV-CTR | Signature sync units"
+              ansible.builtin.template:
+                src: "{{ item }}.j2"
+                dest: "/etc/systemd/system/{{ item }}"
+                owner: root
+                group: root
+                mode: "0644"
+              loop:
+                - clamav-container-sync.service
+                - clamav-container-sync.path
+              register: _cc_sync
+
+            - name: "CLAMAV-CTR | Watch the host database for freshclam updates"
+              ansible.builtin.systemd:
+                name: clamav-container-sync.path
+                enabled: true
+                state: "{{ 'restarted' if _cc_sync is changed else 'started' }}"
+                daemon_reload: true
+
             - name: "CLAMAV-CTR | Start the containerised daemon"
               ansible.builtin.systemd:
                 name: clamav-container
@@ -288,12 +310,15 @@
     - _cc_host is defined
     - (_cc_host.rc | default(1)) == 1 or not (clamav_container_enabled | default(true) | bool)
   block:
-    - name: "CLAMAV-CTR | Stop the containerised daemon"
+    - name: "CLAMAV-CTR | Stop the containerised daemon and its watcher"
       ansible.builtin.systemd:
-        name: clamav-container
+        name: "{{ item }}"
         state: stopped
         enabled: false
       failed_when: false
+      loop:
+        - clamav-container-sync.path
+        - clamav-container
 
     - name: "CLAMAV-CTR | Remove the unit and client config"
       ansible.builtin.file:
@@ -301,6 +326,8 @@
         state: absent
       loop:
         - /etc/systemd/system/clamav-container.service
+        - /etc/systemd/system/clamav-container-sync.service
+        - /etc/systemd/system/clamav-container-sync.path
         - "{{ clamav_container_client_conf }}"
         - /etc/clamav/container-image
       register: _cc_gone
