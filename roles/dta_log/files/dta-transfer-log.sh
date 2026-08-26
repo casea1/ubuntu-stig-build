@@ -91,6 +91,28 @@ sig_age() {  # -> "daily.cld 2026-08-20 (6 days old)" | "NO SIGNATURE DATABASE"
   [ "$age" -le 7 ]
 }
 
+# The engine can load every signature and still scan NOTHING. On a FIPS host,
+# OpenSSL refuses to initialise MD5 -- which is what ClamAV hashes with -- so
+# every file comes back OK with "Data scanned: 0 B". A record that says CLEAN
+# because the scanner was broken is worse than no record, so prove the engine
+# detects before trusting what it says about the payload.
+# The test string is assembled at runtime: written out whole, this file would
+# itself be flagged by every AV product that scanned the repo.
+engine_selftest() {  # engine(clamd|clamscan) -> 0 detects, 1 does not
+  local td out rc
+  td=$(mktemp -d /tmp/dta-canary.XXXXXX) || return 1
+  printf '%s%s' 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR' '-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' \
+    > "$td/canary"
+  if [ "$1" = clamd ]; then
+    out=$(clamdscan --fdpass --no-summary "$td/canary" 2>&1); rc=$?
+  else
+    out=$(clamscan --no-summary "$td/canary" 2>&1); rc=$?
+  fi
+  rm -rf "$td"
+  SELFTEST_OUT="$out"
+  [ "$rc" -eq 1 ]
+}
+
 ask_yn() {  # prompt default(Y|N) -> 0 yes / 1 no
   local p="$1" d="${2:-Y}" a hint="[Y/n]"
   [ "$d" = "N" ] && hint="[y/N]"
@@ -276,7 +298,29 @@ say "  Signatures: $SIG"
 
 SCAN_START=$(date +%s)
 ENGINE="NONE -- clamav is not installed"; SCAN_OUT="clamdscan/clamscan not found"; SCAN_RC=99
+SELFTEST="NOT RUN"; SELFTEST_OUT=""
+
+# Prove the engine detects anything at all before it is asked about the payload.
 if command -v clamdscan >/dev/null 2>&1 && systemctl is-active --quiet clamav-daemon 2>/dev/null; then
+  _st_engine=clamd
+elif command -v clamscan >/dev/null 2>&1; then
+  _st_engine=clamscan
+else
+  _st_engine=""
+fi
+if [ -n "$_st_engine" ]; then
+  if engine_selftest "$_st_engine"; then
+    SELFTEST="PASS -- engine detected the EICAR test file"
+  else
+    SELFTEST="FAIL -- engine did NOT detect the EICAR test file"
+  fi
+fi
+
+if [ "${SELFTEST#FAIL}" != "$SELFTEST" ]; then
+  ENGINE="$_st_engine (SELF-TEST FAILED -- payload NOT scanned)"
+  SCAN_OUT="$SELFTEST_OUT"
+  SCAN_RC=98
+elif command -v clamdscan >/dev/null 2>&1 && systemctl is-active --quiet clamav-daemon 2>/dev/null; then
   ENGINE="clamdscan (clamav-daemon)"
   # --fdpass hands the daemon an open descriptor, so it reads with THIS user's
   # rights. Without it the clamav user cannot read anything under 2770 root:dta.
@@ -285,7 +329,7 @@ fi
 # 0 = clean, 1 = infected; anything else is the scanner failing, most often a
 # clamd socket a non-admin account cannot open. Fall back rather than filing the
 # transfer as unscanned. `it-clamav check` reports the socket permissions.
-if [ "$SCAN_RC" -ge 2 ] && command -v clamscan >/dev/null 2>&1; then
+if [ "$SCAN_RC" -ge 2 ] && [ "$SCAN_RC" != 98 ] && command -v clamscan >/dev/null 2>&1; then
   [ "$SCAN_RC" = 99 ] || warn "  clamdscan could not scan (exit $SCAN_RC). Falling back to clamscan."
   ENGINE="clamscan (standalone -- loads signatures itself, slower)"
   say "  ${DIM}Loading signatures. This takes a minute.${R}"
@@ -298,9 +342,19 @@ INFECTED="${INFECTED:-0}"
 case "$SCAN_RC" in
   0)  VERDICT="CLEAN" ;;
   1)  VERDICT="INFECTED" ;;
+  98) VERDICT="ENGINE-FAULT" ;;
   99) VERDICT="SKIPPED" ;;
   *)  VERDICT="ERROR" ;;
 esac
+# Belt and braces: a clean result that scanned no bytes, or that logged a hash
+# failure, is not a clean result.
+if [ "$VERDICT" = CLEAN ]; then
+  if printf '%s' "$SCAN_OUT" | grep -qiE 'error initializing|hash context'; then
+    VERDICT="ENGINE-FAULT"; SCAN_RC=98
+  elif printf '%s' "$SCAN_OUT" | grep -qE '^Data scanned: 0 '; then
+    VERDICT="ENGINE-FAULT"; SCAN_RC=98
+  fi
+fi
 
 say ""
 printf '%s\n' "$SCAN_OUT" | sed 's/^/  /'
@@ -308,6 +362,11 @@ say ""
 case "$VERDICT" in
   CLEAN)    say "  ${GRN}${B}CLEAN${R} -- 0 infected files." ;;
   INFECTED) say "  ${RED}${B}INFECTED${R} -- $INFECTED file(s). ${RED}Do not transfer. Notify the ISSO.${R}" ;;
+  ENGINE-FAULT)
+
+            say "  ${RED}${B}ENGINE FAULT${R} -- ClamAV is loaded but is not detecting anything."
+            say "  ${RED}The payload was NOT scanned. Do not transfer. Tell an admin to run"
+            say "  \`sudo it-clamav test\` on this box.${R}" ;;
   SKIPPED)  warn "  NOT SCANNED -- clamav is not available on this box." ;;
   *)        warn "  SCANNER ERROR (exit $SCAN_RC). Treat as unscanned." ;;
 esac
@@ -339,6 +398,7 @@ FIN_EPOCH=$(date +%s)
   printf '   Started                 : %s\n' "$(date -u -d "@$SCAN_START" '+%Y-%m-%d %H:%M:%S UTC')"
   printf '   Finished                : %s (%ss)\n' \
     "$(date -u -d "@$SCAN_END" '+%Y-%m-%d %H:%M:%S UTC')" "$((SCAN_END - SCAN_START))"
+  printf '   Engine self-test        : %s\n' "$SELFTEST"
   printf '   Result                  : %s (%s infected, scanner exit %s)\n' "$VERDICT" "$INFECTED" "$SCAN_RC"
   printf '   ---- scanner output ----\n'
   printf '%s\n' "$SCAN_OUT" | sed 's/^/   /'
@@ -347,6 +407,9 @@ FIN_EPOCH=$(date +%s)
   case "$VERDICT" in
     CLEAN)    printf 'Outcome          : APPROVED TO TRANSFER -- scan clean.\n' ;;
     INFECTED) printf 'Outcome          : BLOCKED -- malware detected. Do not transfer; notify the ISSO.\n' ;;
+    ENGINE-FAULT)
+              printf 'Outcome          : BLOCKED -- the scanner failed its own detection test, so it\n'
+              printf '                   cannot vouch for this payload. NOT scanned. Do not transfer.\n' ;;
     *)        printf 'Outcome          : INCOMPLETE -- payload was not scanned successfully.\n' ;;
   esac
   printf '\n'

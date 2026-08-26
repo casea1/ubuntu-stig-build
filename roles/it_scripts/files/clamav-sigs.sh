@@ -9,6 +9,7 @@
 #   it-clamav check              ...the same thing
 #   it-clamav list               archives waiting in /opt/it/clamavsigs
 #   it-clamav install [ARCHIVE]  install the newest archive (or the one named)
+#   it-clamav test               does the engine actually DETECT? (EICAR)
 #   it-clamav rollback           put the previous signature set back
 #   --force                      install even if it is not newer than what is on disk
 #   --no-test                    skip the EICAR detection test
@@ -60,8 +61,63 @@ installed_version() {  # base (daily|main|bytecode) -> version number, or empty
   done
 }
 
-daemon_db_version() {  # what the RUNNING daemon reports, not what is on disk
-  clamdscan --version 2>/dev/null | awk -F/ '{print $2; exit}'
+daemon_db_version() {  # what the RUNNING daemon reports, or empty
+  # clamd can have the VERSION command disabled, in which case clamdscan falls
+  # back to printing the LOCAL version -- which says nothing about what the
+  # daemon loaded. Detect that and report nothing rather than something wrong.
+  local out
+  out=$(clamdscan --version 2>&1) || return 1
+  printf '%s' "$out" | grep -qi 'VERSION command disabled' && return 1
+  printf '%s' "$out" | awk -F/ 'NF>1 {print $2; exit}'
+}
+
+# The authoritative check: does the engine actually DETECT? A FIPS host is the
+# reason this exists -- OpenSSL there refuses to initialise MD5, which is what
+# ClamAV hashes with, so the engine loads every signature and then scans zero
+# bytes, reporting every file OK. Assembled at runtime so this file does not
+# itself trip an AV scan of the repo.
+engine_selftest() {  # -> 0 detects, 1 does not.  Sets SELFTEST_ENGINE/SELFTEST_OUT
+  local td rc
+  td=$(mktemp -d /tmp/clamav-test.XXXXXX) || return 1
+  printf '%s%s' 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR' '-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' \
+    > "$td/canary"
+  if clamdscan --ping 1 >/dev/null 2>&1; then
+    SELFTEST_ENGINE="clamdscan (daemon)"
+    SELFTEST_OUT=$(clamdscan --fdpass "$td/canary" 2>&1); rc=$?
+  else
+    SELFTEST_ENGINE="clamscan (standalone)"
+    SELFTEST_OUT=$(clamscan "$td/canary" 2>&1); rc=$?
+  fi
+  rm -rf "$td"
+  [ "$rc" -eq 1 ]
+}
+
+cmd_test() {
+  head2 "Engine detection test"
+  if ! command -v clamscan >/dev/null 2>&1; then bad "clamav is not installed."; exit 1; fi
+  if engine_selftest; then
+    ok "PASS -- $SELFTEST_ENGINE detected the EICAR test file."
+    say ""
+    return 0
+  fi
+  bad "FAIL -- $SELFTEST_ENGINE did NOT detect the EICAR test file."
+  say ""
+  printf '%s\n' "$SELFTEST_OUT" | sed 's/^/    /'
+  say ""
+  # The single most likely cause on these boxes, and it is silent: the scan
+  # reports OK for everything instead of erroring out.
+  if printf '%s' "$SELFTEST_OUT" | grep -qiE 'error initializing|hash context' \
+     || [ "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null)" = 1 ]; then
+    bad "This host is in FIPS mode. MD5 is not a FIPS-approved algorithm, and it is"
+    bad "what ClamAV hashes with -- so the engine loads its signatures and then"
+    bad "scans nothing, reporting every file clean. ANTIVIRUS IS NOT WORKING."
+    say ""
+    say "  Confirm the cause:"
+    say "    cat /proc/sys/crypto/fips_enabled          # 1 = FIPS on"
+    say "    openssl md5 /etc/hostname                  # fails in FIPS mode"
+    say "    OPENSSL_CONF=/dev/null sudo it-clamav test # passes => FIPS is the cause"
+  fi
+  exit 1
 }
 
 age_days() { echo $(( ( $(date +%s) - $(stat -c %Y "$1") ) / 86400 )); }
@@ -109,6 +165,18 @@ cmd_check() {
   if [ "$fstate" = active ]; then
     warn "  freshclam is running. On an air-gapped box it cannot reach anything;"
     warn "  on a connected one it will overwrite manually installed signatures."
+  fi
+
+  head2 "Engine detection test"
+  if command -v clamscan >/dev/null 2>&1; then
+    if engine_selftest; then
+      ok "PASS -- $SELFTEST_ENGINE detected the EICAR test file"
+    else
+      bad "FAIL -- $SELFTEST_ENGINE did NOT detect the EICAR test file"
+      bad "The engine is loaded but scanning nothing. Run: it-clamav test"
+    fi
+  else
+    bad "clamav is not installed"
   fi
 
   head2 "Scanner socket (can a non-admin DTA use the daemon?)"
@@ -262,7 +330,10 @@ cmd_install() {
       exit 1
     fi
     local dv iv; dv=$(daemon_db_version); iv=$(installed_version daily)
-    if [ -n "$dv" ] && [ "$dv" = "$iv" ]; then
+    if [ -z "$dv" ]; then
+      warn "the daemon will not report its database version (VERSION command disabled)."
+      warn "the detection test below is what confirms the reload."
+    elif [ "$dv" = "$iv" ]; then
       ok "daemon is serving daily version $dv -- matches what was just installed"
     else
       bad "daemon reports '$dv' but '$iv' is on disk. The reload did not take."
@@ -278,21 +349,11 @@ cmd_install() {
   # assembled at runtime: written out whole, this file would itself trip every
   # AV product that scanned the repo.
   if [ "$DO_TEST" = 1 ]; then
-    local td; td=$(mktemp -d /tmp/clamav-test.XXXXXX)
-    printf '%s%s' 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR' '-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' \
-      > "$td/testfile"
-    local out rc
-    if clamdscan --ping 1 >/dev/null 2>&1; then
-      out=$(clamdscan --fdpass --no-summary "$td/testfile" 2>&1); rc=$?
+    if engine_selftest; then
+      ok "detection test passed -- $SELFTEST_ENGINE flagged the EICAR test file"
     else
-      out=$(clamscan --no-summary "$td/testfile" 2>&1); rc=$?
-    fi
-    rm -rf "$td"
-    if [ "$rc" -eq 1 ]; then
-      ok "detection test passed -- the engine flagged the EICAR test file"
-    else
-      bad "detection test FAILED (exit $rc): $out"
-      bad "The database loaded but the engine is not detecting. Roll back and investigate."
+      bad "detection test FAILED -- the database loaded but the engine detects nothing."
+      bad "Run `it-clamav test` for the likely cause. Roll back with: it-clamav rollback"
       exit 1
     fi
   fi
@@ -330,7 +391,7 @@ while [ $# -gt 0 ]; do
     -h|--help) usage; exit 0 ;;
     --force)   FORCE=1; shift ;;
     --no-test) DO_TEST=0; shift ;;
-    check|list|install|rollback) CMD="$1"; shift ;;
+    check|list|install|rollback|test) CMD="$1"; shift ;;
     -*) die "unknown option: $1  (try --help)" ;;
     *)  [ -z "$CMD" ] && die "unknown command: $1  (try --help)"; ARG="$1"; shift ;;
   esac
@@ -341,4 +402,5 @@ case "${CMD:-check}" in
   list)     head2 "Archives in $SIG_SRC"; cmd_list ;;
   install)  cmd_install "$ARG" ;;
   rollback) cmd_rollback ;;
+  test)     cmd_test ;;
 esac

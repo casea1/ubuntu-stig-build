@@ -635,6 +635,8 @@ Only one is ever installed; switching methods removes the other.
 
 `freshclam` cannot reach anything once the box is off the network, so signatures come in by hand. Drop the archive in `/opt/it/clamavsigs` and run the installer:
 
+> **Check that the engine actually detects — `sudo it-clamav test`.** ClamAV can load every signature and then scan *nothing*. On a **FIPS host** OpenSSL refuses to initialise MD5, which is what ClamAV hashes with, so every file comes back `OK` with `Data scanned: 0 B` and a `cli_scan_fmap: Error initializing md5 hash context` line buried in the output. It does not exit non-zero and it does not stop the daemon — antivirus is simply not working while every report says clean. `it-clamav test` scans an EICAR file and fails loudly if it is not detected; `it-clamav check` runs it too. `dta-log` runs the same test before it scans a payload and records `ENGINE-FAULT` rather than `CLEAN` if it fails.
+
 ```bash
 sudo it-clamav                       # what is installed, how old, is the daemon serving it
 sudo it-clamav list                  # archives waiting in /opt/it/clamavsigs
