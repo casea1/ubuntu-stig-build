@@ -99,6 +99,38 @@ engine_selftest() {  # -> 0 detects, 1 does not.  Sets SELFTEST_ENGINE/SELFTEST_
   [ "$rc" -eq 1 ]
 }
 
+# Where the FIPS carve-out stands on THIS box. `it-clamav test` failing after a
+# pull means one of these is not what it should be, and guessing which wastes a
+# round trip -- so print all four.
+carveout_report() {
+  local conf=/etc/clamav/openssl-clamav.cnf
+  head2 "FIPS carve-out"
+  printf '  kernel FIPS mode         : %s\n' "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null || echo '?')"
+
+  if [ -r "$conf" ]; then ok "config present            : $conf"
+  else bad "config MISSING           : $conf (clamav_fips role did not apply -- see the pull output)"; fi
+
+  if [ -r "$conf" ]; then
+    if OPENSSL_CONF="$conf" openssl md5 /dev/null >/dev/null 2>&1; then
+      ok "config restores MD5      : yes"
+    else
+      bad "config does NOT restore MD5"
+      bad "  This OpenSSL build will not give up FIPS via OPENSSL_CONF, so the"
+      bad "  carve-out cannot work as written. Raise it -- the box has no antivirus."
+    fi
+  fi
+
+  local env
+  env=$(systemctl show clamav-daemon -p Environment --value 2>/dev/null)
+  if printf '%s' "$env" | grep -q 'OPENSSL_CONF'; then
+    ok "daemon has the config    : $env"
+  else
+    bad "daemon does NOT have it  : ${env:-<none>}"
+    bad "  clamdscan hands scanning to the daemon, so the daemon is what needs it."
+    bad "  Fix: systemctl daemon-reload && systemctl restart clamav-daemon"
+  fi
+}
+
 cmd_test() {
   head2 "Engine detection test"
   if ! command -v clamscan >/dev/null 2>&1; then bad "clamav is not installed."; exit 1; fi
@@ -110,6 +142,25 @@ cmd_test() {
   bad "FAIL -- $SELFTEST_ENGINE did NOT detect the EICAR test file."
   say ""
   printf '%s\n' "$SELFTEST_OUT" | sed 's/^/    /'
+
+  # Separate "the daemon is misconfigured" from "the engine cannot scan at all".
+  # Only the daemon path was tried above; clamscan hashes in its own process.
+  if [ "$SELFTEST_ENGINE" = "clamdscan (daemon)" ]; then
+    head2 "Second opinion: standalone clamscan (hashes in its own process)"
+    local td rc
+    td=$(mktemp -d /tmp/clamav-test2.XXXXXX)
+    printf '%s%s' 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR' '-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > "$td/canary"
+    clamscan --no-summary "$td/canary" >/dev/null 2>&1; rc=$?
+    rm -rf "$td"
+    if [ "$rc" -eq 1 ]; then
+      ok "clamscan DOES detect. The engine is fine -- it is the DAEMON that is not"
+      ok "picking up the carve-out. Restart it: systemctl restart clamav-daemon"
+    else
+      bad "clamscan does not detect either. The engine itself cannot scan."
+    fi
+  fi
+
+  carveout_report
   say ""
   # Leave a canary behind so the operator can re-run the check by hand.
   CANARY_HINT=/run/clamav-canary
@@ -129,8 +180,11 @@ cmd_test() {
     say "    openssl md5 /etc/hostname                   # fails in FIPS mode"
     say "    OPENSSL_CONF=/dev/null clamscan $CANARY_HINT"
     say ""
-    say "  The fix is the clamav_fips role: it points the clamav processes alone"
-    say "  at an OpenSSL config that has MD5. Run an ansible-pull, then re-test."
+    say ""
+    say "  The clamav_fips role applies the carve-out on every pull. If the report"
+    say "  above shows it present and working but the daemon still does not detect,"
+    say "  restart the daemon. If the config does not restore MD5, this OpenSSL"
+    say "  build cannot be talked out of FIPS and the fix needs rethinking."
   fi
   exit 1
 }
