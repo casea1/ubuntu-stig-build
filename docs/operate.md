@@ -150,6 +150,7 @@ The rows marked **ai only** are the AI-stack tooling. They are placed on the `ai
 | `it-stack-diff` | `stack-diff.sh` | Shows how `/opt/stacks/` on this box differs from what the repo would deploy: a unified diff per `compose.yaml`, the full file for a stack the repo does not know about, and any `compose.override.yaml`. Use it to capture on-box edits **before** the next pull overwrites them (gotcha 2). Reads no `.env` — only reports that one exists — so the output is safe to paste. `--full`, `--out FILE`, or a single stack name. *(ai only)* |
 | `it-stig` | `stig-run.sh` | The whole STIG evidence cycle in one command: `status` (what is staged, what is missing, when it last ran), `run` (scan + checklist), `scan`, `checklist`, `archive` (tar the evidence set for hand-off). Wraps `it-oscap` and `it-ckl` and checks prerequisites before running anything. |
 | `it-clamav` | `clamav-sigs.sh` | **Manual ClamAV signature updates** for air-gapped boxes, plus `test` (does the engine actually detect an EICAR file?) and `image-save`/`image-load` for staging the containerised scanner image. `check` (default) reports installed databases, their age, whether the digital signature verifies, whether the running daemon is actually serving what is on disk, and whether a non-admin DTA can reach the scanner socket. `install` takes the newest `*.tar.gz` from `/opt/it/clamavsigs` — validating and version-checking it **before** touching the live database, backing up, then confirming with the daemon's own reported version and an EICAR detection test. `rollback` restores the previous set. `--force` allows a same/older version, `--no-test` skips the detection test. |
+| `it-goclassified` | `go-classified.sh` | **Pre-classification gate.** Runs before a box holds classified data: machine-checks Secure Boot, FIPS, the GRUB password and whether every boot entry is `--unrestricted`, LUKS, base-image accounts, whether any interactive password still dates from imaging day, radios, USBGuard, **whether antivirus actually detects**, and OpenSCAP/checklist evidence — then puts the things the OS cannot see (BIOS admin password, boot order, LUKS rotation, TPM re-seal, media removed) to the operator as attestations recorded against their name. Writes the record to `/opt/ia/goclassified/`. `--report` for machine checks only. Exit 0 only when nothing failed and nothing is left open. |
 | `it-ckl` | `stig-checklist.py` | Builds a DISA STIG checklist (`.cklb` / `.ckl`) from the manual STIG XCCDF + the SCAP results + the repo's adjudications, with asset fields filled in. `--summary` lists what still needs a human. See [compliance.md](compliance.md#building-the-stig-checklist-it-ckl). |
 | `it-powerstrux` | `run-powerstrux.sh` | Runs the PowerStrux LA audit (`pwsh -NoProfile -File Initiate-PowerstruxLA.ps1`), logs to `/opt/_AuditFiles/logs/`, and reports where the HTML landed. Auditors double-click **PowerStrux Audit** in the app menu instead. Runs weekly on its own — **Wednesday 03:00**, `powerstrux-audit.timer`. `status` shows the schedule, last run and next run; `schedule "<spec>"` changes it — writing both the live timer **and** `/opt/it/site.yml`, so a pull does not revert it — and `enable`/`disable` turn the weekly run off and on. `--where` prints the paths without running anything. |
 | `dta-log` | `dta-transfer-log.sh` | **DTA transfer record.** Asks the approval / DTA name / transfer-type questions, auto-detects the most recent folder under `/opt/dta/incoming` or `/opt/dta/outgoing` for the operator to confirm (or takes a typed path), scans it with ClamAV, and writes a dated record plus a sha256 manifest to `/opt/dta/logs`. `list` / `show last` review past records; `--no-hash` skips the manifest on a large transfer. Runs **as the DTA**, not root, so the record names a person — hence `/usr/local/bin`, not `sbin`. Also **Data Transfer Record** in the app menu. *(profiles with a `dta` group)* |
@@ -735,6 +736,26 @@ Two checks decide whether it worked, and both have to pass:
 Either check failing exits non-zero and tells you to roll back. `--no-test` skips the second one.
 
 `it-clamav check` also reports whether `clamav-freshclam` is running — on a connected box it will overwrite manually installed signatures, and on an air-gapped one it just fails on a timer.
+
+### Going classified (`it-goclassified`)
+
+The gate a box passes through before it holds classified data. Run it on the bench, with the box in the state it will be fielded in:
+
+```bash
+sudo it-goclassified            # walk the gate, answering the attestations
+sudo it-goclassified --report   # machine checks only, no prompts, nothing written
+```
+
+Every item lands in one of four states. **PASS** and **FAIL** are machine-verified. **ATTEST** is a step the OS cannot see — a BIOS admin password, whether the LUKS passphrase was actually rotated, whether the notes came off the bench — answered by the operator and recorded against their name and the time. **OPEN** is anything not confirmed, which includes an attestation answered "no" — saying no does not quietly pass.
+
+Exit is 0 only when nothing failed and nothing is open, so it can gate a script.
+
+The record goes to `/opt/ia/goclassified/<host>-<timestamp>.txt`. That file is the artefact for the ISSM: it says which checks passed on this box, on this date, and who attested the rest. It is evidence the steps were done, not a substitute for the SSP.
+
+Two checks are worth calling out because they are the ones a "looks fine" box fails:
+
+- **Antivirus is tested, not polled.** It runs `it-clamav test` rather than asking whether a daemon is up — on a FIPS box the daemon runs happily and detects nothing (see the ClamAV section above).
+- **Interactive passwords are compared to the imaging date.** Any account whose last password change is the day the box was imaged is still on its build password, and that fails.
 
 ### Data transfers (`dta-log`)
 

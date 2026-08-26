@@ -1364,3 +1364,4 @@ managed_dirs:
   - "{{ it_dir }}"
   - "{{ it_dir }}/installers"   # staging area for installer files/archives (admin-only)
   - "{{ it_dir }}/clamavsigs"   # drop ClamAV signature archives here, then `it-clamav install`
+  - "{{ ia_dir }}/goclassified" # pre-classification gate records (it-goclassified)

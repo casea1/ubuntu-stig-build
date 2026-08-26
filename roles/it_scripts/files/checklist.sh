@@ -49,14 +49,24 @@ if [ -s /etc/issue.net ] && [ "$b" != none ] && [ -n "$b" ]; then
   row PASS 3 "Banners + last login" "banner=$b printlastlog=${l:-?}"
 else row FAIL 3 "Banners + last login" "issue.net or sshd Banner missing (banner=${b:-none})"; fi
 
-# 4 anti-virus + signature freshness (air-gapped boxes go stale)
-if active clamav-daemon; then
-  d=$(find /var/lib/clamav -name '*.c[vl]d' -printf '%T@\n' 2>/dev/null | sort -rn | head -1)
+# 4 anti-virus: does it actually DETECT, plus signature freshness.
+# NOT "is clamav-daemon running" -- on a FIPS box that daemon runs happily and
+# detects nothing (clamav#1786), and where the containerised engine took over it
+# is masked on purpose. it-clamav test settles it either way.
+if have it-clamav; then
+  dbdir=/var/lib/clamav
+  [ -d /var/lib/clamav-container ] && [ -r /etc/clamav/clamd-container.conf ] \
+    && dbdir=/var/lib/clamav-container
+  d=$(find "$dbdir" -name '*.c[vl]d' -printf '%T@\n' 2>/dev/null | sort -rn | head -1)
   age=$([ -n "$d" ] && echo $(( ( $(date +%s) - ${d%.*} ) / 86400 )) || echo "?")
-  [ "$age" != "?" ] && [ "$age" -le 30 ] 2>/dev/null \
-    && row PASS 4 "Anti-virus" "clamav-daemon active, signatures ${age}d old" \
-    || row FAIL 4 "Anti-virus" "clamav-daemon active but signatures ${age}d old (>30d / unknown)"
-else row FAIL 4 "Anti-virus" "clamav-daemon not active"; fi
+  if ! it-clamav test >/dev/null 2>&1; then
+    row FAIL 4 "Anti-virus" "engine does NOT detect the EICAR test file -- a clean scan means nothing"
+  elif [ "$age" != "?" ] && [ "$age" -le 30 ] 2>/dev/null; then
+    row PASS 4 "Anti-virus" "detects; signatures ${age}d old"
+  else
+    row FAIL 4 "Anti-virus" "detects, but signatures ${age}d old (>30d / unknown) -- it-clamav install"
+  fi
+else row FAIL 4 "Anti-virus" "it-clamav not installed"; fi
 
 # 5 password policy -- USG owns this; report the evidence source
 [ -f /etc/security/pwquality.conf ] && [ -f /etc/security/faillock.conf ] \
