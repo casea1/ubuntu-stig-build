@@ -8,4 +8,5 @@
   ansible.builtin.systemd:
     name: clamav-daemon
     state: restarted
-  failed_when: false      # freshclam may not have primed a database yet on first run
+  failed_when: false      # first run: freshclam may not have primed a database yet.
+                          # Also masked where clamav_container owns scanning.

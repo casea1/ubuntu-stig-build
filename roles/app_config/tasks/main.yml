@@ -69,12 +69,36 @@
   notify: restart clamav-daemon
   when: clamav_run_daemon
 
+# clamav_container MASKS this unit on a box where the host engine cannot scan
+# (FIPS -- clamav#1786) and the containerised one took over. Enabling a masked
+# unit is a hard failure, which would abort the whole play on every subsequent
+# pull, so check first.
+- name: Is the host clamav-daemon masked (containerised engine in use)?
+  ansible.builtin.command: systemctl is-enabled clamav-daemon
+  register: _ac_clamd_enabled
+  changed_when: false
+  failed_when: false
+  when: clamav_run_daemon
+
 - name: Enable and start clamav-daemon
   ansible.builtin.systemd:
     name: clamav-daemon
     enabled: true
     state: started
-  when: clamav_run_daemon
+  when:
+    - clamav_run_daemon
+    - "'masked' not in (_ac_clamd_enabled.stdout | default('') ~ _ac_clamd_enabled.stderr | default(''))"
+
+- name: Host clamav-daemon is masked -- the containerised engine owns scanning
+  ansible.builtin.debug:
+    msg: >-
+      clamav-daemon is masked, so clamav_container is running the scanning
+      engine instead (the host engine cannot hash under FIPS -- clamav#1786).
+      Confirm with `sudo it-clamav test`. To go back to the host daemon:
+      set clamav_container_enabled false, then `systemctl unmask clamav-daemon`.
+  when:
+    - clamav_run_daemon
+    - "'masked' in (_ac_clamd_enabled.stdout | default('') ~ _ac_clamd_enabled.stderr | default(''))"
 
 # --- Scheduled full scan (weekly) -------------------------------------------
 - name: Deploy weekly clamav scan timer
