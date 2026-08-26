@@ -1363,3 +1363,4 @@ managed_dirs:
   - "{{ scap_stig_evidence_dir }}"
   - "{{ it_dir }}"
   - "{{ it_dir }}/installers"   # staging area for installer files/archives (admin-only)
+  - "{{ it_dir }}/clamavsigs"   # drop ClamAV signature archives here, then `it-clamav install`

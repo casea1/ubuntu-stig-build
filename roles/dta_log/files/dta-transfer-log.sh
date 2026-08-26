@@ -275,17 +275,21 @@ say "  Signatures: $SIG"
 [ "${SIG_STALE:-0}" = 1 ] && warn "  Signatures are stale or missing. Record it on the transfer form."
 
 SCAN_START=$(date +%s)
+ENGINE="NONE -- clamav is not installed"; SCAN_OUT="clamdscan/clamscan not found"; SCAN_RC=99
 if command -v clamdscan >/dev/null 2>&1 && systemctl is-active --quiet clamav-daemon 2>/dev/null; then
   ENGINE="clamdscan (clamav-daemon)"
   # --fdpass hands the daemon an open descriptor, so it reads with THIS user's
   # rights. Without it the clamav user cannot read anything under 2770 root:dta.
   SCAN_OUT=$(clamdscan --fdpass --infected "$SRC" 2>&1); SCAN_RC=$?
-elif command -v clamscan >/dev/null 2>&1; then
+fi
+# 0 = clean, 1 = infected; anything else is the scanner failing, most often a
+# clamd socket a non-admin account cannot open. Fall back rather than filing the
+# transfer as unscanned. `it-clamav check` reports the socket permissions.
+if [ "$SCAN_RC" -ge 2 ] && command -v clamscan >/dev/null 2>&1; then
+  [ "$SCAN_RC" = 99 ] || warn "  clamdscan could not scan (exit $SCAN_RC). Falling back to clamscan."
   ENGINE="clamscan (standalone -- loads signatures itself, slower)"
-  say "  ${DIM}clamav-daemon is not running; loading signatures. This takes a minute.${R}"
+  say "  ${DIM}Loading signatures. This takes a minute.${R}"
   SCAN_OUT=$(clamscan -r --infected "$SRC" 2>&1); SCAN_RC=$?
-else
-  ENGINE="NONE -- clamav is not installed"; SCAN_OUT="clamdscan/clamscan not found"; SCAN_RC=99
 fi
 SCAN_END=$(date +%s)
 

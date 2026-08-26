@@ -16,7 +16,7 @@ This is a fast indicator — the authoritative evidence is `usg audit disa_stig`
 | 1 | AD integration (SSSD) | **N/A** | Local accounts by design; the SSSD/smartcard STIG rules are de-selected as a documented deviation (`usg_disable_smartcard_rules`). No directory service on these networks. | `getent passwd \| tail` |
 | 2 | No root via SSH | **Met** | Set by `usg fix disa_stig`. | `sshd -T \| grep -i permitrootlogin` |
 | 3 | DCSA banners + last login | **Met** | `classification_banner` role + SSH banner drop-in + GDM banner. | `sshd -T \| grep -iE 'banner\|printlastlog'` |
-| 4 | Anti-virus | **Met** | ClamAV on all profiles (daemon + weekly scan). Docker volumes excluded — scanning 60 GB of model weights is pointless I/O. **Signatures go stale air-gapped**; staging CVDs over USB is open. | `systemctl is-active clamav-daemon` |
+| 4 | Anti-virus | **Met** | ClamAV on all profiles (daemon + weekly scan). Docker volumes excluded — scanning 60 GB of model weights is pointless I/O. Signatures go stale air-gapped; **`it-clamav install` is the manual path** — drop a signature `tar.gz` in `/opt/it/clamavsigs`, it validates the CVD digital signature before installing and confirms with an EICAR test. | `sudo it-clamav check` |
 | 5 | Password complexity / lockout | **Met** | USG `disa_stig`. | `sudo usg audit disa_stig` |
 | 6 | Audit rules incl. reboot | **Met** | USG auditd rules. | `auditctl -l \| wc -l` |
 | 7 | BIOS hardened + password | **Manual** | Per-box hardware step; not automatable. | Check at POST |
