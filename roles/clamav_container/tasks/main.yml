@@ -310,6 +310,27 @@
     - _cc_host is defined
     - (_cc_host.rc | default(1)) == 1 or not (clamav_container_enabled | default(true) | bool)
   block:
+    # The container has been the one getting signature updates, so its database
+    # is the current one. Hand it back BEFORE the host daemon starts, or the box
+    # switches to whatever /var/lib/clamav was left holding -- possibly the
+    # imaging-day set.
+    - name: "CLAMAV-CTR | Hand the current database back to the host"
+      ansible.builtin.shell:
+        cmd: >-
+          set -e;
+          for f in {{ clamav_container_db_dir }}/*.cvd {{ clamav_container_db_dir }}/*.cld; do
+            [ -f "$f" ] || continue;
+            b=$(basename "$f"); base=${b%.*};
+            if [ "$f" -nt "/var/lib/clamav/$b" ] || [ ! -f "/var/lib/clamav/$b" ]; then
+              rm -f "/var/lib/clamav/$base.cvd" "/var/lib/clamav/$base.cld";
+              install -o clamav -g clamav -m 0644 "$f" "/var/lib/clamav/$b";
+            fi;
+          done
+      register: _cc_handback
+      changed_when: true
+      failed_when: false
+      when: clamav_container_db_dir is defined
+
     - name: "CLAMAV-CTR | Stop the containerised daemon and its watcher"
       ansible.builtin.systemd:
         name: "{{ item }}"
@@ -339,5 +360,17 @@
         enabled: true
         state: started
         daemon_reload: true
+      register: _cc_unmasked
+      failed_when: false
+
+    - name: "CLAMAV-CTR | Handed back to the host engine"
+      ansible.builtin.debug:
+        msg: >-
+          The host ClamAV detects again, so the containerised engine was removed
+          and clamav-daemon unmasked. The container's signature database was
+          copied back to /var/lib/clamav first. Confirm with `sudo it-clamav test`.
+          The image and {{ clamav_container_db_dir }} are left on disk -- remove
+          them with `sudo it-clamav revert --purge` once you are satisfied.
+      when: _cc_gone is changed
       failed_when: false
       when: _cc_gone is changed

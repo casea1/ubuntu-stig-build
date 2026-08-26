@@ -13,6 +13,8 @@
 #   it-clamav image-save <dir>   AIR-GAP: save the scanner image to a USB
 #   it-clamav image-load <dir>   AIR-GAP: load it on the fielded box
 #   it-clamav sync               copy freshclam's host database to the scanner
+#   it-clamav revert [--purge]   hand scanning back to the host engine once
+#                                a fixed clamav is installed (clamav#1786)
 #   it-clamav rollback           put the previous signature set back
 #   --force                      install even if it is not newer than what is on disk
 #   --no-test                    skip the EICAR detection test
@@ -30,6 +32,7 @@ BACKUP_ROOT=/var/backups/clamav
 LOG=/var/log/clamav-sig-install.log
 FORCE=0
 DO_TEST=1
+PURGE=0
 
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
@@ -246,6 +249,87 @@ cmd_sync() {
       && ok "scanner reloaded" || warn "reload failed -- systemctl restart clamav-container"
   fi
   logline "sync: copied $n file(s) from /var/lib/clamav"
+  say ""
+}
+
+# ---- go back to the host engine ---------------------------------------------
+# The containerised engine exists only because the host one cannot hash under
+# FIPS (clamav#1786). When that is fixed -- a patched clamav lands, or the box
+# stops being FIPS -- this hands scanning back. An ansible-pull does the same
+# thing automatically; this is for doing it now, on an air-gapped box, right
+# after installing a .deb by hand.
+cmd_revert() {
+  [ -r "$CTR_CONF" ] || { say "No containerised engine on this box; nothing to revert."; exit 0; }
+
+  head2 "Checking the host engine before handing anything back"
+  local td rc
+  td=$(mktemp -d /tmp/clamav-revert.XXXXXX)
+  printf '%s%s' 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR' '-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > "$td/canary"
+  clamscan --no-summary "$td/canary" >/dev/null 2>&1; rc=$?
+  rm -rf "$td"
+  if [ "$rc" -ne 1 ]; then
+    bad "The HOST clamscan still does not detect the EICAR test file (exit $rc)."
+    bad "Reverting now would leave this box with no working antivirus."
+    say ""
+    say "  Install a fixed clamav first, then re-run this. On an air-gapped box:"
+    say "    sudo apt install ./clamav_<version>_amd64.deb ./libclamav*.deb"
+    say "    sudo it-clamav revert"
+    exit 1
+  fi
+  ok "host clamscan detects the EICAR test file"
+
+  # The container has had the signature updates, so its database is the current
+  # one. Hand it back before the host daemon starts on whatever it was left with.
+  head2 "Handing the current database back to the host"
+  local f b base n=0
+  for f in "$DB_DIR"/*.cvd "$DB_DIR"/*.cld; do
+    [ -f "$f" ] || continue
+    b=$(basename "$f"); base="${b%.*}"
+    if [ "$f" -nt "/var/lib/clamav/$b" ] || [ ! -f "/var/lib/clamav/$b" ]; then
+      rm -f "/var/lib/clamav/$base.cvd" "/var/lib/clamav/$base.cld"
+      install -o clamav -g clamav -m 0644 "$f" "/var/lib/clamav/$b" \
+        && { ok "$b"; n=$((n + 1)); }
+    fi
+  done
+  [ "$n" = 0 ] && say "  host database already current"
+
+  head2 "Removing the containerised engine"
+  systemctl disable --now clamav-container-sync.path >/dev/null 2>&1
+  systemctl disable --now clamav-container >/dev/null 2>&1
+  rm -f /etc/systemd/system/clamav-container.service \
+        /etc/systemd/system/clamav-container-sync.service \
+        /etc/systemd/system/clamav-container-sync.path \
+        "$CTR_CONF"
+  systemctl daemon-reload
+  ok "units and client config removed"
+
+  systemctl unmask clamav-daemon >/dev/null 2>&1
+  systemctl enable --now clamav-daemon >/dev/null 2>&1
+  ok "clamav-daemon unmasked and started"
+
+  head2 "Confirming the host engine is doing the work"
+  local i=0
+  while [ $i -lt 90 ]; do clamdscan --ping=1 >/dev/null 2>&1 && break; i=$((i + 1)); sleep 1; done
+  # CTR_CONF is gone now, so engine_selftest picks the host daemon on its own.
+  if engine_selftest; then
+    ok "PASS -- $SELFTEST_ENGINE detected the EICAR test file"
+  else
+    bad "FAIL -- $SELFTEST_ENGINE did NOT detect it. The box has no working antivirus."
+    bad "Put the container back with an ansible-pull, or investigate before relying on scans."
+    exit 1
+  fi
+
+  if [ "$PURGE" = 1 ]; then
+    head2 "Purging"
+    [ -n "$CTR_IMAGE" ] && { docker rmi "$CTR_IMAGE" >/dev/null 2>&1 && ok "image $CTR_IMAGE removed"; }
+    rm -f /etc/clamav/container-image
+    rm -rf /var/lib/clamav-container && ok "/var/lib/clamav-container removed"
+  else
+    say ""
+    say "  ${DIM}The image and /var/lib/clamav-container are still on disk."
+    say "  Remove them with: it-clamav revert --purge${R}"
+  fi
+  logline "revert: handed scanning back to the host engine"
   say ""
 }
 
@@ -667,7 +751,8 @@ while [ $# -gt 0 ]; do
     -h|--help) usage; exit 0 ;;
     --force)   FORCE=1; shift ;;
     --no-test) DO_TEST=0; shift ;;
-    check|list|install|rollback|test|sync|image-save|image-load) CMD="$1"; shift ;;
+    --purge)   PURGE=1; shift ;;
+    check|list|install|rollback|test|sync|revert|image-save|image-load) CMD="$1"; shift ;;
     -*) die "unknown option: $1  (try --help)" ;;
     *)  [ -z "$CMD" ] && die "unknown command: $1  (try --help)"; ARG="$1"; shift ;;
   esac
@@ -679,6 +764,7 @@ case "${CMD:-check}" in
   install)  cmd_install "$ARG" ;;
   rollback)   cmd_rollback ;;
   sync)       cmd_sync ;;
+  revert)     cmd_revert ;;
   test)       cmd_test ;;
   image-save) cmd_image_save "$ARG" ;;
   image-load) cmd_image_load "$ARG" ;;
