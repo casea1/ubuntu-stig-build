@@ -1,0 +1,26 @@
+# System 2 -- Prometheus scraper for the vLLM/docling /metrics endpoints.
+# Separate from the Prometheus inside grafana-otel: that one receives metrics
+# PUSHED over OTLP, this one PULLS from services that only expose a scrape
+# endpoint. Add it as a Grafana data source at http://prometheus:9090.
+# prometheus.yml is rendered next to this file by ansible.
+name: prometheus
+networks:
+  oi: { external: true }
+volumes:
+  prometheus-data: { external: true }
+services:
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    container_name: prometheus
+    # Resolves dev-ai1 in-container when SYSTEM1_ADDR is an IP; no-op otherwise.
+    extra_hosts:
+      - "${SYSTEM1_HOSTS_ENTRY:-localhost:127.0.0.1}"
+    ports: ["9091:9090"]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    networks: [oi]
+    restart: unless-stopped

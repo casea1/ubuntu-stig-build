@@ -60,6 +60,16 @@
         group: root
         mode: "0644"
       when: powerstrux_desktop_entry | default(true) | bool
+      register: _ps_desktop
+
+    # GNOME reads the desktop DATABASE, not the directory. Without this the
+    # launcher can stay out of the app grid until the next reboot -- which is
+    # exactly what happened when this role first shipped.
+    - name: "POWERSTRUX | Refresh the desktop database"
+      ansible.builtin.command: update-desktop-database /usr/share/applications
+      changed_when: false
+      failed_when: false
+      when: _ps_desktop is changed
 
     # ---- schedule ---------------------------------------------------------
     - name: "POWERSTRUX | Scheduled audit ({{ powerstrux_schedule_method }})"

@@ -1,7 +1,7 @@
 # System 1 -- Open WebUI: the chat/RAG front end (:3000).
-# pgvector and redis are separate stacks, so there is no depends_on -- start them
-# first (`it-ai up` does). Open WebUI retries until they appear. Values come from
-# the sibling root-only .env; no secrets live in this file.
+# pgvector, pgbouncer and redis are separate stacks, so there is no depends_on --
+# start them first (`it-ai up` does). Open WebUI retries until they appear. Values
+# come from the sibling root-only .env; no secrets live in this file.
 name: open-webui
 networks:
   oi: { external: true }
@@ -17,10 +17,10 @@ services:
     volumes:
       - open-webui:/app/backend/data
     environment:
-      DATABASE_URL: "postgresql://postgres:${POSTGRES_PASSWORD:?set in .env}@pgvector:5432/openwebui"
+      DATABASE_URL: "postgresql://postgres:${POSTGRES_PASSWORD:?set in .env}@pg-bouncer:5432/openwebui"
       AIOHTTP_CLIENT_TIMEOUT: "6000"
       VECTOR_DB: "pgvector"
-      VECTOR_DB_URL: "postgresql://postgres:${POSTGRES_PASSWORD:?set in .env}@pgvector:5432/openwebui"
+      VECTOR_DB_URL: "postgresql://postgres:${POSTGRES_PASSWORD:?set in .env}@pg-bouncer:5432/openwebui"
       ENV: "dev"
       # Chat: local vLLM via the `chat-llm` alias (survives a model switch) + vision on S2.
       OPENAI_API_BASE_URLS: "http://chat-llm:8000/v1;http://${SYSTEM2_ADDR:?set in .env}:8003/v1"
@@ -63,10 +63,14 @@ services:
       OTEL_LOGS_EXPORTER_OTLP: "http://${SYSTEM2_ADDR:?set in .env}:4317"
       OTEL_LOGS_EXPORTER_OTLP_INSECURE: "true"
       OTEL_METRICS_EXPORT_INTERVAL_MILLIS: "10000"
-      DATABASE_POOL_SIZE: "15"
-      DATABASE_POOL_MAX_OVERFLOW: "20"
+      # Per-worker pool, sized against PgBouncer's 400-client ceiling:
+      # 9 workers x (12 + 18) = 270 connections, leaving headroom for other clients.
+      DATABASE_POOL_SIZE: "12"
+      DATABASE_POOL_MAX_OVERFLOW: "18"
       DATABASE_ENABLE_SESSION_SHARING: "true"
-      DATABASE_POOL_TIMEOUT: "60"
+      DATABASE_POOL_TIMEOUT: "90"
+      DATABASE_POOL_RECYCLE: "1800"
+      DATABASE_POOL_PRE_PING: "true"
       WEBUI_SECRET_KEY: "${WEBUI_SECRET_KEY:?set in .env}"
       REDIS_URL: "redis://redis:6379/0"
       ENABLE_WEBSOCKET_SUPPORT: "true"

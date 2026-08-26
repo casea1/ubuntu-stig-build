@@ -19,6 +19,10 @@ services:
     environment:
       TIKTOKEN_ENCODINGS_BASE: "/etc/encodings"
       TIKTOKEN_RS_CACHE_DIR: "/etc/encodings"
+      # Traces -> the LGTM stack on System 2. SYSTEM2_ADDR comes from .env, so
+      # `it-set-ip --peer` renumbers this with everything else.
+      OTEL_SERVICE_NAME: "vllm-server"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://${SYSTEM2_ADDR:?set in .env}:4317"
     command:
       - --model=/gpt120b
       - --served-model-name=gpt-oss-120b
@@ -29,6 +33,7 @@ services:
       - --enable-auto-tool-choice
       - --tool-call-parser=openai
       - '--override-generation-config={"temperature": 1.0, "top_p": 1.0, "repetition_penalty": 1.1}'
+      - "--otlp-traces-endpoint=http://${SYSTEM2_ADDR:?set in .env}:4317"
     networks:
       oi:
         aliases: [chat-llm]

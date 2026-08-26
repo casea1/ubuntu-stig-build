@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Data Transfer Record
+GenericName=DTA Transfer Log
+Comment=Record a data transfer, scan the files, and write the audit record
+# Terminal=true is deliberate: the tool is a question-and-answer session and the
+# DTA has to read the scan result. A silent graphical launch would look like
+# nothing happened.
+Terminal=true
+Exec=/usr/local/bin/dta-log
+Icon=drive-removable-media
+Categories=System;Security;FileTools;
+Keywords=dta;transfer;data;log;clamav;scan;record;

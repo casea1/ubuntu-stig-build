@@ -110,6 +110,8 @@ it-set-ip --peer 10.0.5.20             #   ...just repoint the cross-node/peer I
 it-set-ip --self 10.0.5.11/24 --gateway 10.0.5.1 --dns 10.0.5.2   # ...this box's own static IP (netplan)
 it-model-export /mnt/usb [--images]    # AIR-GAP gather (online box): models+encodings (+images) -> USB
 it-model-import /mnt/usb [--images]    # AIR-GAP install (fielded box): USB -> external volumes
+it-stack-diff                          # what the engineers changed in /opt/stacks vs the repo baseline
+it-stack-diff --out /tmp/stacks.txt    #   ...also write it to a file to send back
 
 # The AI stack is split into one Dockge stack per service under /opt/stacks/<stack>/:
 it-ai status                           # what's running / healthy across all stacks
@@ -145,9 +147,12 @@ The rows marked **ai only** are the AI-stack tooling. They are placed on the `ai
 | `it-set-ip` | `set-ip.sh` | Renumber the node when it leaves the lab: repoints the peer/cross-node IP (`site.yml` + `.env` + `/etc/hosts` + ufw + recreates containers) and/or this box's own static IP via netplan. Interactive or `--peer` / `--self`. *(ai only)* |
 | `it-model-export` | `model-export.sh` | **Air-gap gather side** (online box): `hf download` the models + tiktoken encodings (+ `--images` to `docker save` the containers) onto a USB with a manifest. Completeness-checked. *(ai only)* |
 | `it-model-import` | `model-import.sh` | **Air-gap install side** (fielded box): read the USB manifest and load models/encodings straight into their external Docker volumes (+ `--images` to `docker load`). No internet/repo/helper-image needed. *(ai only)* |
+| `it-stack-diff` | `stack-diff.sh` | Shows how `/opt/stacks/` on this box differs from what the repo would deploy: a unified diff per `compose.yaml`, the full file for a stack the repo does not know about, and any `compose.override.yaml`. Use it to capture on-box edits **before** the next pull overwrites them (gotcha 2). Reads no `.env` — only reports that one exists — so the output is safe to paste. `--full`, `--out FILE`, or a single stack name. *(ai only)* |
 | `it-stig` | `stig-run.sh` | The whole STIG evidence cycle in one command: `status` (what is staged, what is missing, when it last ran), `run` (scan + checklist), `scan`, `checklist`, `archive` (tar the evidence set for hand-off). Wraps `it-oscap` and `it-ckl` and checks prerequisites before running anything. |
+| `it-clamav` | `clamav-sigs.sh` | **Manual ClamAV signature updates** for air-gapped boxes. `check` (default) reports installed databases, their age, whether the digital signature verifies, whether the running daemon is actually serving what is on disk, and whether a non-admin DTA can reach the scanner socket. `install` takes the newest `*.tar.gz` from `/opt/it/clamavsigs` — validating and version-checking it **before** touching the live database, backing up, then confirming with the daemon's own reported version and an EICAR detection test. `rollback` restores the previous set. `--force` allows a same/older version, `--no-test` skips the detection test. |
 | `it-ckl` | `stig-checklist.py` | Builds a DISA STIG checklist (`.cklb` / `.ckl`) from the manual STIG XCCDF + the SCAP results + the repo's adjudications, with asset fields filled in. `--summary` lists what still needs a human. See [compliance.md](compliance.md#building-the-stig-checklist-it-ckl). |
 | `it-powerstrux` | `run-powerstrux.sh` | Runs the PowerStrux LA audit (`pwsh -NoProfile -File Initiate-PowerstruxLA.ps1`), logs to `/opt/_AuditFiles/logs/`, and reports where the HTML landed. Auditors double-click **PowerStrux Audit** in the app menu instead. Runs weekly on its own — **Wednesday 03:00**, `powerstrux-audit.timer`. `status` shows the schedule, last run and next run; `schedule "<spec>"` changes it — writing both the live timer **and** `/opt/it/site.yml`, so a pull does not revert it — and `enable`/`disable` turn the weekly run off and on. `--where` prints the paths without running anything. |
+| `dta-log` | `dta-transfer-log.sh` | **DTA transfer record.** Asks the approval / DTA name / transfer-type questions, auto-detects the most recent folder under `/opt/dta/incoming` or `/opt/dta/outgoing` for the operator to confirm (or takes a typed path), scans it with ClamAV, and writes a dated record plus a sha256 manifest to `/opt/dta/logs`. `list` / `show last` review past records; `--no-hash` skips the manifest on a large transfer. Runs **as the DTA**, not root, so the record names a person — hence `/usr/local/bin`, not `sbin`. Also **Data Transfer Record** in the app menu. *(profiles with a `dta` group)* |
 | `it-inventory` | `it-inventory.sh` | Writes `/opt/it/inventory-<host>.txt`: service tag, BIOS, DIMM/SSD serials, MACs, GPU, LVM/LUKS layout. |
 
 ### If something's wrong (things we've already handled in the tool)
@@ -625,6 +630,67 @@ It runs as **root**, not `auto_audit`: `oscap` needs to read privileged configur
 | `cron` | `/etc/cron.d/oscap-scan` — literal "crontab" compliance if an assessor greps for it. A run missed while powered off is lost. |
 
 Only one is ever installed; switching methods removes the other.
+
+### ClamAV signatures on an air-gapped box (`it-clamav`)
+
+`freshclam` cannot reach anything once the box is off the network, so signatures come in by hand. Drop the archive in `/opt/it/clamavsigs` and run the installer:
+
+> **Check that the engine actually detects — `sudo it-clamav test`.** ClamAV can load every signature and then scan *nothing*. On a **FIPS host** OpenSSL refuses to initialise MD5, which is what ClamAV hashes with, so every file comes back `OK` with `Data scanned: 0 B` and a `cli_scan_fmap: Error initializing md5 hash context` line buried in the output. It does not exit non-zero and it does not stop the daemon — antivirus is simply not working while every report says clean. `it-clamav test` scans an EICAR file and fails loudly if it is not detected; `it-clamav check` runs it too. `dta-log` runs the same test before it scans a payload and records `ENGINE-FAULT` rather than `CLEAN` if it fails.
+
+```bash
+sudo it-clamav                       # what is installed, how old, is the daemon serving it
+sudo it-clamav list                  # archives waiting in /opt/it/clamavsigs
+sudo it-clamav install               # install the newest one
+sudo it-clamav install /path/to.tar.gz
+sudo it-clamav rollback              # put the previous set back
+```
+
+The archive is extracted to a temp directory and **validated before the live database is touched**. A `.cvd` carries a digital signature from the ClamAV project, and `sigtool --info` verifies it — so a file altered on the media it travelled on is rejected rather than installed. Versions are compared against what is already on disk and a downgrade needs `--force`.
+
+Only then does it back up `/var/lib/clamav` to `/var/backups/clamav/<timestamp>/`, stop the services, install, and restart. It never leaves a `.cvd` and a `.cld` of the same database side by side — clamd loads one of them and not necessarily the newer one.
+
+Two checks decide whether it worked, and both have to pass:
+
+1. The **daemon's own reported version** (`clamdscan --version`, which asks the running process) has to match what was just written to disk. A daemon that did not reload reports the old number.
+2. An **EICAR detection test** through the daemon. The database can load cleanly and the engine still not detect; this proves it does.
+
+Either check failing exits non-zero and tells you to roll back. `--no-test` skips the second one.
+
+`it-clamav check` also reports whether `clamav-freshclam` is running — on a connected box it will overwrite manually installed signatures, and on an air-gapped one it just fails on a timer.
+
+### Data transfers (`dta-log`)
+
+Files move through `/opt/dta`, and every transfer gets a record. The folders are `2770 root:dta`, so only the `dta` group can see or stage anything in them:
+
+| Path | What |
+|---|---|
+| `/opt/dta/incoming` | files arriving on this box |
+| `/opt/dta/outgoing` | files staged to leave |
+| `/opt/dta/logs` | one record per transfer + `transfers.tsv` index |
+
+Run it **as the DTA account**, not with sudo — the whole point is that the record names the person who did the transfer:
+
+```bash
+dta-log                      # walk through a transfer and write the record
+dta-log list                 # the last 15 transfers, one line each
+dta-log show last            # the full record for the most recent one
+dta-log --dir /media/usb/x   # skip the folder prompt
+dta-log --no-hash            # skip the sha256 manifest on a very large transfer
+```
+
+Or double-click **Data Transfer Record** in the app menu.
+
+It asks five things in order: whether the low-side form is approved by the AO and the ISSM/ISSO; the DTA's name; the transfer type (**L2H** or **H2H**); which folder is moving; and then it scans that folder.
+
+The folder question is answered for you where it can be: `dta-log` finds the most recently modified file under `incoming` and `outgoing`, shows the parent folder with a file count, size and timestamp, and asks you to confirm. Say no and you can type any path.
+
+The scan uses `clamdscan --fdpass` when `clamav-daemon` is up and falls back to `clamscan`. **`--fdpass` is not optional** — it hands the daemon an already-open descriptor so it reads with the DTA's rights; without it the `clamav` user cannot read anything under a `2770 root:dta` folder and every scan fails with a permission error.
+
+The record captures the answers, both timestamps, the scanner engine, **the signature database date and age**, the full scanner output, and a sha256 manifest of every file. Signature age matters here more than usual: on an air-gapped box `freshclam` cannot reach anything, so the tool prints a warning above the scan and writes the age into the record rather than quietly scanning with year-old signatures.
+
+Two outcomes end the run early. Answering **no** to the approval question writes an `ABORTED` record and stops — the attempt is still on file. A scan that comes back **INFECTED** writes a `BLOCKED` record and exits non-zero.
+
+`/opt/dta/logs` is `3770` — setgid so records inherit the group, and **sticky** so one DTA cannot delete another's record. That is not tamper-proofing against root; the audit rules cover that separately.
 
 ### USB device allow-listing (`it-usb`)
 
