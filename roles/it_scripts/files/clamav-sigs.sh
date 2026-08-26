@@ -146,6 +146,27 @@ engine_selftest() {  # -> 0 detects, 1 does not.  Sets SELFTEST_ENGINE/SELFTEST_
   [ "$rc" -eq 1 ]
 }
 
+# When the containerised daemon is configured but not answering, the useful
+# information is in the container's own log and in the unit state -- not in
+# anything the host tools can infer. Print it here rather than sending the
+# operator away for another round trip.
+container_postmortem() {
+  local state
+  state=$(systemctl is-active clamav-container 2>/dev/null || echo unknown)
+  printf '\n  %sclamav-container unit : %s%s\n' "$DIM" "$state" "$R"
+  say "  ${DIM}--- docker ps -a ---${R}"
+  docker ps -a --filter name=clamav-container \
+    --format '  {{.Names}}  {{.Status}}  {{.Image}}' 2>&1 | sed 's/^/  /' | head -5
+  say "  ${DIM}--- docker logs (last 30) ---${R}"
+  docker logs --tail 30 clamav-container 2>&1 | sed 's/^/  /' | head -40
+  say "  ${DIM}--- socket directory ---${R}"
+  ls -la "$(dirname "$(awk '/^LocalSocket[[:space:]]/{print $2; exit}' "$CTR_CONF" 2>/dev/null)")" 2>&1 \
+    | sed 's/^/  /' | head -8
+  say "  ${DIM}--- systemctl status (last 15) ---${R}"
+  systemctl --no-pager --lines=15 status clamav-container 2>&1 | sed 's/^/  /' | head -25
+  say ""
+}
+
 # Which engine this box actually scans with, and why. `it-clamav test` failing
 # means one of these is not what it should be, and guessing which wastes a round
 # trip -- so print all of it.
@@ -166,7 +187,7 @@ engine_report() {
       ok "                      socket answering"
     else
       bad "                      socket NOT answering"
-      bad "                      systemctl status clamav-container"
+      container_postmortem
     fi
   elif [ "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null)" = 1 ]; then
     bad "containerised clamd : NOT configured, and this box needs it"

@@ -53,13 +53,17 @@
           Standing up {{ clamav_container_image }} as a containerised clamd instead.
           Host kernel stays in FIPS mode; only the scanning engine moves.
 
-    - name: "CLAMAV-CTR | Socket directory"
+    # 1777, i.e. /tmp semantics -- because that is literally what this directory
+    # becomes inside the container. clamd there runs as the image's unprivileged
+    # `clamav` user and has to CREATE its socket in it; at 0755 root:root it
+    # cannot, and the socket simply never appears.
+    - name: "CLAMAV-CTR | Socket directory (becomes the container's /tmp)"
       ansible.builtin.file:
         path: "{{ clamav_container_sock_dir }}"
         state: directory
         owner: root
         group: root
-        mode: "0755"
+        mode: "1777"
 
     # The image's entrypoint chowns its database directory to the container's
     # clamav user, so it cannot be the host's /var/lib/clamav -- the two would
