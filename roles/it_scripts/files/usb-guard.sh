@@ -168,8 +168,20 @@ case "${1:-help}" in
     serial="${3:-}"
     rule="allow id $id"
     [ -n "$serial" ] && rule="$rule serial \"$serial\""
-    if grep -qF "allow id $id" "$RULES" 2>/dev/null; then
-      echo "Already trusted: $id"; exit 0
+    # Match the EXACT rule, not just the id. A serial-scoped rule for one unit
+    # must not make a second unit of the same model look already-trusted: on
+    # ASP-2 that left the replacement WriteBlocker unauthorised, and because it
+    # gives up and disconnects after six seconds, `it-usb blocked` showed
+    # nothing by the time anyone looked.
+    if grep -qF "$rule" "$RULES" 2>/dev/null; then
+      echo "Already trusted: $rule"; exit 0
+    fi
+    existing=$(grep -F "allow id $id" "$RULES" 2>/dev/null)
+    if [ -n "$existing" ]; then
+      echo "Note: $id is already covered by a NARROWER rule:"
+      printf '%s\n' "$existing" | sed 's/^/  /'
+      echo "Adding this one as well."
+      echo
     fi
     cp -a "$RULES" "$RULES.bak-$(date +%Y%m%d-%H%M%S)"
     usbguard append-rule "$rule" || die "append-rule failed"
