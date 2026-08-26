@@ -170,9 +170,16 @@ cmd_test() {
   # reports OK for everything instead of erroring out.
   if printf '%s' "$SELFTEST_OUT" | grep -qiE 'error initializing|hash context' \
      || [ "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null)" = 1 ]; then
-    bad "This host is in FIPS mode. MD5 is not a FIPS-approved algorithm, and it is"
-    bad "what ClamAV hashes with -- so the engine loads its signatures and then"
-    bad "scans nothing, reporting every file clean. ANTIVIRUS IS NOT WORKING."
+    bad "This host is in FIPS mode. MD5 is not FIPS-approved and it is what ClamAV"
+    bad "hashes file content with, so the engine loads every signature and then"
+    bad "cannot evaluate any of the MD5-based ones. The EICAR test file is NOT"
+    bad "detected. DO NOT TREAT A CLEAN RESULT FROM THIS BOX AS MEANINGFUL."
+    say ""
+    bad "This is upstream bug Cisco-Talos/clamav#1786 -- open, no fix. It is not"
+    bad "something this repo can configure around: Ubuntu's FIPS OpenSSL takes FIPS"
+    bad "from the kernel flag, so even OPENSSL_CONF=/dev/null cannot restore MD5"
+    bad "(verified on ASP-2). --fips-limits and FIPSCryptoHashLimits do not help"
+    bad "either. See the POA&M in docs/operate.md for the options."
     say ""
     say "  Confirm the cause (as root -- sudo strips the variable, and it has to"
     say "  be clamscan: with clamdscan the DAEMON does the hashing, not the client):"
@@ -181,10 +188,9 @@ cmd_test() {
     say "    OPENSSL_CONF=/dev/null clamscan $CANARY_HINT"
     say ""
     say ""
-    say "  The clamav_fips role applies the carve-out on every pull. If the report"
-    say "  above shows it present and working but the daemon still does not detect,"
-    say "  restart the daemon. If the config does not restore MD5, this OpenSSL"
-    say "  build cannot be talked out of FIPS and the fix needs rethinking."
+    say "  The clamav_fips role still tries the carve-out on every pull and removes"
+    say "  it again when it does not work, so it costs nothing and will start"
+    say "  working by itself if Ubuntu or ClamAV ever fix this."
   fi
   exit 1
 }
