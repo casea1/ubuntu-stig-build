@@ -86,7 +86,15 @@
       Description=Weekly ClamAV full filesystem scan
       [Service]
       Type=oneshot
-      ExecStart=/usr/bin/clamscan -r -i / {{ clamav_scan_exclude_args }} --log=/var/log/clamav/weekly-scan.log
+      # clamd-container.conf exists only where the host engine cannot scan
+      # (FIPS -- clamav#1786); clamdscan --fdpass then routes to the
+      # containerised engine. Falls back to host clamscan everywhere else.
+      ExecStart=/bin/sh -c 'if [ -r /etc/clamav/clamd-container.conf ]; then \
+        exec clamdscan -c /etc/clamav/clamd-container.conf --fdpass -i --recursive / \
+          >>/var/log/clamav/weekly-scan.log 2>&1; \
+        else \
+        exec /usr/bin/clamscan -r -i / {{ clamav_scan_exclude_args }} --log=/var/log/clamav/weekly-scan.log; \
+        fi'
   when: clamav_run_daemon
 
 - name: Deploy weekly clamav scan timer unit

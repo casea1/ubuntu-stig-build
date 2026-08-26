@@ -10,6 +10,8 @@
 #   it-clamav list               archives waiting in /opt/it/clamavsigs
 #   it-clamav install [ARCHIVE]  install the newest archive (or the one named)
 #   it-clamav test               does the engine actually DETECT? (EICAR)
+#   it-clamav image-save <dir>   AIR-GAP: save the scanner image to a USB
+#   it-clamav image-load <dir>   AIR-GAP: load it on the fielded box
 #   it-clamav rollback           put the previous signature set back
 #   --force                      install even if it is not newer than what is on disk
 #   --no-test                    skip the EICAR detection test
@@ -26,10 +28,34 @@ DO_TEST=1
 
 # On a FIPS host OpenSSL refuses to initialise MD5, which ClamAV -- and sigtool,
 # which verifies the CVD signatures -- depend on. The clamav_fips role writes
-# this config (default provider only) after proving it works; use it if present.
+# this config after proving it works; on Ubuntu FIPS it cannot, and the file is
+# absent. Use it wherever it does exist.
 if [ -r /etc/clamav/openssl-clamav.cnf ]; then
   export OPENSSL_CONF=/etc/clamav/openssl-clamav.cnf
 fi
+
+# Where the containerised engine lives, when clamav_container has stood one up.
+CTR_CONF=/etc/clamav/clamd-container.conf
+CTR_IMAGE=""
+[ -r /etc/clamav/container-image ] && CTR_IMAGE=$(cat /etc/clamav/container-image)
+
+# sigtool verifies a CVD's digital signature, which needs MD5. Where the host
+# cannot do MD5 but a container image is staged, run sigtool in there instead --
+# otherwise every archive would be rejected as unverifiable.
+SIGTOOL_MODE=native
+if ! openssl md5 /dev/null >/dev/null 2>&1 && [ -n "$CTR_IMAGE" ]; then
+  SIGTOOL_MODE=container
+fi
+
+sigtool_info() {  # file -> `sigtool --info` output
+  if [ "$SIGTOOL_MODE" = container ]; then
+    docker run --rm --network none --security-opt no-new-privileges \
+      -v "$(cd "$(dirname "$1")" && pwd):/w:ro" "$CTR_IMAGE" \
+      sigtool --info "/w/$(basename "$1")" 2>/dev/null
+  else
+    sigtool --info "$1" 2>/dev/null
+  fi
+}
 
 if [ -t 1 ]; then
   B=$'\e[1m'; DIM=$'\e[2m'; R=$'\e[0m'
@@ -53,9 +79,9 @@ usage() { awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
 # reason to use it instead of `ls` -- it proves the archive was not altered on
 # the media it travelled on.
 sig_field() {  # file field -> value
-  sigtool --info "$1" 2>/dev/null | awk -F': ' -v k="$2" '$1==k {print $2; exit}'
+  sigtool_info "$1" | awk -F': ' -v k="$2" '$1==k {print $2; exit}'
 }
-sig_verified() { sigtool --info "$1" 2>/dev/null | grep -q '^Verification OK'; }
+sig_verified() { sigtool_info "$1" | grep -q '^Verification OK'; }
 
 db_files() {  # the signature files currently installed
   find "$DB_DIR" -maxdepth 1 -type f \( -name '*.cvd' -o -name '*.cld' \) 2>/dev/null | sort
@@ -88,8 +114,13 @@ engine_selftest() {  # -> 0 detects, 1 does not.  Sets SELFTEST_ENGINE/SELFTEST_
   td=$(mktemp -d /tmp/clamav-test.XXXXXX) || return 1
   printf '%s%s' 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR' '-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' \
     > "$td/canary"
-  if clamdscan --ping 1 >/dev/null 2>&1; then
-    SELFTEST_ENGINE="clamdscan (daemon)"
+  # Same order of preference as dta-log, so the test reflects what a transfer
+  # would actually use.
+  if [ -r "$CTR_CONF" ] && clamdscan -c "$CTR_CONF" --ping 1 >/dev/null 2>&1; then
+    SELFTEST_ENGINE="containerised clamd"
+    SELFTEST_OUT=$(clamdscan -c "$CTR_CONF" --fdpass "$td/canary" 2>&1); rc=$?
+  elif clamdscan --ping 1 >/dev/null 2>&1; then
+    SELFTEST_ENGINE="clamdscan (host daemon)"
     SELFTEST_OUT=$(clamdscan --fdpass "$td/canary" 2>&1); rc=$?
   else
     SELFTEST_ENGINE="clamscan (standalone)"
@@ -99,36 +130,70 @@ engine_selftest() {  # -> 0 detects, 1 does not.  Sets SELFTEST_ENGINE/SELFTEST_
   [ "$rc" -eq 1 ]
 }
 
-# Where the FIPS carve-out stands on THIS box. `it-clamav test` failing after a
-# pull means one of these is not what it should be, and guessing which wastes a
-# round trip -- so print all four.
-carveout_report() {
-  local conf=/etc/clamav/openssl-clamav.cnf
-  head2 "FIPS carve-out"
-  printf '  kernel FIPS mode         : %s\n' "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null || echo '?')"
+# Which engine this box actually scans with, and why. `it-clamav test` failing
+# means one of these is not what it should be, and guessing which wastes a round
+# trip -- so print all of it.
+engine_report() {
+  head2 "Scanning engine"
+  printf '  kernel FIPS mode    : %s\n' "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null || echo '?')"
 
-  if [ -r "$conf" ]; then ok "config present            : $conf"
-  else bad "config MISSING           : $conf (clamav_fips role did not apply -- see the pull output)"; fi
-
-  if [ -r "$conf" ]; then
-    if OPENSSL_CONF="$conf" openssl md5 /dev/null >/dev/null 2>&1; then
-      ok "config restores MD5      : yes"
-    else
-      bad "config does NOT restore MD5"
-      bad "  This OpenSSL build will not give up FIPS via OPENSSL_CONF, so the"
-      bad "  carve-out cannot work as written. Raise it -- the box has no antivirus."
-    fi
-  fi
-
-  local env
-  env=$(systemctl show clamav-daemon -p Environment --value 2>/dev/null)
-  if printf '%s' "$env" | grep -q 'OPENSSL_CONF'; then
-    ok "daemon has the config    : $env"
+  if openssl md5 /dev/null >/dev/null 2>&1; then
+    ok "host OpenSSL MD5    : available"
   else
-    bad "daemon does NOT have it  : ${env:-<none>}"
-    bad "  clamdscan hands scanning to the daemon, so the daemon is what needs it."
-    bad "  Fix: systemctl daemon-reload && systemctl restart clamav-daemon"
+    warn "host OpenSSL MD5    : REFUSED (FIPS). The host ClamAV cannot hash file"
+    warn "                      content, so it detects nothing -- clamav#1786."
   fi
+
+  if [ -r "$CTR_CONF" ]; then
+    ok "containerised clamd : configured (${CTR_IMAGE:-image unknown})"
+    if clamdscan -c "$CTR_CONF" --ping 1 >/dev/null 2>&1; then
+      ok "                      socket answering"
+    else
+      bad "                      socket NOT answering"
+      bad "                      systemctl status clamav-container"
+    fi
+  elif [ "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null)" = 1 ]; then
+    bad "containerised clamd : NOT configured, and this box needs it"
+    bad "                      The clamav_container role stands it up on a pull."
+    bad "                      Air-gapped? Stage the image: it-clamav image-load <dir>"
+  fi
+
+  printf '  sigtool runs        : %s\n' "$SIGTOOL_MODE"
+}
+
+# ---- air-gap image staging --------------------------------------------------
+cmd_image_save() {
+  local dir="${1:?usage: it-clamav image-save <dir>}"
+  [ -n "$CTR_IMAGE" ] || CTR_IMAGE="clamav/clamav:1.4.3"
+  command -v docker >/dev/null 2>&1 || die "docker is not installed."
+  mkdir -p "$dir" || die "cannot write to $dir"
+  head2 "Saving $CTR_IMAGE"
+  docker image inspect "$CTR_IMAGE" >/dev/null 2>&1 || {
+    say "  not on this box; pulling"
+    docker pull "$CTR_IMAGE" || die "pull failed"
+  }
+  local out="$dir/clamav-image.tar"
+  docker save "$CTR_IMAGE" -o "$out" || die "docker save failed"
+  printf '%s\n' "$CTR_IMAGE" > "$dir/clamav-image.txt"
+  ok "$out  ($(du -h "$out" | cut -f1))"
+  ok "$dir/clamav-image.txt  ($CTR_IMAGE)"
+  say ""
+  say "  Carry both to the fielded box and run: it-clamav image-load $dir"
+  say ""
+}
+
+cmd_image_load() {
+  local dir="${1:?usage: it-clamav image-load <dir>}"
+  local tar="$dir/clamav-image.tar"
+  command -v docker >/dev/null 2>&1 || die "docker is not installed."
+  [ -f "$tar" ] || die "no clamav-image.tar in $dir"
+  head2 "Loading $(cat "$dir/clamav-image.txt" 2>/dev/null || echo 'the image')"
+  docker load -i "$tar" || die "docker load failed"
+  ok "loaded"
+  say ""
+  say "  Now run an ansible-pull so clamav_container starts the daemon,"
+  say "  then confirm with: it-clamav test"
+  say ""
 }
 
 cmd_test() {
@@ -160,7 +225,7 @@ cmd_test() {
     fi
   fi
 
-  carveout_report
+  engine_report
   say ""
   # Leave a canary behind so the operator can re-run the check by hand.
   CANARY_HINT=/run/clamav-canary
@@ -181,16 +246,16 @@ cmd_test() {
     bad "(verified on ASP-2). --fips-limits and FIPSCryptoHashLimits do not help"
     bad "either. See the POA&M in docs/operate.md for the options."
     say ""
-    say "  Confirm the cause (as root -- sudo strips the variable, and it has to"
-    say "  be clamscan: with clamdscan the DAEMON does the hashing, not the client):"
-    say "    cat /proc/sys/crypto/fips_enabled"
-    say "    openssl md5 /etc/hostname                   # fails in FIPS mode"
-    say "    OPENSSL_CONF=/dev/null clamscan $CANARY_HINT"
+    say "  THE FIX on this fleet is the containerised engine (clamav_container):"
+    say "  clamd runs in a container whose OpenSSL is a stock build, so MD5 works,"
+    say "  and the host kernel stays in FIPS mode. Scans go over its socket with"
+    say "  clamdscan --fdpass, so nothing is mounted into it and a DTA needs no"
+    say "  docker access. An ansible-pull stands it up."
     say ""
-    say ""
-    say "  The clamav_fips role still tries the carve-out on every pull and removes"
-    say "  it again when it does not work, so it costs nothing and will start"
-    say "  working by itself if Ubuntu or ClamAV ever fix this."
+    say "  Air-gapped, so the pull cannot fetch the image? On an online box:"
+    say "    sudo it-clamav image-save /mnt/usb"
+    say "  then here:"
+    say "    sudo it-clamav image-load /mnt/usb && sudo ansible-pull ... && sudo it-clamav test"
   fi
   exit 1
 }
@@ -466,7 +531,7 @@ while [ $# -gt 0 ]; do
     -h|--help) usage; exit 0 ;;
     --force)   FORCE=1; shift ;;
     --no-test) DO_TEST=0; shift ;;
-    check|list|install|rollback|test) CMD="$1"; shift ;;
+    check|list|install|rollback|test|image-save|image-load) CMD="$1"; shift ;;
     -*) die "unknown option: $1  (try --help)" ;;
     *)  [ -z "$CMD" ] && die "unknown command: $1  (try --help)"; ARG="$1"; shift ;;
   esac
@@ -477,5 +542,7 @@ case "${CMD:-check}" in
   list)     head2 "Archives in $SIG_SRC"; cmd_list ;;
   install)  cmd_install "$ARG" ;;
   rollback) cmd_rollback ;;
-  test)     cmd_test ;;
+  test)       cmd_test ;;
+  image-save) cmd_image_save "$ARG" ;;
+  image-load) cmd_image_load "$ARG" ;;
 esac

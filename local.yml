@@ -148,6 +148,14 @@
       when:
         - is_development or is_emi or is_ai
         - clamav_fips_carveout_enabled | default(true) | bool
+
+    # Runs after clamav_fips, which gets first refusal: if the OpenSSL carve-out
+    # ever works, the host engine is used and this is a no-op. On Ubuntu FIPS it
+    # cannot (clamav#1786), so clamd moves into a container instead.
+    - role: clamav_container        # containerised clamd when the host engine detects nothing
+      when:
+        - is_development or is_emi or is_ai
+        - clamav_container_enabled | default(true) | bool
     - role: dev_tools               # compilers/SDKs, /opt/eng-venv, VS Code extensions, docker.io (development + emi)
       when: is_development or is_emi
     - role: remote_desktop          # GNOME desktop + xrdp (RDP into the dev GUI); runs before hardening. development only -- emi/baseline are local-GUI.

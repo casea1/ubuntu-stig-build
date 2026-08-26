@@ -106,19 +106,51 @@ sig_age() {  # -> "daily.cld 2026-08-20 (6 days old)" | "NO SIGNATURE DATABASE"
 # detects before trusting what it says about the payload.
 # The test string is assembled at runtime: written out whole, this file would
 # itself be flagged by every AV product that scanned the repo.
-engine_selftest() {  # engine(clamd|clamscan) -> 0 detects, 1 does not
+engine_selftest() {  # engine name -> 0 detects, 1 does not
   local td out rc
   td=$(mktemp -d /tmp/dta-canary.XXXXXX) || return 1
   printf '%s%s' 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR' '-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' \
     > "$td/canary"
-  if [ "$1" = clamd ]; then
-    out=$(clamdscan --fdpass --no-summary "$td/canary" 2>&1); rc=$?
-  else
-    out=$(clamscan --no-summary "$td/canary" 2>&1); rc=$?
-  fi
+  out=$(scan_with "$1" --no-summary "$td/canary" 2>&1); rc=$?
   rm -rf "$td"
   SELFTEST_OUT="$out"
   [ "$rc" -eq 1 ]
+}
+
+# Which engine to use, in order of preference. On a FIPS host the host engine
+# cannot initialise MD5 and detects nothing, so clamav_container runs clamd in a
+# container whose OpenSSL is a stock build; its socket lands on the host and we
+# talk to it with the ordinary clamdscan client. --fdpass hands over a file
+# DESCRIPTOR, so the file never has to exist inside the container and the daemon
+# reads with this user's rights -- which is also why a DTA needs no docker access.
+CTR_CONF=/etc/clamav/clamd-container.conf
+pick_engine() {
+  if [ -r "$CTR_CONF" ] && clamdscan -c "$CTR_CONF" --ping 1 >/dev/null 2>&1; then
+    echo container
+  elif command -v clamdscan >/dev/null 2>&1 && systemctl is-active --quiet clamav-daemon 2>/dev/null; then
+    echo clamd
+  elif command -v clamscan >/dev/null 2>&1; then
+    echo clamscan
+  fi
+}
+
+scan_with() {  # engine, then clamscan-style args
+  local eng="$1"; shift
+  case "$eng" in
+    container) clamdscan -c "$CTR_CONF" --fdpass "$@" ;;
+    clamd)     clamdscan --fdpass "$@" ;;
+    clamscan)  clamscan -r "$@" ;;
+    *)         return 99 ;;
+  esac
+}
+
+engine_label() {
+  case "$1" in
+    container) echo "clamdscan -> containerised clamd (host engine cannot scan under FIPS)" ;;
+    clamd)     echo "clamdscan (host clamav-daemon)" ;;
+    clamscan)  echo "clamscan (standalone -- loads signatures itself, slower)" ;;
+    *)         echo "NONE -- clamav is not available" ;;
+  esac
 }
 
 ask_yn() {  # prompt default(Y|N) -> 0 yes / 1 no
@@ -305,43 +337,27 @@ say "  Signatures: $SIG"
 [ "${SIG_STALE:-0}" = 1 ] && warn "  Signatures are stale or missing. Record it on the transfer form."
 
 SCAN_START=$(date +%s)
-ENGINE="NONE -- clamav is not installed"; SCAN_OUT="clamdscan/clamscan not found"; SCAN_RC=99
+ENGINE="NONE -- clamav is not available"; SCAN_OUT="no usable scanner"; SCAN_RC=99
 SELFTEST="NOT RUN"; SELFTEST_OUT=""
 
-# Prove the engine detects anything at all before it is asked about the payload.
-if command -v clamdscan >/dev/null 2>&1 && systemctl is-active --quiet clamav-daemon 2>/dev/null; then
-  _st_engine=clamd
-elif command -v clamscan >/dev/null 2>&1; then
-  _st_engine=clamscan
-else
-  _st_engine=""
-fi
-if [ -n "$_st_engine" ]; then
-  if engine_selftest "$_st_engine"; then
+ENG=$(pick_engine)
+if [ -n "$ENG" ]; then
+  ENGINE=$(engine_label "$ENG")
+  # Prove the engine detects anything at all before it is asked about the payload.
+  if engine_selftest "$ENG"; then
     SELFTEST="PASS -- engine detected the EICAR test file"
   else
     SELFTEST="FAIL -- engine did NOT detect the EICAR test file"
   fi
 fi
 
-if [ "${SELFTEST#FAIL}" != "$SELFTEST" ]; then
-  ENGINE="$_st_engine (SELF-TEST FAILED -- payload NOT scanned)"
+if [ "$SELFTEST" != "${SELFTEST#FAIL}" ]; then
+  ENGINE="$ENGINE -- SELF-TEST FAILED, payload NOT scanned"
   SCAN_OUT="$SELFTEST_OUT"
   SCAN_RC=98
-elif command -v clamdscan >/dev/null 2>&1 && systemctl is-active --quiet clamav-daemon 2>/dev/null; then
-  ENGINE="clamdscan (clamav-daemon)"
-  # --fdpass hands the daemon an open descriptor, so it reads with THIS user's
-  # rights. Without it the clamav user cannot read anything under 2770 root:dta.
-  SCAN_OUT=$(clamdscan --fdpass --infected "$SRC" 2>&1); SCAN_RC=$?
-fi
-# 0 = clean, 1 = infected; anything else is the scanner failing, most often a
-# clamd socket a non-admin account cannot open. Fall back rather than filing the
-# transfer as unscanned. `it-clamav check` reports the socket permissions.
-if [ "$SCAN_RC" -ge 2 ] && [ "$SCAN_RC" != 98 ] && command -v clamscan >/dev/null 2>&1; then
-  [ "$SCAN_RC" = 99 ] || warn "  clamdscan could not scan (exit $SCAN_RC). Falling back to clamscan."
-  ENGINE="clamscan (standalone -- loads signatures itself, slower)"
-  say "  ${DIM}Loading signatures. This takes a minute.${R}"
-  SCAN_OUT=$(clamscan -r --infected "$SRC" 2>&1); SCAN_RC=$?
+elif [ -n "$ENG" ]; then
+  [ "$ENG" = clamscan ] && say "  ${DIM}Loading signatures. This takes a minute.${R}"
+  SCAN_OUT=$(scan_with "$ENG" --infected "$SRC" 2>&1); SCAN_RC=$?
 fi
 SCAN_END=$(date +%s)
 
