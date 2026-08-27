@@ -173,6 +173,9 @@ The ones worth knowing:
 | `usg_fix_pam_stack` | **false** | Regenerates `common-auth`. Off by choice — see [compliance.md](compliance.md) |
 | `usg_chrony_servers` | `ntp.ubuntu.com` | Set to your enclave's time server; an air-gapped box cannot reach a public pool |
 | `usg_faillock_unlock_time` | 900 | Seconds. `0` = admin reset only |
+| `usg_fix_log_permissions` | true | `/var/log` file modes (UBTU-24-700010). Swept at build time and daily by `stig-log-perms.timer` |
+| `usg_fix_library_group` | true | `chgrp root` on `*.so*` under the library dirs (UBTU-24-300009) |
+| `audit_cron_rules_enabled` | true | `72-cron.rules` — watch `/etc/cron.d` and the cron spool, key `cronjobs` (UBTU-24-200270) |
 | `grub_password_pbkdf2` | `CHANGEME` | The role skips until a real hash is vaulted |
 | `tpm_luks_enabled` | true except `emi-unclass` | Binds LUKS to PCR 7 |
 | `offline_repo_enabled` | false | Switch apt to `/srv/repo`. Set by `it-offline-repo enable` |

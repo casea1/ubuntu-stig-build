@@ -20,6 +20,10 @@ usg_ssh_banner_path: /etc/issue.net
 
 usg_fix_log_permissions: true
 
+# Apply the DISA fix for UBTU-24-300009 (chgrp root on any *.so* under
+# /lib, /lib64, /usr/lib, /usr/lib64 that is not already group root).
+usg_fix_library_group: true
+
 # --- Audited privileged commands (UBTU-24-900080 .. 900330) -----------------
 # `usg fix` writes rules for only part of the set the benchmark checks, so ~19
 # of these fail an otherwise clean audit. Every path here is exactly what the

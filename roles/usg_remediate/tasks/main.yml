@@ -279,6 +279,39 @@
         - _audit_dir.stat.isdir | default(false)
 
 # ---------------------------------------------------------------------------
+# 2b) SHARED LIBRARY GROUP OWNERSHIP -- UBTU-24-300009 / V-270699.
+# The DISA check is narrow and unambiguous:
+#   find /lib /lib64 /usr/lib /usr/lib64 -type f -name '*.so*' ! -group root
+# Any output is a finding. A shared object never needs a non-root group, so
+# applying the DISA fix verbatim is safe and self-healing on every pull.
+#
+# Do NOT widen this to every file under those directories. SSG's OVAL
+# (root_permissions_syslibrary_files) does exactly that, which is why it fails
+# here while the DISA check passes: Ubuntu ships setgid helpers such as
+# /usr/lib/x86_64-linux-gnu/utempter/utempter (group utmp) and
+# /usr/lib/dbus-1.0/dbus-daemon-launch-helper (group messagebus) that REQUIRE
+# their group to function, and that the STIG itself permits -- the rule title
+# is "group-owned by root OR A SYSTEM ACCOUNT". chgrp root on those breaks
+# utmp accounting and D-Bus system activation. The residual SSG failure is
+# adjudicated in ckl-answers.yml.j2 with the evidence attached.
+# ---------------------------------------------------------------------------
+- name: "REMED | Shared library files group-owned by root (UBTU-24-300009)"
+  when: usg_fix_library_group | default(true) | bool
+  block:
+    - name: "REMED | Find *.so* files not group-owned by root"
+      ansible.builtin.shell:
+        cmd: >-
+          find /lib /lib64 /usr/lib /usr/lib64 -xdev -type f -name '*.so*'
+          ! -group root -exec chgrp root {} + -print 2>/dev/null || true
+      register: _syslib_chgrp
+      changed_when: (_syslib_chgrp.stdout | default('') | trim) | length > 0
+
+    - name: "REMED | Report the library files re-grouped"
+      ansible.builtin.debug:
+        msg: "Re-grouped to root: {{ _syslib_chgrp.stdout_lines | default([]) }}"
+      when: (_syslib_chgrp.stdout | default('') | trim) | length > 0
+
+# ---------------------------------------------------------------------------
 # 3) CHRONY -- remote time source, configured DIRECTLY IN /etc/chrony/chrony.conf.
 # The SSG OVAL reads chrony.conf (and its confdir includes) but NOT sourcedir/
 # *.sources, so the directives must live in chrony.conf to satisfy:
@@ -356,7 +389,7 @@
   when: usg_ufw_rate_limit_ssh | default(true) | bool
 
 # ---------------------------------------------------------------------------
-# 5) SYSTEM REBOOT / SHUTDOWN AUDITING (all profiles).
+# 5) EXTRA AUDIT RULES USG DOES NOT SHIP (all profiles): reboot/shutdown, cron.
 # USG's STIG ruleset does not ship an explicit reboot-audit rule; auditd records
 # SYSTEM_BOOT/SYSTEM_SHUTDOWN natively but without a searchable audit key. Drop a
 # rule for the reboot(2) + kexec_load syscalls -- the kernel entry points for
@@ -367,8 +400,7 @@
 # running config immutable, a live `augenrules --load` is refused -- the rule is
 # staged in rules.d and loaded by the audit service on the post-build REBOOT.
 # ---------------------------------------------------------------------------
-- name: "REMED | System reboot/shutdown audit rule"
-  when: audit_reboot_rules_enabled | default(true) | bool
+- name: "REMED | Audit rules staged in rules.d"
   block:
     # This used to be a bare "does rules.d exist, else skip", and it hid a real
     # hole: on ASP-2 auditd was running with the directory ABSENT, so every
@@ -405,6 +437,9 @@
       when: not (_auditctl.stat.exists | default(false))
 
     - name: "REMED | Install the reboot/shutdown audit rule (key={{ audit_reboot_rules_key | default('reboot') }})"
+      when:
+        - _audit_rulesd.stat.exists | default(false)
+        - audit_reboot_rules_enabled | default(true) | bool
       ansible.builtin.copy:
         dest: /etc/audit/rules.d/71-reboot.rules
         owner: root
@@ -418,7 +453,31 @@
           ## -> find them with: ausearch -k {{ audit_reboot_rules_key | default('reboot') }}
           -a always,exit -F arch=b64 -S reboot -S kexec_load -k {{ audit_reboot_rules_key | default('reboot') }}
           -a always,exit -F arch=b32 -S reboot -S kexec_load -k {{ audit_reboot_rules_key | default('reboot') }}
-      when: _audit_rulesd.stat.exists | default(false)
+      notify: Load audit rules
+
+    # UBTU-24-200270 / V-274870. USG's ruleset ships no watch on the cron
+    # spool or /etc/cron.d, so the rule failed on every box in the fleet
+    # (audit_rules_etc_cron_d and audit_rules_var_spool_cron both fail). The
+    # DISA check greps `auditctl -l` for these two lines VERBATIM -- including
+    # the key `cronjobs` -- so the text below is not stylistic.
+    #
+    # As with 71-reboot.rules, `usg fix` has already made the running config
+    # immutable, so this lands in the kernel on the next reboot, not now.
+    - name: "REMED | Cron audit rules (UBTU-24-200270)"
+      when:
+        - _audit_rulesd.stat.exists | default(false)
+        - audit_cron_rules_enabled | default(true) | bool
+      ansible.builtin.copy:
+        dest: /etc/audit/rules.d/72-cron.rules
+        owner: root
+        group: root
+        mode: "0600"          # file_permissions_etc_audit_rulesd wants 0600
+        content: |
+          ## Managed by usg_remediate -- do not edit by hand.
+          ## Audit anything cron is given to run as root or a privileged user.
+          ## -> ausearch -k cronjobs
+          -w /etc/cron.d/ -p wa -k cronjobs
+          -w /var/spool/cron/ -p wa -k cronjobs
       notify: Load audit rules
 
 # ---------------------------------------------------------------------------
@@ -1044,6 +1103,70 @@
       register: _rulesd_sweep
       changed_when: (_rulesd_sweep.stdout | default('') | trim) | length > 0
       failed_when: false
+
+    # /var/log FILE MODES, AGAIN -- and this time continuously.
+    # Section 2 already tightens these, but it runs near the top of a role that
+    # then installs packages: apt, dpkg and unattended-upgrades all recreate
+    # their logs 0644 AFTER that task, so by the time scap_scan runs at the end
+    # of the pull /var/log/dpkg.log and /var/log/apt/*.log are over-permissive
+    # again. That is why UBTU-24-700010 failed on every box in the fleet
+    # despite a fix that was itself correct. Re-run it here, last, and install a
+    # timer so it also holds between pulls (unattended-upgrades runs daily).
+    - name: "REMED | Continuous /var/log mode enforcement (UBTU-24-700010)"
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/stig-log-perms.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by usg_remediate -- do not edit by hand.
+          # DISA UBTU-24-700010: no file under /var/log may have any of the
+          # 0137 bits. btmp/wtmp/lastlog are excluded by the STIG itself.
+          # Symbolic mode, not `chmod 640` -- this only ever REMOVES bits, so a
+          # 0600 log is never widened to group-readable.
+          [Unit]
+          Description=Enforce STIG permissions on files under /var/log
+
+          [Service]
+          Type=oneshot
+          ExecStart=/bin/sh -c "find /var/log -xdev -type f -perm /137 ! -name '*[bw]tmp' ! -name '*[bw]tmp.*' ! -name '*lastlog' ! -name '*lastlog.*' -exec chmod u-xs,g-xws,o-rwxt {} + 2>/dev/null; exit 0"
+
+    - name: "REMED | Timer for the /var/log mode enforcement"
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/stig-log-perms.timer
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by usg_remediate -- do not edit by hand.
+          [Unit]
+          Description=Daily STIG permission sweep over /var/log
+
+          [Timer]
+          OnBootSec=10min
+          OnUnitActiveSec=1d
+          Persistent=true
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: "REMED | Enable the /var/log permission timer"
+      ansible.builtin.systemd:
+        name: stig-log-perms.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      failed_when: false
+
+    - name: "REMED | Run the /var/log permission sweep now"
+      ansible.builtin.shell:
+        cmd: >-
+          find /var/log -xdev -type f -perm /137
+          ! -name '*[bw]tmp' ! -name '*[bw]tmp.*'
+          ! -name '*lastlog' ! -name '*lastlog.*'
+          -exec chmod u-xs,g-xws,o-rwxt {} + -print 2>/dev/null || true
+      register: _var_log_final_sweep
+      changed_when: (_var_log_final_sweep.stdout | default('') | trim) | length > 0
 
     - name: "REMED | Re-read auditd's log_group"
       ansible.builtin.command:

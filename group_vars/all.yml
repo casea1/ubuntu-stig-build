@@ -515,6 +515,16 @@ classification_banner_force_xorg: true
 audit_reboot_rules_enabled: true
 audit_reboot_rules_key: reboot        # the -k key on the rule (ausearch -k <key>)
 
+# UBTU-24-200270: audit anything cron is given to run as root or a privileged
+# user. USG ships no watch on /etc/cron.d or the cron spool, so the rule failed
+# fleet-wide. usg_remediate drops /etc/audit/rules.d/72-cron.rules:
+#   -w /etc/cron.d/ -p wa -k cronjobs
+#   -w /var/spool/cron/ -p wa -k cronjobs
+# The DISA check greps `auditctl -l` for those lines verbatim, key included, so
+# the key is not a free choice. Loads on the post-build reboot (auditd is -e 2).
+#   ausearch -k cronjobs
+audit_cron_rules_enabled: true
+
 # =============================================================================
 # STIG GAP-REMEDIATION TUNABLES
 # =============================================================================
@@ -1361,8 +1371,19 @@ usg_ssh_banner_dcsa: true
 usg_ssh_disable_root_login: true
 
 # Fix /var/log file perms (file_permissions_var_log_stig / UBTU-24-700010) and
-# /var/log/audit dir mode 0750 (directory_permissions_var_log_audit).
+# /var/log/audit dir mode 0750 (directory_permissions_var_log_audit). The same
+# sweep also runs LAST in the role and from a daily stig-log-perms.timer: apt
+# and unattended-upgrades recreate their logs 0644 after the early pass, which
+# is why this rule kept failing despite the fix being correct.
 usg_fix_log_permissions: true
+
+# Apply the DISA fix for UBTU-24-300009 -- chgrp root on any *.so* under /lib,
+# /lib64, /usr/lib and /usr/lib64 that is not already group root. Deliberately
+# scoped to shared objects: SSG checks EVERY file under those trees, which
+# catches Ubuntu's setgid helpers (utempter, dbus-daemon-launch-helper) whose
+# groups are load-bearing and which the STIG's own wording permits. See the
+# UBTU-24-300009 entry in roles/scap_scan/templates/ckl-answers.yml.j2.
+usg_fix_library_group: true
 
 # Chrony: the STIG requires a remote time source configured with the `server`
 # directive (not `pool`). We write these as `server <host> iburst maxpoll <N>`

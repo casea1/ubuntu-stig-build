@@ -65,19 +65,97 @@ UBTU-24-200680:
   comments: Approved text deviation.
 
 # ---- USB mass storage ------------------------------------------------------
-{% if is_emi | default(false) | bool %}
+# Gated on usb_storage_enabled, NOT on the profile. This entry used to render
+# only for EMI, so dev-13 -- a development workstation with exactly the same
+# deliberate deviation -- reported UBTU-24-300039 Open with "NO SITE
+# ADJUDICATION RECORDED" against it. Every box that re-enables the module has
+# the same justification and now says so; the AI nodes leave the module
+# blacklisted (usb_storage_enabled is false there) and simply pass the rule,
+# so nothing is rendered for them.
+{% if usb_storage_enabled | default(true) | bool %}
 UBTU-24-300039:
   status: open
   finding_details: |
-    The usb-storage kernel module is NOT disabled. This system performs
-    authorized data transfer to and from removable media as its mission
-    function, which the control would prevent entirely.
-    Compensating controls: USBGuard enforces a device authorization allow-list
-    (unknown devices are blocked at enumeration and logged to the audit trail);
-    mount rights are restricted to members of the 'dta' group via polkit and
-    udisks2; and all device authorization decisions are audited.
-  comments: POA&M -- mission-essential deviation with compensating controls.
+    The usb-storage kernel module is deliberately NOT disabled on this system.
+    desktop_hardening strips the `install usb-storage /bin/false` and
+    `blacklist usb-storage` lines that USG writes, and loads the module.
+{% if is_emi | default(false) | bool %}
+    Justification: this system performs authorized data transfer to and from
+    removable media as its mission function, which the control would prevent
+    entirely.
+{% else %}
+    Justification: this is an engineering workstation whose users move
+    deliverables on approved removable media. Disabling the module removes the
+    capability for every user rather than restricting it to those authorized,
+    and would defeat the group-based mount restriction below -- with the module
+    blacklisted no block device ever appears, so there is nothing left to
+    authorize.
 {% endif %}
+    Compensating controls, all enforced by configuration management:
+      1. USBGuard enforces a device authorization allow-list. Devices not on it
+         are blocked at USB enumeration, before any filesystem is seen, and the
+         decision is written to the audit trail.
+      2. Mount rights are restricted to members of the '{{ usb_access_group | default('dta') }}' group
+         via a udisks2 polkit rule and a udev rule; a user outside that group
+         cannot mount removable media even once the device is authorized.
+      3. Device authorization decisions and mount events are audited.
+    Net effect: removable media is restricted to approved devices operated by
+    named, authorized users, which is the control objective. The prescribed
+    means of meeting it -- removing the capability from the kernel -- is what
+    this system cannot use.
+  evidence_cmd: "grep -rn 'usb.storage' /etc/modprobe.d/ 2>/dev/null || echo 'usb-storage not blacklisted (expected)'; echo '-- usbguard:'; systemctl is-active usbguard 2>/dev/null; usbguard list-rules 2>/dev/null | head -10; echo '-- {{ usb_access_group | default('dta') }} group:'; getent group {{ usb_access_group | default('dta') }} || echo 'group absent'"
+  comments: >-
+    POA&M -- accepted deviation with compensating controls. Review the evidence:
+    USBGuard must be active with a populated policy and the mount group must
+    exist, or the compensating controls are not actually in place and this is a
+    plain finding.
+{% endif %}
+
+# ---- Shared library group ownership ----------------------------------------
+# The scanner and the STIG disagree about scope here, and the STIG wins.
+#   DISA check : find /lib /lib64 /usr/lib /usr/lib64 -type f -name '*.so*' ! -group root
+#   SSG OVAL   : the same trees, but EVERY file, group must be root
+# The rule's own title is "group-owned by root OR A SYSTEM ACCOUNT", so the
+# SSG check is stricter than the requirement it implements. Ubuntu ships setgid
+# helpers under /usr/lib whose group is load-bearing -- utempter needs group
+# utmp to write the utmp database, dbus-daemon-launch-helper needs group
+# messagebus for system-bus activation -- and chgrp root breaks both. Those
+# groups are system accounts, which the rule permits.
+#
+# usg_remediate applies the DISA fix verbatim (usg_fix_library_group), so any
+# shared object that drifts off group root is corrected on every pull. The
+# evidence below prints the DISA check first: if it returns nothing, the
+# requirement is met. The second half lists whatever SSG is still objecting to,
+# with each group's GID, so an assessor can confirm for themselves that the
+# remaining entries really are system accounts (GID < 1000) and not, say, a
+# library group-owned by a user.
+UBTU-24-300009:
+  status: not_a_finding
+  override: true
+  finding_details: |
+    Shared library files under /lib, /lib64, /usr/lib and /usr/lib64 are group
+    owned by root. This is enforced on every configuration-management run
+    (usg_remediate applies the DISA remediation for this rule), so the DISA
+    check returns no output -- see the evidence below.
+    The automated SSG rule root_permissions_syslibrary_files reports a failure
+    because it checks every file in those directories rather than the shared
+    library files the STIG names, and requires group root rather than "root or
+    a system account". The files it objects to are Ubuntu's setgid helper
+    binaries, whose group membership is what makes them work and which the
+    rule's own text allows. On a stock Ubuntu 24.04 install there are exactly
+    two, both owned by system accounts:
+      /usr/lib/x86_64-linux-gnu/utempter/utempter   group utmp (gid 43)
+      /usr/lib/dbus-1.0/dbus-daemon-launch-helper   group messagebus (gid 101)
+    utempter is setgid utmp so terminal emulators can update the utmp login
+    database without being setuid root; dbus-daemon-launch-helper is setgid
+    messagebus so the system bus can activate services. Changing either to
+    group root does not harden anything -- it breaks the mechanism that keeps
+    those binaries from needing root at all.
+  evidence_cmd: "echo '== DISA check (any output is a finding):'; find /lib /lib64 /usr/lib /usr/lib64 -xdev -type f -name '*.so*' ! -group root -exec stat -c '%n %G' {} + 2>/dev/null || true; echo '== remaining non-root groups in SSG scope (name group gid; gid<1000 = system account):'; find /lib /lib64 /usr/lib /usr/lib64 -xdev -type f ! -group root -printf '%p %g\\n' 2>/dev/null | while read -r f g; do echo \"$f $g $(getent group \"$g\" | cut -d: -f3)\"; done | head -40"
+  comments: >-
+    Scanner scope exceeds the STIG's. Read the evidence: the DISA check must be
+    empty, and every group in the second list must be a system account. If
+    either is untrue this is a real finding and must be remediated, not accepted.
 
 # ---- Time synchronization --------------------------------------------------
 UBTU-24-600160:
@@ -114,6 +192,60 @@ UBTU-24-300020:
     approved hardware configuration, so smart-card authentication controls do
     not apply. The rules are de-selected in the USG tailoring file.
   comments: No directory service, no CAC reader. Approved.
+
+# ---- /var/log file modes ---------------------------------------------------
+# Enforced, but state this rather than leave it bare: the rule failed fleet-wide
+# for a while even though the fix was correct, because apt and dpkg recreate
+# their logs 0644 AFTER the early remediation pass and before the scan. It is
+# now swept again at the end of the role and by a daily timer. NO override --
+# if the scanner still reports a failure this stays Open with the evidence
+# attached, which is what an assessor needs to see.
+UBTU-24-700010:
+  status: not_a_finding
+  finding_details: |
+    No file under /var/log carries any of the 0137 permission bits. The mode is
+    enforced by configuration management (usg_remediate) at build time and
+    re-applied daily by the stig-log-perms.timer systemd unit, because apt,
+    dpkg and unattended-upgrades recreate their log files world-readable and
+    would otherwise reopen this finding between builds.
+    btmp, wtmp and lastlog are excluded by the STIG check itself.
+  evidence_cmd: "echo '== DISA check (any output is a finding):'; find /var/log -xdev -perm /137 ! -name '*[bw]tmp' ! -name '*lastlog' -type f -exec stat -c '%n %a' {} + 2>/dev/null || true; echo '== enforcement timer:'; systemctl is-enabled stig-log-perms.timer 2>/dev/null; systemctl list-timers stig-log-perms.timer --no-pager 2>/dev/null | head -3"
+  comments: >-
+    Deliberately NOT overridden. If SCAP still reports a failure the evidence
+    above names the offending files -- treat it as a real finding.
+
+# ---- GRUB / single-user-mode password ---------------------------------------
+{% if 'CHANGEME' in (grub_password_pbkdf2 | default('CHANGEME')) %}
+# Rendered ONLY while grub_password_pbkdf2 is still the CHANGEME sentinel. Set
+# a real hash and the grub_password role runs, the rule passes, and this entry
+# disappears -- it can never linger as a stale excuse for a fixed control.
+UBTU-24-102000:
+  status: open
+  finding_details: |
+    No GRUB superuser password is configured: grub_password_pbkdf2 is still the
+    placeholder value, so the grub_password role deliberately takes no action
+    rather than write a password nobody holds. Without it, anyone with physical
+    access can edit the kernel command line at the boot menu and obtain a root
+    shell.
+    This is materially worse on this build than the generic case. The root
+    volume is LUKS-encrypted with the key sealed to the TPM against PCR 7 only,
+    which measures Secure Boot policy and NOT the kernel command line -- so the
+    volume unseals and decrypts regardless of what is appended at the boot menu.
+    Physical access therefore reaches decrypted data.
+    Interim mitigation: physical access to these systems is controlled by the
+    facility's access procedures.
+    Remediation, which requires no rebuild and takes about a minute per box:
+      sudo it-grub set        # this box, interactive, applies immediately
+      sudo it-grub status     # confirm
+    Fleet-wide, generate the hash once and vault it into group_vars as
+    grub_password_pbkdf2:
+      sudo it-grub hash
+  evidence_cmd: "it-grub status 2>/dev/null || echo 'it-grub not present'"
+  comments: >-
+    POA&M with a named, immediate remediation -- not an accepted deviation.
+    Close it by running `sudo it-grub set` on the box, or by vaulting the
+    PBKDF2 hash for the fleet. This entry stops rendering once the hash is set.
+{% endif %}
 
 # ---- Audit log offload -----------------------------------------------------
 UBTU-24-900240:

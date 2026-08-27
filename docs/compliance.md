@@ -37,7 +37,9 @@ sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml
 | Finding (SSG rule) | STIG ID | What we do |
 | --- | --- | --- |
 | Smart Card Logins in PAM (`smartcard_pam_enabled`) | n/a | comment `pam_pkcs11.so` out of the auth stack → stops the "no smart card found" spam (this fleet is **password-login only**) |
-| `/var/log` file perms (`file_permissions_var_log_stig`) | UBTU-24-700010 | strip setuid/exec/other bits off log files |
+| `/var/log` file perms (`file_permissions_var_log_stig`) | UBTU-24-700010 | strip setuid/exec/other bits off log files. Done **twice** — once early, once as the last thing in the role — plus a daily `stig-log-perms.timer`. apt, dpkg and unattended-upgrades recreate their logs `0644` *after* the early pass, so a single sweep left `/var/log/dpkg.log`, `/var/log/alternatives.log` and `/var/log/apt/*.log` over-permissive by the time the scan ran. That is why this rule kept failing fleet-wide despite a fix that was itself correct |
+| **Cron audit rules** (`audit_rules_etc_cron_d`, `audit_rules_var_spool_cron`) | UBTU-24-200270 | USG ships no watch on the cron spool, so this failed on every box. `/etc/audit/rules.d/72-cron.rules` adds `-w /etc/cron.d/ -p wa -k cronjobs` and `-w /var/spool/cron/ -p wa -k cronjobs`. The DISA check greps `auditctl -l` for those lines **verbatim, key included**, so the key is not a free choice. Loads on the post-build reboot (auditd is `-e 2`) |
+| **Shared library group ownership** (`root_permissions_syslibrary_files`) | UBTU-24-300009 | `chgrp root` on any `*.so*` under `/lib`, `/lib64`, `/usr/lib`, `/usr/lib64` that is not already group root — the DISA remediation verbatim. Deliberately **not** widened to every file in those trees; see the deviations table |
 | `/var/log/audit` mode (`directory_permissions_var_log_audit`) | UBTU-24-901380 | `0750` when auditd's `log_group` is non-root, `0700` when it is root — the required mode is conditional, and a flat `0750` fails the scan on a `log_group = root` box |
 | **Privileged-command audit rules** (`audit_rules_privileged_commands_*`, `audit_rules_execution_*`) | UBTU-24-900080…900330 | `usg fix` writes only part of the set (`su`/`fdisk`/`kmod`/`modprobe`/`unix_update` pass, ~19 others fail). We write the remainder to `/etc/audit/rules.d/72-privileged-commands.rules` — existing paths only, skipping any command another file already covers |
 | audit rules.d perms (`file_permissions_etc_audit_rulesd`) | UBTU-24-900040 | `chmod 0600` on anything with user-exec or group/other bits |
@@ -61,7 +63,8 @@ sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml
 | GNOME login-banner **text**, blank-screensaver, USB→`dta` *(development profile only; the AI nodes disable USB storage)* | mission requirements (DCSA banner, org wallpaper, USB data-transfer) | deviations table |
 | Banner **text** rules (`banner_etc_issue_net`, `dconf_gnome_login_banner_text`, `banner_etc_profiled_ssh_confirm`) | these check for the **exact DoD** string; we deliberately show the DCSA banner instead. Three permanent findings, accepted by choice — they close only by abandoning the DCSA text | `usg_remediate` §1b |
 | PAM faillock in the auth stack (`accounts_passwords_pam_faillock_*`, `accounts_passwords_pam_faildelay_delay`) | Seven findings held open **by choice, for now.** The fix is written and uses the right mechanism, but it regenerates `common-auth` and an error there means nobody can log in. ASP-2 spent an afternoon unloggable from exactly this class of bug (a pre-USG role inserted faillock lines without recalculating `pam_unix`'s jump offset) and needed live-USB recovery. Enable on one throwaway box, verify with a second TTY, then roll out | `usg_fix_pam_stack` |
-| USB storage driver (`kernel_module_usb-storage_disabled`) | the EMI laptop's data-transfer (`dta`) workflow needs USB mass storage. USBGuard now gates which devices are authorised at all, which is the compensating control | `usbguard` role |
+| USB storage driver (`kernel_module_usb-storage_disabled`, UBTU-24-300039) | Applies to **every box where `usb_storage_enabled` is true** — the EMI laptop's `dta` workflow and the engineering workstations both move deliverables on approved removable media. Blacklisting the module removes the capability from everyone rather than restricting it to the authorised, and defeats the group-based mount restriction (no block device ever appears, so there is nothing to authorise). Compensating controls: USBGuard blocks unknown devices at enumeration and audits the decision; mounting is restricted to the `dta` group via polkit + udev. The AI nodes leave the module blacklisted and simply pass the rule | `usbguard` role, `desktop_hardening` §4 |
+| Library files group-owned by root (`root_permissions_syslibrary_files`, UBTU-24-300009) | Scanner scope exceeds the STIG's. DISA checks `*.so*` files only and its title permits "root **or a system account**"; the SSG OVAL checks *every* file and demands group root. The two files it objects to on a stock Ubuntu 24.04 are `utempter` (group `utmp`) and `dbus-daemon-launch-helper` (group `messagebus`) — setgid helpers whose group is exactly what keeps them from needing root. `chgrp root` breaks utmp accounting and D-Bus activation. The DISA check itself is clean and enforced every run | `usg_fix_library_group` |
 
 ### ❌ Open POA&M: need a secret or infra (NOT auto-applied)
 
@@ -117,6 +120,22 @@ From ASP-2's first complete checklist (194 rules: 179 NotAFinding, 8 N/A, 7 Open
 So of seven: two close in the build, five are deviations that will never close and now carry their reasoning in the checklist rather than being re-argued each cycle.
 
 **The lesson worth keeping:** the score barely moved during that build (88.476 → 88.703 after remediation) even though the remediation role ran every task. Two whole categories of fix were being written correctly and still failing — a stale file poisoning rules that were otherwise satisfied, and PAM values written into a config file that nothing read because the module was not in the stack. Neither shows up as an Ansible failure. **A green playbook is not evidence; the re-audit is.**
+
+### Fleet checklist review, 2026-08-27
+
+Checklists from dev-13, dev-ai1 and dev-ai2 (194 rules each). Five distinct rules were Open across the three boxes; four of the five carried **no adjudication at all**, so they read as unexplained findings.
+
+| Rule | Boxes | Root cause | Disposition |
+| --- | --- | --- | --- |
+| UBTU-24-102000 *(high)* — single-user-mode password | all three | `grub_password_pbkdf2` is still the CHANGEME sentinel, so `grub_password` skips | **Fixable now, per box: `sudo it-grub set`.** Not a deviation. The checklist entry now names that command and stops rendering once a hash is set |
+| UBTU-24-200270 — audit scripts called by cron | all three | USG ships no watch on `/etc/cron.d` or the cron spool | **Fixed in the build.** `72-cron.rules`; lands in the kernel on the next reboot |
+| UBTU-24-700010 — `/var/log` file modes | all three | The fix was correct but ran too early: apt/dpkg recreate their logs `0644` afterwards | **Fixed in the build.** Swept again at the end of the role plus a daily timer |
+| UBTU-24-300009 — library files group-owned by root | all three | SSG checks a wider set than the STIG, and demands group root where the STIG allows "root or a system account" | **Adjudicated, with evidence.** DISA fix applied to `*.so*`; the two setgid helpers SSG objects to are documented and load-bearing |
+| UBTU-24-300039 — USB mass storage | dev-13 | Deliberate deviation, but the adjudication was gated on `is_emi` so it rendered only for the EMI laptop | **Adjudicated.** Now gated on `usb_storage_enabled`, so every box with the deviation carries the reason |
+
+Expected after the next pull and reboot: two Open on the AI nodes and dev-13 (GRUB until `it-grub set`, USB where the deviation applies), both carrying their justification and evidence rather than "NO SITE ADJUDICATION RECORDED".
+
+**The pattern worth keeping:** three of the five had a correct fix in the repo already. Two failed on *ordering* (a sweep overtaken by later tasks; audit rules staged but not yet in the kernel) and one on *scope* (an adjudication gated on the wrong variable). None of them showed up as an Ansible failure — the same lesson as ASP-2. Read the checklist, not the playbook output.
 
 ### NTP / time source
 
