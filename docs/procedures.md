@@ -265,6 +265,8 @@ sudo it-inventory     # hardware/serials/listening ports -> /opt/it/inventory-<h
 
 `it-checklist --fail-only` shows just what needs attention. Exit 0 means nothing FAILed; N/A and MANUAL never count as failures.
 
+**`sudo it-checklist --fix`** adds a section after the table telling you how to close every FAIL, and what each MANUAL item needs from a human. It **prints steps and changes nothing** — several of the remedies restart auth or the firewall, which is not a decision a status command should make on its own.
+
 ## 3.2 Produce compliance evidence
 
 ```bash
@@ -275,7 +277,11 @@ sudo it-stig archive      # tar the evidence set for hand-off
 
 Output: `/opt/ia/stig/checklists/<host>-<ts>.cklb`, plus the scan artifacts in `/opt/ia/oscap/manual/`.
 
-`it-stig` wraps `it-oscap` (the scanner) and `it-ckl` (the checklist builder); run either alone when you only need one half. The **one** input this cannot generate is DISA's manual STIG XCCDF — download it from cyber.mil once and drop it in `/opt/ia/stig/`. `it-stig status` says so.
+`it-stig` wraps `it-oscap` (the scanner) and `it-ckl` (the checklist builder); run either alone when you only need one half.
+
+**DISA's manual STIG XCCDF ships in the repo** (`roles/scap_scan/files/`) and lands on every box, so there is nothing to fetch from cyber.mil per machine. **A `.cklb` is built at the end of every pull** from the scan that just ran — `scap_ckl_on_pull: false` turns that off.
+
+On a new STIG release: drop the new `*Manual-xccdf.xml` into `roles/scap_scan/files/`, point `scap_stig_manual_xccdf` at it, and delete the old one — `it-ckl` takes the newest match, so leaving both makes "which release is this checklist against" a guess.
 
 A scheduled scan already runs weekly into `/opt/ia/oscap/scheduled/`:
 
