@@ -1404,6 +1404,11 @@ it_dir: /opt/it
 #   /opt/ia/stig/checklists/  generated .ckl / .cklb
 #   /opt/ia/stig/evidence/    `it-stig archive` bundles
 #   /opt/ia/audit-offload/    weekly staged audit logs
+#   /opt/ia/vulnscans/        nmap + AV scan reports (it-vulnscan, EMI only)
+#   /opt/ia/backups/          EMI: a note per manual SSD duplication -- the
+#                             backup process for those boxes is an offline
+#                             disk clone, so the only on-box evidence it
+#                             happened is what the operator records here
 managed_dirs:
   - "{{ ia_dir }}"
   - "{{ ia_usg_dir }}"
@@ -1419,3 +1424,5 @@ managed_dirs:
   - "{{ it_dir }}/installers"   # staging area for installer files/archives (admin-only)
   - "{{ it_dir }}/clamavsigs"   # drop ClamAV signature archives here, then `it-clamav install`
   - "{{ ia_dir }}/goclassified" # pre-classification gate records (it-goclassified)
+  - "{{ ia_dir }}/vulnscans"    # nmap + AV vulnerability scan reports (it-vulnscan, emi)
+  - "{{ ia_dir }}/backups"      # EMI: record of each manual SSD duplication (see checklist item 23)

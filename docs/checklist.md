@@ -35,7 +35,7 @@ This is a fast indicator — the authoritative evidence is `usg audit disa_stig`
 | 20 | Local firewall **disabled** | **Conflict** | The build **enables** ufw. Note it's partly moot on the AI nodes: Docker's DNAT precedes ufw, so published container ports aren't filtered by it. Needs a policy decision. | `sudo ufw status verbose` ; `sudo iptables -L DOCKER-USER -n` |
 | 21 | Splunk agent | **N/A** | Not used in this environment. | — |
 | 22 | DNS records (COMPASS) | **Manual** | Org infrastructure. | `dig +short <host>` |
-| 23 | Backup + restore | **N/A (covered off-box)** | Backup is a **file-server** function, not an endpoint one. The servers are backed up, and users are directed not to keep anything locally they cannot afford to lose. No endpoint agent is the intended design, so there is nothing to install or check per box. (Macrium SiteBackup's Linux agent is Insider-preview only anyway, and would not be acceptable on an accredited system.) | — |
+| 23 | Backup + restore | **Two answers, by profile** | **EMI → MANUAL.** The box is standalone and air-gapped, so there is no file server to push to: backup is an **offline SSD duplication**, done by hand. That leaves no trace on the box, so the only on-box evidence it happened is what the operator writes into `/opt/ia/backups` — a note per duplication is enough, and `it-checklist` reports how long ago the newest one was. **Development / AI / baseline → N/A.** Nothing is kept locally; the file servers are backed up and users are directed to store there. No endpoint agent is the intended design, so there is nothing to install or check per box. (Macrium SiteBackup's Linux agent is Insider-preview only anyway, and would not be acceptable on an accredited system.) The profile comes from `/etc/stig-build/profile`, written by `it_scripts`. | `ls -t /opt/ia/backups \| head -1` |
 | 24 | Scheduled OSCAP job | **Met** | `it-oscap` on a systemd timer (or `/etc/cron.d`, via `scap_schedule_method`). Results → `/opt/ia/oscap/scheduled`. Runs as **root** because `auto_audit` is locked and can't sudo unattended. | `systemctl list-timers oscap-scan.timer` |
 | 25 | iDRAC / OME | **Manual** | Server hardware, out-of-band. | iDRAC web UI |
 | 26 | Current compliance scan | **Met (process)** | Scheduled OpenSCAP scan produces the artifact; reviewing it is a human step. FAILs once the newest report is over 45 days old. | `ls -t /opt/ia/oscap/*/stig-report-*.html \| head -1` |
@@ -47,7 +47,7 @@ This is a fast indicator — the authoritative evidence is `usg audit disa_stig`
 1. **GRUB password** (11) — built, needs a hash vaulted to take effect.
 2. **Firewall policy** (20) — the checklist and the build disagree; decide which is right.
 
-Closed since the last revision: **backup** (23) is an off-box file-server function by policy; **partitioning** (15) is a RHEL-derived org item, not an Ubuntu STIG rule; **ClamAV signatures air-gapped** (4) now have `it-clamav install`, and FIPS detection is fixed by `clamav_container`.
+Closed since the last revision: **backup** (23) is a file-server function on dev/AI and a manual SSD duplication on EMI, neither of which needs an endpoint agent; **partitioning** (15) is a RHEL-derived org item, not an Ubuntu STIG rule; **ClamAV signatures air-gapped** (4) now have `it-clamav install`, and FIPS detection is fixed by `clamav_container`.
 
 ## Which tool is which
 

@@ -31,6 +31,15 @@ row(){ # $1=status $2=id $3=name $4=detail
 }
 yn(){ [ "$1" = 0 ] && echo PASS || echo FAIL; }
 
+# Which profile this box was built as. it_scripts writes it; fall back to
+# inferring from the EMI-only tooling if an older box has no marker yet.
+PROFILE=""
+if [ -r /etc/stig-build/profile ]; then
+  PROFILE=$(awk -F= '/^deployment_profile=/{print $2; exit}' /etc/stig-build/profile)
+fi
+[ -z "$PROFILE" ] && have it-vulnscan && PROFILE=emi
+is_emi(){ case "$PROFILE" in emi|emi-unclass) return 0 ;; *) return 1 ;; esac; }
+
 echo "Linux checklist -- $(hostname) -- $(date '+%Y-%m-%d %H:%M:%S %Z')"
 echo
 
@@ -208,10 +217,24 @@ else row PASS 20 "Local firewall" "ufw not active (matches checklist)"; fi
 row "N/A" 21 "Splunk agent" "not used in this environment"
 row MAN 22 "DNS records (COMPASS)" "org infrastructure -- verify externally"
 
-# 23 backup -- handled off-box by policy: the file servers are backed up and
-# users are directed not to keep anything locally they cannot lose. No agent on
-# the endpoint is the intended design, so this is not a per-box check.
-row "N/A" 23 "Backup + restore" "org: file servers backed up; endpoints hold no primary data by policy"
+# 23 backup -- two different answers by profile.
+#   EMI: the box is standalone and air-gapped, so there is no file server to
+#        push to. Backup is a MANUAL offline SSD duplication, which leaves no
+#        trace on the box -- the only on-box evidence is what the operator
+#        records in /opt/ia/backups. MANUAL either way; the record just says
+#        when it last happened.
+#   everything else: nothing is kept locally, the file servers are backed up.
+if is_emi; then
+  bk=$(find /opt/ia/backups -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+  if [ -n "$bk" ]; then
+    d=$(( ( $(date +%s) - $(stat -c %Y "$bk") ) / 86400 ))
+    row MAN 23 "Backup + restore" "manual SSD duplication; last recorded $(basename "$bk") (${d}d ago)"
+  else
+    row MAN 23 "Backup + restore" "manual SSD duplication -- nothing recorded in /opt/ia/backups yet"
+  fi
+else
+  row "N/A" 23 "Backup + restore" "org: file servers backed up; endpoints hold no primary data by policy"
+fi
 
 # 24 scheduled OSCAP
 if systemctl list-timers 2>/dev/null | grep -q oscap-scan; then
