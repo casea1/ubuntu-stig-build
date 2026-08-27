@@ -671,7 +671,18 @@ sudo journalctl -u xrdp -u xrdp-sesman
 
 Also: do not be logged into the same account at the physical console at the same time. GDM's console session holds D-Bus names the RDP session needs.
 
-## 6.8 A box drifted from the repo
+## 6.8 Is this box running the fix?
+
+Every box records the baseline revision it last pulled. `it-checklist` prints it on its second line, and `it-vulnscan` stamps it into the report header:
+
+```bash
+sudo it-checklist | head -2
+cat /etc/stig-build/profile
+```
+
+Compare against `git log --oneline -1` on the repo. `unknown` means the box predates this, or `ansible-pull` did not run from a git checkout. Re-run the build (§1.10) to bring it forward.
+
+## 6.9 A box drifted from the repo
 
 Nothing reports drift automatically — `ansible-pull` runs only when someone runs it.
 

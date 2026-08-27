@@ -94,6 +94,7 @@ log "===================================================================="
 log " Vulnerability scan -- $(hostname)"
 log " Started : $(date '+%Y-%m-%d %H:%M:%S %Z')"
 log " Operator: ${SUDO_USER:-root}"
+log " Baseline: $(awk -F= '/^baseline_revision=/{print $2; exit}' /etc/stig-build/profile 2>/dev/null || echo unknown)"
 log " Target  : $TARGET"
 log "===================================================================="
 
