@@ -317,6 +317,36 @@ So: **`it-checklist` answers "is this box configured the way we said", `it-stig 
 
 `it-vulnscan` is separate from all four — it is the org's `MUSA_Vuln_Scan` process (nmap `vuln` scripts + a full AV scan), not a STIG artifact, and it lands in `/opt/ia/vulnscans`.
 
+#### How a rule actually gets its status
+
+Four inputs, in this order. Later steps can only move a rule under the rules below — nothing silently upgrades a failure.
+
+**1. The manual STIG XCCDF is the skeleton.** All 194 V-IDs with their title, severity, discussion, check content, fix text and CCIs. **Every rule starts `Not_Reviewed`.**
+
+**2. The SCAP results fill in most of them.** This is the part that surprises people: a scan against **SSG** content produces results keyed by *SSG* rule ids (`xccdf_org.ssgproject.content_rule_…`), not DISA V-IDs. `it-ckl` bridges them by reading the `<reference>` elements out of the SSG datastream — SSG tags each of its rules with the DISA id it implements (`UBTU-24-nnnnnn`). That map is why **one SSG scan populates the large majority of the checklist**, not a handful.
+
+- Lookup tries, in order: `UBTU-24-nnnnnn` → `V-nnnnnn` → `SV-…_rule` → legacy ids. Results are indexed under every key derivable from the `idref`, so `--results` and `--stig-viewer` output both work.
+- **Many SSG rules routinely map to one STIG rule** (the `setxattr` family is seven SSG rules and one V-ID). When that happens **the worst result wins** — a STIG rule is not satisfied because part of it passed. The checklist records which SSG rules contributed and what each returned.
+
+| OpenSCAP result | Checklist status |
+|---|---|
+| `pass`, `fixed` | NotAFinding |
+| `fail` | **Open** |
+| `notapplicable`, `notselected` | Not_Applicable |
+| `error`, `unknown`, `notchecked`, `informational` | Not_Reviewed |
+
+**3. `answers.yml` adjudicates what the scan cannot** — currently **19 rules**, rendered per profile by `scap_scan` from `ckl-answers.yml.j2`. This covers the permanent deviations (DCSA banner text, no CAC/SSSD, USB for the DTA workflow) and the OCIL-only rules with no automated check.
+
+It may set a status **only** when the rule is `Not_Reviewed`, or `override: true` is set, or the rule is already `Open`. And the safety rule that makes the whole artifact trustworthy:
+
+> If SCAP reports **fail** and `answers.yml` proposes something else **without** `override: true`, the rule **stays Open** and a NOTE is written into it saying so. A stale hand-written note can never quietly mark a genuinely failing control compliant.
+
+It can also attach `finding_details`, `comments`, and an `evidence_cmd` whose output is captured into the checklist — real evidence an assessor can re-run, rather than prose asserting compliance.
+
+**4. Whatever is still unanswered stays `Not_Reviewed`** and gets a comment saying why. Every Open or Not_Reviewed rule carrying no adjudication also gets one naming the key to record it under, so nobody meets a finding with no explanation. `sudo it-ckl --unjustified` lists exactly those — it is the operator's to-do list.
+
+> **Scanning with DISA's own SCAP benchmark skips step 2's mapping entirely** — its rule ids already match the manual STIG, so results land 1:1. Use `it-oscap --content <benchmark>.xml`.
+
 #### Where everything lives
 
 `/opt/ia` is subdivided so **each directory has exactly one writer**. Everything used to land in two flat directories, which is how a build-time scan and an ad-hoc scan ended up side by side in `/opt/ia/oscap` under near-identical names — and `it-ckl` picked the wrong one. Separating by writer also makes retention safe: pruning ad-hoc runs can no longer delete the build-time artifact an accreditation package refers to.
@@ -346,7 +376,7 @@ Existing boxes are migrated automatically on the next pull: `managed_dirs` moves
 sudo it-stig status       # names anything missing, and how to fix it
 ```
 
-The directories are created by the `managed_dirs` role and `answers.yml` is rendered by `scap_scan`; if either is missing, run a pull. The one thing neither can produce is DISA's manual STIG XCCDF — stage that in `/opt/ia/stig/content/`.
+The directories are created by the `managed_dirs` role, `answers.yml` is rendered by `scap_scan`, and **DISA's manual STIG XCCDF now ships in the repo** (`roles/scap_scan/files/`) and is placed in `/opt/ia/stig/content/` on every box. If any of the three is missing, run a pull.
 
 #### Getting DISA's content
 
@@ -354,7 +384,7 @@ From [public.cyber.mil/stigs/downloads](https://public.cyber.mil/stigs/downloads
 
 | Download | Take it? | Why |
 |---|---|---|
-| **Canonical Ubuntu 24.04 LTS STIG** | **Required** | The manual STIG. Its `*Manual-xccdf.xml` is the checklist skeleton — every V-ID, check text and fix text. |
+| **Canonical Ubuntu 24.04 LTS STIG** | **Already in the repo** | The manual STIG — the checklist skeleton (every V-ID, check text, fix text). V1R6 ships in `roles/scap_scan/files/`. Download it again only for a **new release**: drop the `*Manual-xccdf.xml` in, update `scap_stig_manual_xccdf`, delete the old one. |
 | **STIG SCAP Benchmark** | Recommended | DISA's own SCAP content. Its rule ids match the manual STIG exactly, so `it-ckl` maps 1:1 instead of by inference: `it-oscap --content <benchmark>.xml`. Often a release behind the manual STIG; rules only in the newer release simply stay Not_Reviewed. |
 | **STIG for Ansible** | **Do not run** | Supplemental automation that *applies* the STIG — a remediation engine, like `usg fix` and this repo. Running it puts a third engine on the same files. That is exactly how ASP-2 ended up with a `common-auth` that denied every login. Useful as a **reference** for DISA's canonical fix: `grep -rl 'UBTU-24-600200' <unzipped>/`. |
 | **STIG for Chef** | No | Not used here. |
