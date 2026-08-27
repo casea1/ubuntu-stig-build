@@ -44,7 +44,15 @@ Each of these caused a real outage or a wrong conclusion.
 
 **12. A passing benchmark is not a compliant box.** `usg fix` leaves `PermitRootLogin prohibit-password`, which satisfies the STIG rule (it only forbids a root *password* login) while still allowing root in **by SSH key** — which the org checklist forbids outright. Found on ASP-2 with a 96.41 % scan. Check what the rule actually asserts, not just its colour.
 
-**13. Audit rules on disk are not audit rules in the kernel.** The STIG sets auditd `-e 2` (immutable), after which the kernel **refuses new rules until a reboot**. A pull that adds audit rules leaves them in `/etc/audit/rules.d` and inert — and every file-based OVAL still passes, because those check the files. ASP-2 ran with **1 rule loaded** against a full ruleset on disk and the compliance scan said nothing. `it-checklist` item 6 now compares the two counts. Diagnose with `auditctl -l | wc -l` against `cat /etc/audit/rules.d/*.rules | grep -cvE '^\s*(#|$)'`, and `auditctl -s | grep enabled`.
+**13. Audit rules on disk are not audit rules in the kernel, and they may not be in `rules.d`.** Two separate traps in one place. First, `usg fix` writes **`/etc/audit/audit.rules` directly**, not `rules.d/*.rules` — so an empty `rules.d` is normal on a USG box, and counting only `rules.d` reports "no rules" on a box with a full ruleset. Second, whatever is on disk still has to reach the kernel: the STIG sets auditd `-e 2` (immutable), after which new rules are refused until a reboot. Either way **every file-based OVAL still passes**, because those check files. ASP-2 ran with **1 rule in the kernel** against 8.5 KB in `audit.rules` and the 96.41 % scan said nothing. `it-checklist` item 6 counts whichever source holds rules and compares it against the kernel. Diagnose with:
+
+```bash
+sudo auditctl -l                                              # what the kernel enforces
+sudo grep -cvE '^\s*(#|$)' /etc/audit/audit.rules             # what usg fix wrote
+sudo cat /etc/audit/rules.d/*.rules | grep -cvE '^\s*(#|$)'   # what augenrules would compile
+sudo auditctl -s | grep enabled                               # 2 = immutable, needs a reboot
+sudo augenrules --check                                       # is audit.rules out of step with rules.d?
+```
 
 **14. A green playbook is not evidence.** ASP-2's compliance score barely moved (88.476 → 88.703) across a full remediation run — two whole categories of fix were being written correctly and still failing, because a stale file was poisoning rules that were otherwise satisfied and PAM values were being written into a file nothing read. Neither showed as an Ansible failure. **The re-audit is the evidence.**
 
@@ -91,6 +99,8 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `it-clamav` | `check`, `list`, `install`, `test`, `sync`, `rollback`, `revert`, `image-save`, `image-load` |
 | `it-goclassified` | Pre-classification gate. `--report` for machine checks only |
 | `it-offline-repo` | `load` / `enable` / `disable` / `verify` — run apt off a local repo |
+| `it-adduser` | Create a local account. Asks the type (standard/dta/admin/audit) and derives both the username suffix and the group set from it |
+| `it-passwd` | Reset a password, unlock the account, and clear its faillock counter. `--list` shows every account's state and expiry; `--unlock-only` skips the password |
 | `it-set-classification` | Set the banner level |
 | `it-inventory` | Hardware/serials/listening ports → `/opt/it/inventory-<host>.txt` |
 | `pam-auth-check` | Can `common-auth` authenticate at all? Read-only |

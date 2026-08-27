@@ -104,23 +104,27 @@ else row FAIL 4 "Anti-virus" "it-clamav not installed"; fi
 # and every file-based OVAL still passes. Compare the two numbers.
 if active auditd; then
   loaded=$(auditctl -l 2>/dev/null | grep -cvE '^(No rules|)$' || true); loaded=${loaded:-0}
-  ondisk=$(cat /etc/audit/rules.d/*.rules 2>/dev/null \
-             | grep -cvE '^\s*(#|$)' || true); ondisk=${ondisk:-0}
+  # TWO possible sources, and on a USG box it is usually the second. augenrules
+  # compiles rules.d/*.rules into /etc/audit/audit.rules, but `usg fix` writes
+  # audit.rules directly -- so an EMPTY rules.d is normal here, and counting only
+  # rules.d reports "0 on disk" on a box with a full ruleset. Count whichever
+  # actually holds rules; prefer rules.d when it has any.
+  rd=$(cat /etc/audit/rules.d/*.rules 2>/dev/null | grep -cvE '^\s*(#|$)' || true); rd=${rd:-0}
+  ar=$(grep -cvE '^\s*(#|$)' /etc/audit/audit.rules 2>/dev/null || true); ar=${ar:-0}
+  if [ "$rd" -gt 0 ]; then ondisk=$rd; src="rules.d"; else ondisk=$ar; src="audit.rules"; fi
   imm=$(auditctl -s 2>/dev/null | awk '/^enabled/{print $2}')
   immnote=""
   [ "$imm" = 2 ] && immnote=" (immutable: -e 2, needs a REBOOT to load)"
-  if [ ! -d /etc/audit/rules.d ]; then
-    row FAIL 6 "Audit rules" "/etc/audit/rules.d does NOT EXIST -- nothing to load; $loaded rule(s) in the kernel"
-  elif [ "$ondisk" -eq 0 ]; then
-    row FAIL 6 "Audit rules" "no rule files in /etc/audit/rules.d -- $loaded rule(s) in the kernel$immnote"
+  if [ "$ondisk" -eq 0 ]; then
+    row FAIL 6 "Audit rules" "NO rules on disk (rules.d and audit.rules both empty); $loaded in the kernel$immnote"
   elif [ "$loaded" -eq 0 ]; then
-    row FAIL 6 "Audit rules" "auditd active but NO rules loaded; $ondisk on disk$immnote"
+    row FAIL 6 "Audit rules" "auditd active but NO rules loaded; $ondisk in $src$immnote"
   elif [ "$loaded" -lt $(( ondisk / 2 )) ]; then
-    row FAIL 6 "Audit rules" "only $loaded of $ondisk rules reached the kernel$immnote -- run: augenrules --load, or reboot"
+    row FAIL 6 "Audit rules" "only $loaded of $ondisk ($src) reached the kernel$immnote -- run: augenrules --load, or reboot"
   elif [ "$loaded" -lt 20 ]; then
-    row FAIL 6 "Audit rules" "$loaded rules loaded -- far below a STIG ruleset ($ondisk on disk)$immnote"
+    row FAIL 6 "Audit rules" "$loaded rules loaded -- far below a STIG ruleset ($ondisk in $src)$immnote"
   else
-    row PASS 6 "Audit rules" "auditd active, $loaded rules loaded of $ondisk on disk"
+    row PASS 6 "Audit rules" "auditd active, $loaded rules loaded of $ondisk in $src"
   fi
 else row FAIL 6 "Audit rules" "auditd not active"; fi
 
