@@ -104,15 +104,6 @@
     - role: disk_expand      # grow root LV + fs to all free VG space (idempotent; disk_autoexpand)
 
     # -------------------------------------------------------------------------
-    # OFFLINE APT  -- must run BEFORE base_packages, so everything after it
-    # installs from the local repo. Self-skips unless offline_repo_enabled is
-    # set (default false; it-offline-repo enable writes it into /opt/it/site.yml).
-    # Built for the standalone EMI laptop -- the dev/ai fleet is pointed at the
-    # ADM-Toolkit's HTTP repo server instead.
-    # -------------------------------------------------------------------------
-    - role: offline_repo     # air-gapped: park the online apt sources, read /srv/repo over file://
-
-    # -------------------------------------------------------------------------
     # BASELINE  -- base_packages runs for all profiles; internally it installs
     # the development app set (when is_development) or a lean AI-server baseline
     # (when is_ai). On the baseline profile neither set imports, so only the
@@ -257,3 +248,15 @@
     # tool. Only on profiles that have a `dta` group -- see dta_log_enabled.
     - role: dta_log                 # data-transfer staging folders + transfer record/scan tool
       when: dta_log_enabled | default(false) | bool
+
+    # -------------------------------------------------------------------------
+    # OFFLINE APT  -- runs LAST, deliberately. Imaging is done ONLINE: every
+    # role above installs from Ubuntu's archive and the vendor repos, which is
+    # the only way to get a current, patched box built. The local repo is for
+    # PATCHING AFTER the box is air-gapped, so it must not be in the way while
+    # the box is being built.
+    #
+    # Self-skips unless offline_repo_enabled (default false). `it-offline-repo
+    # enable` writes it into /opt/it/site.yml after deployment.
+    # -------------------------------------------------------------------------
+    - role: offline_repo            # post-deployment: park the online apt sources, read /srv/repo over file://

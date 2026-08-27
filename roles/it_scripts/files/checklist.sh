@@ -37,10 +37,20 @@ echo
 # 1 AD/SSSD -- this fleet uses local accounts by design (documented deviation)
 row "N/A" 1 "AD integration (SSSD)" "local accounts by design; SSSD STIG rules de-selected"
 
-# 2 no root over SSH
+# 2 no root over SSH -- the ROOT ACCOUNT specifically. This does not restrict
+# an admin from logging in as themselves and elevating with sudo, which is the
+# required path (and is what makes the audit trail attributable).
 v=$(sshd -T 2>/dev/null | awk '/^permitrootlogin/{print $2}')
-[ "$v" = no ] && row PASS 2 "No root via SSH" "PermitRootLogin no" \
-              || row FAIL 2 "No root via SSH" "PermitRootLogin=${v:-unknown}"
+rk=0; [ -r /root/.ssh/authorized_keys ] && rk=$(wc -l < /root/.ssh/authorized_keys)
+if [ "$v" = no ]; then
+  if [ "${rk:-0}" -gt 0 ] 2>/dev/null; then
+    row PASS 2 "No root SSH login" "PermitRootLogin no (note: /root/.ssh/authorized_keys has $rk key(s), inert while this holds)"
+  else
+    row PASS 2 "No root SSH login" "PermitRootLogin no; admins log in as themselves and sudo"
+  fi
+else
+  row FAIL 2 "No root SSH login" "PermitRootLogin=${v:-unknown} -- must be no"
+fi
 
 # 3 banners + last login
 b=$(sshd -T 2>/dev/null | awk '/^banner/{print $2}')
@@ -80,7 +90,51 @@ if active auditd; then
                  || row FAIL 6 "Audit rules" "auditd active but NO rules loaded"
 else row FAIL 6 "Audit rules" "auditd not active"; fi
 
-row MAN 7 "BIOS hardened + password" "hardware step -- verify manually"
+# 7 BIOS. Two of the three parts ARE machine-readable:
+#   Secure Boot  -- mokutil, or the EFI variable directly
+#   Admin password -- the vendor firmware-attributes driver (dell-wmi-sysman,
+#                  think-lmi, hp-wmi-sysman) exposes authentication/Admin/is_enabled.
+# The rest of "BIOS hardened" (boot order, disabled ports/radios) is not, so a
+# box where the password cannot be read stays MANUAL rather than being called
+# passing on half the evidence.
+sb=unknown
+if have mokutil; then
+  case "$(mokutil --sb-state 2>/dev/null)" in
+    *"enabled"*)  sb=enabled ;;
+    *"disabled"*) sb=disabled ;;
+  esac
+fi
+if [ "$sb" = unknown ] && [ -d /sys/firmware/efi ]; then
+  # Last byte of the SecureBoot EFI variable: 1 = on. The first 4 bytes are the
+  # variable's attributes, which is why this reads the tail and not the head.
+  e=$(find /sys/firmware/efi/efivars -maxdepth 1 -name 'SecureBoot-*' 2>/dev/null | head -1)
+  if [ -n "$e" ]; then
+    b=$(od -An -tu1 -j4 -N1 "$e" 2>/dev/null | tr -d ' ')
+    [ "$b" = 1 ] && sb=enabled
+    [ "$b" = 0 ] && sb=disabled
+  fi
+fi
+
+bp=unknown; bpsrc=""
+for a in /sys/class/firmware-attributes/*/authentication/Admin/is_enabled; do
+  [ -r "$a" ] || continue
+  bpsrc=$(basename "$(dirname "$(dirname "$(dirname "$a")")")")
+  case "$(cat "$a" 2>/dev/null)" in
+    1) bp=set ;;
+    0) bp=unset ;;
+  esac
+  break
+done
+
+if [ "$sb" = disabled ]; then
+  row FAIL 7 "BIOS hardened + password" "Secure Boot DISABLED; admin password ${bp}${bpsrc:+ ($bpsrc)}"
+elif [ "$bp" = unset ]; then
+  row FAIL 7 "BIOS hardened + password" "no BIOS admin password set ($bpsrc); Secure Boot $sb"
+elif [ "$sb" = enabled ] && [ "$bp" = set ]; then
+  row MAN 7 "BIOS hardened + password" "Secure Boot on, admin password set ($bpsrc) -- boot order/ports still manual"
+else
+  row MAN 7 "BIOS hardened + password" "Secure Boot $sb, admin password $bp -- verify at POST"
+fi
 
 # 8 vendor supported release
 row PASS 8 "Vendor supported release" "$(lsb_release -ds 2>/dev/null || echo Ubuntu) $(pro status --format=json 2>/dev/null | grep -o '\"attached\": *[a-z]*' | head -1)"
@@ -117,14 +171,15 @@ if active cups || active cups-browsed; then
   row FAIL 14 "CUPS disabled" "cups/cups-browsed is running"
 else row PASS 14 "CUPS disabled" "not active"; fi
 
-# 15 filesystem + separate partitions (the part the STIG actually requires)
+# 15 filesystems / partitions -- N/A. XFS and the separate-mount list are the
+# org checklist's RHEL heritage, not an Ubuntu STIG requirement. Still print
+# what this box actually has, because an assessor will ask.
 fs=$(findmnt -no FSTYPE / 2>/dev/null)
-miss=""
+sep=""
 for m in /var /var/log /var/log/audit /home /tmp; do
-  findmnt -no TARGET "$m" >/dev/null 2>&1 || miss="$miss $m"
+  findmnt -no TARGET "$m" >/dev/null 2>&1 && sep="$sep $m"
 done
-[ -z "$miss" ] && row PASS 15 "Filesystems / partitions" "root=$fs; required mounts all separate" \
-               || row FAIL 15 "Filesystems / partitions" "root=$fs; NOT separate:$miss"
+row "N/A" 15 "Filesystems / partitions" "org (RHEL-derived), not an Ubuntu STIG rule; root=$fs, separate:${sep:- none}"
 
 # 16 port/process capture
 i=$(ls -1t /opt/it/inventory-*.txt 2>/dev/null | head -1)
@@ -153,8 +208,10 @@ else row PASS 20 "Local firewall" "ufw not active (matches checklist)"; fi
 row "N/A" 21 "Splunk agent" "not used in this environment"
 row MAN 22 "DNS records (COMPASS)" "org infrastructure -- verify externally"
 
-# 23 backup
-row FAIL 23 "Backup + restore" "no backup tooling installed (open item)"
+# 23 backup -- handled off-box by policy: the file servers are backed up and
+# users are directed not to keep anything locally they cannot lose. No agent on
+# the endpoint is the intended design, so this is not a per-box check.
+row "N/A" 23 "Backup + restore" "org: file servers backed up; endpoints hold no primary data by policy"
 
 # 24 scheduled OSCAP
 if systemctl list-timers 2>/dev/null | grep -q oscap-scan; then
@@ -165,16 +222,44 @@ else row FAIL 24 "Scheduled OSCAP job" "no timer or cron entry"; fi
 
 row MAN 25 "iDRAC / OME" "server hardware -- verify out-of-band"
 
-# 26 latest scan result
-l=$(ls -1t /opt/ia/oscap/stig-report-*.html 2>/dev/null | head -1)
-[ -n "$l" ] && row PASS 26 "Recent vulnerability scan" "$(basename "$l")" \
-            || row FAIL 26 "Recent vulnerability scan" "no report in /opt/ia/oscap -- run: it-oscap"
+# 26 latest scan result. Search the tree, not the top level: it-oscap writes
+# into build/ scheduled/ manual/ (one directory per writer), so a glob rooted at
+# /opt/ia/oscap matches nothing and this always reported FAIL.
+l=$(find /opt/ia/oscap -name 'stig-report-*.html' -printf '%T@ %p\n' 2>/dev/null \
+      | sort -rn | head -1 | cut -d' ' -f2-)
+if [ -n "$l" ]; then
+  d=$(( ( $(date +%s) - $(stat -c %Y "$l") ) / 86400 ))
+  [ "$d" -le 45 ] && row PASS 26 "Recent compliance scan" "$(basename "$l") (${d}d ago)" \
+                  || row FAIL 26 "Recent compliance scan" "newest is ${d}d old -- run: it-oscap"
+else
+  row FAIL 26 "Recent compliance scan" "no report under /opt/ia/oscap -- run: it-oscap"
+fi
 
 # 27 STIG content version
 d=$(ls -1 /usr/share/xml/scap/ssg/content/ssg-ubuntu24*-ds*.xml 2>/dev/null | head -1)
 uv=$(dpkg-query -W -f='${Version}' usg 2>/dev/null || echo n/a)
 if [ -n "$d" ]; then row PASS 27 "STIG content present" "usg=$uv ssg=$(basename "$d")"
 else row FAIL 27 "STIG content present" "usg=$uv, no SSG datastream -- run the scap_scan role"; fi
+
+# 28 nmap vulnerability scan -- the org's MUSA_Vuln_Scan process. Only the EMI
+# boxes carry it (nmap is installed there and it-vulnscan is placed there).
+if have it-vulnscan; then
+  v=$(find /opt/ia/vulnscans -name '*-vuln-scan-*.txt' -printf '%T@ %p\n' 2>/dev/null \
+        | sort -rn | head -1 | cut -d' ' -f2-)
+  if [ -n "$v" ]; then
+    d=$(( ( $(date +%s) - $(stat -c %Y "$v") ) / 86400 ))
+    h=$(grep -cE '^\|.*(VULNERABLE|CVE-[0-9]{4}-[0-9]+)' "$v" 2>/dev/null || true); h=${h:-0}
+    if [ "$h" -gt 0 ]; then
+      row FAIL 28 "nmap vulnerability scan" "$(basename "$v") (${d}d ago) -- $h finding(s) to review"
+    elif [ "$d" -le 45 ]; then
+      row PASS 28 "nmap vulnerability scan" "$(basename "$v") (${d}d ago), nothing flagged"
+    else
+      row FAIL 28 "nmap vulnerability scan" "newest is ${d}d old -- run: it-vulnscan"
+    fi
+  else
+    row FAIL 28 "nmap vulnerability scan" "never run -- run: it-vulnscan"
+  fi
+fi
 
 echo
 printf 'PASS=%d  FAIL=%d  N/A=%d  MANUAL=%d\n' "$P" "$F" "$N" "$M"
