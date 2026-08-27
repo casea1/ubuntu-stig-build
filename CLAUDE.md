@@ -103,6 +103,24 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   reads it is still a manual three-step.
 - **granite-docling VLM** is not deployed; it needs a custom docling image with
   the weights baked in. `external_granite_vision` is not a valid preset name.
+- **dev-ai1's live compose has drifted from the repo, and one drift is a real
+  exposure.** Captured by `it-stack-diff` on 2026-08-27; the engineers are still
+  testing, so NOTHING has been changed on the box. On-box vs repo:
+  - **`pgbouncer` publishes `5432:5432`.** The repo deliberately publishes
+    nothing — Postgres has no business on the LAN, and a published container
+    port cannot be filtered by ufw (gotcha 1), so this is genuinely reachable.
+    Worth raising with the engineers before the next accreditation pass.
+  - `open-webui` also publishes `8050:8050` (repo does not).
+  - `vllm-gptoss` **hardcodes `192.168.1.110`** where the repo uses
+    `${SYSTEM2_ADDR}`, so `it-set-ip` cannot renumber it, and it **drops
+    `--override-generation-config`**.
+  - `pgvector` memory limit 2G on the box, 4G in the repo.
+  - `/opt/stacks/ai` and `/opt/stacks/ai-system1` exist with no compose file —
+    the stale pre-split dirs, confirmed present.
+- **ASP-2's audit-rule gap is NOT fleet-wide.** dev-ai1 loads 60 of 68 rules
+  from `rules.d` and passes item 6. ASP-2 has 101 on disk and 1 in the kernel
+  with auditd NOT immutable, so `augenrules --load` is failing on that box
+  specifically. Get the error from `sudo augenrules --load` there.
 - **Offline apt is half-solved.** The main archive is covered: `offline_repo` +
   `it-offline-repo` carry a repo tree in on media and point apt at
   `/srv/repo` over `file://` (standalone/EMI only -- the dev/ai fleet uses the
