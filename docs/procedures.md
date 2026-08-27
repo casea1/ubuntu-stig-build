@@ -370,7 +370,51 @@ Offline SSD duplication, by hand, **logged on paper**. Nothing on the box record
 
 Development / AI / baseline boxes need nothing here — nothing primary is stored locally.
 
-## 3.7 Set the classification banner
+## 3.7 Create a user account
+
+```bash
+sudo it-adduser
+```
+
+It asks the type, and both the username suffix and the groups follow from it:
+
+| Type | Username | Groups |
+|---|---|---|
+| standard | `first_last` | `sentry` |
+| dta | `first_last_dta` | `dta`, `sentry` |
+| admin | `first_last_adm` | `sudo`, `sentry` |
+| audit | `first_last_aud` | `audit`, `sudo`, `sentry` |
+
+Then the name, then the password — set now or leave the account locked. A password set now forces a change at first login (`--no-expire` to skip).
+
+Non-interactive: `sudo it-adduser --type admin --first Jane --last Doe`. `--dry-run` shows what would happen.
+
+> **The build does not know about a hand-created account.** A rebuilt or re-imaged box will not have it. `it-adduser` prints the exact `local_users` line to paste into `group_vars/all.yml` — do that, or the account exists on one box only.
+
+Passwords are checked against this box's own `pwquality` policy before being set. `chpasswd` does not go through PAM, so without that check a weak password would slip onto a hardened box.
+
+## 3.8 Reset a password / unlock an account
+
+```bash
+sudo it-passwd                    # pick from a list
+sudo it-passwd jane_doe_adm
+sudo it-passwd --list             # every account: state, faillock, expiry
+sudo it-passwd <user> --unlock-only
+```
+
+It does all three things that independently block a login, because fixing one and not the others is the usual reason someone still cannot get in:
+
+1. sets the password (policy-checked),
+2. **unlocks the account**,
+3. **clears the faillock counter** — three bad attempts locks a user out regardless of the password.
+
+It also warns when the *account* (not the password) has an expiry date set, which blocks login on its own.
+
+> It refuses to unlock an account that has **no password hash**. `usermod -U` on a `!` placeholder leaves an empty password, which is worse than locked.
+
+After a reset, `chage -l` reads "password must be changed" — that is the forced change at next login, not an error. The real expiry appears once they change it.
+
+## 3.9 Set the classification banner
 
 ```bash
 sudo it-set-classification UNCLASSIFIED
