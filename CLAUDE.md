@@ -98,8 +98,12 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   reads it is still a manual three-step.
 - **granite-docling VLM** is not deployed; it needs a custom docling image with
   the weights baked in. `external_granite_vision` is not a valid preset name.
-- **No offline apt path.** Images and models have a USB workflow; OS packages
-  do not.
+- **Offline apt is half-solved.** The main archive is covered: `offline_repo` +
+  `it-offline-repo` carry a repo tree in on media and point apt at
+  `/srv/repo` over `file://` (standalone/EMI only -- the dev/ai fleet uses the
+  ADM-Toolkit's HTTP repo server). Two things remain: the carried repo is
+  **unsigned** (`Trusted: yes`; set `offline_repo_signed_by` if the builder ever
+  signs it), and **Ubuntu Pro / ESM packages are still not reachable** offline.
 
 ## Docs
 

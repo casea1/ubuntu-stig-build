@@ -1,0 +1,15 @@
+---
+# offline_repo -- see the "Offline (local) apt repo" block in group_vars/all.yml
+# for what each of these means. Defaults here only matter if the role is used
+# outside this playbook.
+offline_repo_enabled: false
+offline_repo_dir: /srv/repo
+offline_repo_suite: noble
+offline_repo_subdir: "ubuntu/{{ offline_repo_suite }}"
+offline_repo_components: main
+offline_repo_signed_by: ""
+offline_repo_backup_dir: "{{ it_dir | default('/opt/it') }}/apt-sources-backup"
+
+# The source file this role owns. Anything else in sources.list.d is "online"
+# and gets parked.
+offline_repo_source_file: /etc/apt/sources.list.d/offline-repo.sources

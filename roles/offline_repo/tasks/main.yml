@@ -1,0 +1,176 @@
+---
+# =============================================================================
+# offline_repo -- point apt at a hand-carried local repo on a standalone box.
+#
+# Built for the EMI laptop, which is air-gapped after imaging with no ADM PC to
+# serve packages over HTTP. The repo tree is copied onto the box (it-offline-repo
+# load) and apt reads it over file://.
+#
+# Both directions are implemented. The role only ever CREATES if you let it, so
+# the disabled branch actively removes the source file and restores the parked
+# online sources -- otherwise a box that was switched offline and later switched
+# back would keep a dead file:// source forever (repo gotcha 2).
+#
+# Runs EARLY, before base_packages, so everything after it installs from the
+# local repo. The third-party apt repos this baseline adds (Microsoft/VS Code,
+# NodeSource, Docker) are skipped while this is on -- see the `when:` guards in
+# those roles. They are unreachable air-gapped, and apt blocks on each one.
+# =============================================================================
+
+- name: "OFFLINE-REPO | Enabled"
+  when: offline_repo_enabled | bool
+  block:
+    - name: "OFFLINE-REPO | Repo directory (root-owned; NOT sudo-writable)"
+      ansible.builtin.file:
+        path: "{{ offline_repo_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"      # _apt must be able to read it; only root may write
+
+    # A file:// source pointing at an empty tree makes `apt-get update` fail and
+    # takes every later apt task down with it. Refuse to switch until the tree
+    # is actually there.
+    - name: "OFFLINE-REPO | Is there a real repo at {{ offline_repo_dir }}?"
+      ansible.builtin.stat:
+        path: "{{ offline_repo_dir }}/{{ offline_repo_subdir }}/dists/{{ offline_repo_suite }}/Release"
+      register: _or_release
+
+    - name: "OFFLINE-REPO | Nothing loaded yet -- leave apt alone"
+      ansible.builtin.debug:
+        msg: >-
+          offline_repo_enabled is true but there is no Release file at
+          {{ offline_repo_dir }}/{{ offline_repo_subdir }}/dists/{{ offline_repo_suite }}/Release,
+          so the online sources were NOT touched. Load the repo first:
+          `sudo it-offline-repo load /media/<user>/<SSD>/repo`, then re-run the
+          pull (or `sudo it-offline-repo enable`).
+      when: not _or_release.stat.exists
+
+    - name: "OFFLINE-REPO | Switch apt over"
+      when: _or_release.stat.exists
+      block:
+        - name: "OFFLINE-REPO | Backup directory for the parked online sources"
+          ansible.builtin.file:
+            path: "{{ offline_repo_backup_dir }}"
+            state: directory
+            owner: root
+            group: "{{ ia_it_group | default('sudo') }}"
+            mode: "0750"
+
+        # Move, don't delete. The EMI laptop can legitimately go back online for
+        # a rebuild, and `disable` puts these back verbatim. `mv -n` so a second
+        # run never clobbers the first (real) backup with an empty one.
+        - name: "OFFLINE-REPO | Park the online sources"
+          ansible.builtin.shell:
+            cmd: |
+              set -e
+              moved=0
+              for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
+                       /etc/apt/sources.list.d/*.sources; do
+                [ -e "$f" ] || continue
+                if [ "$f" = "{{ offline_repo_source_file }}" ]; then continue; fi
+                dest="{{ offline_repo_backup_dir }}/$(basename "$f")"
+                # Never overwrite an existing backup -- that one is from the
+                # first switch and is the copy `disable` has to put back. A
+                # later duplicate is parked alongside it with a suffix, so the
+                # source always leaves /etc/apt but nothing is ever destroyed.
+                if [ -e "$dest" ]; then
+                  dest="$dest.$(date +%Y%m%d-%H%M%S)"
+                fi
+                mv "$f" "$dest"
+                moved=$((moved+1))
+              done
+              echo "parked=$moved"
+          register: _or_park
+          changed_when: "'parked=0' not in _or_park.stdout"
+
+        - name: "OFFLINE-REPO | Write the local source"
+          ansible.builtin.template:
+            src: offline-repo.sources.j2
+            dest: "{{ offline_repo_source_file }}"
+            owner: root
+            group: root
+            mode: "0644"
+          register: _or_source
+
+        - name: "OFFLINE-REPO | Refresh the apt cache from the local repo"
+          ansible.builtin.apt:
+            update_cache: true
+          register: _or_update
+          when: _or_park is changed or _or_source is changed
+          failed_when: false
+
+        - name: "OFFLINE-REPO | Result"
+          ansible.builtin.debug:
+            msg: >-
+              {% if _or_update is skipped %}
+              apt already pointed at {{ offline_repo_dir }}/{{ offline_repo_subdir }} -- nothing to do.
+              {% elif _or_update.failed | default(false) %}
+              SWITCHED, BUT `apt-get update` FAILED against
+              {{ offline_repo_dir }}/{{ offline_repo_subdir }}. The rest of this play
+              will not be able to install anything. Check the tree with
+              `sudo it-offline-repo status`, or revert with
+              `sudo it-offline-repo disable`.
+              {% else %}
+              apt now reads {{ offline_repo_dir }}/{{ offline_repo_subdir }} ({{ offline_repo_suite }}
+              {{ offline_repo_components }}). Online sources parked in
+              {{ offline_repo_backup_dir }}.
+              {% endif %}
+
+# ---------------------------------------------------------------------------
+# Disabled: undo it. Only acts if this box was actually switched -- a box that
+# never ran the offline repo has no source file and no backup, so this is a
+# no-op there.
+# ---------------------------------------------------------------------------
+- name: "OFFLINE-REPO | Disabled"
+  when: not (offline_repo_enabled | bool)
+  block:
+    - name: "OFFLINE-REPO | Is the local source in place?"
+      ansible.builtin.stat:
+        path: "{{ offline_repo_source_file }}"
+      register: _or_present
+
+    - name: "OFFLINE-REPO | Revert to the online sources"
+      when: _or_present.stat.exists
+      block:
+        - name: "OFFLINE-REPO | Remove the local source"
+          ansible.builtin.file:
+            path: "{{ offline_repo_source_file }}"
+            state: absent
+
+        # Restore rather than regenerate: what was parked is what this box was
+        # actually built against, mirror and all.
+        - name: "OFFLINE-REPO | Restore whatever was parked"
+          ansible.builtin.shell:
+            cmd: |
+              set -e
+              restored=0
+              for f in "{{ offline_repo_backup_dir }}"/*; do
+                [ -e "$f" ] || continue
+                b=$(basename "$f")
+                case "$b" in
+                  sources.list)   dest=/etc/apt/sources.list ;;
+                  *.list|*.sources) dest="/etc/apt/sources.list.d/$b" ;;
+                  # Timestamped duplicates from a later switch. apt would ignore
+                  # them anyway; leave them parked rather than litter sources.list.d.
+                  *) continue ;;
+                esac
+                [ -e "$dest" ] && continue
+                mv "$f" "$dest"
+                restored=$((restored+1))
+              done
+              echo "restored=$restored"
+          register: _or_restore
+          changed_when: "'restored=0' not in _or_restore.stdout"
+
+        - name: "OFFLINE-REPO | Refresh the apt cache"
+          ansible.builtin.apt:
+            update_cache: true
+          failed_when: false
+
+        - name: "OFFLINE-REPO | Reverted"
+          ansible.builtin.debug:
+            msg: >-
+              apt is back on its online sources. The repo tree at
+              {{ offline_repo_dir }} was left in place -- delete it by hand if
+              the box is not going back offline.

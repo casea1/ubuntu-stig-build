@@ -151,6 +151,7 @@ The rows marked **ai only** are the AI-stack tooling. They are placed on the `ai
 | `it-stig` | `stig-run.sh` | The whole STIG evidence cycle in one command: `status` (what is staged, what is missing, when it last ran), `run` (scan + checklist), `scan`, `checklist`, `archive` (tar the evidence set for hand-off). Wraps `it-oscap` and `it-ckl` and checks prerequisites before running anything. |
 | `it-clamav` | `clamav-sigs.sh` | **Manual ClamAV signature updates** for air-gapped boxes, plus `test` (does the engine actually detect an EICAR file?) and `image-save`/`image-load` for staging the containerised scanner image. `check` (default) reports installed databases, their age, whether the digital signature verifies, whether the running daemon is actually serving what is on disk, and whether a non-admin DTA can reach the scanner socket. `install` takes the newest `*.tar.gz` from `/opt/it/clamavsigs` — validating and version-checking it **before** touching the live database, backing up, then confirming with the daemon's own reported version and an EICAR detection test. `rollback` restores the previous set, `sync` copies freshclam's host database into the containerised scanner, `revert [--purge]` hands scanning back to the host engine once a fixed ClamAV is installed. `--force` allows a same/older version, `--no-test` skips the detection test. |
 | `it-goclassified` | `go-classified.sh` | **Pre-classification gate.** Runs before a box holds classified data: machine-checks Secure Boot, FIPS, the GRUB password and whether every boot entry is `--unrestricted`, LUKS, base-image accounts, whether any interactive password still dates from imaging day, radios, USBGuard, **whether antivirus actually detects**, and OpenSCAP/checklist evidence — then puts the things the OS cannot see (BIOS admin password, boot order, LUKS rotation, TPM re-seal, media removed) to the operator as attestations recorded against their name. Writes the record to `/opt/ia/goclassified/`. `--report` for machine checks only. Exit 0 only when nothing failed and nothing is left open. |
+| `it-offline-repo` | `offline-repo.sh` | **Run apt off a hand-carried local repo** on a standalone (air-gapped) box. `load <path>` copies the repo tree from media to `/srv/repo` after checking it structurally, then locks it to `root:root 0755`; `enable` parks the online sources in `/opt/it/apt-sources-backup/`, writes the `file://` source, and persists `offline_repo_enabled: true` into `/opt/it/site.yml` so the next `ansible-pull` does not undo it; `disable` restores the parked sources verbatim; `verify` runs `apt-get update` and proves a package actually resolves from the local repo. Default (`status`) reports what apt reads, how many `.deb` the tree holds and when its index was built. |
 | `it-ckl` | `stig-checklist.py` | Builds a DISA STIG checklist (`.cklb` / `.ckl`) from the manual STIG XCCDF + the SCAP results + the repo's adjudications, with asset fields filled in. `--summary` lists what still needs a human. See [compliance.md](compliance.md#building-the-stig-checklist-it-ckl). |
 | `it-powerstrux` | `run-powerstrux.sh` | Runs the PowerStrux LA audit (`pwsh -NoProfile -File Initiate-PowerstruxLA.ps1`), logs to `/opt/_AuditFiles/logs/`, and reports where the HTML landed. Auditors double-click **PowerStrux Audit** in the app menu instead. Runs weekly on its own — **Wednesday 03:00**, `powerstrux-audit.timer`. `status` shows the schedule, last run and next run; `schedule "<spec>"` changes it — writing both the live timer **and** `/opt/it/site.yml`, so a pull does not revert it — and `enable`/`disable` turn the weekly run off and on. `--where` prints the paths without running anything. |
 | `dta-log` | `dta-transfer-log.sh` | **DTA transfer record.** Asks the approval / DTA name / transfer-type questions, auto-detects the most recent folder under `/opt/dta/incoming` or `/opt/dta/outgoing` for the operator to confirm (or takes a typed path), scans it with ClamAV, and writes a dated record plus a sha256 manifest to `/opt/dta/logs`. `list` / `show last` review past records; `--no-hash` skips the manifest on a large transfer. Runs **as the DTA**, not root, so the record names a person — hence `/usr/local/bin`, not `sbin`. Also **Data Transfer Record** in the app menu. *(profiles with a `dta` group)* |
@@ -633,6 +634,43 @@ It runs as **root**, not `auto_audit`: `oscap` needs to read privileged configur
 
 Only one is ever installed; switching methods removes the other.
 
+### Running apt off a local repo (`it-offline-repo`)
+
+A standalone box — the EMI laptop — is air-gapped after imaging with no ADM PC to serve packages, so apt reads a repo tree carried in on media. The tree is the one the ADM-Toolkit mirrors for the connected fleet (`ubuntu/<codename>/dists/…` + `pool/…`); the dev/AI boxes get pointed at the toolkit's HTTP repo server instead, and never use this.
+
+```bash
+sudo it-offline-repo load /media/$USER/SSD/repo   # copy the tree in (rsync, --delete)
+sudo it-offline-repo enable                       # park the online sources, switch apt
+sudo it-offline-repo                              # status: what apt reads, is the tree sane
+sudo it-offline-repo disable                      # put the original sources back
+```
+
+`load` accepts the repo **root**, verifies structurally (a `dists/<suite>/Release` must exist — a directory merely *named* `ubuntu` proves nothing), and re-`chown`s the result to `root:root` `0755`.
+
+#### Where the tree lives, and why
+
+**`/srv/repo`**, set by `offline_repo_dir` in `group_vars/all.yml`. Three constraints picked it:
+
+- **Not `/opt/it`.** That directory is `2770 root:sudo`. apt drops to the unprivileged `_apt` user to fetch, which cannot read it, so every fetch falls back with a sandbox warning. Worse, a repo any `sudo` member can write to, combined with `Trusted: yes` below, is a local root escalation: stage a `.deb`, wait for the next `apt install`. Root-owned `0755` closes both.
+- **Not `/var` or `/home`.** Both are separate partitions in the STIG layout. A repo is bulk data that grows, and filling `/var` stops `auditd`.
+- **`/srv` is what the tree was built for** — it is the target the toolkit's own `setup-repo.sh` uses, so the same media works in both places with no path translation.
+
+#### The switch has to survive `ansible-pull`
+
+`enable` writes `offline_repo_enabled: true` into `/opt/it/site.yml`, the per-node override the playbook already loads. That matters for a reason that is not obvious: the baseline **adds** third-party apt repos of its own (Microsoft/VS Code in `base_packages`, NodeSource in `dev_tools`). Air-gapped those are unreachable, and a source entry pointing at one makes every subsequent `apt-get update` stall on a timeout. With the flag set, the `offline_repo` role rewrites the local source on each pull and those two roles skip their repo blocks; without it, the next pull quietly undoes the switch.
+
+Set the flag by hand in `site.yml` and the next pull does the same thing — the script is just the interactive front end.
+
+#### What is parked, and getting back
+
+`enable` **moves** `/etc/apt/sources.list` and everything in `/etc/apt/sources.list.d/` into `/opt/it/apt-sources-backup/` rather than deleting them, and `disable` puts them back verbatim. That is deliberate: the EMI laptop legitimately goes back online to be rebuilt, and what was parked is what the box was actually built against — mirror, ESM entries and all. A second `enable` never overwrites the first backup; a duplicate is parked alongside it with a timestamp.
+
+#### The repo is unsigned — know what that means
+
+The carried tree has no `Release.gpg`, so the source is written `Trusted: yes` and apt does **not** verify a signature. The trust boundary is therefore the media it arrived on and the root-owned directory it sits in, not cryptography. Practically: scan the media (`dta-log` if it came through a transfer), and keep `/srv/repo` root-write-only. If the builder is ever taught to sign the repo, set `offline_repo_signed_by` to the keyring path and the source drops to a normal verified one with no other change. Until then it belongs on the POA&M alongside the other accepted deviations.
+
+**Ubuntu Pro / ESM is not covered.** The tree holds the main archive. ESM content needs an internal Pro mirror; anything shipped only through ESM still has to be carried in as a loose `.deb`.
+
 ### ClamAV signatures on an air-gapped box (`it-clamav`)
 
 `freshclam` cannot reach anything once the box is off the network, so signatures come in by hand. Drop the archive in `/opt/it/clamavsigs` and run the installer:
@@ -713,7 +751,7 @@ The container is a workaround for [clamav#1786](https://github.com/Cisco-Talos/c
 
 **On a connected box this is automatic.** `clamav_container` EICAR-tests the host engine on every pull; the moment it detects again, the role hands the container's signature database back to `/var/lib/clamav`, removes the units, and unmasks `clamav-daemon`. Nothing to do.
 
-**On an air-gapped box** the patched ClamAV has to be carried in as a `.deb` — there is no offline apt path in this repo (see [patching.md](patching.md)). Then:
+**On an air-gapped box** the patched ClamAV has to be carried in. If the box runs a local repo (see *Running apt off a local repo* above), refresh it with `it-offline-repo load` and `apt install clamav` normally; otherwise carry the `.deb` files in loose. Then:
 
 ```bash
 sudo apt install ./libclamav*.deb ./clamav*.deb
