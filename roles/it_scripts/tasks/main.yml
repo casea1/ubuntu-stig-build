@@ -12,6 +12,32 @@
 # is placed the same way on the EMI profiles only (it_scripts_emi_enabled).
 # =============================================================================
 
+# The scripts need to know which profile this box was built as -- item 23 of
+# the org checklist has a different answer on EMI (manual SSD duplication) than
+# on dev/ai (nothing local worth backing up). Nothing else on the box records
+# it: group_vars is on the ansible-pull side, not here. Plain key=value so a
+# shell script can source it.
+# copy does not create parents, and /etc/stig-build only exists on a box that
+# has generated a secret into it -- which the EMI profile never does.
+- name: "IT-SCRIPTS | Ensure /etc/stig-build exists (root-only; holds generated secrets)"
+  ansible.builtin.file:
+    path: /etc/stig-build
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: "IT-SCRIPTS | Record the deployment profile for the scripts to read"
+  ansible.builtin.copy:
+    dest: /etc/stig-build/profile
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Written by ansible (it_scripts). Which profile this box was built as.
+      deployment_profile={{ deployment_profile | default('development') }}
+      emi_classified={{ (emi_classified | default(true) | bool) | lower }}
+
 - name: "IT-SCRIPTS | Ensure the scripts dir exists ({{ it_scripts_dir }})"
   ansible.builtin.file:
     path: "{{ it_scripts_dir }}"

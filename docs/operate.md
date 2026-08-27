@@ -635,6 +635,26 @@ It runs as **root**, not `auto_audit`: `oscap` needs to read privileged configur
 
 Only one is ever installed; switching methods removes the other.
 
+### Backup: what it means per profile
+
+There is no backup agent on any box, and that is deliberate — but for two different reasons, so `it-checklist` item 23 gives two different answers.
+
+**Development / AI / baseline → N/A.** Nothing primary is kept locally. Users store on the file servers, which are backed up; the endpoints are rebuildable from this repo. Model weights are separately reproducible through the `it-model-export`/`import` USB workflow.
+
+**EMI → MANUAL, an offline SSD duplication.** That box is standalone and air-gapped: there is no file server to push to, and no network path to one. Backup is a whole-disk clone taken by hand onto a spare SSD.
+
+A disk clone leaves nothing behind on the box, so the only on-box evidence it happened is what the operator records. Drop a note per duplication in **`/opt/ia/backups`** — date, which spare it went to, whether the clone was verified — and `it-checklist` reports how long ago the newest one was:
+
+```bash
+sudo sh -c 'cat > /opt/ia/backups/$(date +%F)-duplication.txt' <<'EOF'
+2026-08-27  clone to spare SSD 02, verified by boot test.  DTA: <name>
+EOF
+```
+
+Two things worth stating on the SSP rather than leaving implied: the clone is a **full copy of a LUKS-encrypted disk**, so the spare inherits the same classification and handling as the original and needs the same storage; and there is **no restore rehearsal** in this process — a clone nobody has ever booted is a hope, not a backup, which is why the note has a place for verification.
+
+The profile that decides which answer applies comes from `/etc/stig-build/profile`, written by `it_scripts` on every pull.
+
 ### Vulnerability scanning (`it-vulnscan`, EMI profiles)
 
 The Linux counterpart to the org's `MUSA_Vuln_Scan` Windows job. That one runs `nmap -sV --script vuln` against the host and then a Defender full scan, appending both to one dated text file; this does the same two things with the same shape.
