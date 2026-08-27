@@ -27,6 +27,16 @@
     group: root
     mode: "0700"
 
+# Which revision of this repo the box is actually running. Without it there is
+# no way to tell a box that has a fix from one that has not -- and "did you
+# pull?" has already cost two rounds of debugging a bug that was fixed.
+# playbook_dir is the ansible-pull checkout.
+- name: "IT-SCRIPTS | Which revision of the baseline is this?"
+  ansible.builtin.command: git -C {{ playbook_dir }} rev-parse --short HEAD
+  register: _it_rev
+  changed_when: false
+  failed_when: false
+
 - name: "IT-SCRIPTS | Record the deployment profile for the scripts to read"
   ansible.builtin.copy:
     dest: /etc/stig-build/profile
@@ -37,6 +47,7 @@
       # Written by ansible (it_scripts). Which profile this box was built as.
       deployment_profile={{ deployment_profile | default('development') }}
       emi_classified={{ (emi_classified | default(true) | bool) | lower }}
+      baseline_revision={{ (_it_rev.stdout | default('') | trim) or 'unknown' }}
 
 - name: "IT-SCRIPTS | Ensure the scripts dir exists ({{ it_scripts_dir }})"
   ansible.builtin.file:

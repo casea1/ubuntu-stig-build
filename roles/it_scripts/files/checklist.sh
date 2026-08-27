@@ -40,7 +40,10 @@ fi
 [ -z "$PROFILE" ] && have it-vulnscan && PROFILE=emi
 is_emi(){ case "$PROFILE" in emi|emi-unclass) return 0 ;; *) return 1 ;; esac; }
 
+REV=""
+[ -r /etc/stig-build/profile ] && REV=$(awk -F= '/^baseline_revision=/{print $2; exit}' /etc/stig-build/profile)
 echo "Linux checklist -- $(hostname) -- $(date '+%Y-%m-%d %H:%M:%S %Z')"
+echo "baseline ${REV:-unknown}${PROFILE:+  profile $PROFILE}"
 echo
 
 # 1 AD/SSSD -- this fleet uses local accounts by design (documented deviation)

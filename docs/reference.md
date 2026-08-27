@@ -134,7 +134,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `/opt/dta/incoming,outgoing,logs/` | Data-transfer staging and records (EMI) |
 | `/opt/stacks/<stack>/` | AI compose stacks — Dockge watches this dir |
 | `/srv/repo/` | The carried offline apt repo. `root:root 0755` |
-| `/etc/stig-build/` | Root-only. Generated `*.pw`, the GRUB hash, `profile` |
+| `/etc/stig-build/` | Root-only. Generated `*.pw`, the GRUB hash, and `profile` — which records the deployment profile and the **baseline revision** this box last pulled |
 | `/etc/luks/initial-passphrase` | Read once to bind the TPM, then deleted |
 | `/var/lib/clamav-container/` | The containerised scanner's own signature database |
 
