@@ -28,7 +28,7 @@ Each of these caused a real outage or a wrong conclusion.
 
 **4. ClamAV silently does nothing on a FIPS host.** OpenSSL in FIPS mode refuses MD5, which is what ClamAV hashes content with, so the engine loads every signature and then scans **zero bytes**, reports every file clean, and exits 0. No error an operator would see. Upstream [clamav#1786](https://github.com/Cisco-Talos/clamav/issues/1786), open, no fix, and not configurable around — Ubuntu's FIPS OpenSSL takes FIPS from the kernel flag, so even `OPENSSL_CONF=/dev/null` fails. The fix is `clamav_container`. **`sudo it-clamav test` is the only thing that settles it.**
 
-**5. nmap does not run on a FIPS box either.** It initialises OpenSSL at startup, the FIPS provider gives it no usable cipher suite, and it quits before probing anything — `library has no ciphers`. Same root cause as trap 4 and equally unconfigurable. `it-vulnscan` records `NMAP-FAULT` and exits non-zero; `it-checklist` item 28 FAILs on it. **A vuln report reading "0 open ports, nothing flagged" because the scanner never started is the exact failure this repo keeps meeting.**
+**5. nmap does not run on a FIPS box either.** It initialises OpenSSL at startup, the FIPS provider gives it no usable cipher suite, and it quits before probing anything — `library has no ciphers`. Same root cause as trap 4 and equally unconfigurable: nmap links the host OpenSSL. Fixed the same way — `nmap_container` builds an image on a stock base and `it-vulnscan` falls back to it, reporting `OK (via container)`. When neither works it records `NMAP-FAULT` and item 28 FAILs. **A vuln report reading "0 open ports, nothing flagged" because the scanner never started is the exact failure this repo keeps meeting.**
 
 **6. clamd needs 60–90 s after a restart** before its socket answers — it binds only after loading ~3.6M signatures. A test in that window falls back to the broken host engine and looks exactly like a broken container.
 
@@ -99,7 +99,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 
 | Command | Does |
 |---|---|
-| `it-vulnscan` | nmap `vuln` scripts + AV scan → `/opt/ia/vulnscans`. Records `NMAP-FAULT` / `ENGINE-FAULT` and exits non-zero when a scanner did not actually run. `VULNSCAN_AV_PATHS` overrides what the AV half walks |
+| `it-vulnscan` | nmap `vuln` scripts + AV scan → `/opt/ia/vulnscans`. Falls back to the containerised nmap when the host one cannot start under FIPS; `image-save`/`image-load` stage that image for an air-gapped box. Records `NMAP-FAULT` / `ENGINE-FAULT` and exits non-zero when a scanner did not actually run. `VULNSCAN_AV_PATHS` overrides what the AV half walks |
 | `dta-log` | Record and scan a data transfer → `/opt/dta/logs` |
 
 ### AI profile only

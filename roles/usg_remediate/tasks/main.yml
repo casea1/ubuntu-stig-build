@@ -352,10 +352,39 @@
 - name: "REMED | System reboot/shutdown audit rule"
   when: audit_reboot_rules_enabled | default(true) | bool
   block:
-    - name: "REMED | Is auditd's rules.d present? (skip on a box without auditd)"
+    # This used to be a bare "does rules.d exist, else skip", and it hid a real
+    # hole: on ASP-2 auditd was running with the directory ABSENT, so every
+    # audit-rule task below skipped silently and the box enforced nothing --
+    # while the file-based OVALs still passed, because there was no
+    # non-conforming file for them to find. Distinguish the two cases: auditd
+    # installed means the directory is ours to create; auditd genuinely absent
+    # is the only thing that may skip.
+    - name: "REMED | Is auditd installed?"
+      ansible.builtin.stat:
+        path: /sbin/auditctl
+      register: _auditctl
+
+    - name: "REMED | Ensure auditd's rules.d exists (auditd is installed)"
+      ansible.builtin.file:
+        path: /etc/audit/rules.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+      when: _auditctl.stat.exists | default(false)
+
+    - name: "REMED | Is auditd's rules.d present?"
       ansible.builtin.stat:
         path: /etc/audit/rules.d
       register: _audit_rulesd
+
+    - name: "REMED | auditd is not installed -- audit rules are NOT being enforced"
+      ansible.builtin.debug:
+        msg: >-
+          /sbin/auditctl is absent, so this box has no audit daemon and none of
+          the STIG audit rules are enforced. Every audit task below is being
+          skipped. If that is not deliberate, install auditd and re-run.
+      when: not (_auditctl.stat.exists | default(false))
 
     - name: "REMED | Install the reboot/shutdown audit rule (key={{ audit_reboot_rules_key | default('reboot') }})"
       ansible.builtin.copy:

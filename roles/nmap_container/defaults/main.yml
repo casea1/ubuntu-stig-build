@@ -1,0 +1,29 @@
+---
+# nmap_container -- a containerised nmap for hosts whose own nmap cannot run.
+#
+# WHY: on a FIPS host nmap initialises OpenSSL at startup, the FIPS provider
+# offers it no usable cipher suite, and it quits before probing anything:
+#   OpenSSL failed to create a new SSL_CTX: ...SSL routines::library has no ciphers
+# nmap links the host OpenSSL and cannot be configured out of FIPS mode -- the
+# same dead end as ClamAV (clamav#1786). The image is built from a stock Ubuntu
+# base whose OpenSSL is not the FIPS variant, so nmap starts normally there.
+# The host kernel stays in FIPS mode.
+#
+# Self-skipping: does nothing unless the HOST nmap actually fails AND docker is
+# present. On a box where nmap works this role is a no-op.
+nmap_container_enabled: true
+
+# Built on the box during the build (needs internet, like the other custom
+# images). Pinned by base tag; rebuild by bumping it.
+nmap_container_image: "stig-build/nmap:24.04"
+nmap_container_base: "ubuntu:24.04"
+
+# Recorded here for it-vulnscan to find. Absent = no containerised nmap.
+nmap_container_marker: /etc/stig-build/nmap-image
+
+# Some images abort on a FIPS host because their runtime reads
+# /proc/sys/crypto/fips_enabled directly (this is why the vLLM and Docling
+# stacks carry a fips_off file). Mount the same carve-out here so the container
+# is unaffected either way. The HOST stays FIPS -- only this container's view
+# of that one file changes.
+nmap_container_fips_off: /etc/stig-build/fips_off

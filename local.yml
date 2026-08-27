@@ -228,6 +228,12 @@
     # -------------------------------------------------------------------------
     - role: inventory_report        # both: hardware/system inventory -> /opt/it/inventory-<host>.txt
       when: inventory_report_enabled | default(true)
+    # Containerised nmap for FIPS boxes -- the host nmap quits at startup with
+    # "library has no ciphers". Self-skips unless the host nmap actually fails
+    # and docker is present. EMI only: nmap and it-vulnscan live there.
+    - role: nmap_container          # emi: containerised nmap when the host one cannot start
+      when: is_emi | default(false) | bool
+
     - role: it_scripts              # both: admin status scripts in /opt/it/scripts (+ it-* commands)
       when: it_scripts_enabled | default(true)
 
