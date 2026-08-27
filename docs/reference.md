@@ -28,21 +28,25 @@ Each of these caused a real outage or a wrong conclusion.
 
 **4. ClamAV silently does nothing on a FIPS host.** OpenSSL in FIPS mode refuses MD5, which is what ClamAV hashes content with, so the engine loads every signature and then scans **zero bytes**, reports every file clean, and exits 0. No error an operator would see. Upstream [clamav#1786](https://github.com/Cisco-Talos/clamav/issues/1786), open, no fix, and not configurable around — Ubuntu's FIPS OpenSSL takes FIPS from the kernel flag, so even `OPENSSL_CONF=/dev/null` fails. The fix is `clamav_container`. **`sudo it-clamav test` is the only thing that settles it.**
 
-**5. clamd needs 60–90 s after a restart** before its socket answers — it binds only after loading ~3.6M signatures. A test in that window falls back to the broken host engine and looks exactly like a broken container.
+**5. nmap does not run on a FIPS box either.** It initialises OpenSSL at startup, the FIPS provider gives it no usable cipher suite, and it quits before probing anything — `library has no ciphers`. Same root cause as trap 4 and equally unconfigurable. `it-vulnscan` records `NMAP-FAULT` and exits non-zero; `it-checklist` item 28 FAILs on it. **A vuln report reading "0 open ports, nothing flagged" because the scanner never started is the exact failure this repo keeps meeting.**
 
-**6. The FIPS carve-out for containers.** vLLM and Docling images have no FIPS OpenSSL provider and abort at startup, so they bind-mount a `fips_off` file over `/proc/sys/crypto/fips_enabled`. The host kernel stays FIPS. Do not "clean this up".
+**6. clamd needs 60–90 s after a restart** before its socket answers — it binds only after loading ~3.6M signatures. A test in that window falls back to the broken host engine and looks exactly like a broken container.
 
-**7. Docling's models are baked into its image**, with runtime downloads disabled. Mounting a volume over its model cache **hides** them and docling crash-loops. To add a model, mount its own subdirectory, never the parent.
+**7. The FIPS carve-out for containers.** vLLM and Docling images have no FIPS OpenSSL provider and abort at startup, so they bind-mount a `fips_off` file over `/proc/sys/crypto/fips_enabled`. The host kernel stays FIPS. Do not "clean this up".
 
-**8. Image tags are pinned**, so `docker compose pull` is not an update. Patching a container means editing the tag in this repo.
+**8. Docling's models are baked into its image**, with runtime downloads disabled. Mounting a volume over its model cache **hides** them and docling crash-loops. To add a model, mount its own subdirectory, never the parent.
 
-**9. Volumes are external**, so `docker compose down -v` cannot delete model weights or databases. It also means Postgres keeps its original password on an existing volume regardless of the env var.
+**9. Image tags are pinned**, so `docker compose pull` is not an update. Patching a container means editing the tag in this repo.
 
-**10. Open WebUI RAG settings are `PersistentConfig`.** Env seeds a *fresh* database only. On an existing box they must be changed in the UI.
+**10. Volumes are external**, so `docker compose down -v` cannot delete model weights or databases. It also means Postgres keeps its original password on an existing volume regardless of the env var.
 
-**11. A green playbook is not evidence.** ASP-2's compliance score barely moved (88.476 → 88.703) across a full remediation run — two whole categories of fix were being written correctly and still failing, because a stale file was poisoning rules that were otherwise satisfied and PAM values were being written into a file nothing read. Neither showed as an Ansible failure. **The re-audit is the evidence.**
+**11. Open WebUI RAG settings are `PersistentConfig`.** Env seeds a *fresh* database only. On an existing box they must be changed in the UI.
 
-**12. Pre-USG leftovers.** Two separate outages traced to files the current baseline neither writes nor removes, left by the old ansible-lockdown role (`/etc/audit/rules.d/stig.rules`, and `pam_faillock` lines in `common-auth` with `pam_unix`'s jump offset never recalculated). Assume there are others on any box built before the USG switch.
+**12. A passing benchmark is not a compliant box.** `usg fix` leaves `PermitRootLogin prohibit-password`, which satisfies the STIG rule (it only forbids a root *password* login) while still allowing root in **by SSH key** — which the org checklist forbids outright. Found on ASP-2 with a 96.41 % scan. Check what the rule actually asserts, not just its colour.
+
+**13. A green playbook is not evidence.** ASP-2's compliance score barely moved (88.476 → 88.703) across a full remediation run — two whole categories of fix were being written correctly and still failing, because a stale file was poisoning rules that were otherwise satisfied and PAM values were being written into a file nothing read. Neither showed as an Ansible failure. **The re-audit is the evidence.**
+
+**14. Pre-USG leftovers.** Two separate outages traced to files the current baseline neither writes nor removes, left by the old ansible-lockdown role (`/etc/audit/rules.d/stig.rules`, and `pam_faillock` lines in `common-auth` with `pam_unix`'s jump offset never recalculated). Assume there are others on any box built before the USG switch.
 
 ---
 
@@ -93,7 +97,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 
 | Command | Does |
 |---|---|
-| `it-vulnscan` | nmap `vuln` scripts + full AV scan → `/opt/ia/vulnscans` |
+| `it-vulnscan` | nmap `vuln` scripts + AV scan → `/opt/ia/vulnscans`. Records `NMAP-FAULT` / `ENGINE-FAULT` and exits non-zero when a scanner did not actually run. `VULNSCAN_AV_PATHS` overrides what the AV half walks |
 | `dta-log` | Record and scan a data transfer → `/opt/dta/logs` |
 
 ### AI profile only
@@ -121,7 +125,6 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `/opt/ia/stig/content,checklists,evidence/` | DISA input you stage, generated checklists, archived bundles |
 | `/opt/ia/goclassified/` | Pre-classification records |
 | `/opt/ia/vulnscans/` | `it-vulnscan` reports (EMI) |
-| `/opt/ia/backups/` | Operator notes for EMI SSD duplications |
 | `/opt/ia/audit-offload/` | Weekly staged audit logs |
 | `/opt/it/` | IT admin area, same ownership |
 | `/opt/it/scripts/` | The `it-*` scripts |
@@ -256,7 +259,7 @@ Containers cannot resolve the peer's hostname, so cross-node addressing comes fr
 | `postgres_mlflow_data` | MLflow's Postgres | `/var/lib/postgresql/data` |
 | `openwiki-out` | Generated wiki markdown | `/work` |
 
-**Docling has no volume** — its models ship baked into the image (trap 7).
+**Docling has no volume** — its models ship baked into the image (trap 8).
 
 ```bash
 sudo docker volume inspect vllm                  # find its Mountpoint
@@ -363,6 +366,6 @@ IA / DCSA inventory. Versions are pinned in `group_vars/all.yml`, the compose fi
 
 Plus `o200k_base.tiktoken` and `cl100k_base.tiktoken` (OpenAI) — vocab for the gpt-oss harmony tokenizer.
 
-> **granite-docling-258M is not deployed.** Adding it needs a custom docling image with the weights baked in — see trap 7.
+> **granite-docling-258M is not deployed.** Adding it needs a custom docling image with the weights baked in — see trap 8.
 
 External sources read by oikb (GitLab, Confluence, S3, per `site.yml`) are org services, not installed software.

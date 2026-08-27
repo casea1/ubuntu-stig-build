@@ -218,20 +218,13 @@ row "N/A" 21 "Splunk agent" "not used in this environment"
 row MAN 22 "DNS records (COMPASS)" "org infrastructure -- verify externally"
 
 # 23 backup -- two different answers by profile.
-#   EMI: the box is standalone and air-gapped, so there is no file server to
-#        push to. Backup is a MANUAL offline SSD duplication, which leaves no
-#        trace on the box -- the only on-box evidence is what the operator
-#        records in /opt/ia/backups. MANUAL either way; the record just says
-#        when it last happened.
-#   everything else: nothing is kept locally, the file servers are backed up.
+#   EMI: standalone and air-gapped, so there is no file server to push to.
+#        Backup is a manual offline SSD duplication, and it is logged ON PAPER.
+#        Nothing on the box can see it; MANUAL is the honest answer, not a
+#        check pretending to have evidence.
+#   everything else: nothing kept locally, the file servers are backed up.
 if is_emi; then
-  bk=$(find /opt/ia/backups -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
-  if [ -n "$bk" ]; then
-    d=$(( ( $(date +%s) - $(stat -c %Y "$bk") ) / 86400 ))
-    row MAN 23 "Backup + restore" "manual SSD duplication; last recorded $(basename "$bk") (${d}d ago)"
-  else
-    row MAN 23 "Backup + restore" "manual SSD duplication -- nothing recorded in /opt/ia/backups yet"
-  fi
+  row MAN 23 "Backup + restore" "manual SSD duplication, logged on paper -- verify against the paper record"
 else
   row "N/A" 23 "Backup + restore" "org: file servers backed up; endpoints hold no primary data by policy"
 fi
@@ -272,7 +265,11 @@ if have it-vulnscan; then
   if [ -n "$v" ]; then
     d=$(( ( $(date +%s) - $(stat -c %Y "$v") ) / 86400 ))
     h=$(grep -cE '^\|.*(VULNERABLE|CVE-[0-9]{4}-[0-9]+)' "$v" 2>/dev/null || true); h=${h:-0}
-    if [ "$h" -gt 0 ]; then
+    # A scanner that did not run must never read as a clean result. it-vulnscan
+    # stamps NMAP-FAULT / ENGINE-FAULT into the report when that happens.
+    if grep -qE 'NMAP-FAULT|ENGINE-FAULT|Anti-virus +: +(ERROR|INFECTED)' "$v" 2>/dev/null; then
+      row FAIL 28 "nmap vulnerability scan" "$(basename "$v") (${d}d ago) -- a scanner FAULTED; the report is not evidence"
+    elif [ "$h" -gt 0 ]; then
       row FAIL 28 "nmap vulnerability scan" "$(basename "$v") (${d}d ago) -- $h finding(s) to review"
     elif [ "$d" -le 45 ]; then
       row PASS 28 "nmap vulnerability scan" "$(basename "$v") (${d}d ago), nothing flagged"

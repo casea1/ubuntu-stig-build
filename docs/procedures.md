@@ -81,7 +81,27 @@ It prompts, hidden, for:
 - the **Ubuntu Pro token** (or set `PRO_TOKEN=`, or pre-place it in `/etc/ubuntu-advantage/pro-token`);
 - the **LUKS passphrase**, to bind TPM auto-unlock. Press Enter to skip.
 
-Other switches: `HARDEN=0` installs everything but skips the disruptive `usg fix`. `REPO_URL=` / `BRANCH=` point at a mirror.
+**Every switch goes between `sudo` and `bash`**, as `NAME=value`, space-separated. A fully worked example — EMI, token supplied non-interactively, audit-only first pass, from a mirror:
+
+```bash
+curl -fsSL https://git.asplab.com/ASPLAB/ubuntu-stig-build/raw/branch/main/bootstrap.sh \
+  | sudo PROFILE=emi \
+         PRO_TOKEN=C1abcdEFGH23ijklMNOP \
+         HARDEN=0 \
+         REPO_URL=https://git.example.com/ASPLAB/ubuntu-stig-build.git \
+         BRANCH=main \
+         bash
+```
+
+| Switch | Values | Effect |
+|---|---|---|
+| `PROFILE` | `development` \| `ai` \| `emi` \| `emi-unclass` \| `baseline` | Which build. Default `development` |
+| `PRO_TOKEN` | your Ubuntu Pro token | Supply it non-interactively instead of being prompted |
+| `HARDEN` | `0` | Install everything, skip the disruptive `usg fix`. Omit for a normal run |
+| `REPO_URL` | a git URL | Build from a mirror |
+| `BRANCH` | a branch name | Default `main` |
+
+> A token on the command line lands in your shell history. Prefer the prompt, or pre-place it in `/etc/ubuntu-advantage/pro-token` (`0600`, root-owned) and omit `PRO_TOKEN` entirely.
 
 The build runs **detached** as the systemd unit `stig-build`, because hardening restarts GDM mid-run and would kill a foreground job.
 
@@ -276,6 +296,26 @@ Reports append to `/opt/ia/vulnscans/<host>-vuln-scan-MM-DD-YYYY.txt`. Exit is n
 
 Scans loopback by default. `--target` exists for a deliberate, authorised scope.
 
+**nmap does not run on a FIPS box.** It initialises OpenSSL at startup, the FIPS provider offers it no usable cipher suite, and it quits before probing anything:
+
+```
+OpenSSL failed to create a new SSL_CTX: error:0A0000A1:SSL routines::library has no ciphers
+```
+
+Same class of failure as ClamAV, and not configurable around for the same reason — nmap links the host OpenSSL, which takes FIPS from the kernel flag. `it-vulnscan` detects this, records **`NMAP-FAULT`** in the report, exits non-zero, and `it-checklist` item 28 FAILs on it. A report that says "0 open ports, nothing flagged" because the scanner never started is not evidence.
+
+Until it is solved, get the nmap half from a non-FIPS box on the same segment and file that output alongside the AV scan:
+
+```bash
+nmap -sV --script vuln <emi-box-ip>      # from a non-FIPS host, authorised scope only
+sudo it-vulnscan --quick --no-av         # nothing useful; use the AV half instead
+sudo it-vulnscan                         # AV scan still works and still counts
+```
+
+The AV half is unaffected and is the part the engine gate protects.
+
+**What the AV half scans.** `/home /root /opt /srv /etc /usr/local /tmp /var/tmp /media /mnt` — where writable content actually lives, `/media` and `/mnt` included because removable media is the point on a DTA box. Not `/`: `clamdscan` has no `--exclude-dir` (that is a `clamscan`-only flag), so a `/` scan walks `/proc` printing "Failed to open file" for every task and then grinds through `/var/lib/docker`. Override with `VULNSCAN_AV_PATHS="/a /b"`.
+
 ## 3.4 Log a data transfer (EMI)
 
 ```bash
@@ -301,20 +341,15 @@ sudo it-usb trust <id>          # allow this exact device across reboots
 
 USBGuard runs on every profile including EMI. The initial policy is generated from whatever was attached at build time, so the built-in keyboard is always authorised.
 
-## 3.6 Record an EMI backup
+## 3.6 Back up an EMI box
 
-Backup on EMI is an offline SSD duplication, done by hand. It leaves nothing on the box, so record it:
+Offline SSD duplication, by hand, **logged on paper**. Nothing on the box records it and nothing here tries to — `it-checklist` item 23 reports MANUAL and you verify it against the paper record.
 
-```bash
-sudo sh -c 'echo "2026-08-27  clone to spare SSD 02, verified by boot test.  DTA: <name>" \
-  > /opt/ia/backups/$(date +%F)-duplication.txt'
-```
+> The clone is a full copy of a LUKS-encrypted disk. The spare inherits the original's classification and handling, and needs the same storage.
+>
+> Nothing in this process rehearses a restore. A clone nobody has booted is a hope, not a backup.
 
-`it-checklist` item 23 reports how long ago the newest one was.
-
-> The clone is a full copy of a LUKS-encrypted disk. The spare inherits the original's classification and handling.
-
-Development/AI/baseline boxes need nothing here — nothing primary is stored locally.
+Development / AI / baseline boxes need nothing here — nothing primary is stored locally.
 
 ## 3.7 Set the classification banner
 

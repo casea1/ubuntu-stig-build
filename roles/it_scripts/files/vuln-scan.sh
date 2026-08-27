@@ -35,6 +35,7 @@ if [ -t 1 ]; then
 else
   B=""; DIM=""; R=""; RED=""; GRN=""; YEL=""
 fi
+say()  { printf '%s\n' "$*"; }
 head2(){ printf '\n%s%s%s\n' "$B" "$*" "$R"; }
 ok()   { printf '  %s%s%s\n' "$GRN" "$*" "$R"; }
 warn() { printf '  %s%s%s\n' "$YEL" "$*" "$R"; }
@@ -109,20 +110,38 @@ log ""
 log "-------------------------------------------------------------------- "
 log " nmap $(nmap --version 2>/dev/null | awk '/^Nmap version/{print $3}')  --  nmap ${NMAP_ARGS[*]} $TARGET"
 log "-------------------------------------------------------------------- "
-nmap "${NMAP_ARGS[@]}" "$TARGET" 2>&1 | tee -a "$LOG"
-nmap_rc=${PIPESTATUS[0]}
+nmap_out=$(nmap "${NMAP_ARGS[@]}" "$TARGET" 2>&1)
+nmap_rc=$?
+printf '%s\n' "$nmap_out" | tee -a "$LOG"
+
+nmap_verdict=OK
 if [ "$nmap_rc" -ne 0 ]; then
-  bad "nmap exited $nmap_rc"
-  log "*** nmap exited $nmap_rc ***"
+  nmap_verdict=FAULT
+  bad "nmap exited $nmap_rc -- NOTHING WAS SCANNED"
+  log "*** NMAP-FAULT: nmap exited $nmap_rc. No ports were probed. ***"
+  # The known one on these boxes. nmap initialises OpenSSL at startup and the
+  # FIPS provider offers it no usable cipher suite, so it quits before probing
+  # anything -- the same class of failure as ClamAV (clamav#1786). Say so,
+  # because the output otherwise reads exactly like a clean scan.
+  if printf '%s' "$nmap_out" | grep -q 'library has no ciphers'; then
+    bad "cause: OpenSSL in FIPS mode gives nmap no usable ciphers, so it quit at startup"
+    log "*** cause: FIPS OpenSSL -- 'SSL routines::library has no ciphers'. ***"
+    say "  ${DIM}nmap is linked against the host OpenSSL and cannot be configured out of${R}"
+    say "  ${DIM}FIPS mode. Run it from a container, or from a non-FIPS box on the same${R}"
+    say "  ${DIM}segment, and file that output instead. See docs/procedures.md 3.3.${R}"
+  fi
 else
   ok "nmap complete"
 fi
 
 # What an operator actually wants off the top: did any vuln script report
 # something, and what is listening. nmap's own output buries both.
-hits=$(grep -cE '^\|.*(VULNERABLE|CVE-[0-9]{4}-[0-9]+)' "$LOG" 2>/dev/null || true)
+#
+# Count from THIS run's output, not the whole log -- the log is appended, so
+# grepping it would fold in every earlier scan of the same day.
+hits=$(printf '%s\n' "$nmap_out" | grep -cE '^\|.*(VULNERABLE|CVE-[0-9]{4}-[0-9]+)' || true)
 hits=${hits:-0}
-open=$(grep -cE '^[0-9]+/(tcp|udp)[[:space:]]+open' "$LOG" 2>/dev/null || true)
+open=$(printf '%s\n' "$nmap_out" | grep -cE '^[0-9]+/(tcp|udp)[[:space:]]+open' || true)
 open=${open:-0}
 
 # ---- anti-virus -------------------------------------------------------------
@@ -149,20 +168,29 @@ if [ "$DO_AV" -eq 1 ]; then
     CTR_CONF=/etc/clamav/clamd-container.conf
     sock=""
     [ -r "$CTR_CONF" ] && sock=$(awk '/^LocalSocket[[:space:]]/{print $2; exit}' "$CTR_CONF" 2>/dev/null)
-    # Exclude the things a full-disk scan should never walk: pseudo-filesystems,
-    # and the container/model storage (tens of GB of weights, pointless I/O).
-    EXCL=(--exclude-dir='^/(proc|sys|dev|run)/' --exclude-dir='^/var/lib/docker/')
+
+    # NEVER hand the engine "/". clamdscan has no --exclude-dir (that is a
+    # clamscan-only flag), so a "/" scan walks /proc and /sys, spends minutes
+    # printing "Failed to open file" for every task's mem/pagemap, and then
+    # grinds through /var/lib/docker. Scan the places writable content actually
+    # lives instead. Override with VULNSCAN_AV_PATHS="/a /b".
+    read -r -a AV_PATHS <<< "${VULNSCAN_AV_PATHS:-/home /root /opt /srv /etc /usr/local /tmp /var/tmp /media /mnt}"
+    TARGETS=()
+    for d in "${AV_PATHS[@]}"; do [ -d "$d" ] && TARGETS+=("$d"); done
+    log "Scanned paths: ${TARGETS[*]}"
+    printf '  %spaths: %s%s\n' "$DIM" "${TARGETS[*]}" "$R"
+
     if [ -n "$sock" ] && [ -S "$sock" ] && clamdscan -c "$CTR_CONF" --ping=1 >/dev/null 2>&1; then
       printf '  %sengine: containerised clamd%s\n' "$DIM" "$R"
-      clamdscan -c "$CTR_CONF" --fdpass --multiscan --infected / 2>&1 | tee -a "$LOG"
+      clamdscan -c "$CTR_CONF" --fdpass --multiscan --infected "${TARGETS[@]}" 2>&1 | tee -a "$LOG"
       av_rc=${PIPESTATUS[0]}
     elif systemctl is-active --quiet clamav-daemon 2>/dev/null; then
       printf '  %sengine: host clamav-daemon%s\n' "$DIM" "$R"
-      clamdscan --fdpass --multiscan --infected / 2>&1 | tee -a "$LOG"
+      clamdscan --fdpass --multiscan --infected "${TARGETS[@]}" 2>&1 | tee -a "$LOG"
       av_rc=${PIPESTATUS[0]}
     elif command -v clamscan >/dev/null 2>&1; then
       printf '  %sengine: standalone clamscan (slow)%s\n' "$DIM" "$R"
-      clamscan -r --infected "${EXCL[@]}" / 2>&1 | tee -a "$LOG"
+      clamscan -r --infected "${TARGETS[@]}" 2>&1 | tee -a "$LOG"
       av_rc=${PIPESTATUS[0]}
     else
       warn "no ClamAV engine available -- skipping"
@@ -186,6 +214,7 @@ fi
 log ""
 log "===================================================================="
 log " SCAN COMPLETE -- $(date '+%Y-%m-%d %H:%M:%S %Z')"
+log " nmap                    : $nmap_verdict"
 log " Open ports found        : $open"
 log " nmap vuln script hits   : $hits"
 log " Anti-virus              : $av_verdict"
@@ -194,8 +223,14 @@ log "===================================================================="
 chmod 0640 "$LOG"
 
 head2 "Summary"
-printf '  %-24s %s\n' "open ports" "$open"
-if [ "$hits" -gt 0 ]; then
+if [ "$nmap_verdict" = FAULT ]; then
+  bad "nmap FAULTED -- no ports were probed. This report is not evidence of anything."
+else
+  printf '  %-24s %s\n' "open ports" "$open"
+fi
+if [ "$nmap_verdict" = FAULT ]; then
+  :
+elif [ "$hits" -gt 0 ]; then
   bad "nmap flagged $hits line(s) as VULNERABLE / CVE -- review them"
   grep -E '^\|.*(VULNERABLE|CVE-[0-9]{4}-[0-9]+)' "$LOG" | head -10 | sed 's/^/    /'
   [ "$hits" -gt 10 ] && printf '    %s... %d more in the log%s\n' "$DIM" "$((hits-10))" "$R"
@@ -213,5 +248,10 @@ if [ "$KEEP" -gt 0 ]; then
   done
 fi
 
-# Exit non-zero when something needs a human: a vuln hit or an AV problem.
-[ "$hits" -eq 0 ] && [ "$av_verdict" != INFECTED ] && [ "$av_verdict" != ENGINE-FAULT ]
+# Exit non-zero when something needs a human. A faulted scanner counts: a scan
+# that did not run must never read as a clean result.
+[ "$nmap_verdict" = OK ] \
+  && [ "$hits" -eq 0 ] \
+  && [ "$av_verdict" != INFECTED ] \
+  && [ "$av_verdict" != ENGINE-FAULT ] \
+  && [ "$av_verdict" != ERROR ]

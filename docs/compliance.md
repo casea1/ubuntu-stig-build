@@ -67,7 +67,7 @@ sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml
 
 | Finding | To close it |
 | --- | --- |
-| **UEFI/GRUB boot-loader password** (`grub2_uefi_password`, UBTU-24-102000) | The **only `high` finding left.** The `grub_password` role is written and skips until a hash is vaulted — generate one with `it-grub hash` and set `grub_password_pbkdf2`. This matters more here than the severity suggests: LUKS is TPM-sealed to PCR 7 only, which does not measure the kernel command line, so without it physical access → root shell on decrypted data |
+| **UEFI/GRUB boot-loader password** (`grub2_uefi_password`, UBTU-24-102000) | **Closed on ASP-2** (`it-grub set`, verified 2026-08-27: password set, all 8 entries `--unrestricted`). It was the last `high`, and the 2026-08-25 scan has **zero high findings**. Still open **fleet-wide**: `grub_password_pbkdf2` in `group_vars` is the `CHANGEME` sentinel, so a newly built box skips the role and ships without one. Close it for good with `it-grub hash` + `ansible-vault encrypt_string`. This matters more than the severity suggests: LUKS is TPM-sealed to PCR 7 only, which does not measure the kernel command line, so without it physical access → root shell on decrypted data |
 | **Password hashing rounds** (`accounts_password_pam_unix_rounds_password_auth`, UBTU-24-400220) | Now **on** (`usg_fix_pam_rounds: true`), writing the benchmark's `rounds=100000`. Worth understanding before you trust it: the value is an SHA-512 iteration count, but Ubuntu 24.04 hashes with **yescrypt**, whose cost parameter accepts only 1–11. Measured against libcrypt directly, `crypt_gensalt("$y$", N)` **returns NULL** for both 5000 and 100000 — it does not clamp. The `rounds=5000` on these boxes came from the pre-USG ansible-lockdown role (`pam_unix_rounds: 5000`, still in `group_vars` as a dead legacy variable), not from `usg fix`. Either way 100000 is not a new risk; both are equally out of range. The open question is what pam_unix does with an out-of-range value, and it is bigger than the finding: if it passes the value straight through, `passwd` is already broken on every hardened box. Verify once with a throwaway account (see `usg_fix_pam_rounds` in the role defaults) |
 | **Full-disk encryption** (`Encrypt Partitions`) | bake LUKS into the Ubuntu autoinstall (pre-install; see [procedures.md §1.2](procedures.md#12-install-ubuntu-2404)) |
 
@@ -75,28 +75,32 @@ sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml
 >
 > **GPUs + FIPS:** Canonical's prebuilt NVIDIA modules are kernel-flavour-locked, so the FIPS kernel swap would break `nvidia-smi`. On the `ai` profile the **`gpu_fips_module`** role stages the matching `linux-modules-nvidia-*-fips` module (from the `fips-updates` repo) in the same run, so the GPU comes back automatically on the single FIPS reboot. No manual DKMS/driver rebuild.
 
-### Reading a real scan — ASP-2 (emi), 2026-08-20, score 88.7 %
+### Reading a real scan — ASP-2 (emi), 2026-08-25, score 96.41 %
 
-A worked example of what the residual findings on a fully built box actually are, and why "39 failures" is a much smaller list of problems than it looks. Of 220 scored rules: 181 pass, 39 fail (38 medium, 1 high).
+**214 passed, 6 failed, 5 other. Zero high, zero low — all six are medium, and all six are deviations already documented above.** Nothing on this list is an unaddressed defect.
 
-| # | Findings | Cause | Disposition |
-| ---: | --- | --- | --- |
-| **22** | `audit_rules_privileged_commands_*` (19), `audit_rules_execution_*` (3) | **One stale file.** `/etc/audit/rules.d/stig.rules`, a leftover from the ansible-lockdown era, carried a second rule for every command in the old `-F auid!=-1 -k <cmd>` form. USG's own file had the compliant line right beside it; the OVAL requires *all* matching lines to conform, so the stale one failed each rule | Fixed — file retired by `usg_remediate` |
-| **6** | `accounts_passwords_pam_faillock_*` | `/etc/security/faillock.conf` was correct, but `pam_faillock` was absent from `/etc/pam.d/common-auth`, which every one of these OVALs checks first. The values were inert | **Held open** — fix written, `usg_fix_pam_stack: false` until proven on a throwaway box |
-| **4** | journal dirs, `journalctl`, `/etc/audit/rules.d/*.rules`, `/var/log/audit` | Modes were applied during the build and were **wrong again by the time the scan ran** — `/var/log/journal` 2755, `journalctl` 0755, `71-reboot.rules` 0640 | Fixed — re-asserted immediately before the re-audit, plus `tmpfiles.d` for the tmpfs journal |
-| **3** | `banner_etc_issue_net`, `dconf_gnome_login_banner_text`, `banner_etc_profiled_ssh_confirm` | These check for the **exact DoD** string. We show the DCSA banner by choice | Permanent deviation |
-| **1** | `sshd_enable_warning_banner_net` | sshd pointed at a dedicated banner file, not the literal `/etc/issue.net` the rule wants | Fixed — `usg_ssh_banner_path` |
-| **1** | `accounts_passwords_pam_faildelay_delay` | Same root cause as the faillock six: the line was not in the generated `common-auth` | **Held open** — same switch |
-| **1** | `accounts_password_pam_unix_rounds_password_auth` | Box had `rounds=5000` (written by `usg fix`); the benchmark wants `100000` | Fixed — see POA&M note on yescrypt |
-| **1** | `auditd_offload_logs` | `/etc/cron.weekly/audit-offload` did not exist. The OVAL checks only that it exists and is non-empty | Fixed — weekly staged offload |
-| **1** | `chronyd_specify_remote_server` | Box points at the site time server `10.10.99.100`; the benchmark's rendered value is `0.us.pool.ntp.mil` | Deviation — an air-gapped box cannot reach a `.mil` pool. Close it by tailoring `var_multiple_time_servers`, or accept |
-| **1** | `kernel_module_usb-storage_disabled` | Mission conflict: the EMI laptop's `dta` workflow needs USB mass storage | Deviation — USBGuard is the compensating control |
-| **1** | `ufw_rate_limit` | Has **no OVAL** — it is an OCIL/manual check, so it reports fail regardless of configuration | Deviation. SSH is `ufw limit`ed anyway; rate-limiting the AI/imaging service ports would be a self-inflicted outage |
-| **1** | `grub2_uefi_password` *(the only `high`)* | `grub_password_pbkdf2` is still the CHANGEME sentinel, so the role skips | Open — run `it-grub hash`, vault the hash, `it-grub set` |
+| Finding | Why it fails | Disposition |
+| --- | --- | --- |
+| `dconf_gnome_login_banner_text` | Checks for the **exact DoD** string; we show the DCSA banner | Permanent deviation, by choice |
+| `banner_etc_issue_net` | Same | Permanent deviation, by choice |
+| `banner_etc_profiled_ssh_confirm` | Same | Permanent deviation, by choice |
+| `ufw_rate_limit` | Has **no OVAL** — an OCIL/manual check, so it reports fail regardless of configuration | Deviation. SSH is `ufw limit`ed; rate-limiting the imaging/AI service ports would be a self-inflicted outage |
+| `kernel_module_usb-storage_disabled` | The EMI laptop's `dta` workflow needs USB mass storage | Mission deviation; USBGuard is the compensating control |
+| `chronyd_specify_remote_server` | Box points at the site time server; the benchmark's rendered value is `0.us.pool.ntp.mil` | Deviation — an air-gapped box cannot reach a `.mil` pool. Close it by tailoring `var_multiple_time_servers`, or accept |
 
-> **Postscript, 2026-08-21.** This box then locked its operator out entirely — no console, no GDM, every password rejected — and recovery took a live USB. The cause was in the scan above and was read past: the faillock OVAL reported `pam_unix` matching **nothing** in `common-auth`, dismissed as implausible because logins were working. The real file had `pam_unix` *plus* `pam_faillock` inserted twice by the pre-USG ansible-lockdown role, with `pam_unix`'s `success=2` never recalculated — so a correct password jumped the faillock lines and landed on `pam_deny`. Present, parseable, every module installed, and it denied every login.
->
-> Two things came out of it: `pam-auth-check` now walks those offsets on every run and says plainly whether the stack can authenticate, and `usg_fix_pam_stack` ships **off**, because closing six medium findings is not worth a machine nobody can log into. Note the date on that file — `Updated by Ansible - 2026-06-04`. Both this and the `stig.rules` finding above are pre-USG leftovers the current baseline neither writes nor removes. Assume there are others.
+**What moved, 2026-08-20 → 2026-08-25 (88.70 % → 96.41 %):**
+
+| Was failing | Now | How |
+| --- | --- | --- |
+| 22 × `audit_rules_privileged_commands_*` / `audit_rules_execution_*` | pass | The stale `/etc/audit/rules.d/stig.rules` retired by `usg_remediate` |
+| 6 × `accounts_passwords_pam_faillock_*` + `faildelay` | pass | — |
+| 4 × journal / `journalctl` / `rules.d` / `/var/log/audit` modes | pass | Re-asserted immediately before the re-audit, plus `tmpfiles.d` for the tmpfs journal |
+| `sshd_enable_warning_banner_net` | pass | `usg_ssh_banner_path` pointed at the literal `/etc/issue.net` |
+| `accounts_password_pam_unix_rounds_password_auth` | pass | `usg_fix_pam_rounds` |
+| `auditd_offload_logs` | pass | `/etc/cron.weekly/audit-offload` |
+| `grub2_uefi_password` *(the only high)* | pass | `it-grub set` on the box |
+
+**The one thing this scan does not settle** is item 2 of the org checklist. `sshd -T` on the same box reported `permitrootlogin without-password` — root can still SSH in **with a key**. The benchmark rule only forbids a root *password* login, so the scan is satisfied and the org requirement is not. `usg_remediate` now writes `PermitRootLogin no` (`usg_ssh_disable_root_login`). **A passing benchmark is not the same as a compliant box**, and this is the cheapest available example of it.
 
 ### The seven open findings, and which are fixable
 
@@ -154,7 +158,7 @@ Exit 0 when nothing FAILs. **N/A** and **MANUAL** never count as failures. This 
 | # | Item | Status | How / why | Verify |
 |---|---|---|---|---|
 | 1 | AD integration (SSSD) | **N/A** | Local accounts by design; the SSSD/smartcard STIG rules are de-selected as a documented deviation (`usg_disable_smartcard_rules`). No directory service on these networks. | `getent passwd \| tail` |
-| 2 | No root SSH login | **Met** | This is the **root account over SSH**, nothing else: `PermitRootLogin no`, set by `usg fix disa_stig`. Admins still log in as themselves and **elevate with `sudo`** — that path is untouched, and is what makes the audit trail attributable to a person rather than to `root`. The check also reports whether `/root/.ssh/authorized_keys` holds keys (inert while `PermitRootLogin no` stands, but worth knowing). | `sshd -T \| grep -i permitrootlogin` |
+| 2 | No root SSH login | **Met (by `usg_remediate`, not by `usg fix`)** | This is the **root account over SSH**, nothing else. `usg fix` leaves Ubuntu's `PermitRootLogin prohibit-password`, which still allows a root login **by SSH key** — the benchmark rule it satisfies only forbids a root *password* login. Found on ASP-2, 2026-08-27. `usg_remediate` now writes `PermitRootLogin no` in `/etc/ssh/sshd_config.d/00-1-no-root-login.conf` (`usg_ssh_disable_root_login`). Admins still log in as themselves and **elevate with `sudo`** — that path is untouched, and is what makes the audit trail attributable to a person rather than to `root`. The check also reports whether `/root/.ssh/authorized_keys` holds keys (inert while `PermitRootLogin no` stands, but worth knowing). | `sshd -T \| grep -i permitrootlogin` |
 | 3 | DCSA banners + last login | **Met** | `classification_banner` role + SSH banner drop-in + GDM banner. | `sshd -T \| grep -iE 'banner\|printlastlog'` |
 | 4 | Anti-virus | **Met via container on FIPS boxes** | ClamAV on all profiles (daemon + weekly scan). Docker volumes excluded — scanning 60 GB of model weights is pointless I/O. **FIPS breaks ClamAV** — OpenSSL in FIPS mode will not initialise MD5, which is what ClamAV hashes file content with, so MD5-based signatures cannot be evaluated and **the EICAR test file is not detected** (confirmed on ASP-2, 2026-08-26). Upstream [Cisco-Talos/clamav#1786](https://github.com/Cisco-Talos/clamav/issues/1786), open with no fix; not configurable around — Ubuntu's FIPS OpenSSL takes FIPS from the kernel flag, so even `OPENSSL_CONF=/dev/null` fails, and `--fips-limits` does not help. The fix is `clamav_container`: clamd moves into a container whose OpenSSL is a stock build, so MD5 works, while the **host kernel stays in FIPS**. Scans go over its socket with `clamdscan --fdpass`, so a DTA needs no docker access. **On-access scanning is lost — on-demand only (POA&M).** `sudo it-clamav test` is the per-box check and must PASS before a box is relied on; air-gapped boxes need `it-clamav image-load` first, and clamd needs ~60–90s after a restart before its socket answers. **Verified on ASP-2, 2026-08-26.** Signatures also go stale air-gapped; **`it-clamav install` is the manual path** — drop a signature `tar.gz` in `/opt/it/clamavsigs`, it validates the CVD digital signature before installing and confirms with an EICAR test. | `sudo it-clamav test` |
 | 5 | Password complexity / lockout | **Met** | USG `disa_stig`. | `sudo usg audit disa_stig` |
@@ -163,7 +167,7 @@ Exit 0 when nothing FAILs. **N/A** and **MANUAL** never count as failures. This 
 | 8 | Vendor supported release | **Met** | Ubuntu 24.04 LTS (support to ~2029; ~2034 with Pro). | `lsb_release -ds && pro status` |
 | 9 | FIPS crypto (OS + drive) | **Met** | FIPS kernel via Ubuntu Pro. **Disclose:** vLLM/Docling *containers* mask `fips_enabled` because those images ship no FIPS provider — the host stays FIPS. | `cat /proc/sys/crypto/fips_enabled` |
 | 10 | DARE | **Met** | LUKS, TPM-auto-unlocked (`tpm_luks_unlock`). | `lsblk -o NAME,TYPE \| grep crypt` |
-| 11 | GRUB2 password | **Inert until activated** | `grub_password` role is built but skips while the hash is the `CHANGEME` sentinel. **Not redundant with LUKS here** — the TPM seals to PCR 7 only, which doesn't measure the kernel cmdline, so without it physical access → root shell on decrypted data. Activate: `it-grub hash` (fleet) or `it-grub set` (one box). | `sudo it-grub status` |
+| 11 | GRUB2 password | **Set on ASP-2; sentinel fleet-wide** | Applied per box with `it-grub set` (ASP-2 verified 2026-08-27: set, all 8 entries `--unrestricted`). `grub_password_pbkdf2` in `group_vars` is still the `CHANGEME` sentinel, so a newly built box skips the role — vault a hash to close it fleet-wide. **Not redundant with LUKS here** — the TPM seals to PCR 7 only, which doesn't measure the kernel cmdline, so without it physical access → root shell on decrypted data. Activate: `it-grub hash` (fleet) or `it-grub set` (one box). | `sudo it-grub status` |
 | 12 | File perms + SELinux | **Met (translated)** | Ubuntu uses **AppArmor**, not SELinux — the checklist item is RHEL-derived. Permissions are USG's. | `sudo aa-status` |
 | 13 | Local accounts | **Met** | `local_accounts` manages them declaratively and purges base-image defaults. | `awk -F: '$3>=1000&&$3<65534{print $1}' /etc/passwd` |
 | 14 | CUPS not running | **Met** | `usg_remediate` disables **and masks** cups, cups.socket, cups-browsed. | `systemctl is-active cups` |
@@ -175,7 +179,7 @@ Exit 0 when nothing FAILs. **N/A** and **MANUAL** never count as failures. This 
 | 20 | Local firewall **disabled** | **Conflict** | The build **enables** ufw. Note it's partly moot on the AI nodes: Docker's DNAT precedes ufw, so published container ports aren't filtered by it. Needs a policy decision. | `sudo ufw status verbose` ; `sudo iptables -L DOCKER-USER -n` |
 | 21 | Splunk agent | **N/A** | Not used in this environment. | — |
 | 22 | DNS records (COMPASS) | **Manual** | Org infrastructure. | `dig +short <host>` |
-| 23 | Backup + restore | **Two answers, by profile** | **EMI → MANUAL.** The box is standalone and air-gapped, so there is no file server to push to: backup is an **offline SSD duplication**, done by hand. That leaves no trace on the box, so the only on-box evidence it happened is what the operator writes into `/opt/ia/backups` — a note per duplication is enough, and `it-checklist` reports how long ago the newest one was. **Development / AI / baseline → N/A.** Nothing is kept locally; the file servers are backed up and users are directed to store there. No endpoint agent is the intended design, so there is nothing to install or check per box. (Macrium SiteBackup's Linux agent is Insider-preview only anyway, and would not be acceptable on an accredited system.) The profile comes from `/etc/stig-build/profile`, written by `it_scripts`. | `ls -t /opt/ia/backups \| head -1` |
+| 23 | Backup + restore | **Two answers, by profile** | **EMI → MANUAL.** The box is standalone and air-gapped, so there is no file server to push to: backup is an **offline SSD duplication**, done by hand and **logged on paper**. Nothing on the box can see it, so `it-checklist` reports MANUAL rather than pretending to have evidence — verify it against the paper record. **Development / AI / baseline → N/A.** Nothing is kept locally; the file servers are backed up and users are directed to store there. No endpoint agent is the intended design, so there is nothing to install or check per box. (Macrium SiteBackup's Linux agent is Insider-preview only anyway, and would not be acceptable on an accredited system.) The profile comes from `/etc/stig-build/profile`, written by `it_scripts`. | paper record |
 | 24 | Scheduled OSCAP job | **Met** | `it-oscap` on a systemd timer (or `/etc/cron.d`, via `scap_schedule_method`). Results → `/opt/ia/oscap/scheduled`. Runs as **root** because `auto_audit` is locked and can't sudo unattended. | `systemctl list-timers oscap-scan.timer` |
 | 25 | iDRAC / OME | **Manual** | Server hardware, out-of-band. | iDRAC web UI |
 | 26 | Current compliance scan | **Met (process)** | Scheduled OpenSCAP scan produces the artifact; reviewing it is a human step. FAILs once the newest report is over 45 days old. | `ls -t /opt/ia/oscap/*/stig-report-*.html \| head -1` |
@@ -184,8 +188,9 @@ Exit 0 when nothing FAILs. **N/A** and **MANUAL** never count as failures. This 
 
 **Open items**
 
-1. **GRUB password** (11) — built, needs a hash vaulted to take effect.
+1. **GRUB password fleet-wide** (11) — set on ASP-2 by hand; `group_vars` still holds the `CHANGEME` sentinel, so a newly built box ships without one. Vault a hash.
 2. **Firewall policy** (20) — the checklist and the build disagree; decide which is right.
+3. **nmap does not run under FIPS** (28) — it quits at startup with `library has no ciphers`, the same OpenSSL problem as ClamAV. `it-vulnscan` records `NMAP-FAULT` and item 28 FAILs rather than reporting a clean scan. The AV half is unaffected. Until it is solved, take the nmap half from a non-FIPS box on the same segment.
 
 Closed since the last revision: **backup** (23) is a file-server function on dev/AI and a manual SSD duplication on EMI, neither of which needs an endpoint agent; **partitioning** (15) is a RHEL-derived org item, not an Ubuntu STIG rule; **ClamAV signatures air-gapped** (4) now have `it-clamav install`, and FIPS detection is fixed by `clamav_container`.
 
