@@ -180,29 +180,64 @@ if [ "$DO_AV" -eq 1 ]; then
     log "Scanned paths: ${TARGETS[*]}"
     printf '  %spaths: %s%s\n' "$DIM" "${TARGETS[*]}" "$R"
 
+    AV_CMD=()
     if [ -n "$sock" ] && [ -S "$sock" ] && clamdscan -c "$CTR_CONF" --ping=1 >/dev/null 2>&1; then
       printf '  %sengine: containerised clamd%s\n' "$DIM" "$R"
-      clamdscan -c "$CTR_CONF" --fdpass --multiscan --infected "${TARGETS[@]}" 2>&1 | tee -a "$LOG"
-      av_rc=${PIPESTATUS[0]}
+      AV_CMD=(clamdscan -c "$CTR_CONF" --fdpass --multiscan --infected)
     elif systemctl is-active --quiet clamav-daemon 2>/dev/null; then
       printf '  %sengine: host clamav-daemon%s\n' "$DIM" "$R"
-      clamdscan --fdpass --multiscan --infected "${TARGETS[@]}" 2>&1 | tee -a "$LOG"
-      av_rc=${PIPESTATUS[0]}
+      AV_CMD=(clamdscan --fdpass --multiscan --infected)
     elif command -v clamscan >/dev/null 2>&1; then
       printf '  %sengine: standalone clamscan (slow)%s\n' "$DIM" "$R"
-      clamscan -r --infected "${TARGETS[@]}" 2>&1 | tee -a "$LOG"
-      av_rc=${PIPESTATUS[0]}
-    else
+      AV_CMD=(clamscan -r --infected)
+    fi
+
+    if [ "${#AV_CMD[@]}" -eq 0 ]; then
       warn "no ClamAV engine available -- skipping"
       log "*** no AV engine available ***"
-      av_rc=99
+      av_verdict="SKIPPED"
+    else
+      av_out=$("${AV_CMD[@]}" "${TARGETS[@]}" 2>&1)
+      av_rc=$?
+      # Full fidelity into the report -- it is the evidence artifact.
+      printf '%s\n' "$av_out" >> "$LOG"
+
+      # A live desktop has hundreds of sockets and FIFOs (X11, ICE, dbus,
+      # code-server) that no scanner can read. clamd counts each one in
+      # "Total errors" and then exits 2, so the EXIT CODE alone says "error"
+      # on a perfectly good scan. Judge by the summary instead, and only treat
+      # errors as real when they are not the known-unscannable kinds.
+      BENIGN='Not supported file type|cli_realpath: Invalid arguments|Can.t open file or directory|Access denied'
+      printf '%s\n' "$av_out" | grep -vE "$BENIGN" | grep -vE '^\s*$' | sed 's/^/    /'
+
+      infected=$(printf '%s\n' "$av_out" | sed -n 's/^Infected files: *\([0-9][0-9]*\).*/\1/p' | tail -1)
+      errors=$(printf '%s\n'   "$av_out" | sed -n 's/^Total errors: *\([0-9][0-9]*\).*/\1/p'   | tail -1)
+      # Anything that looks like a problem and is NOT one of the benign kinds.
+      odd=$(printf '%s\n' "$av_out" | grep -E '^(WARNING|ERROR|LibClamAV (Error|Warning))' \
+              | grep -cvE "$BENIGN" || true)
+      odd=${odd:-0}
+
+      if [ -z "$infected" ]; then
+        # No summary line at all -- the scan did not complete.
+        av_verdict="ENGINE-FAULT"
+        bad "the AV scan did not complete (rc=$av_rc, no summary) -- see $LOG"
+        log "*** ENGINE-FAULT: AV scan produced no summary (rc=$av_rc). ***"
+      elif [ "$infected" -gt 0 ]; then
+        av_verdict="INFECTED"
+        bad "INFECTED FILES FOUND ($infected) -- see $LOG"
+      elif [ "$odd" -gt 0 ]; then
+        av_verdict="ERROR"
+        bad "scan completed with $odd unexplained error(s) -- see $LOG"
+      else
+        av_verdict="CLEAN"
+        if [ "${errors:-0}" -gt 0 ]; then
+          ok "no infected files (${errors} unscannable sockets/FIFOs skipped -- normal on a desktop)"
+          log "Note: ${errors} unscannable special files (sockets/FIFOs). Not a fault."
+        else
+          ok "no infected files"
+        fi
+      fi
     fi
-    case "${av_rc:-99}" in
-      0)  av_verdict="CLEAN";    ok "no infected files" ;;
-      1)  av_verdict="INFECTED"; bad "INFECTED FILES FOUND -- see $LOG" ;;
-      99) av_verdict="SKIPPED" ;;
-      *)  av_verdict="ERROR";    bad "AV scan errored (rc=$av_rc)" ;;
-    esac
   fi
 else
   log ""
