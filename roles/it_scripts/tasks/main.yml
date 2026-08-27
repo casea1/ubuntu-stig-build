@@ -8,7 +8,8 @@
 # it-docker, it-restart) is placed on the `ai` profile ONLY, and REMOVED
 # everywhere else -- ansible's copy/link tasks only ever create, so without an
 # explicit `state: absent` a box that got them from an earlier build would keep
-# them forever. See it_scripts_ai_enabled in defaults/main.yml.
+# them forever. See it_scripts_ai_enabled in defaults/main.yml. `it-vulnscan`
+# is placed the same way on the EMI profiles only (it_scripts_emi_enabled).
 # =============================================================================
 
 - name: "IT-SCRIPTS | Ensure the scripts dir exists ({{ it_scripts_dir }})"
@@ -26,7 +27,9 @@
     owner: root
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "0750"
-  loop: "{{ it_scripts_common + (it_scripts_ai if it_scripts_ai_enabled | bool else []) }}"
+  loop: "{{ it_scripts_common
+            + (it_scripts_ai if it_scripts_ai_enabled | bool else [])
+            + (it_scripts_emi if it_scripts_emi_enabled | bool else []) }}"
   loop_control:
     label: "{{ item.file }}"
 
@@ -38,7 +41,9 @@
     dest: "/usr/local/sbin/{{ item.link }}"
     state: link
     force: true
-  loop: "{{ (it_scripts_common + (it_scripts_ai if it_scripts_ai_enabled | bool else []))
+  loop: "{{ (it_scripts_common
+             + (it_scripts_ai if it_scripts_ai_enabled | bool else [])
+             + (it_scripts_emi if it_scripts_emi_enabled | bool else []))
             | selectattr('link', 'defined') | rejectattr('link', 'equalto', '') | list }}"
   loop_control:
     label: "{{ item.link }}"
@@ -52,6 +57,17 @@
   loop: "{{ (it_scripts_ai | map(attribute='file') | map('regex_replace', '^', it_scripts_dir ~ '/') | list)
             + (it_scripts_ai | map(attribute='link') | map('regex_replace', '^', '/usr/local/sbin/') | list) }}"
   when: not (it_scripts_ai_enabled | bool)
+
+# Same cleanup for the EMI tooling: a box rebuilt under another profile would
+# otherwise keep `it-vulnscan` forever, pointing at an nmap that is no longer
+# installed.
+- name: "IT-SCRIPTS | Remove the EMI tooling (not an EMI box)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ (it_scripts_emi | map(attribute='file') | map('regex_replace', '^', it_scripts_dir ~ '/') | list)
+            + (it_scripts_emi | map(attribute='link') | map('regex_replace', '^', '/usr/local/sbin/') | list) }}"
+  when: not (it_scripts_emi_enabled | bool)
 
 - name: "IT-SCRIPTS | Where the scripts are"
   ansible.builtin.debug:

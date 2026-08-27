@@ -136,6 +136,12 @@ base_packages_full_upgrade: false
 # them. Here the same repo tree is hand-carried onto the box and served to apt
 # over file://.
 #
+# IMAGING IS DONE ONLINE. Every role in the build installs from Ubuntu's
+# archive and the vendor repos -- that is the only way to get a current, patched
+# box built. This role runs LAST in the play and does nothing until the switch
+# below is thrown, which happens AFTER the box is air-gapped. The local repo is
+# for patching and new packages from then on, not for the build.
+#
 # TURNING IT ON IS A TWO-STEP, and the order matters:
 #   1. `sudo it-offline-repo load /media/<user>/<SSD>/repo`  -- copy the tree in
 #   2. `sudo it-offline-repo enable`                          -- switch apt over

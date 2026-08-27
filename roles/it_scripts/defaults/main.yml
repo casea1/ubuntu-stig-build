@@ -10,6 +10,10 @@ it_scripts_dir: "{{ it_dir | default('/opt/it') }}/scripts"
 # AI commands. Override in site.yml if a dev box genuinely needs them.
 it_scripts_ai_enabled: "{{ is_ai | default(false) | bool }}"
 
+# EMI-only tooling, same shape: installed on the emi profiles (both the
+# classified-capable and unclassified variants) and REMOVED everywhere else.
+it_scripts_emi_enabled: "{{ is_emi | default(false) | bool }}"
+
 # Placed on every profile.
 it_scripts_common:
   - { file: status.sh,             link: it-status }
@@ -27,6 +31,12 @@ it_scripts_common:
   - { file: clamav-sigs.sh,        link: it-clamav }
   - { file: go-classified.sh,      link: it-goclassified }
   - { file: offline-repo.sh,       link: it-offline-repo }
+
+# EMI profiles only. The org's vulnerability-scan process (the Windows
+# MUSA_Vuln_Scan job) applies to these boxes; nmap is installed by
+# base_packages/emi.yml, so the script has an engine only here.
+it_scripts_emi:
+  - { file: vuln-scan.sh,      link: it-vulnscan }
 
 # AI profile only. Every one of these is written around the AI stack: the
 # Dockge stacks under /opt/stacks, the model volumes, or the cross-node wiring
