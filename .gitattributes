@@ -1,13 +1,7 @@
-# Normalize line endings in the repo to LF on commit.
-* text=auto
-
-# These run on Linux (bootstrap.sh is curl|bash'd; YAML is consumed by Ansible).
-# Force LF even in working copies so a Windows checkout can't introduce CRLF.
-*.sh   text eol=lf
-*.yml  text eol=lf
-*.yaml text eol=lf
-
-# Binary assets -- never apply EOL normalization (would corrupt the wallpaper).
-*.jpg  binary
-*.jpeg binary
-*.png  binary
+# DISA's published STIG content must stay BYTE-IDENTICAL to what was downloaded
+# from cyber.mil. Git's CRLF normalisation silently stripped 34 CR bytes from
+# the V1R6 XCCDF (658177 -> 658143), which parses fine but no longer matches
+# DISA's published file if anyone hashes it for provenance.
+*Manual-xccdf.xml -text -diff
+*.cklb -text
+*.ckl  -text
