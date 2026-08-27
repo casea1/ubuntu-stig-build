@@ -22,7 +22,7 @@ Each of these caused a real outage or a wrong conclusion.
 
 **1. Docker bypasses ufw.** Published container ports are DNAT'd before ufw's INPUT chain, so ufw rules do not filter them. Confirmed on dev-ai2: port 5000 was absent from ufw and still reachable from the LAN. `DOCKER-USER` is empty. MLflow is protected by an nginx allow-list instead; every other published port is effectively open on the LAN. The systemic fix — `DOCKER-USER` rules in `ai_firewall` — is not written yet.
 
-**2. Ansible overwrites on-box edits.** Every file `ai_compose` places is a plain `copy`/`template`: `compose.yaml`, `.env`, `fips_off`, dashboards. Only `.oikb.yaml` is preserved. A hand-edit is lost on the next pull, and the container is recreated with it. For a genuine per-box exception use `compose.override.yaml`, which nothing manages.
+**2. Ansible overwrites on-box edits.** *(To update a live AI node without this happening, skip the `ai-runtime` tag — [procedures.md §5.8](procedures.md#58-update-a-live-ai-node-without-touching-the-containers).)* Every file `ai_compose` places is a plain `copy`/`template`: `compose.yaml`, `.env`, `fips_off`, dashboards. Only `.oikb.yaml` is preserved. A hand-edit is lost on the next pull, and the container is recreated with it. For a genuine per-box exception use `compose.override.yaml`, which nothing manages.
 
 **3. Ansible's `copy` and `link` only ever create.** Removing something from a profile needs an explicit `state: absent` task, or a box that got it from an earlier build keeps it forever. `it_scripts` does this for the AI and EMI tooling; copy that pattern.
 
