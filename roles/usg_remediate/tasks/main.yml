@@ -134,6 +134,36 @@
         mode: "0644"
       notify: Restart ssh
 
+    - name: "REMED | Refuse root SSH logins outright (PermitRootLogin no)"
+      # Ubuntu ships `PermitRootLogin prohibit-password`, and `usg fix` leaves it
+      # there -- the benchmark rule it satisfies only forbids root logging in with
+      # a PASSWORD, so a key still works. The org checklist (item 2) asks for no
+      # root SSH login at all, and it is what makes the audit trail attributable:
+      # admins log in as themselves and elevate with sudo. Confirmed on ASP-2,
+      # 2026-08-27, where `sshd -T` reported `permitrootlogin without-password`
+      # on a fully hardened box.
+      #
+      # 00-1- sorts before USG's 00-complianceascode-*.conf, and sshd takes the
+      # FIRST value it reads for a keyword, so this wins.
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/00-1-no-root-login.conf
+        content: |
+          # Managed by ansible (usg_remediate). Set usg_ssh_disable_root_login:
+          # false if something on this box genuinely needs to SSH in as root.
+          PermitRootLogin no
+        owner: root
+        group: root
+        mode: "0644"
+      when: usg_ssh_disable_root_login | default(true) | bool
+      notify: Restart ssh
+
+    - name: "REMED | Drop the root-login denial when it has been switched off"
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d/00-1-no-root-login.conf
+        state: absent
+      when: not (usg_ssh_disable_root_login | default(true) | bool)
+      notify: Restart ssh
+
     - name: "REMED | Remove the superseded drop-in (older name, pointed at /etc/issue.net)"
       ansible.builtin.file:
         path: /etc/ssh/sshd_config.d/00-dcsa-banner.conf
