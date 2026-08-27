@@ -13,7 +13,7 @@
 clamav_container_enabled: true
 
 # Pinned, like every other image in this repo. `docker compose pull` is not an
-# update -- change the tag here. See docs/patching.md.
+# update -- change the tag here. See docs/procedures.md §4.
 clamav_container_image: "clamav/clamav:1.4.3"
 
 # The image's clamd listens on /tmp/clamd.sock and the documented way to reach it

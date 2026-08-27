@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # it-checklist -- run the org Linux checklist against THIS box and print a
-# pass/fail line per item. Companion to docs/checklist.md (same numbering).
+# pass/fail line per item. Companion to docs/compliance.md (same numbering).
 #
 # Usage: it-checklist [--fail-only] [--out FILE]
 # Exit:  0 = no FAILs, 1 = at least one FAIL.

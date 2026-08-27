@@ -41,7 +41,7 @@
 # these nodes holds ~60GB+ of model weights and the databases -- enormous I/O for
 # zero detection value. The exclusions below are applied by app_config.
 # AIR-GAP: freshclam cannot reach the internet, so signatures go stale. Stage the
-# CVD files with the USB workflow (see docs/patching.md) or accept a POA&M.
+# CVD files with the USB workflow (see docs/procedures.md §4) or accept a POA&M.
 - name: "SERVER | Install ClamAV (headless: daemon + CLI, no GUI)"
   ansible.builtin.apt:
     name:

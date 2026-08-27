@@ -131,7 +131,7 @@ if [[ -n "${LUKS_DEV}" && ! -s "${LUKS_PASS_FILE}" && -r /dev/tty ]] \
     chmod 600 "${LUKS_PASS_FILE}"
     echo "[*] Passphrase saved — the build will bind the TPM, then delete the file."
   else
-    echo "[*] Skipping TPM auto-unlock (enable later per docs/operate.md)."
+    echo "[*] Skipping TPM auto-unlock (enable later per docs/reference.md)."
   fi
   unset LUKS_PASS
 fi
@@ -163,7 +163,7 @@ TMP_CLONE="$(mktemp -d)"
 git clone --quiet --depth 1 --branch "$BRANCH" "$REPO_URL" "$TMP_CLONE" || {
   echo "ERROR: could not clone $REPO_URL (branch $BRANCH)." >&2
   echo "  TLS 'unable to get local issuer certificate' => the box does not trust" >&2
-  echo "  the server's CA. Install it first (see docs/build.md):" >&2
+  echo "  the server's CA. Install it first (see docs/procedures.md §1):" >&2
   echo "    sudo cp your-ca.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates" >&2
   exit 1
 }

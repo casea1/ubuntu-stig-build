@@ -27,7 +27,7 @@
     msg: >-
       GRUB password NOT set (grub_password_pbkdf2 is the CHANGEME sentinel or
       grub_password_enabled is false). Generate one with `grub-mkpasswd-pbkdf2`,
-      vault it, and re-run. See docs/operate.md.
+      vault it, and re-run. See docs/reference.md.
   when: not (_grub_pw_ready | bool)
 
 - name: "GRUB | Configure the bootloader password"

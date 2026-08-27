@@ -1,42 +1,18 @@
 # Security & Compliance
 
-Security and compliance reference for the IA / assessment team and our DCSA rep. Covers four things:
+For the IA / assessment team and the DCSA rep. Everything here is enforced by the version-controlled `ubuntu-stig-build` Ansible baseline — repeatable, auditable, identical across the fleet.
 
-- **Hardening posture** the build enforces.
-- **DCSA / DoD RMF control-implementation summary** (authorization context, control baseline, NIST 800-53 mapping, AI-specific risk, POA&M list).
-- **Container-runtime compliance** (why there's no Docker STIG, how the container layer is secured).
-- **Software inventories** (linked, per profile).
-
-Everything is provisioned by the version-controlled `ubuntu-stig-build` Ansible baseline: repeatable, auditable, identical across the fleet. Operations: [`operate.md`](operate.md). Build/imaging: [`build.md`](build.md). Per-node overrides: [`site.yml.example`](site.yml.example). Overview: [`../README.md`](../README.md).
+How to *run* any of this: [procedures.md](procedures.md). Ports, paths, software inventory: [reference.md](reference.md).
 
 ## Contents
 
-- [Hardening posture](#hardening-posture)
-  - [Additionally remediated by usg_remediate (every run, idempotent)](#-additionally-remediated-by-usg_remediate-every-run-idempotent)
-  - [Approved deviations (documented, not "failures")](#-approved-deviations-documented-not-failures)
-  - [Open POA&M: need a secret or infra (NOT auto-applied)](#-open-poam-need-a-secret-or-infra-not-auto-applied)
-  - [Reading a real scan — ASP-2, 2026-08-20](#reading-a-real-scan--asp-2-emi-2026-08-20-score-887-)
-  - [NTP / time source](#ntp--time-source)
-  - [Admin working folders /opt/ia and /opt/it](#admin-working-folders-optia-and-optit)
-- [DCSA / DoD RMF compliance posture](#dcsa--dod-rmf-compliance-posture)
-  - [Authorization context](#authorization-context)
-  - [System description](#system-description)
-  - [Compliance baseline (what the build enforces)](#compliance-baseline-what-the-build-enforces)
-  - [NIST SP 800-53 Rev 5 control-family mapping (representative)](#nist-sp-800-53-rev-5-control-family-mapping-representative)
-  - [Configuration Management (CM family)](#configuration-management-cm-family)
-  - [AI-specific risk considerations](#ai-specific-risk-considerations)
-  - [Open items / POA&M (stated honestly)](#open-items--poam-stated-honestly)
-  - [Scanning and building the STIG checklist](#scanning-and-building-the-stig-checklist)
-  - [Assessment artifacts we can provide](#assessment-artifacts-we-can-provide)
-- [Container-runtime compliance (why "no Docker STIG")](#container-runtime-compliance-why-no-docker-stig)
-  - [1. USG hardens the OS, not Docker](#1-usg-hardens-the-os-not-docker)
-  - [2. There is no applicable DISA STIG for docker-ce](#2-there-is-no-applicable-disa-stig-for-docker-ce)
-  - [3. How the container layer is secured (CIS Docker Benchmark alignment)](#3-how-the-container-layer-is-secured-cis-docker-benchmark-alignment)
-  - [4. Optional evidence: docker-bench-security](#4-optional-evidence-docker-bench-security)
-  - [5. Control mapping (NIST 800-53 Rev 5)](#5-control-mapping-nist-800-53-rev-5)
-- [Software inventories](#software-inventories)
-
----
+| | |
+|---|---|
+| [Hardening posture](#hardening-posture) | what the build enforces, deviates from, and leaves open |
+| [The org Linux checklist](#the-org-linux-checklist) | met / not met / N-A per item, with the command to verify |
+| [DCSA / DoD RMF posture](#dcsa--dod-rmf-compliance-posture) | authorization context, 800-53 mapping, POA&M |
+| [Producing the STIG checklist](#producing-the-stig-checklist) | the two scanners, and how the `.cklb` gets built |
+| [Container-runtime compliance](#container-runtime-compliance-why-no-docker-stig) | why there is no Docker STIG, and what secures the layer instead |
 
 ## Hardening posture
 
@@ -46,7 +22,7 @@ Both profiles apply **Canonical USG `usg fix disa_stig`** (the DISA-STIG remedia
 - What's an approved deviation.
 - What stays an open POA&M.
 
-Per-rule detail (rule IDs, rationale): **[operate.md → POA&M](operate.md#poam-findings-not-auto-remediated-by-the-build)** and the **[residual-remediation table](operate.md#residual-findings-auto-remediated-by-usg_remediate)**. The [DCSA / DoD RMF compliance posture](#dcsa--dod-rmf-compliance-posture) gives the same picture at the RMF level.
+Per-rule detail (rule IDs, rationale): the two tables below. The [DCSA / DoD RMF compliance posture](#dcsa--dod-rmf-compliance-posture) gives the same picture at the RMF level.
 
 USG audit report auto-copies to `/opt/ia/` every run (HTML + XCCDF), readable by the admin (`sudo`) group. Regenerated after remediation + firewall, so it reflects the fully-built box. Hand it to your assessor; re-run any time:
 
@@ -82,7 +58,7 @@ sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml
 | --- | --- | --- |
 | Smart Card / CAC + SSSD (`smartcard_pam_enabled`, `service_sssd_enabled`, `sssd_enable_user_cert`) | password-login only; local accounts, no directory/CAC → **de-selected in the USG tailoring** so they don't count against you | `usg_disable_smartcard*` |
 | ufw rate-limit **all** ports (`ufw_rate_limit`, UBTU-24-600200) | on `ai`, rate-limiting the Open WebUI / vLLM / Docling ports throttles inference. Only **management** ports (SSH/RDP/Cockpit/Dockge) are `ufw limit`ed | firewall roles |
-| GNOME login-banner **text**, blank-screensaver, USB→`dta` *(development profile only; the AI nodes disable USB storage)* | mission requirements (DCSA banner, org wallpaper, USB data-transfer) | operate.md POA&M |
+| GNOME login-banner **text**, blank-screensaver, USB→`dta` *(development profile only; the AI nodes disable USB storage)* | mission requirements (DCSA banner, org wallpaper, USB data-transfer) | deviations table |
 | Banner **text** rules (`banner_etc_issue_net`, `dconf_gnome_login_banner_text`, `banner_etc_profiled_ssh_confirm`) | these check for the **exact DoD** string; we deliberately show the DCSA banner instead. Three permanent findings, accepted by choice — they close only by abandoning the DCSA text | `usg_remediate` §1b |
 | PAM faillock in the auth stack (`accounts_passwords_pam_faillock_*`, `accounts_passwords_pam_faildelay_delay`) | Seven findings held open **by choice, for now.** The fix is written and uses the right mechanism, but it regenerates `common-auth` and an error there means nobody can log in. ASP-2 spent an afternoon unloggable from exactly this class of bug (a pre-USG role inserted faillock lines without recalculating `pam_unix`'s jump offset) and needed live-USB recovery. Enable on one throwaway box, verify with a second TTY, then roll out | `usg_fix_pam_stack` |
 | USB storage driver (`kernel_module_usb-storage_disabled`) | the EMI laptop's data-transfer (`dta`) workflow needs USB mass storage. USBGuard now gates which devices are authorised at all, which is the compensating control | `usbguard` role |
@@ -93,7 +69,7 @@ sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml
 | --- | --- |
 | **UEFI/GRUB boot-loader password** (`grub2_uefi_password`, UBTU-24-102000) | The **only `high` finding left.** The `grub_password` role is written and skips until a hash is vaulted — generate one with `it-grub hash` and set `grub_password_pbkdf2`. This matters more here than the severity suggests: LUKS is TPM-sealed to PCR 7 only, which does not measure the kernel command line, so without it physical access → root shell on decrypted data |
 | **Password hashing rounds** (`accounts_password_pam_unix_rounds_password_auth`, UBTU-24-400220) | Now **on** (`usg_fix_pam_rounds: true`), writing the benchmark's `rounds=100000`. Worth understanding before you trust it: the value is an SHA-512 iteration count, but Ubuntu 24.04 hashes with **yescrypt**, whose cost parameter accepts only 1–11. Measured against libcrypt directly, `crypt_gensalt("$y$", N)` **returns NULL** for both 5000 and 100000 — it does not clamp. The `rounds=5000` on these boxes came from the pre-USG ansible-lockdown role (`pam_unix_rounds: 5000`, still in `group_vars` as a dead legacy variable), not from `usg fix`. Either way 100000 is not a new risk; both are equally out of range. The open question is what pam_unix does with an out-of-range value, and it is bigger than the finding: if it passes the value straight through, `passwd` is already broken on every hardened box. Verify once with a throwaway account (see `usg_fix_pam_rounds` in the role defaults) |
-| **Full-disk encryption** (`Encrypt Partitions`) | bake LUKS into the Ubuntu autoinstall (pre-install; see operate.md) |
+| **Full-disk encryption** (`Encrypt Partitions`) | bake LUKS into the Ubuntu autoinstall (pre-install; see [procedures.md §1.2](procedures.md#12-install-ubuntu-2404)) |
 
 > **FIPS mode (`is_fips_mode_enabled`) is ENABLED** (`usg_enable_fips: true`). `usg_harden` runs `pro enable fips-updates` (installs the FIPS kernel/modules) and flags a reboot. The check passes **after that reboot**. It swaps the running kernel: validate on a throwaway box if you run unusual crypto/dev tooling. Set `usg_enable_fips: false` to defer it (POA&M).
 >
@@ -118,11 +94,9 @@ A worked example of what the residual findings on a fully built box actually are
 | **1** | `ufw_rate_limit` | Has **no OVAL** — it is an OCIL/manual check, so it reports fail regardless of configuration | Deviation. SSH is `ufw limit`ed anyway; rate-limiting the AI/imaging service ports would be a self-inflicted outage |
 | **1** | `grub2_uefi_password` *(the only `high`)* | `grub_password_pbkdf2` is still the CHANGEME sentinel, so the role skips | Open — run `it-grub hash`, vault the hash, `it-grub set` |
 
-> **Postscript, 2026-08-21.** This box then locked its operator out entirely — no console, no GDM, every password rejected — and recovery took a live USB. The cause was in the same scan and I had read past it: the faillock OVAL reported `^\s*auth.*pam_unix\.so` matching **nothing** in `common-auth`, which I dismissed as implausible because logins were working. The real file was worse than missing pam_unix — it had it, plus `pam_faillock` inserted **twice** by the pre-USG ansible-lockdown role with `pam_unix`'s `success=2` never recalculated, so a correct password jumped over the faillock lines and landed on `requisite pam_deny.so`. Present, parseable, every module installed, and it denied every login on the box.
+> **Postscript, 2026-08-21.** This box then locked its operator out entirely — no console, no GDM, every password rejected — and recovery took a live USB. The cause was in the scan above and was read past: the faillock OVAL reported `pam_unix` matching **nothing** in `common-auth`, dismissed as implausible because logins were working. The real file had `pam_unix` *plus* `pam_faillock` inserted twice by the pre-USG ansible-lockdown role, with `pam_unix`'s `success=2` never recalculated — so a correct password jumped the faillock lines and landed on `pam_deny`. Present, parseable, every module installed, and it denied every login.
 >
-> Two things came out of it. `pam-auth-check` now walks those offsets on every run and says plainly whether the stack can authenticate — the check that would have caught this in June. And `usg_fix_pam_stack` ships **off**, because the fix for those six findings regenerates the same file, and closing a medium-severity finding is not worth a machine nobody can log into.
->
-> Note the date on that file: `Updated by Ansible - 2026-06-04`. Both this and the `stig.rules` finding above are the same thing — pre-USG leftovers the current baseline neither writes nor removes. Worth assuming there are others.
+> Two things came out of it: `pam-auth-check` now walks those offsets on every run and says plainly whether the stack can authenticate, and `usg_fix_pam_stack` ships **off**, because closing six medium findings is not worth a machine nobody can log into. Note the date on that file — `Updated by Ansible - 2026-06-04`. Both this and the `stig.rules` finding above are pre-USG leftovers the current baseline neither writes nor removes. Assume there are others.
 
 ### The seven open findings, and which are fixable
 
@@ -162,6 +136,58 @@ The `managed_dirs` role creates both on every box:
 - Files created there stay group-shared even under the STIG's `umask 077`.
 - `/opt/ia` doubles as the USG report drop.
 - Change the owning group with `ia_it_group`, or set `managed_dirs_enabled: false` to skip.
+
+---
+
+## The org Linux checklist
+
+The org's Linux checklist, what this build does about each item, and the command to prove it. Run it:
+
+```bash
+sudo it-checklist              # every check, one line per item
+sudo it-checklist --fail-only  # only what needs attention
+sudo it-checklist --out /opt/ia/checklist-$(hostname).txt
+```
+
+Exit 0 when nothing FAILs. **N/A** and **MANUAL** never count as failures. This is a fast indicator — the authoritative evidence is `usg audit disa_stig` and `it-oscap`.
+
+| # | Item | Status | How / why | Verify |
+|---|---|---|---|---|
+| 1 | AD integration (SSSD) | **N/A** | Local accounts by design; the SSSD/smartcard STIG rules are de-selected as a documented deviation (`usg_disable_smartcard_rules`). No directory service on these networks. | `getent passwd \| tail` |
+| 2 | No root SSH login | **Met** | This is the **root account over SSH**, nothing else: `PermitRootLogin no`, set by `usg fix disa_stig`. Admins still log in as themselves and **elevate with `sudo`** — that path is untouched, and is what makes the audit trail attributable to a person rather than to `root`. The check also reports whether `/root/.ssh/authorized_keys` holds keys (inert while `PermitRootLogin no` stands, but worth knowing). | `sshd -T \| grep -i permitrootlogin` |
+| 3 | DCSA banners + last login | **Met** | `classification_banner` role + SSH banner drop-in + GDM banner. | `sshd -T \| grep -iE 'banner\|printlastlog'` |
+| 4 | Anti-virus | **Met via container on FIPS boxes** | ClamAV on all profiles (daemon + weekly scan). Docker volumes excluded — scanning 60 GB of model weights is pointless I/O. **FIPS breaks ClamAV** — OpenSSL in FIPS mode will not initialise MD5, which is what ClamAV hashes file content with, so MD5-based signatures cannot be evaluated and **the EICAR test file is not detected** (confirmed on ASP-2, 2026-08-26). Upstream [Cisco-Talos/clamav#1786](https://github.com/Cisco-Talos/clamav/issues/1786), open with no fix; not configurable around — Ubuntu's FIPS OpenSSL takes FIPS from the kernel flag, so even `OPENSSL_CONF=/dev/null` fails, and `--fips-limits` does not help. The fix is `clamav_container`: clamd moves into a container whose OpenSSL is a stock build, so MD5 works, while the **host kernel stays in FIPS**. Scans go over its socket with `clamdscan --fdpass`, so a DTA needs no docker access. **On-access scanning is lost — on-demand only (POA&M).** `sudo it-clamav test` is the per-box check and must PASS before a box is relied on; air-gapped boxes need `it-clamav image-load` first, and clamd needs ~60–90s after a restart before its socket answers. **Verified on ASP-2, 2026-08-26.** Signatures also go stale air-gapped; **`it-clamav install` is the manual path** — drop a signature `tar.gz` in `/opt/it/clamavsigs`, it validates the CVD digital signature before installing and confirms with an EICAR test. | `sudo it-clamav test` |
+| 5 | Password complexity / lockout | **Met** | USG `disa_stig`. | `sudo usg audit disa_stig` |
+| 6 | Audit rules incl. reboot | **Met** | USG auditd rules. | `auditctl -l \| wc -l` |
+| 7 | BIOS hardened + password | **Partly automated** | Two of the three parts *are* machine-readable and `it-checklist` now reads them: **Secure Boot** (`mokutil --sb-state`, falling back to the `SecureBoot-*` EFI variable) and the **BIOS admin password**, via the vendor firmware-attributes driver — `/sys/class/firmware-attributes/*/authentication/Admin/is_enabled`, exposed by `dell-wmi-sysman` / `think-lmi` / `hp-wmi-sysman`. Secure Boot off, or an admin password readably **unset**, is a **FAIL**. The rest of "BIOS hardened" — boot order, disabled ports and radios — is not readable from the OS, so a box where everything detectable looks right still reports **MANUAL** rather than passing on half the evidence. On hardware without the vendor driver both fall back to manual. | `sudo it-checklist \| grep ' 7 '` ; `mokutil --sb-state` |
+| 8 | Vendor supported release | **Met** | Ubuntu 24.04 LTS (support to ~2029; ~2034 with Pro). | `lsb_release -ds && pro status` |
+| 9 | FIPS crypto (OS + drive) | **Met** | FIPS kernel via Ubuntu Pro. **Disclose:** vLLM/Docling *containers* mask `fips_enabled` because those images ship no FIPS provider — the host stays FIPS. | `cat /proc/sys/crypto/fips_enabled` |
+| 10 | DARE | **Met** | LUKS, TPM-auto-unlocked (`tpm_luks_unlock`). | `lsblk -o NAME,TYPE \| grep crypt` |
+| 11 | GRUB2 password | **Inert until activated** | `grub_password` role is built but skips while the hash is the `CHANGEME` sentinel. **Not redundant with LUKS here** — the TPM seals to PCR 7 only, which doesn't measure the kernel cmdline, so without it physical access → root shell on decrypted data. Activate: `it-grub hash` (fleet) or `it-grub set` (one box). | `sudo it-grub status` |
+| 12 | File perms + SELinux | **Met (translated)** | Ubuntu uses **AppArmor**, not SELinux — the checklist item is RHEL-derived. Permissions are USG's. | `sudo aa-status` |
+| 13 | Local accounts | **Met** | `local_accounts` manages them declaratively and purges base-image defaults. | `awk -F: '$3>=1000&&$3<65534{print $1}' /etc/passwd` |
+| 14 | CUPS not running | **Met** | `usg_remediate` disables **and masks** cups, cups.socket, cups-browsed. | `systemctl is-active cups` |
+| 15 | XFS + separate filesystems | **N/A** | **Org requirement, RHEL-derived — not an Ubuntu STIG rule.** XFS is a RHEL default; the separate-mount list came with it. Neither is levied by the Ubuntu 24.04 STIG, so this is out of scope rather than an open finding. `it-checklist` still prints the box's actual root filesystem and which of those mounts happen to be separate, because an assessor will ask. | `findmnt -no FSTYPE /` ; `findmnt /var/log/audit` |
+| 16 | Port/process capture | **Met** | `it-inventory` records every listening socket → process → owning package, plus container port publications. | `sudo it-inventory` |
+| 17 | Chrony/NTP | **Met** | `usg_remediate` writes `server` + `maxpoll` into `chrony.conf`. | `chronyc -n sources` |
+| 18 | USBGuard | **Met** | Allow-list on every profile incl. EMI. Separate layer from the `dta` mount controls. Enrol devices with `it-usb enroll`. | `sudo it-usb status` |
+| 19 | Solarwinds | **N/A** | Not used in this environment. | — |
+| 20 | Local firewall **disabled** | **Conflict** | The build **enables** ufw. Note it's partly moot on the AI nodes: Docker's DNAT precedes ufw, so published container ports aren't filtered by it. Needs a policy decision. | `sudo ufw status verbose` ; `sudo iptables -L DOCKER-USER -n` |
+| 21 | Splunk agent | **N/A** | Not used in this environment. | — |
+| 22 | DNS records (COMPASS) | **Manual** | Org infrastructure. | `dig +short <host>` |
+| 23 | Backup + restore | **Two answers, by profile** | **EMI → MANUAL.** The box is standalone and air-gapped, so there is no file server to push to: backup is an **offline SSD duplication**, done by hand. That leaves no trace on the box, so the only on-box evidence it happened is what the operator writes into `/opt/ia/backups` — a note per duplication is enough, and `it-checklist` reports how long ago the newest one was. **Development / AI / baseline → N/A.** Nothing is kept locally; the file servers are backed up and users are directed to store there. No endpoint agent is the intended design, so there is nothing to install or check per box. (Macrium SiteBackup's Linux agent is Insider-preview only anyway, and would not be acceptable on an accredited system.) The profile comes from `/etc/stig-build/profile`, written by `it_scripts`. | `ls -t /opt/ia/backups \| head -1` |
+| 24 | Scheduled OSCAP job | **Met** | `it-oscap` on a systemd timer (or `/etc/cron.d`, via `scap_schedule_method`). Results → `/opt/ia/oscap/scheduled`. Runs as **root** because `auto_audit` is locked and can't sudo unattended. | `systemctl list-timers oscap-scan.timer` |
+| 25 | iDRAC / OME | **Manual** | Server hardware, out-of-band. | iDRAC web UI |
+| 26 | Current compliance scan | **Met (process)** | Scheduled OpenSCAP scan produces the artifact; reviewing it is a human step. FAILs once the newest report is over 45 days old. | `ls -t /opt/ia/oscap/*/stig-report-*.html \| head -1` |
+| 27 | Latest STIG version | **Met** | USG content ships via Pro; SSG datastream pinned in `group_vars`. Confirm the benchmark version you're held to. | `dpkg-query -W usg` |
+| 28 | nmap vulnerability scan | **Met (EMI)** | The Linux counterpart to the org's `MUSA_Vuln_Scan` Windows job: `nmap -sV --script vuln` against this host, then a full anti-virus scan, both appended to one dated report in `/opt/ia/vulnscans`. **EMI profiles only** — `nmap` is installed there and `it-vulnscan` is placed there. FAILs when a vuln script flagged something, when the newest scan is over 45 days old, or when it has never run. The row is omitted entirely on profiles that do not carry the tool. | `sudo it-vulnscan` ; `sudo it-vulnscan --list` |
+
+**Open items**
+
+1. **GRUB password** (11) — built, needs a hash vaulted to take effect.
+2. **Firewall policy** (20) — the checklist and the build disagree; decide which is right.
+
+Closed since the last revision: **backup** (23) is a file-server function on dev/AI and a manual SSD duplication on EMI, neither of which needs an endpoint agent; **partitioning** (15) is a RHEL-derived org item, not an Ubuntu STIG rule; **ClamAV signatures air-gapped** (4) now have `it-clamav install`, and FIPS detection is fixed by `clamav_container`.
 
 ---
 
@@ -228,7 +254,7 @@ The build is configuration-as-code, so it maps directly onto the CM family. The 
 | **CM-5 Access Restrictions for Change** | Repo write access gates baseline changes. On the box, config changes need root/sudo; admin folders `/opt/ia` and `/opt/it` are restricted to the `sudo` group (mode `2770` + ACL); secrets (Pro token, LUKS passphrase, DB/API keys) stay out-of-band, root-only, never in the repo. |
 | **CM-6 Configuration Settings** | Mandated settings come from the DISA STIG applied by USG (`usg fix disa_stig`) plus documented tunables in `group_vars/all.yml` (lockout counts, timeouts, audit retention, banner, FIPS). `usg audit` (XCCDF + HTML) is the settings-compliance evidence; deviations are enumerated in [Hardening posture](#hardening-posture). |
 | **CM-7 Least Functionality** | Lean per-profile package sets; provisioning services installed but disabled + stopped; `ufw` default-deny inbound with only required ports opened; Cockpit/Dockge restricted to admin subnets; USB mass storage disabled on the AI nodes. |
-| **CM-8 System Component Inventory** | Component versions pinned across `group_vars`, the compose files, and the Dockerfiles. Per-profile software lists ([dev-workstation](dev-workstation.md#software-list), [ai-stack](ai-stack.md#software-list)) enumerate tool, version, publisher, and purpose; images and model repos are listed with versions. |
+| **CM-8 System Component Inventory** | Component versions pinned across `group_vars`, the compose files, and the Dockerfiles. The [software inventory](reference.md#software-inventory) enumerates tool, version, publisher, and purpose per profile; images and model repos are listed with versions. |
 | **CM-9 Configuration Management Plan** | Organizational/procedural control. This repo is the technical baseline the site CM Plan references; the plan itself is a program document. |
 | **CM-10 / CM-11 Software Usage & User-Installed Software** | Components are open-source with tracked licenses (software lists). Standard users are non-privileged; installs require sudo. The `docker` group (root-equivalent) is a documented developer-workstation exception; no unmanaged package channels are enabled. |
 | **CM-14 Signed Components** | Third-party apt repos (Docker, NVIDIA, Microsoft) are added with GPG-key verification; distro packages are apt-signed. Images and model weights are hash-verifiable and mirrorable to an internal registry for provenance. Full SBOM/signing attestation is an SSP/POA&M item. |
@@ -246,7 +272,7 @@ Questions an AO/ISSP raises about an AI system specifically; our position:
 
 ### Open items / POA&M (stated honestly)
 
-Known deviations to remediate or risk-accept with the AO. None hidden; each is documented in [`operate.md`](operate.md) and `group_vars/all.yml`.
+Known deviations to remediate or risk-accept with the AO. None hidden; each is documented above and in `group_vars/all.yml`.
 
 | Item | Status / plan |
 |------|---------------|
@@ -256,7 +282,7 @@ Known deviations to remediate or risk-accept with the AO. None hidden; each is d
 | **FIPS inside inference containers** | **Host is fully FIPS**; the inference/extraction containers (vLLM, and docling via its bundled OpenCV/OpenSSL) use standard crypto. Those images ship no FIPS provider and aren't FIPS-validated, so on the FIPS host their OpenSSL selftest aborts unless carved out. Container traffic is host-local/enclave-internal. Documented POA&M; host-level FIPS is what the STIG assesses. |
 | **AI/ML software assurance** | vLLM, Open WebUI, Docling, etc. are open-source and not separately accredited; recommend internal image scanning + registry mirroring as part of the SSP. |
 
-### Scanning and building the STIG checklist
+## Producing the STIG checklist
 
 The whole process, end to end. Two scanners run on these boxes and they answer different questions — knowing which is which prevents a lot of confusion.
 
@@ -269,6 +295,22 @@ The whole process, end to end. Two scanners run on these boxes and they answer d
 | Use it for | the compliance score and the accreditation artifact | the checklist, and ad-hoc re-checks |
 
 **They must be tailored the same way or they disagree.** `usg_harden` de-selects the smart-card and SSSD rules — this fleet is password-login only with no CAC reader — and a raw `oscap` run ignores that, reporting `smartcard_pam_enabled`, `service_sssd_enabled` and `sssd_enable_user_cert` as findings the accredited baseline has formally de-scoped. `it-oscap` now picks up the tailoring file automatically.
+
+
+### Which tool is which
+
+Four commands with overlapping names. They are two pairs, and each pair is *checklist* vs *scan*:
+
+| Command | What it is | Input | Output |
+|---|---|---|---|
+| `it-checklist` | **The org checklist above.** A shell script with one hand-written check per row — fast, opinionated, human-readable. A quick indicator, not evidence. | the live box | one line per item on stdout, `--out` to a file |
+| `it-ckl` | **The DISA STIG checklist.** Builds a real `.cklb`/`.ckl` for STIG Viewer by merging DISA's manual STIG XCCDF (the skeleton of every V-ID), the SCAP results, and this repo's `answers.yml` adjudications. That last part is the point: `Not_Reviewed` comes to mean "needs a human on *this* box" rather than "nobody has typed it in yet". | STIG XCCDF + scan results + `answers.yml` | `/opt/ia/stig/checklists/<host>-<ts>.cklb` |
+| `it-oscap` | **The scanner.** One `oscap xccdf eval` run against the SSG (or DISA) datastream, honouring the USG tailoring file. This is what the weekly timer runs. | a SCAP datastream | `stig-report-*.html`, `stig-arf-*.xml`, `stig-viewer-*.xml` in `/opt/ia/oscap/{build,scheduled,manual}` |
+| `it-stig` | **The wrapper.** Runs `it-oscap` then `it-ckl` in the right order, checks the prerequisites up front instead of failing halfway, and can `archive` the evidence set for hand-off. | — | whatever the two produce, plus a tarball |
+
+So: **`it-checklist` answers "is this box configured the way we said", `it-stig run` produces the artifact an assessor wants.** `it-oscap` and `it-ckl` are its two halves, useful on their own when you only need one.
+
+`it-vulnscan` is separate from all four — it is the org's `MUSA_Vuln_Scan` process (nmap `vuln` scripts + a full AV scan), not a STIG artifact, and it lands in `/opt/ia/vulnscans`.
 
 #### Where everything lives
 
@@ -418,9 +460,9 @@ Keep the generated `.cklb` alongside the `usg audit` report — together they ar
 
 - **This repository** (`ubuntu-stig-build`): the full, reviewable configuration-as-code baseline.
 - **`usg audit` reports** (XCCDF `.xml` + HTML) collected to `/opt/ia` on each box. STIG compliance evidence per host.
-- **[`operate.md`](operate.md):** control-by-control subsystem detail and every documented deviation/POA&M.
+- **This document:** every documented deviation and POA&M.
 - **[Container-runtime compliance](#container-runtime-compliance-why-no-docker-stig):** why there's no docker-ce STIG and how the container layer is secured (CIS Docker Benchmark).
-- **Architecture overview:** [`operate.md`](operate.md).
+- **Architecture, ports, software inventory:** [`reference.md`](reference.md).
 - Host inventory, FIPS status, and encryption/TPM binding evidence on request.
 
 *Prepared to support A&A discussions. Final control selection, categorization, and authorization are determined with the ISSM/ISSP and the AO.*
@@ -488,9 +530,6 @@ sudo docker run --rm --net host --pid host --userns host --cap-add audit_control
 
 ## Software inventories
 
-Per-profile software lists (Software/Tool, Version, Publisher, Purpose) live with each profile page:
+Per-profile software lists — Software/Tool, Version, Publisher, Purpose — are in **[reference.md → Software inventory](reference.md#software-inventory)**.
 
-- **[Developer workstation software list](dev-workstation.md#software-list)**
-- **[AI stack software list](ai-stack.md#software-list)**
-
-Everything is pinned and reproducible via the `ubuntu-stig-build` baseline, and can be mirrored to an internal registry / staged offline for air-gap. External data sources read by oikb (GitLab / Confluence / S3, per `site.yml`) are org services, not installed software.
+Everything is pinned and reproducible from this baseline, and can be mirrored to an internal registry or staged offline for air-gap. External data sources read by oikb (GitLab / Confluence / S3, per `site.yml`) are org services, not installed software.

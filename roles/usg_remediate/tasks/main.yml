@@ -298,7 +298,7 @@
 # SSH ONLY, deliberately. `ufw limit` denies a source that opens more than six
 # connections in thirty seconds; applied to the AI stack's published ports or
 # the EMI imaging services that is a self-inflicted outage, and Docker's DNAT
-# bypasses ufw for those ports regardless (see docs/ai-stack.md). Every other
+# bypasses ufw for those ports regardless (see docs/reference.md). Every other
 # listening port stays an explicit deviation.
 - name: "REMED | Rate-limit inbound SSH"
   community.general.ufw:

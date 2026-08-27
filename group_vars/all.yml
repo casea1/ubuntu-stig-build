@@ -741,7 +741,7 @@ local_users_common_groups:
 #   on every profile via base_common_packages).
 # NOTE: `sudo` here still requires a password, and these accounts are created
 # LOCKED, so sudo will not work until an admin sets one (`sudo passwd auto_audit`)
-# or a deliberate, documented sudoers rule is added. See docs/operate.md.
+# or a deliberate, documented sudoers rule is added. See docs/reference.md.
 local_auto_audit_enabled: "{{ not ((is_emi | default(false) | bool) and not (emi_classified | default(true) | bool)) }}"
 local_automation_users:
   - { name: auto_audit, groups: [audit, sudo] }
@@ -787,7 +787,7 @@ usb_access_group: dta
 # above (no block device ever appears). This fleet needs USB for data-transfer
 # agents, so stig_harden strips that blacklist AFTER the lockdown role and loads
 # the module; the dta udev + polkit policy then governs who may mount. Documented
-# deviation (docs/operate.md POA&M). Set false to keep USB mass storage fully
+# deviation (docs/compliance.md). Set false to keep USB mass storage fully
 # disabled (the dta carve-out is then moot).
 usb_storage_enabled: true
 
@@ -809,6 +809,30 @@ desktop_branding_enabled: true
 # =============================================================================
 # The wallpaper file ships in roles/desktop_branding/files/ and is deployed here.
 branding_wallpaper_dest: /usr/share/backgrounds/SHB_Background.jpg
+
+# ---- Classification-aware wallpaper ----------------------------------------
+# The classified wallpaper carries a SECRET marking, so it must NOT ship on a
+# box operating below that level. It is applied only when this box's
+# classification_banner_level is one of branding_classified_levels -- which is
+# set at DEPLOYMENT by `it-set-classification SECRET` (that command also writes
+# the level into /opt/it/site.yml, so the next ansible-pull keeps it).
+#
+# Both images are copied to the SAME destination path, so exactly one wallpaper
+# file exists on the box and it always matches the current level. Dropping back
+# to UNCLASSIFIED overwrites the marked image on the next run rather than
+# leaving it on disk.
+#
+# If the classified file is not present in roles/desktop_branding/files/ the
+# role falls back to the standard wallpaper and says so -- it never fails the
+# build, and it never silently leaves a classified box unmarked without telling
+# you.
+branding_wallpaper_src: "SHB_Background.jpg"                      # filename in the role's files/
+branding_wallpaper_classified_src: "SHB_Background_SECRET.jpg"    # ditto; "" to disable
+branding_classified_levels:
+  - CONFIDENTIAL
+  - SECRET
+  - TOP SECRET
+  - SCI
 # true => also set the SESSION LOCK SCREEN to the wallpaper. This OVERRIDES the
 # STIG "Implement Blank Screensaver" control (documented deviation). Set false to
 # brand only the desktop (then re-enable the blank lock screen in gnome.yml).
@@ -850,7 +874,7 @@ tpm_luks_enabled: "{{ (not (is_emi | default(false) | bool)) or (emi_classified 
 luks_passphrase: ""
 # Root-only file holding the install passphrase, placed out-of-band (autoinstall
 # late-commands / write_files, or dropped manually). Read once for the bind; never
-# in git. See docs/operate.md "TPM2 LUKS auto-unlock".
+# in git. See docs/procedures.md §6.3.
 luks_passphrase_file: /etc/luks/initial-passphrase
 # Delete luks_passphrase_file right after a successful TPM bind so the per-box
 # passphrase doesn't persist on the auto-unlocking disk. Re-drop the file only if
@@ -967,7 +991,7 @@ dockge_port: 9001                       # host port -> container 5001 (HTTP)
 # requirement -- it shells out to `docker compose` using this path) + exported as
 # DOCKGE_STACKS_DIR. ai_compose writes the per-service AI stacks straight into
 # here (/opt/stacks/<stack>/compose.yaml), so each is a first-class Dockge stack
-# with no extra bind mount. See docs/operate.md.
+# with no extra bind mount. See docs/reference.md.
 dockge_stacks_dir: "/opt/stacks"
 
 # =============================================================================
@@ -1023,7 +1047,7 @@ ai_firewall_allow_ports:
 #
 # By default the role only PLACES files + creates the (empty) volumes -- it does
 # NOT pull/`up`, because the vLLM volume must be loaded with the 120B model first
-# (see docs/operate.md "Gathering the models"). Flip ai_compose_deploy=true once the
+# (see docs/procedures.md §5.4). Flip ai_compose_deploy=true once the
 # model is staged to let Ansible pull + `up -d` too.
 ai_compose_enabled: true         # every ai-profile box is an AI node
 # Hostname -> role map. Name a box dev-ai1/dev-ai2 and it images correctly with
@@ -1160,7 +1184,7 @@ ai_compose_build_by_role:        # which images each node builds
 # download these into the (external) volumes so vLLM serves them from disk.
 # Only the CURRENTLY-SERVED model is listed (gpt-oss on System 1); the Granite
 # chat / embed / vision models are downloaded when you add their vLLM servers --
-# stage them any time with the hfcli utility (see docs/operate.md), e.g.
+# stage them any time with the hfcli utility (see docs/procedures.md §5.4), e.g.
 #   docker compose run --rm hfcli hf download ibm-granite/granite-4.1-30b --local-dir /llm/granite
 # All repos are Apache-2.0 / ungated -- no HF token needed (ai_hf_token only
 # dodges anonymous rate-limits on the big gpt-oss pull).
