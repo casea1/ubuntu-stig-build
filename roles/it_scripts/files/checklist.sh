@@ -109,9 +109,13 @@ if active auditd; then
   imm=$(auditctl -s 2>/dev/null | awk '/^enabled/{print $2}')
   immnote=""
   [ "$imm" = 2 ] && immnote=" (immutable: -e 2, needs a REBOOT to load)"
-  if [ "$loaded" -eq 0 ]; then
+  if [ ! -d /etc/audit/rules.d ]; then
+    row FAIL 6 "Audit rules" "/etc/audit/rules.d does NOT EXIST -- nothing to load; $loaded rule(s) in the kernel"
+  elif [ "$ondisk" -eq 0 ]; then
+    row FAIL 6 "Audit rules" "no rule files in /etc/audit/rules.d -- $loaded rule(s) in the kernel$immnote"
+  elif [ "$loaded" -eq 0 ]; then
     row FAIL 6 "Audit rules" "auditd active but NO rules loaded; $ondisk on disk$immnote"
-  elif [ "$ondisk" -gt 0 ] && [ "$loaded" -lt $(( ondisk / 2 )) ]; then
+  elif [ "$loaded" -lt $(( ondisk / 2 )) ]; then
     row FAIL 6 "Audit rules" "only $loaded of $ondisk rules reached the kernel$immnote -- run: augenrules --load, or reboot"
   elif [ "$loaded" -lt 20 ]; then
     row FAIL 6 "Audit rules" "$loaded rules loaded -- far below a STIG ruleset ($ondisk on disk)$immnote"

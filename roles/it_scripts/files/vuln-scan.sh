@@ -17,6 +17,9 @@
 #   it-vulnscan --list           past scans, newest first
 #   it-vulnscan --show [FILE]    print the newest scan (or the one named)
 #   it-vulnscan --keep N         how many scans to retain (default 12; 0 = all)
+#   it-vulnscan --no-container   do not fall back to the containerised nmap
+#   it-vulnscan image-save DIR   AIR-GAP: save the nmap image to removable media
+#   it-vulnscan image-load DIR   AIR-GAP: load it on the fielded box
 set -uo pipefail
 
 OUT_DIR="${VULNSCAN_DIR:-/opt/ia/vulnscans}"
@@ -26,6 +29,13 @@ DO_AV=1
 KEEP=12
 ACTION=scan
 SHOW_FILE=""
+IMG_DIR=""
+USE_CONTAINER=1
+
+# Written by the nmap_container role, and only after it has PROVEN the image can
+# scan. Absent means there is no working containerised nmap -- never guess one.
+NMAP_IMG_MARKER=/etc/stig-build/nmap-image
+FIPS_OFF=/etc/stig-build/fips_off
 
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
@@ -49,6 +59,9 @@ while [ $# -gt 0 ]; do
     --target) TARGET="${2:?--target needs a host}"; shift 2 ;;
     --ports)  PORTS="${2:?--ports needs a spec}"; shift 2 ;;
     --keep)   KEEP="${2:?--keep needs a number}"; shift 2 ;;
+    --no-container) USE_CONTAINER=0; shift ;;
+    image-save) ACTION=image-save; IMG_DIR="${2:?image-save needs a directory}"; shift 2 ;;
+    image-load) ACTION=image-load; IMG_DIR="${2:?image-load needs a directory}"; shift 2 ;;
     --list)   ACTION=list; shift ;;
     --show)   ACTION=show; SHOW_FILE="${2:-}"; [ -n "$SHOW_FILE" ] && shift; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -56,9 +69,63 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# ---- containerised nmap -----------------------------------------------------
+# The host nmap cannot start under FIPS. nmap_container builds an image whose
+# OpenSSL is a stock build and records it here ONLY after proving it can scan.
+
+ctr_image() { [ -r "$NMAP_IMG_MARKER" ] && cat "$NMAP_IMG_MARKER" || true; }
+
+ctr_nmap() {   # args -> nmap args. --network host so loopback means the host's.
+  local img; img=$(ctr_image)
+  [ -n "$img" ] || return 127
+  local mnt=()
+  [ -r "$FIPS_OFF" ] && mnt=(-v "$FIPS_OFF:/proc/sys/crypto/fips_enabled:ro")
+  docker run --rm --network host "${mnt[@]}" "$img" "$@"
+}
+
+cmd_image_save() {
+  local img; img=$(ctr_image)
+  [ -n "$img" ] || die "no containerised nmap on this box (nothing to save)"
+  [ -d "$IMG_DIR" ] || die "no such directory: $IMG_DIR"
+  command -v docker >/dev/null 2>&1 || die "docker is not installed"
+  head2 "Saving $img"
+  docker save "$img" -o "$IMG_DIR/nmap-image.tar" || die "docker save failed"
+  printf '%s\n' "$img" > "$IMG_DIR/nmap-image.txt"
+  chmod 0644 "$IMG_DIR/nmap-image.tar" "$IMG_DIR/nmap-image.txt"
+  ok "$(du -h "$IMG_DIR/nmap-image.tar" | cut -f1) -> $IMG_DIR/nmap-image.tar"
+  say "  ${DIM}On the fielded box: sudo it-vulnscan image-load $IMG_DIR${R}"
+}
+
+cmd_image_load() {
+  [ -r "$IMG_DIR/nmap-image.tar" ] || die "no nmap-image.tar in $IMG_DIR"
+  command -v docker >/dev/null 2>&1 || die "docker is not installed"
+  head2 "Loading"
+  docker load -i "$IMG_DIR/nmap-image.tar" || die "docker load failed"
+  local img=""
+  [ -r "$IMG_DIR/nmap-image.txt" ] && img=$(cat "$IMG_DIR/nmap-image.txt")
+  [ -n "$img" ] || die "no nmap-image.txt beside the tar -- cannot tell which tag to record"
+
+  # Prove it before recording it, exactly as the role does.
+  install -d -m 0700 /etc/stig-build
+  [ -r "$FIPS_OFF" ] || printf '0\n' > "$FIPS_OFF"
+  local mnt=(-v "$FIPS_OFF:/proc/sys/crypto/fips_enabled:ro")
+  if docker run --rm --network host "${mnt[@]}" "$img" -sn -n 127.0.0.1 >/dev/null 2>&1; then
+    printf '%s\n' "$img" > "$NMAP_IMG_MARKER"; chmod 0644 "$NMAP_IMG_MARKER"
+    ok "loaded and verified: $img"
+  else
+    rm -f "$NMAP_IMG_MARKER"
+    die "the image loaded but could not scan -- not recording it"
+  fi
+}
+
 # ---- list / show ------------------------------------------------------------
 
 newest() { ls -1t "$OUT_DIR"/*-vuln-scan-*.txt 2>/dev/null | head -1; }
+
+case "$ACTION" in
+  image-save) cmd_image_save; exit 0 ;;
+  image-load) cmd_image_load; exit 0 ;;
+esac
 
 if [ "$ACTION" = list ]; then
   head2 "Scans in $OUT_DIR"
@@ -113,7 +180,29 @@ log " nmap $(nmap --version 2>/dev/null | awk '/^Nmap version/{print $3}')  --  
 log "-------------------------------------------------------------------- "
 nmap_out=$(nmap "${NMAP_ARGS[@]}" "$TARGET" 2>&1)
 nmap_rc=$?
+nmap_via=host
+
+# The host nmap cannot start under FIPS. When nmap_container has proven an
+# image can, use it rather than filing a report that scanned nothing. Only
+# after the host has actually failed -- the host binary stays the default.
+if [ "$nmap_rc" -ne 0 ] && [ "$USE_CONTAINER" -eq 1 ] && [ -n "$(ctr_image)" ]; then
+  warn "host nmap failed -- retrying in the containerised nmap ($(ctr_image))"
+  log "*** host nmap exited $nmap_rc; retrying via container $(ctr_image) ***"
+  ctr_out=$(ctr_nmap "${NMAP_ARGS[@]}" "$TARGET" 2>&1)
+  ctr_rc=$?
+  if [ "$ctr_rc" -eq 0 ]; then
+    nmap_out="$ctr_out"; nmap_rc=0; nmap_via=container
+  else
+    # Keep the HOST failure as the reported one -- it is the root cause, and a
+    # container that also fails is a second fact, not a replacement for it.
+    nmap_out="$nmap_out
+--- containerised nmap also failed (rc=$ctr_rc) ---
+$ctr_out"
+  fi
+fi
+
 printf '%s\n' "$nmap_out" | tee -a "$LOG"
+[ "$nmap_via" = container ] && log "nmap ran in the container: $(ctr_image)"
 
 nmap_verdict=OK
 if [ "$nmap_rc" -ne 0 ]; then
@@ -127,12 +216,16 @@ if [ "$nmap_rc" -ne 0 ]; then
   if printf '%s' "$nmap_out" | grep -q 'library has no ciphers'; then
     bad "cause: OpenSSL in FIPS mode gives nmap no usable ciphers, so it quit at startup"
     log "*** cause: FIPS OpenSSL -- 'SSL routines::library has no ciphers'. ***"
-    say "  ${DIM}nmap is linked against the host OpenSSL and cannot be configured out of${R}"
-    say "  ${DIM}FIPS mode. Run it from a container, or from a non-FIPS box on the same${R}"
-    say "  ${DIM}segment, and file that output instead. See docs/procedures.md 3.3.${R}"
+    say "  ${DIM}nmap links the host OpenSSL and cannot be configured out of FIPS mode.${R}"
+    if [ -n "$(ctr_image)" ]; then
+      say "  ${DIM}The containerised nmap was tried and also failed. See docs/procedures.md 3.3.${R}"
+    else
+      say "  ${DIM}No containerised nmap on this box. Re-run the build to have nmap_container${R}"
+      say "  ${DIM}build one, or carry it in: it-vulnscan image-load <dir>. docs/procedures.md 3.3.${R}"
+    fi
   fi
 else
-  ok "nmap complete"
+  ok "nmap complete (via $nmap_via)"
 fi
 
 # What an operator actually wants off the top: did any vuln script report
@@ -250,7 +343,7 @@ fi
 log ""
 log "===================================================================="
 log " SCAN COMPLETE -- $(date '+%Y-%m-%d %H:%M:%S %Z')"
-log " nmap                    : $nmap_verdict"
+log " nmap                    : $nmap_verdict (via $nmap_via)"
 log " Open ports found        : $open"
 log " nmap vuln script hits   : $hits"
 log " Anti-virus              : $av_verdict"

@@ -1,0 +1,153 @@
+---
+# =============================================================================
+# nmap_container -- containerised nmap for hosts whose own nmap cannot start.
+#
+# Runs ONLY when the host nmap actually fails. On a box where nmap works this
+# role does nothing, so it is safe on every profile.
+#
+# Unlike the ClamAV container this is not a daemon: it-vulnscan invokes it per
+# scan with `docker run --rm --network host`. --network host is what makes a
+# loopback scan mean the same thing it would from the host.
+#
+# IT NEEDS DOCKER, WHICH IS ROOT-EQUIVALENT. it-vulnscan is an admin command
+# (it self-elevates), so that is acceptable here -- unlike dta-log, which is
+# deliberately built so an unprivileged DTA never touches docker.
+# =============================================================================
+
+- name: "NMAP-CTR | Can the host nmap run at all?"
+  when: nmap_container_enabled | default(true) | bool
+  block:
+    # -sn -n on loopback: no ports, no DNS, no scripts. The fastest invocation
+    # that still makes nmap initialise OpenSSL, which is where it dies.
+    - name: "NMAP-CTR | Host nmap smoke test"
+      ansible.builtin.command: nmap -sn -n 127.0.0.1
+      register: _nc_host
+      changed_when: false
+      failed_when: false
+
+    - name: "NMAP-CTR | Is docker available?"
+      ansible.builtin.stat:
+        path: /usr/bin/docker
+      register: _nc_docker
+
+- name: "NMAP-CTR | Host nmap is broken -- build the containerised one"
+  when:
+    - nmap_container_enabled | default(true) | bool
+    - _nc_host is defined
+    - _nc_host.rc | default(0) != 0
+    - _nc_docker.stat.exists | default(false)
+  block:
+    - name: "NMAP-CTR | Why the host nmap failed"
+      ansible.builtin.debug:
+        msg: >-
+          Host nmap exited {{ _nc_host.rc }}.
+          {% if 'library has no ciphers' in (_nc_host.stderr | default('') ~ _nc_host.stdout | default('')) %}
+          Cause is the known FIPS one: OpenSSL gives nmap no usable cipher suite.
+          {% else %}
+          Cause is NOT the known FIPS cipher failure -- check this before trusting
+          the containerised replacement: {{ (_nc_host.stderr | default('')) | truncate(200) }}
+          {% endif %}
+
+    - name: "NMAP-CTR | Secrets/marker dir"
+      ansible.builtin.file:
+        path: /etc/stig-build
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    # Same carve-out the vLLM/Docling stacks use, for images whose runtime reads
+    # the kernel FIPS flag directly. Harmless when unneeded.
+    - name: "NMAP-CTR | fips_off carve-out file"
+      ansible.builtin.copy:
+        dest: "{{ nmap_container_fips_off }}"
+        content: "0\n"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: "NMAP-CTR | Build directory"
+      ansible.builtin.file:
+        path: /opt/it/docker/nmap
+        state: directory
+        owner: root
+        group: "{{ ia_it_group | default('sudo') }}"
+        mode: "0750"
+
+    - name: "NMAP-CTR | Dockerfile"
+      ansible.builtin.copy:
+        src: Dockerfile
+        dest: /opt/it/docker/nmap/Dockerfile
+        owner: root
+        group: root
+        mode: "0644"
+      register: _nc_dockerfile
+
+    - name: "NMAP-CTR | Is the image already built?"
+      ansible.builtin.command: docker image inspect {{ nmap_container_image }}
+      register: _nc_have_image
+      changed_when: false
+      failed_when: false
+
+    # Needs internet. On an air-gapped box it will fail; the image has to be
+    # carried in with `it-vulnscan image-load` instead, and the failure below is
+    # reported rather than fatal.
+    - name: "NMAP-CTR | Build the image"
+      ansible.builtin.command:
+        cmd: >-
+          docker build --build-arg BASE={{ nmap_container_base }}
+          -t {{ nmap_container_image }} /opt/it/docker/nmap
+      register: _nc_build
+      changed_when: _nc_build.rc == 0
+      failed_when: false
+      when: _nc_have_image.rc != 0 or (_nc_dockerfile is changed)
+
+    # Prove it before recording it. A marker pointing at an image that cannot
+    # scan would be worse than no marker -- it-vulnscan would trust it.
+    - name: "NMAP-CTR | Does the containerised nmap actually run?"
+      ansible.builtin.command:
+        cmd: >-
+          docker run --rm --network host
+          -v {{ nmap_container_fips_off }}:/proc/sys/crypto/fips_enabled:ro
+          {{ nmap_container_image }} -sn -n 127.0.0.1
+      register: _nc_test
+      changed_when: false
+      failed_when: false
+
+    - name: "NMAP-CTR | Record the working image for it-vulnscan"
+      ansible.builtin.copy:
+        dest: "{{ nmap_container_marker }}"
+        content: "{{ nmap_container_image }}\n"
+        owner: root
+        group: root
+        mode: "0644"
+      when: _nc_test.rc == 0
+
+    - name: "NMAP-CTR | Remove the marker when the container cannot scan either"
+      ansible.builtin.file:
+        path: "{{ nmap_container_marker }}"
+        state: absent
+      when: _nc_test.rc != 0
+
+    - name: "NMAP-CTR | Result"
+      ansible.builtin.debug:
+        msg: >-
+          {% if _nc_test.rc == 0 %}
+          Containerised nmap WORKS ({{ nmap_container_image }}). `it-vulnscan`
+          will use it automatically. Stage it for an air-gapped box with
+          `it-vulnscan image-save <dir>`.
+          {% else %}
+          The containerised nmap ALSO failed (rc={{ _nc_test.rc }}). No marker was
+          written, so it-vulnscan keeps reporting NMAP-FAULT rather than trusting
+          a scanner that does not work. {{ (_nc_test.stderr | default('')) | truncate(200) }}
+          {% endif %}
+
+# The host nmap works, or docker is absent: make sure no stale marker survives,
+# or it-vulnscan would keep shelling out to an image that may be gone.
+- name: "NMAP-CTR | No containerised nmap needed -- drop any stale marker"
+  ansible.builtin.file:
+    path: "{{ nmap_container_marker }}"
+    state: absent
+  when: >-
+    not (nmap_container_enabled | default(true) | bool)
+    or ((_nc_host is defined) and (_nc_host.rc | default(0) == 0))

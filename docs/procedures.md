@@ -296,23 +296,32 @@ Reports append to `/opt/ia/vulnscans/<host>-vuln-scan-MM-DD-YYYY.txt`. Exit is n
 
 Scans loopback by default. `--target` exists for a deliberate, authorised scope.
 
-**nmap does not run on a FIPS box.** It initialises OpenSSL at startup, the FIPS provider offers it no usable cipher suite, and it quits before probing anything:
+**nmap cannot run on the FIPS host — it runs in a container instead.** The host nmap initialises OpenSSL at startup, the FIPS provider offers it no usable cipher suite, and it quits before probing anything:
 
 ```
 OpenSSL failed to create a new SSL_CTX: error:0A0000A1:SSL routines::library has no ciphers
 ```
 
-Same class of failure as ClamAV, and not configurable around for the same reason — nmap links the host OpenSSL, which takes FIPS from the kernel flag. `it-vulnscan` detects this, records **`NMAP-FAULT`** in the report, exits non-zero, and `it-checklist` item 28 FAILs on it. A report that says "0 open ports, nothing flagged" because the scanner never started is not evidence.
+Same dead end as ClamAV, for the same reason: nmap links the host OpenSSL, and Ubuntu's FIPS OpenSSL takes FIPS from the kernel flag, so no config can turn it off for one process.
 
-Until it is solved, get the nmap half from a non-FIPS box on the same segment and file that output alongside the AV scan:
+The `nmap_container` role builds an image from a stock Ubuntu base — whose OpenSSL is not the FIPS variant — and records it **only after proving it can scan**. `it-vulnscan` then tries the host binary first and falls back to the container, reporting which one ran:
 
-```bash
-nmap -sV --script vuln <emi-box-ip>      # from a non-FIPS host, authorised scope only
-sudo it-vulnscan --quick --no-av         # nothing useful; use the AV half instead
-sudo it-vulnscan                         # AV scan still works and still counts
+```
+ nmap                    : OK (via container)
 ```
 
-The AV half is unaffected and is the part the engine gate protects.
+If the host nmap ever starts working, the marker is dropped and it goes back to running natively. `--no-container` forces the host binary.
+
+**Air-gapped**, the image cannot be built on the box. Stage it from a connected one:
+
+```bash
+sudo it-vulnscan image-save /mnt/usb     # connected box
+sudo it-vulnscan image-load /mnt/usb     # fielded box -- verifies before recording
+```
+
+`image-load` runs a real scan before writing the marker. An image that loads but cannot scan is not recorded, because `it-vulnscan` would then trust it.
+
+If neither works, `NMAP-FAULT` is recorded, `it-checklist` item 28 FAILs, and the honest fallback is to run nmap from a non-FIPS box on the same segment and file that output.
 
 **A desktop always has unscannable files.** X11, ICE, dbus and code-server sockets cannot be read by any scanner. `clamd` counts each one in `Total errors` and then **exits 2**, so the exit code alone reads "error" on a perfectly good scan. `it-vulnscan` judges by the scan summary instead: `CLEAN` with a count of unscannable special files, and `ERROR` only for errors that are *not* of that known-benign kind. The terminal shows the condensed result; the full output goes to the report, which is the evidence artifact.
 
