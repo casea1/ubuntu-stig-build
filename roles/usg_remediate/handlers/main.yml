@@ -21,3 +21,18 @@
   register: _augenrules_load
   changed_when: false
   failed_when: false
+
+# failed_when:false above is deliberate -- under auditd `-e 2` the kernel
+# legitimately refuses a live load until reboot, and that must not fail a build.
+# But a SILENT refusal is how ASP-2 ran with 1 rule in the kernel against 101 on
+# disk while every file-based OVAL passed. Say what happened.
+- name: Report the audit-rule load
+  ansible.builtin.debug:
+    msg: >-
+      augenrules --load exited {{ _augenrules_load.rc }}.
+      {% if _augenrules_load.rc != 0 %}
+      THE RULES ON DISK ARE NOT IN THE KERNEL. If auditd is immutable (`auditctl -s`
+      shows enabled 2) this clears on the next reboot; otherwise the load itself
+      failed and the box is auditing almost nothing. Check with `sudo it-checklist`
+      item 6. Output: {{ (_augenrules_load.stderr | default('') ~ ' ' ~ (_augenrules_load.stdout | default(''))) | trim | truncate(300) }}
+      {% endif %}
