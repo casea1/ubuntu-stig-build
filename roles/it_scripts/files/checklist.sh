@@ -95,11 +95,29 @@ else row FAIL 4 "Anti-virus" "it-clamav not installed"; fi
   && row PASS 5 "Password policy" "pwquality+faillock present (authoritative: usg audit)" \
   || row FAIL 5 "Password policy" "pwquality/faillock config missing"
 
-# 6 auditd + rules loaded
+# 6 auditd -- rules LOADED IN THE KERNEL, compared against what is on disk.
+# "more than zero" is not a STIG audit posture: USG writes ~90 rules across
+# /etc/audit/rules.d, and a box showing a handful loaded has rules that never
+# reached the kernel. That happens for a specific, easy-to-miss reason: the
+# STIG sets `-e 2` (immutable), after which the kernel REFUSES new rules until
+# a reboot -- so a pull that adds audit rules leaves them on disk and inert,
+# and every file-based OVAL still passes. Compare the two numbers.
 if active auditd; then
-  n=$(auditctl -l 2>/dev/null | grep -cv '^No rules$' || true); n=${n:-0}
-  [ "$n" -gt 0 ] && row PASS 6 "Audit rules" "auditd active, $n rules loaded" \
-                 || row FAIL 6 "Audit rules" "auditd active but NO rules loaded"
+  loaded=$(auditctl -l 2>/dev/null | grep -cvE '^(No rules|)$' || true); loaded=${loaded:-0}
+  ondisk=$(cat /etc/audit/rules.d/*.rules 2>/dev/null \
+             | grep -cvE '^\s*(#|$)' || true); ondisk=${ondisk:-0}
+  imm=$(auditctl -s 2>/dev/null | awk '/^enabled/{print $2}')
+  immnote=""
+  [ "$imm" = 2 ] && immnote=" (immutable: -e 2, needs a REBOOT to load)"
+  if [ "$loaded" -eq 0 ]; then
+    row FAIL 6 "Audit rules" "auditd active but NO rules loaded; $ondisk on disk$immnote"
+  elif [ "$ondisk" -gt 0 ] && [ "$loaded" -lt $(( ondisk / 2 )) ]; then
+    row FAIL 6 "Audit rules" "only $loaded of $ondisk rules reached the kernel$immnote -- run: augenrules --load, or reboot"
+  elif [ "$loaded" -lt 20 ]; then
+    row FAIL 6 "Audit rules" "$loaded rules loaded -- far below a STIG ruleset ($ondisk on disk)$immnote"
+  else
+    row PASS 6 "Audit rules" "auditd active, $loaded rules loaded of $ondisk on disk"
+  fi
 else row FAIL 6 "Audit rules" "auditd not active"; fi
 
 # 7 BIOS. Two of the three parts ARE machine-readable:
