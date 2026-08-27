@@ -9,16 +9,68 @@
 # Runs AFTER hardening (usg_harden + desktop_hardening). It is the SOLE owner of the screensaver (lock screen)
 # picture-uri key: desktop_hardening/tasks/gnome.yml deliberately no longer sets that
 # key, because showing a lock-screen wallpaper OVERRIDES the STIG "Implement
-# Blank Screensaver" control (documented deviation -- see docs/operate.md). The
+# Blank Screensaver" control (documented deviation -- see docs/reference.md). The
 # desktop background key is not touched by STIG at all.
+#
+# WHICH image is deployed follows classification_banner_level: the SECRET-marked
+# wallpaper is applied only on a box that has actually been taken to that level
+# with `it-set-classification`. See the classification-aware block below.
 #
 # dconf mechanics: keyfile under /etc/dconf/db/local.d/ + a matching lock under
 # .../locks/ + `dconf update` to compile the binary db (the existing handler).
 # =============================================================================
 
-- name: BRANDING | Install the system wallpaper
+# ---------------------------------------------------------------------------
+# WHICH wallpaper. The classified image carries a SECRET marking, so it is
+# applied ONLY when this box's classification_banner_level says it belongs
+# there -- which is a DEPLOYMENT-time decision made with
+# `it-set-classification SECRET`, not something baked into a gold image.
+#
+# Both images land at the SAME destination path, so exactly one wallpaper file
+# exists and it always matches the current level: dropping back to UNCLASSIFIED
+# overwrites the marked image on the next run instead of leaving it on disk.
+#
+# Gated on the file existing (same pattern as the account avatar below), so the
+# build never fails when it has not been added to files/ yet.
+# ---------------------------------------------------------------------------
+- name: BRANDING | Is a classified-level wallpaper available?
+  ansible.builtin.stat:
+    path: "{{ role_path }}/files/{{ branding_wallpaper_classified_src }}"
+  register: _branding_classified_wp
+  when: (branding_wallpaper_classified_src | default('')) | length > 0
+
+- name: BRANDING | Does this box's classification level call for it?
+  ansible.builtin.set_fact:
+    _branding_level: "{{ classification_banner_level | default('UNCLASSIFIED') | upper }}"
+    _branding_wants_classified: >-
+      {{ (classification_banner_level | default('UNCLASSIFIED') | upper)
+         in (branding_classified_levels | default([]) | map('upper') | list) }}
+
+- name: BRANDING | Choose the wallpaper
+  ansible.builtin.set_fact:
+    _branding_wallpaper_src: >-
+      {{ branding_wallpaper_classified_src
+         if (_branding_wants_classified | bool and (_branding_classified_wp.stat.exists | default(false)))
+         else branding_wallpaper_src }}
+
+# Loud, because the failure mode is a classified box wearing an unclassified
+# wallpaper and nobody noticing.
+- name: BRANDING | Classified wallpaper wanted but not present in files/
+  ansible.builtin.debug:
+    msg: >-
+      This box is at {{ _branding_level }}, which calls for
+      {{ branding_wallpaper_classified_src }}, but that file is not in
+      roles/desktop_branding/files/. Falling back to {{ branding_wallpaper_src }}
+      -- the desktop will NOT carry a classification marking. Add the image to
+      the repo, or set branding_wallpaper_classified_src to "" if that is
+      deliberate.
+  when:
+    - _branding_wants_classified | bool
+    - not (_branding_classified_wp.stat.exists | default(false))
+
+- name: BRANDING | Install the system wallpaper ({{ _branding_wallpaper_src }} for {{ _branding_level }})
   ansible.builtin.copy:
-    src: SHB_Background.jpg
+    src: "{{ _branding_wallpaper_src }}"
     dest: "{{ branding_wallpaper_dest }}"
     owner: root
     group: root
@@ -78,7 +130,7 @@
 
       # SESSION LOCK SCREEN. This intentionally OVERRIDES the STIG "Implement
       # Blank Screensaver" control (which wants picture-uri=''); gnome.yml no
-      # longer manages this key. Tracked as an approved deviation in docs/operate.md.
+      # longer manages this key. Tracked as an approved deviation in docs/reference.md.
       [org/gnome/desktop/screensaver]
       picture-uri='file://{{ branding_wallpaper_dest }}'
       picture-options='zoom'
@@ -107,7 +159,7 @@
 # background and commonly IGNORES this dconf key; setting it is harmless and
 # costs nothing, but a guaranteed login-screen JPG would require patching the
 # gnome-shell gresource, which breaks on every shell update -- deliberately NOT
-# done. See docs/operate.md.
+# done. See docs/reference.md.
 # ---------------------------------------------------------------------------
 - name: BRANDING | Best-effort GDM login-screen background (greeter may ignore it)
   ansible.builtin.copy:

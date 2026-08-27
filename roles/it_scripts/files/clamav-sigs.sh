@@ -423,7 +423,7 @@ cmd_test() {
     bad "something this repo can configure around: Ubuntu's FIPS OpenSSL takes FIPS"
     bad "from the kernel flag, so even OPENSSL_CONF=/dev/null cannot restore MD5"
     bad "(verified on ASP-2). --fips-limits and FIPSCryptoHashLimits do not help"
-    bad "either. See the POA&M in docs/operate.md for the options."
+    bad "either. See the POA&M in docs/compliance.md for the options."
     say ""
     say "  THE FIX on this fleet is the containerised engine (clamav_container):"
     say "  clamd runs in a container whose OpenSSL is a stock build, so MD5 works,"

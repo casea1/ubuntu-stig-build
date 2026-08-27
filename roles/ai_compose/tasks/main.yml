@@ -20,7 +20,7 @@
 #
 # HOST-PREP-FRIENDLY: by default it PLACES files + builds images + creates the
 # (empty) volumes, but does NOT `up` (ai_compose_deploy=false), because System
-# 1's vLLM volume must be populated with the model first (see docs/operate.md).
+# 1's vLLM volume must be populated with the model first (see docs/reference.md).
 # Flip ai_compose_deploy=true once the model is staged to have Ansible run them.
 # =============================================================================
 

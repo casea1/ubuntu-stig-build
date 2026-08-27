@@ -26,6 +26,11 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   `/etc/stig-build/*.pw` and rendered into each stack's root-only `.env`. Compose
   files use `${VAR:?set in .env}` so a missing value fails loudly. This repo was
   public until recently — treat anything ever committed as compromised.
+- **Docs are three files, and that is deliberate.** `procedures.md` is steps,
+  `reference.md` is tables, `compliance.md` is for assessors. Eight overlapping
+  documents drifted (build.md still described the retired `stig_harden` role and
+  the wrong report path). Add to the right one of the three rather than starting
+  a fourth.
 - **Comments earn their place.** Compose files were deliberately trimmed to ~9%
   comments. Keep a comment only if removing it would let someone break something
   (the FIPS carve-out, the docling mount trap, PersistentConfig). Do not restate
@@ -56,7 +61,7 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
    disabled. Mounting a volume over its model cache **hides** them and docling
    crash-loops. To add a model, mount its own subdirectory, never the parent.
 5. **Image tags are pinned**, so `docker compose pull` is not an update. Patching
-   a container means editing the tag in this repo. See `docs/patching.md`.
+   a container means editing the tag in this repo. See `docs/procedures.md` §4.
 6. **Volumes are external**, so `docker compose down -v` cannot delete model
    weights or databases. Also means Postgres keeps its original password on an
    existing volume regardless of the env var.
@@ -109,10 +114,6 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
 
 | Doc | For |
 |---|---|
-| `docs/ai-stack.md` | what runs where, ports, volumes, software inventory |
-| `docs/operate.md` | day-to-day ops, accounts, deep reference |
-| `docs/build.md` | bare-metal build steps |
-| `docs/compliance.md` | IA / DCSA posture, POA&M |
-| `docs/patching.md` | where updates come from, cadence, known gaps |
-| `docs/compose-changes.md` | why the compose files differ from the originals |
-| `docs/checklist.md` | org Linux checklist: status + verify command per item (`it-checklist`) |
+| `docs/procedures.md` | **the takeover doc.** Every task as numbered steps: build, deploy, patch, scan, recover |
+| `docs/reference.md` | lookup: traps, `it-*` commands, paths, config vars, AI ports/volumes, software inventory |
+| `docs/compliance.md` | IA / DCSA posture, the org checklist, POA&M, STIG-checklist generation |

@@ -10,34 +10,22 @@ Pick a profile, run one `curl | sudo bash`, reboot, collect the report from `/op
 
 ## Contents
 
+- [Documentation](#documentation)
 - [Profiles](#profiles)
 - [Quick start](#quick-start)
 - [How it works](#how-it-works)
-- [Documentation](#documentation)
 - [Configuration](#configuration)
 - [Repo layout](#repo-layout)
-- [Notes](#notes)
 
 ## Documentation
 
-This README is orientation. Detail lives under [`docs/`](docs/).
+This README is orientation. Everything else is one of three documents:
 
-**By profile** (what it builds + its software list):
-
-| Profile | Page |
+| Document | For |
 |---|---|
-| `development` workstation | **[Development Workstation](docs/dev-workstation.md)** |
-| `ai` server | **[AI Server Profile](docs/ai-stack.md)** |
-
-**Shared references** (both profiles):
-
-| Guide | What's in it |
-|---|---|
-| **[Build & Imaging Guide](docs/build.md)** | Bare-metal build steps: **Track A** (dev workstation), **Track B** (two-node AI servers). |
-| **[Operations & Reference](docs/operate.md)** | Operator manual: run steps, gotchas, STIG-gap remediation, accounts, TPM/LUKS, RDP, AI-stack quick reference + deep ops, USG/SCAP scans. |
-| **[Security & Compliance](docs/compliance.md)** | For IA / DCSA: hardening posture, NIST 800-53 mapping, POA&M, "why no Docker STIG." |
-| **[Patching & Updates](docs/patching.md)** | Where each component comes from, what is pinned, how to patch it connected or air-gapped, suggested cadence, and the known gaps. |
-| **[Linux Checklist](docs/checklist.md)** | The org checklist: met / not met / N-A per item, with the command to verify each. Run `sudo it-checklist`. |
+| **[Procedures](docs/procedures.md)** | **Start here.** Every task as numbered steps — build, deploy, patch, scan, recover. |
+| **[Reference](docs/reference.md)** | Lookup: the traps that have cost us a box, every `it-*` command, paths, config variables, AI-stack ports and volumes, software inventory. |
+| **[Security & Compliance](docs/compliance.md)** | For IA / DCSA: hardening posture, the org checklist, NIST 800-53 mapping, POA&M, why there is no Docker STIG. |
 
 Per-node config template: **[`docs/site.yml.example`](docs/site.yml.example)**.
 
@@ -48,7 +36,7 @@ Pick one with `deployment_profile` (or `PROFILE=` on `bootstrap.sh`). Default: *
 | Profile | For | What it builds |
 |---|---|---|
 | **`development`** | Engineering **workstation** | Dev toolchain + **GNOME desktop over RDP** (installs the GUI, so a server base works too) + browser VS Code (code-server) + Cockpit. |
-| **`ai`** | Local-AI **inference server** | **Host prep only**: Docker + NVIDIA GPU stack + Cockpit + Dockge, with container inbound ports opened. Deploy the AI tools (vLLM / Open WebUI / pgvector / Docling) from your own prebuilt images + compose files. |
+| **`ai`** | Local-AI **inference server** | Docker + NVIDIA GPU stack + Cockpit + Dockge, with container ports opened, plus the AI compose stacks (vLLM / Open WebUI / pgvector / Docling / MLflow / …) written to `/opt/stacks/`. Two nodes; the hostname picks the role. |
 | **`baseline`** | An **already-built** box (software already installed) | **Provision + harden only, no app installs, no RDP**: org accounts/groups/ACL'd folders + USB→`dta`, `/opt/ia` + `/opt/it`, Cockpit, USG, and the GUI-preserving fixups (graphical target, GDM banner, GNOME dconf, USB re-enable). For a hand-built Ubuntu **Desktop** endpoint logged into locally. |
 | **`emi`** / **`emi-unclass`** | Local-GUI imaging/**field workstation** | The `development` app set + `dev_tools` **minus RDP**, plus VPN/recon/CJK-IME extras, an imaging-service firewall (DHCP/TFTP/DNS/OpenVPN), and a **camera + microphone lockdown**. Local desktop only, with wallpaper + classification banner. Two variants: **`emi`** is classified-capable (FIPS + LUKS/TPM on, full `usg fix`); **`emi-unclass`** is unclassified-only (FIPS/LUKS off and the disruptive `usg fix` skipped — USG audit + ufw/dconf/banner hardening still apply). |
 
@@ -108,9 +96,9 @@ sudo journalctl -u stig-build -f
 systemctl status stig-build        # active (exited) = success
 ```
 
-On finish, grab the USG report from **`/opt/ia/`** (admin-readable) **while still online**, then **reboot** to apply USG (and load the GPU driver on `ai`). The `development` box boots to a graphical login with the DCSA banner; on `ai`, deploy your prebuilt compose stack.
+On finish, grab the USG report from **`/opt/ia/`** (admin-readable) **while still online**, then **reboot** to apply USG (and load the GPU driver on `ai`). The `development` box boots to a graphical login with the DCSA banner; on `ai`, fetch the models and run `sudo it-ai up`.
 
-> New to this? Start with the **[Build & Imaging Guide](docs/build.md)**.
+> Full step-by-step, including what to decide before you install: **[Procedures §1](docs/procedures.md#1-build-a-box)**.
 
 ## How it works
 
@@ -126,13 +114,13 @@ Ansible roles run in a deliberate order: install → configure → dev tools →
 | 5. Harden | `usg_harden` → `desktop_hardening`/`ai_firewall` → `usg_remediate` | `usg fix disa_stig` + FIPS, then GUI/USB/firewall re-assert, then idempotent residual fixes |
 | 6. Report | `usg audit` (re-run by `usg_remediate`) | Compliance report → `/opt/ia` |
 
-Full role-by-role detail, the STIG-gap coverage table, and every documented deviation/POA&M are in **[Operations & Reference](docs/operate.md)** and **[Security & Compliance](docs/compliance.md)**.
+Every documented deviation and POA&M is in **[Security & Compliance](docs/compliance.md)**.
 
 ## Configuration
 
 Toggle everything from **[`group_vars/all.yml`](group_vars/all.yml)**: profile selection, editor choice, STIG tunables (lockout counts, timeouts, audit retention), DCSA banner text, USG options (`usg_profile`, `usg_fix_enabled`, `usg_enable_fips`), NTP servers (`usg_chrony_servers`), Cockpit, and AI-server settings (`nvidia_*`, `dockge_enabled`, `ai_firewall_allow_ports`).
 
-Per-node / per-site overrides (internal IPs, existing DB password, oikb secrets, firewall port openings) go in **`/opt/it/site.yml`** on the box (the build drops an editable template there; legacy `/etc/stig-build/site.yml` still works), see **[`docs/site.yml.example`](docs/site.yml.example)**. Package and VS Code extension lists live in `roles/dev_tools/defaults/main.yml`. Full config reference: **[Build Guide](docs/build.md)** and **[Operations & Reference](docs/operate.md)**.
+Per-node / per-site overrides (internal IPs, existing DB password, oikb secrets, firewall port openings) go in **`/opt/it/site.yml`** on the box (the build drops an editable template there; legacy `/etc/stig-build/site.yml` still works), see **[`docs/site.yml.example`](docs/site.yml.example)**. Package and VS Code extension lists live in `roles/dev_tools/defaults/main.yml`. The variables worth knowing are summarised in **[Reference](docs/reference.md#configuration)**.
 
 ## Repo layout
 
@@ -143,7 +131,7 @@ ubuntu-stig-build/
 ├── local.yml              # ansible-pull entrypoint (role run order)
 ├── requirements.yml       # pinned external roles
 ├── group_vars/all.yml     # all toggles
-├── docs/                  # build, operations & compliance guides + site.yml.example
+├── docs/                  # procedures, reference, compliance + site.yml.example
 └── roles/
     ├── base_packages/     # apt installs + PowerShell + provisioning services
     ├── app_config/        # clamav services, wireshark group
@@ -161,7 +149,8 @@ ubuntu-stig-build/
 
 ## Notes
 
-- **Run while online, then air-gap.** Build needs internet (apt, USG content). Collect reports before disconnecting.
-- **Reboot after hardening** so all controls (PAM, mounts, GRUB, banner, FIPS) take effect, then re-run the audit for accurate post-reboot results.
-- **Validate on a throwaway VM** before imaging production hardware. USG's DISA profile can make breaking changes; confirm you can still log in / RDP after `usg fix` + reboot.
-- **Re-running is safe and idempotent.** After changing a setting or adding software, push and re-run the same `stig-build` command; Ansible applies only the *delta*. Use the detached run method (hardening restarts GDM), and reboot afterward for settings that need it.
+- **Run while online, then air-gap.** The build needs internet (apt, USG content, the SCAP datastream). Collect reports before disconnecting.
+- **Reboot after hardening**, then re-run the audit — PAM, mounts, GRUB, banner and FIPS only take effect after it.
+- **Verify auth before that reboot** ([Procedures §1.6](docs/procedures.md#16-verify-auth-before-you-reboot)). A broken PAM stack found afterwards, with no session open, needs a live USB.
+- **Validate on a throwaway VM** before imaging production hardware.
+- **Re-running is safe and idempotent** — Ansible applies only the delta.

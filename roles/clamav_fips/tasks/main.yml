@@ -67,7 +67,7 @@
           on: the EICAR test file is not detected and MD5-based signatures cannot
           be evaluated. This is upstream bug Cisco-Talos/clamav#1786, open with no
           fix. Treat this box as having no working antivirus and raise it with the
-          ISSM -- see the POA&M in docs/operate.md for the options.
+          ISSM -- see the POA&M in docs/compliance.md for the options.
       when: _cf_md5.rc != 0
 
     - name: "CLAMAV-FIPS | Apply to the ClamAV units"
