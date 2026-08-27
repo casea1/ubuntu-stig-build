@@ -169,9 +169,15 @@
     # Runs BEFORE hardening: needs internet (pulls images) and must finish before
     # USG locks the box down.
     # -------------------------------------------------------------------------
+    # TAGGED ai-runtime: everything that can disturb a RUNNING container. Skip
+    # the tag to bring a live AI node up to date on the STIG/audit/scripts side
+    # without touching Docker, the daemon config, or the compose stacks --
+    # `--skip-tags ai-runtime`. See docs/procedures.md 5.9.
     - role: ai_stack                # docker-ce + NVIDIA + selectable Compose stack (vLLM/WebUI/pgvector/Docling)
       when: is_ai
+      tags: [ai-runtime]
     - role: docker_hardening        # ai: CIS-aligned Docker daemon hardening (USG doesn't cover Docker)
+      tags: [ai-runtime]            # merges daemon.json and notifies `restart docker`
       when:
         - is_ai
         - docker_hardening_enabled | default(true)
@@ -181,17 +187,22 @@
     # -------------------------------------------------------------------------
     - role: usg_harden              # Ubuntu Pro attach + `usg fix disa_stig` + `usg audit` -> report
     - role: gpu_fips_module         # ai+FIPS: stage the fips-flavour NVIDIA module so GPUs survive the FIPS kernel swap
+      tags: [ai-gpu]                # installs kernel-module packages; only needed before a kernel change
       when:
         - is_ai
         - gpu_enabled | default(true)
         - usg_enable_fips | default(false)
     - role: desktop_hardening       # development + baseline: GUI-preserving fixups AFTER USG (GNOME/GDM banner, USB, firewall). RDP/Wayland-off bits are development-only (gated on dev_rdp_enabled).
       when: is_development or is_baseline or is_emi
+    # DELIBERATELY NOT tagged ai-runtime. It only adds ufw rules -- it never
+    # touches a container -- and usg_remediate re-asserts ufw on every run, so
+    # SKIPPING it is the risky choice: the AI ports could end up closed.
     - role: ai_firewall             # ai: open the prebuilt AI stack's inbound ports AFTER USG's default-deny
       when: is_ai
     - role: emi_firewall            # emi: open the imaging/VPN service ports AFTER USG's default-deny
       when: is_emi
     - role: ai_compose              # ai: bake the node's docker-compose + .env into /opt/it/docker (opt-in `up`)
+      tags: [ai-runtime]            # rewrites every compose.yaml/.env; recreates containers if ai_compose_deploy
       when:
         - is_ai
         - ai_compose_enabled | default(false)

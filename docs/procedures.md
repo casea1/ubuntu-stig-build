@@ -599,7 +599,63 @@ sudo it-stack-diff        # /opt/stacks/*/compose.yaml vs the ansible-pull clone
 
 For a genuine per-box exception use `compose.override.yaml` — nothing manages that file.
 
-## 5.8 Connect an IDE
+## 5.8 Update a LIVE AI node without touching the containers
+
+Brings a running node up to date on everything **except** Docker and the compose stacks — STIG remediation, audit rules, SCAP content, `it-*` scripts, GRUB, accounts, ClamAV, USBGuard.
+
+```bash
+sudo systemd-run --unit=stig-build --collect \
+  ansible-pull -U https://git.asplab.com/ASPLAB/ubuntu-stig-build.git -C main \
+  -i localhost, local.yml -e deployment_profile=ai \
+  --skip-tags ai-runtime,ai-gpu
+```
+
+Watch it: `sudo journalctl -u stig-build -f`
+
+**What `ai-runtime` covers** — the three roles that can disturb a running container:
+
+| Role | Why it is skipped |
+|---|---|
+| `ai_stack` | Installs/upgrades docker-ce and notifies `restart docker` |
+| `docker_hardening` | Merges `/etc/docker/daemon.json`, notifies `restart docker` |
+| `ai_compose` | Rewrites every `compose.yaml` and `.env`; recreates containers when `ai_compose_deploy` is true |
+
+`ai-gpu` is `gpu_fips_module`, which installs kernel-module packages. Nothing needs it unless the kernel is about to change, so it stays out of a routine run.
+
+**`ai_firewall` deliberately still runs.** It only adds ufw rules and never touches a container — and `usg_remediate` re-asserts ufw on every run, so *skipping* it is the risky choice: the AI ports could end up closed.
+
+### Before you run it
+
+Confirm the box is where you think it is, and snapshot what you are protecting:
+
+```bash
+sudo it-stack-diff                       # on-box compose vs the repo -- expect differences, that is the point
+docker ps --format '{{.Names}}\t{{.Status}}' | tee /tmp/before.txt
+sudo it-checklist | head -2              # which baseline it is on now
+```
+
+A dry run is available but noisy — `--check` reports "skipped" for every `command`/`shell` task, so read it as an indicator, not a contract:
+
+```bash
+sudo ansible-pull -U ... -C main -i localhost, local.yml \
+  -e deployment_profile=ai --skip-tags ai-runtime,ai-gpu --check --diff
+```
+
+### Two things that will still happen
+
+- **`clamav_container` will start a container.** Not AI, but it is a container, and clamd holds ~2 GB resident. On a node under GPU/RAM pressure decide deliberately: add `-e clamav_container_enabled=false` to skip it, and accept that antivirus does not detect on that box (see trap 4).
+- **`usg_remediate` restarts auditd and re-asserts ufw.** That is the point of the run, but audit rules may need a reboot to reach the kernel (trap 13). The containers survive both.
+
+### Afterwards
+
+```bash
+docker ps --format '{{.Names}}\t{{.Status}}' | diff /tmp/before.txt -   # nothing should have moved
+sudo it-checklist
+sudo it-stack-diff                       # unchanged from before the run
+nvidia-smi
+```
+
+## 5.9 Connect an IDE
 
 Client-side setup. Point Continue (VS Code) at System 1's OpenAI-compatible endpoint:
 
