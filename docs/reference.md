@@ -44,9 +44,11 @@ Each of these caused a real outage or a wrong conclusion.
 
 **12. A passing benchmark is not a compliant box.** `usg fix` leaves `PermitRootLogin prohibit-password`, which satisfies the STIG rule (it only forbids a root *password* login) while still allowing root in **by SSH key** — which the org checklist forbids outright. Found on ASP-2 with a 96.41 % scan. Check what the rule actually asserts, not just its colour.
 
-**13. A green playbook is not evidence.** ASP-2's compliance score barely moved (88.476 → 88.703) across a full remediation run — two whole categories of fix were being written correctly and still failing, because a stale file was poisoning rules that were otherwise satisfied and PAM values were being written into a file nothing read. Neither showed as an Ansible failure. **The re-audit is the evidence.**
+**13. Audit rules on disk are not audit rules in the kernel.** The STIG sets auditd `-e 2` (immutable), after which the kernel **refuses new rules until a reboot**. A pull that adds audit rules leaves them in `/etc/audit/rules.d` and inert — and every file-based OVAL still passes, because those check the files. ASP-2 ran with **1 rule loaded** against a full ruleset on disk and the compliance scan said nothing. `it-checklist` item 6 now compares the two counts. Diagnose with `auditctl -l | wc -l` against `cat /etc/audit/rules.d/*.rules | grep -cvE '^\s*(#|$)'`, and `auditctl -s | grep enabled`.
 
-**14. Pre-USG leftovers.** Two separate outages traced to files the current baseline neither writes nor removes, left by the old ansible-lockdown role (`/etc/audit/rules.d/stig.rules`, and `pam_faillock` lines in `common-auth` with `pam_unix`'s jump offset never recalculated). Assume there are others on any box built before the USG switch.
+**14. A green playbook is not evidence.** ASP-2's compliance score barely moved (88.476 → 88.703) across a full remediation run — two whole categories of fix were being written correctly and still failing, because a stale file was poisoning rules that were otherwise satisfied and PAM values were being written into a file nothing read. Neither showed as an Ansible failure. **The re-audit is the evidence.**
+
+**15. Pre-USG leftovers.** Two separate outages traced to files the current baseline neither writes nor removes, left by the old ansible-lockdown role (`/etc/audit/rules.d/stig.rules`, and `pam_faillock` lines in `common-auth` with `pam_unix`'s jump offset never recalculated). Assume there are others on any box built before the USG switch.
 
 ---
 

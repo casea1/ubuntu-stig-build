@@ -682,7 +682,26 @@ cat /etc/stig-build/profile
 
 Compare against `git log --oneline -1` on the repo. `unknown` means the box predates this, or `ansible-pull` did not run from a git checkout. Re-run the build (§1.10) to bring it forward.
 
-## 6.9 A box drifted from the repo
+## 6.9 Audit rules are on disk but not loaded
+
+The STIG sets auditd immutable (`-e 2`), and the kernel then **refuses new rules until a reboot**. Rules a pull added sit in `/etc/audit/rules.d` doing nothing, and every file-based compliance check still passes.
+
+```bash
+auditctl -l | wc -l                                        # loaded in the kernel
+cat /etc/audit/rules.d/*.rules | grep -cvE '^\s*(#|$)'     # on disk
+auditctl -s | grep enabled                                 # 2 = immutable
+```
+
+If the two counts disagree:
+
+```bash
+sudo augenrules --load     # works only when not immutable
+sudo reboot                # what actually loads them under -e 2
+```
+
+`it-checklist` item 6 compares the counts and FAILs when they diverge.
+
+## 6.10 A box drifted from the repo
 
 Nothing reports drift automatically — `ansible-pull` runs only when someone runs it.
 
