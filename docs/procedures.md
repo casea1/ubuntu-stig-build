@@ -624,6 +624,48 @@ Watch it: `sudo journalctl -u stig-build -f`
 
 **`ai_firewall` deliberately still runs.** It only adds ufw rules and never touches a container — and `usg_remediate` re-asserts ufw on every run, so *skipping* it is the risky choice: the AI ports could end up closed.
 
+### The containers are safe; the HOST is not untouched
+
+Nothing outside the `ai-runtime` roles runs `docker`, `docker compose`, or writes to `/opt/stacks` — the containers are not restarted, recreated, or reconfigured. But 28 roles still run against the host, and five of them can change something an engineer would notice. **Check these before you run it, especially with people on the box:**
+
+```bash
+echo "== usg fix: will it re-run? (want: disa_stig) =="
+sudo cat /var/lib/usg-harden/applied-profile 2>/dev/null || echo "  NO STAMP -- usg fix WOULD RUN"
+echo "== USBGuard: already on? (want: active) =="
+systemctl is-active usbguard 2>/dev/null || echo "  not active -- this run would ENABLE it"
+echo "== ufw: already on? =="
+sudo ufw status 2>/dev/null | head -1
+echo "== free VG space (disk_expand acts only if non-zero) =="
+sudo vgs --noheadings -o vg_name,vg_free 2>/dev/null || echo "  no LVM"
+echo "== RAM headroom for clamd (~2 GB) =="
+free -g | awk '/^Mem:/{print "  total "$2"G  used "$3"G  available "$7"G"}'
+echo "== FIPS (1 = already on, no reboot pending) =="
+cat /proc/sys/crypto/fips_enabled 2>/dev/null
+```
+
+| What it tells you | If it looks wrong |
+|---|---|
+| **No `usg fix` stamp** — `usg fix disa_stig` would run, rewriting PAM and services. The one genuinely disruptive outcome | `-e usg_fix_enabled=false` |
+| **USBGuard not active** — the run enables it and builds a policy from *currently attached* devices. A KVM or console dongle plugged in later gets blocked | `-e usbguard_enabled=false` |
+| **ufw not active** — the run turns it on with default-deny. Published container ports are unaffected (they bypass ufw, trap 1), but SSH/Cockpit/Dockge follow the rule set | check `ai_firewall_allow_ports` first |
+| **Free VG space** — `disk_expand` grows the root LV online. Safe, but it is a live filesystem operation | `-e disk_autoexpand=false` |
+| **RAM** — `clamav_container` starts clamd, ~2 GB resident | `-e clamav_container_enabled=false` |
+
+The cautious form, if any of the above is unexpected:
+
+```bash
+sudo systemd-run --unit=stig-build --collect \
+  ansible-pull -U https://git.asplab.com/ASPLAB/ubuntu-stig-build.git -C main \
+  -i localhost, local.yml -e deployment_profile=ai \
+  --skip-tags ai-runtime,ai-gpu \
+  -e usg_fix_enabled=false -e usbguard_enabled=false \
+  -e disk_autoexpand=false -e clamav_container_enabled=false
+```
+
+That still delivers `usg_remediate` (audit rules, ufw re-assert, PAM checks), `scap_scan`, every `it-*` script, `grub_password`, accounts and inventory — which is the point of the run.
+
+`scap_scan` runs a full OpenSCAP evaluation either way: several minutes of CPU, no service impact, but it is real load on a box doing inference.
+
 ### Before you run it
 
 Confirm the box is where you think it is, and snapshot what you are protecting:
