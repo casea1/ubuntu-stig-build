@@ -420,4 +420,18 @@ fi
 echo
 printf 'PASS=%d  FAIL=%d  N/A=%d  MANUAL=%d\n' "$P" "$F" "$N" "$M"
 echo 'Authoritative evidence is `usg audit disa_stig` / it-oscap, not this script.'
+
+# Point at --fix when there is something to fix and it was not already asked
+# for. Suppressed under --fix (the steps are right above) and when everything
+# passes, so it never becomes noise people learn to skip past.
+if [ "$SHOW_FIX" = 0 ] && [ $((F + M)) -gt 0 ]; then
+  if [ "$F" -gt 0 ]; then
+    printf '\n%sTo see how to fix the %d failed item(s):%s  sudo it-checklist --fix\n' \
+      "$B" "$F" "$R"
+  else
+    printf '\n%sTo see what the %d manual item(s) need:%s  sudo it-checklist --fix\n' \
+      "$B" "$M" "$R"
+  fi
+fi
+
 [ "$F" -eq 0 ]
