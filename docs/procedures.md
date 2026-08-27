@@ -314,6 +314,16 @@ sudo it-vulnscan                         # AV scan still works and still counts
 
 The AV half is unaffected and is the part the engine gate protects.
 
+**A desktop always has unscannable files.** X11, ICE, dbus and code-server sockets cannot be read by any scanner. `clamd` counts each one in `Total errors` and then **exits 2**, so the exit code alone reads "error" on a perfectly good scan. `it-vulnscan` judges by the scan summary instead: `CLEAN` with a count of unscannable special files, and `ERROR` only for errors that are *not* of that known-benign kind. The terminal shows the condensed result; the full output goes to the report, which is the evidence artifact.
+
+| Verdict | Means |
+|---|---|
+| `CLEAN` | Scan completed, nothing infected. May note N unscannable sockets/FIFOs — normal |
+| `INFECTED` | Something was found. Read the report |
+| `ERROR` | Completed, but with errors that are not the benign unscannable kind |
+| `ENGINE-FAULT` | The engine failed its EICAR self-test, or the scan produced no summary. **Nothing was scanned** |
+| `SKIPPED` | `--quick`, or no engine available |
+
 **What the AV half scans.** `/home /root /opt /srv /etc /usr/local /tmp /var/tmp /media /mnt` — where writable content actually lives, `/media` and `/mnt` included because removable media is the point on a DTA box. Not `/`: `clamdscan` has no `--exclude-dir` (that is a `clamscan`-only flag), so a `/` scan walks `/proc` printing "Failed to open file" for every task and then grinds through `/var/lib/docker`. Override with `VULNSCAN_AV_PATHS="/a /b"`.
 
 ## 3.4 Log a data transfer (EMI)
