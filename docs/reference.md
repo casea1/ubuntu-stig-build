@@ -94,7 +94,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `it-luks-rebind` | Re-bind LUKS to the current PCRs after a firmware change |
 | `it-grub` | `status` / `hash` (fleet) / `set` (one box) — GRUB password |
 | `it-usb` | USBGuard: `status`, `list`, `blocked`, `enroll`, `allow`, `trust` |
-| `it-checklist` | The org checklist, one line per item. `--fail-only`, `--out FILE` |
+| `it-checklist` | The org checklist, one line per item. `--fail-only`, `--out FILE`, and **`--fix`** — prints how to close every FAIL and what each MANUAL item needs from a human. Prints steps, changes nothing |
 | `it-oscap` | Run an OpenSCAP DISA-STIG scan now |
 | `it-ckl` | Build the DISA `.cklb`/`.ckl` from the scan + `answers.yml` |
 | `it-stig` | `status` / `run` / `scan` / `checklist` / `archive` — wraps the two above |
@@ -136,7 +136,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `/opt/ia/` | IA area, `root:sudo 2770`. Admins enter without `sudo` |
 | `/opt/ia/usg/` | `usg audit` reports (HTML + XCCDF) — the compliance score |
 | `/opt/ia/oscap/build,scheduled,manual/` | OpenSCAP artifacts, one directory per writer so retention never prunes another's evidence |
-| `/opt/ia/stig/content,checklists,evidence/` | DISA input you stage, generated checklists, archived bundles |
+| `/opt/ia/stig/content,checklists,evidence/` | DISA's manual STIG XCCDF (shipped by `scap_scan`, no longer staged by hand), generated checklists, archived bundles |
 | `/opt/ia/goclassified/` | Pre-classification records |
 | `/opt/ia/vulnscans/` | `it-vulnscan` reports (EMI) |
 | `/opt/ia/audit-offload/` | Weekly staged audit logs |
@@ -177,6 +177,8 @@ The ones worth knowing:
 | `tpm_luks_enabled` | true except `emi-unclass` | Binds LUKS to PCR 7 |
 | `offline_repo_enabled` | false | Switch apt to `/srv/repo`. Set by `it-offline-repo enable` |
 | `base_packages_full_upgrade` | false | `apt full-upgrade` early in the build |
+| `scap_stig_manual_xccdf` | `U_CAN_…_V1R6_Manual-xccdf.xml` | DISA's manual STIG, shipped in `roles/scap_scan/files/`. Update on a new STIG release |
+| `scap_ckl_on_pull` | true | Build the `.cklb` at the end of every pull, from the scan that just ran |
 | `local_accounts_enabled` | true | Org users/groups/ACL'd folders |
 | `ai_model_fetch` | — | Fetch model weights during the build |
 | `ai_compose_deploy` | — | Bring the stacks up during the build |

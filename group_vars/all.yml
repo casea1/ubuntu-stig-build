@@ -350,6 +350,16 @@ scap_stig_dir: /opt/ia/stig
 scap_stig_content_dir: "{{ scap_stig_dir }}/content"      # DISA input you stage
 scap_stig_checklist_dir: "{{ scap_stig_dir }}/checklists"  # generated .ckl/.cklb
 scap_stig_evidence_dir: "{{ scap_stig_dir }}/evidence"     # it-stig archive bundles
+
+# DISA's manual STIG XCCDF, shipped in the repo (roles/scap_scan/files/) so no
+# one has to fetch it from cyber.mil per box. Public, unclassified content.
+# On a new STIG release: drop the new file in, update this, delete the old one.
+scap_stig_manual_xccdf: "U_CAN_Ubuntu_24-04_LTS_STIG_V1R6_Manual-xccdf.xml"
+
+# Build the .cklb at the end of every pull, from the scan that just ran (no
+# second scan). Set false if you would rather generate checklists by hand.
+scap_ckl_on_pull: true
+scap_ckl_format: cklb            # cklb (STIG Viewer 3) | ckl (v2) | both
 ssg_content_version: "0.1.81"
 
 # ---- Scheduled OpenSCAP re-scan (checklist: "add OSCAP job to crontab") ------

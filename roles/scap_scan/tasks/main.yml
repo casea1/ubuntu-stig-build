@@ -216,18 +216,81 @@
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "0640"
 
-- name: "SCAP | Is DISA's manual STIG XCCDF staged?"
+# ---------------------------------------------------------------------------
+# DISA's manual STIG XCCDF. This used to be the one input an operator had to
+# fetch by hand from cyber.mil for every box, and forgetting it meant `it-ckl`
+# had no skeleton to fill in. It is public, unclassified, freely
+# redistributable content, so it ships in the repo and lands on every box.
+#
+# Per STIG RELEASE, not per box: when DISA publishes V1R7, drop the new
+# Manual-xccdf.xml into roles/scap_scan/files/, update
+# scap_stig_manual_xccdf, and delete the old one -- `it-ckl` takes the NEWEST
+# match, so leaving both behind would work but makes "which release is this
+# checklist against" a guess.
+# ---------------------------------------------------------------------------
+- name: "SCAP | Ship DISA's manual STIG XCCDF ({{ scap_stig_manual_xccdf }})"
+  ansible.builtin.copy:
+    src: "{{ scap_stig_manual_xccdf }}"
+    dest: "{{ scap_stig_content_dir }}/{{ scap_stig_manual_xccdf }}"
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "0640"
+  when: (scap_stig_manual_xccdf | default('')) | length > 0
+
+- name: "SCAP | Is a manual STIG XCCDF staged?"
   ansible.builtin.find:
     paths: "{{ scap_stig_content_dir }}"
     patterns: "*xccdf*.xml"
   register: _stig_manual
 
-- name: "SCAP | How to finish the checklist setup"
+- name: "SCAP | No manual STIG XCCDF available"
   ansible.builtin.debug:
     msg: >-
-      {{ 'Checklist ready: run `sudo it-oscap` then `sudo it-ckl`.'
-         if (_stig_manual.files | length) > 0
-         else 'No manual STIG XCCDF in ' ~ scap_stig_content_dir ~ '. Download the Ubuntu 24.04
-               STIG from https://public.cyber.mil/stigs/downloads/, unzip it, and copy the
-               *Manual-xccdf.xml there (once per STIG release). Until then `it-ckl` has no
-               skeleton to fill in, though `it-oscap` still produces the STIG Viewer import.' }}
+      No manual STIG XCCDF in {{ scap_stig_content_dir }}. Download the Ubuntu
+      24.04 STIG from https://public.cyber.mil/stigs/downloads/, unzip it, and
+      put the *Manual-xccdf.xml in roles/scap_scan/files/ so every box gets it.
+      Until then `it-ckl` has no skeleton to fill in, though `it-oscap` still
+      produces the STIG Viewer import.
+  when: (_stig_manual.files | length) == 0
+
+# ---------------------------------------------------------------------------
+# Build the checklist at the end of the pull. The scan above already ran, so
+# this is `it-ckl` alone -- it reads the newest results rather than scanning
+# again. Cheap, and it means every box carries a current .cklb without anyone
+# remembering to ask for one.
+#
+# NOT fatal on failure: a missing input or an odd scan should never fail a
+# build whose real job is hardening. It says what went wrong instead.
+# ---------------------------------------------------------------------------
+- name: "SCAP | Build the STIG checklist"
+  when:
+    - scap_ckl_on_pull | default(true) | bool
+    - (_stig_manual.files | length) > 0
+  block:
+    - name: "SCAP | Is it-ckl installed?"
+      ansible.builtin.stat:
+        path: /usr/local/sbin/it-ckl
+      register: _ckl_bin
+
+    - name: "SCAP | Generate the .cklb from the newest scan"
+      ansible.builtin.command:
+        cmd: /usr/local/sbin/it-ckl --format {{ scap_ckl_format | default('cklb') }}
+      register: _ckl_run
+      changed_when: _ckl_run.rc == 0
+      failed_when: false
+      when: _ckl_bin.stat.exists
+
+    - name: "SCAP | Checklist result"
+      ansible.builtin.debug:
+        msg: >-
+          {% if not (_ckl_bin.stat.exists | default(false)) %}
+          it-ckl is not installed (it_scripts runs before this role -- if it is
+          missing, that role failed). No checklist was generated.
+          {% elif _ckl_run.rc == 0 %}
+          Checklist written to {{ scap_stig_checklist_dir }}. Review it with
+          `sudo it-ckl --unjustified` and archive with `sudo it-stig archive`.
+          {% else %}
+          it-ckl exited {{ _ckl_run.rc }} -- no checklist this run. The build is
+          unaffected. Diagnose with `sudo it-stig status`.
+          {{ (_ckl_run.stderr | default('')) | trim | truncate(200) }}
+          {% endif %}

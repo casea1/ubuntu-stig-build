@@ -2,7 +2,9 @@
 # it-checklist -- run the org Linux checklist against THIS box and print a
 # pass/fail line per item. Companion to docs/compliance.md (same numbering).
 #
-# Usage: it-checklist [--fail-only] [--out FILE]
+# Usage: it-checklist [--fail-only] [--fix] [--out FILE]
+#   --fix   after the table, print how to fix everything that FAILed (and what
+#           each MANUAL item needs from a human). Prints steps; changes nothing.
 # Exit:  0 = no FAILs, 1 = at least one FAIL.
 #
 # MAN = human/hardware step, N/A = not used in this environment. Neither counts
@@ -10,10 +12,11 @@
 set -uo pipefail
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
-FAIL_ONLY=0; OUT=""
+FAIL_ONLY=0; OUT=""; SHOW_FIX=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --fail-only) FAIL_ONLY=1; shift ;;
+    --fix|fix)   SHOW_FIX=1; shift ;;
     --out) OUT="${2:?}"; shift 2 ;;
     -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -21,11 +24,23 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$OUT" ] && exec > >(tee "$OUT")
 
+if [ -t 1 ]; then
+  B=$'\e[1m'; DIM=$'\e[2m'; R=$'\e[0m'; RED=$'\e[31m'; GRN=$'\e[32m'; YEL=$'\e[33m'
+else
+  B=""; DIM=""; R=""; RED=""; GRN=""; YEL=""
+fi
+
 P=0; F=0; N=0; M=0
 have(){ command -v "$1" >/dev/null 2>&1; }
 active(){ systemctl is-active --quiet "$1" 2>/dev/null; }
+FAILED_IDS=""; MANUAL_IDS=""
 row(){ # $1=status $2=id $3=name $4=detail
-  case "$1" in PASS) P=$((P+1));; FAIL) F=$((F+1));; "N/A") N=$((N+1));; MAN) M=$((M+1));; esac
+  case "$1" in
+    PASS)  P=$((P+1)) ;;
+    FAIL)  F=$((F+1)); FAILED_IDS="$FAILED_IDS $2" ;;
+    "N/A") N=$((N+1)) ;;
+    MAN)   M=$((M+1)); MANUAL_IDS="$MANUAL_IDS $2" ;;
+  esac
   [ "$FAIL_ONLY" = 1 ] && [ "$1" != FAIL ] && return 0
   printf '[%-4s] %-2s %-28s %s\n' "$1" "$2" "$3" "$4"
 }
@@ -307,6 +322,98 @@ if have it-vulnscan; then
     fi
   else
     row FAIL 28 "nmap vulnerability scan" "never run -- run: it-vulnscan"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# --fix: how to close each item. PRINTS STEPS, changes nothing -- several of
+# these restart auth or the firewall, and that is not something a status
+# command should decide to do on its own.
+# ---------------------------------------------------------------------------
+fix_for() {
+  case "$1" in
+    2)  echo "PermitRootLogin is not 'no'. usg fix leaves Ubuntu's 'prohibit-password',"
+        echo "which still allows a root login BY KEY."
+        echo "  sudo ansible-pull ... (usg_remediate writes 00-1-no-root-login.conf)"
+        echo "  # or by hand:"
+        echo "  echo 'PermitRootLogin no' | sudo tee /etc/ssh/sshd_config.d/00-1-no-root-login.conf"
+        echo "  sudo systemctl restart ssh    # existing sessions survive" ;;
+    3)  echo "  sudo ansible-pull ...   # classification_banner + usg_remediate own this"
+        echo "  sshd -T | grep -iE 'banner|printlastlog'" ;;
+    4)  echo "The engine does not DETECT, or its signatures are stale."
+        echo "  sudo it-clamav test          # what is actually wrong"
+        echo "  sudo it-clamav install       # stale signatures: drop a tar.gz in /opt/it/clamavsigs first"
+        echo "On a FIPS box the host engine cannot detect at all (clamav#1786);"
+        echo "clamav_container fixes it, and needs the image carried in when air-gapped:"
+        echo "  sudo it-clamav image-load /mnt/usb && sudo ansible-pull ..." ;;
+    5)  echo "  sudo ansible-pull ...        # usg fix owns pwquality/faillock"
+        echo "  sudo usg audit disa_stig     # the authoritative check" ;;
+    6)  echo "Rules on disk are not reaching the kernel."
+        echo "  sudo augenrules --load       # READ the errors it prints -- it names the bad rule"
+        echo "  sudo auditctl -s | grep enabled   # 2 = immutable, needs a reboot instead"
+        echo "  sudo auditctl -l | wc -l     # confirm afterwards" ;;
+    7)  echo "Firmware, not the OS. Nothing here can set it."
+        echo "  Reboot -> BIOS/UEFI setup -> set an admin/supervisor password."
+        echo "  Record it wherever the org keeps firmware credentials."
+        echo "  Secure Boot must stay ON (TPM auto-unlock seals to PCR 7)." ;;
+    8)  echo "  sudo pro attach <token> ; sudo pro status" ;;
+    9)  echo "FIPS is not active. Needs Ubuntu Pro and a REBOOT after enabling:"
+        echo "  sudo pro enable fips-updates && sudo reboot"
+        echo "  # on an ai node confirm the GPU came back: nvidia-smi" ;;
+    10) echo "No LUKS device. Encryption is INSTALL-TIME ONLY -- it cannot be added"
+        echo "to a running box. This one needs a rebuild to close." ;;
+    11) echo "  sudo it-grub set          # this box, interactive, applies immediately"
+        echo "  sudo it-grub status       # confirm"
+        echo "Fleet-wide, so a NEW box is not built without one:"
+        echo "  sudo it-grub hash         # prints the PBKDF2 token"
+        echo "  ansible-vault encrypt_string '<token>' --name 'grub_password_pbkdf2'"
+        echo "  # paste over grub_password_pbkdf2 in group_vars/all.yml, push, re-pull" ;;
+    12) echo "  sudo systemctl enable --now apparmor ; sudo aa-status" ;;
+    14) echo "  sudo systemctl disable --now cups cups-browsed ; sudo systemctl mask cups" ;;
+    16) echo "  sudo it-inventory" ;;
+    17) echo "  sudo systemctl enable --now chrony ; chronyc -n sources"
+        echo "  # set usg_chrony_servers in group_vars to a REACHABLE server --"
+        echo "  # an air-gapped box cannot reach a public pool" ;;
+    18) echo "  sudo systemctl enable --now usbguard ; sudo it-usb status"
+        echo "The initial policy is generated from ATTACHED devices, so plug in what"
+        echo "must keep working first. Enrol anything else later: sudo it-usb enroll"
+        echo "Skipped deliberately? Then this FAIL is expected." ;;
+    20) echo "The build enables ufw; the org checklist asks for it disabled."
+        echo "A policy decision, not a bug. Decide, then either:"
+        echo "  sudo ufw disable                      # match the checklist"
+        echo "  # or record the deviation in docs/compliance.md"
+        echo "Note: Docker's published ports bypass ufw either way (trap 1)." ;;
+    22) echo "  Org infrastructure. Verify the DNS record externally: dig +short \$(hostname -f)" ;;
+    23) echo "  EMI: an offline SSD clone, logged on paper. Verify against the paper record."
+        echo "  Other profiles: nothing to do -- the file servers are backed up." ;;
+    24) echo "  sudo systemctl enable --now oscap-scan.timer"
+        echo "  systemctl list-timers oscap-scan.timer" ;;
+    25) echo "  Server hardware. Verify out-of-band via iDRAC/OME." ;;
+    26) echo "  sudo it-oscap               # writes to /opt/ia/oscap/manual" ;;
+    27) echo "  sudo ansible-pull ...       # scap_scan stages the SSG datastream (needs internet once)" ;;
+    28) echo "  sudo it-vulnscan            # never run, or older than 45 days"
+        echo "A FAULTED scanner means the report is not evidence:"
+        echo "  sudo it-clamav test         # AV half"
+        echo "nmap cannot start under FIPS; nmap_container builds a working one on"
+        echo "the next pull, or carry it in: sudo it-vulnscan image-load /mnt/usb" ;;
+    *)  echo "  No recorded remediation. See docs/procedures.md." ;;
+  esac
+}
+
+if [ "$SHOW_FIX" = 1 ]; then
+  if [ -n "$FAILED_IDS$MANUAL_IDS" ]; then
+    printf '\n%s%s%s\n' "$B" "How to close these" "$R"
+    for id in $FAILED_IDS; do
+      printf '\n  %s[FAIL] item %s%s\n' "$RED" "$id" "$R"
+      fix_for "$id" | sed 's/^/    /'
+    done
+    for id in $MANUAL_IDS; do
+      printf '\n  %s[MAN]  item %s%s\n' "$YEL" "$id" "$R"
+      fix_for "$id" | sed 's/^/    /'
+    done
+    printf '\n  %sNothing above was changed -- these are steps, not actions.%s\n' "$DIM" "$R"
+  else
+    printf '\n  %sNothing to fix.%s\n' "$GRN" "$R"
   fi
 fi
 
