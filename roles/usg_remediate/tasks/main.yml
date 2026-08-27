@@ -404,6 +404,46 @@
       notify: Load audit rules
 
 # ---------------------------------------------------------------------------
+# 5b) DID THE RULES ACTUALLY REACH THE KERNEL?
+# Rules on disk are not rules in the kernel, and nothing else in this build
+# notices the difference -- the benchmark's audit OVALs read FILES, so a box
+# enforcing one rule out of a hundred scores the same as one enforcing all of
+# them. ASP-2 ran that way for weeks. Handlers have not fired at this point in
+# the play, so this reports the state the box has been running in.
+# ---------------------------------------------------------------------------
+- name: "REMED | Audit rules: kernel vs disk"
+  when: _auditctl.stat.exists | default(false)
+  block:
+    - name: "REMED | Count what the kernel enforces and what is on disk"
+      ansible.builtin.shell:
+        cmd: |
+          loaded=$(auditctl -l 2>/dev/null | grep -cvE '^(No rules|)$' || true)
+          rd=$(cat /etc/audit/rules.d/*.rules 2>/dev/null | grep -cvE '^[[:space:]]*(#|$)' || true)
+          ar=$(grep -cvE '^[[:space:]]*(#|$)' /etc/audit/audit.rules 2>/dev/null || true)
+          imm=$(auditctl -s 2>/dev/null | awk '/^enabled/{print $2}')
+          echo "${loaded:-0} ${rd:-0} ${ar:-0} ${imm:-?}"
+      register: _audit_counts
+      changed_when: false
+      failed_when: false
+
+    - name: "REMED | Audit rules are NOT reaching the kernel"
+      ansible.builtin.debug:
+        msg: >-
+          {{ (_audit_counts.stdout | default('0 0 0 ?')).split()[0] }} audit rule(s) in the kernel
+          against {{ [(_audit_counts.stdout | default('0 0 0 ?')).split()[1] | int,
+                      (_audit_counts.stdout | default('0 0 0 ?')).split()[2] | int] | max }} on disk
+          (auditctl enabled={{ (_audit_counts.stdout | default('0 0 0 ?')).split()[3] }}).
+          This box is auditing far less than the baseline defines, and the STIG scan
+          CANNOT see it -- the audit OVALs read files, not the kernel. If enabled=2
+          the rules load on the next reboot; otherwise `augenrules --load` is failing.
+          Verify with `sudo it-checklist` item 6.
+      when:
+        - (_audit_counts.stdout | default('')) | length > 0
+        - ((_audit_counts.stdout).split()[1] | int) + ((_audit_counts.stdout).split()[2] | int) > 0
+        - (_audit_counts.stdout).split()[0] | int
+          < ([(_audit_counts.stdout).split()[1] | int, (_audit_counts.stdout).split()[2] | int] | max) / 2
+
+# ---------------------------------------------------------------------------
 # 5c) AUDIT THE PRIVILEGED COMMANDS THE BENCHMARK CHECKS (UBTU-24-900080..900330)
 # `usg fix` writes this class of rule for only part of the set -- su, fdisk,
 # kmod, modprobe and unix_update pass while chfn/chsh/chage/passwd/gpasswd/

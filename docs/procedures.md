@@ -740,10 +740,14 @@ Compare against `git log --oneline -1` on the repo. `unknown` means the box pred
 The STIG sets auditd immutable (`-e 2`), and the kernel then **refuses new rules until a reboot**. Rules a pull added sit in `/etc/audit/rules.d` doing nothing, and every file-based compliance check still passes.
 
 ```bash
-auditctl -l | wc -l                                        # loaded in the kernel
-cat /etc/audit/rules.d/*.rules | grep -cvE '^\s*(#|$)'     # on disk
-auditctl -s | grep enabled                                 # 2 = immutable
+sudo auditctl -l | wc -l                                   # loaded in the kernel
+sudo sh -c "cat /etc/audit/rules.d/*.rules | grep -cvE '^[[:space:]]*(#|$)'"
+sudo grep -cvE '^[[:space:]]*(#|$)' /etc/audit/audit.rules # what usg fix wrote
+sudo auditctl -s | grep enabled                            # 2 = immutable
+sudo augenrules --load                                     # read the errors it prints
 ```
+
+`rules.d` is `0750`, so the glob must be inside `sudo sh -c '...'` — your own shell expands it first and cannot read the directory, which looks exactly like an empty directory.
 
 If the two counts disagree:
 

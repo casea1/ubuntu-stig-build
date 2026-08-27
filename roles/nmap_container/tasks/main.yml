@@ -17,10 +17,14 @@
 - name: "NMAP-CTR | Can the host nmap run at all?"
   when: nmap_container_enabled | default(true) | bool
   block:
-    # -sn -n on loopback: no ports, no DNS, no scripts. The fastest invocation
-    # that still makes nmap initialise OpenSSL, which is where it dies.
-    - name: "NMAP-CTR | Host nmap smoke test"
-      ansible.builtin.command: nmap -sn -n 127.0.0.1
+    # MUST include -sV. nmap only initialises OpenSSL when it needs TLS for
+    # service probing, so a bare `-sn` ping scan SUCCEEDS on a FIPS box and the
+    # gate below concludes the host nmap is fine -- which is exactly what
+    # happened on ASP-2 (baseline 303e5f1: role skipped, no marker written,
+    # while the real scan kept failing). Reproduce what it-vulnscan actually
+    # runs; -p22 keeps it to one port so it stays fast.
+    - name: "NMAP-CTR | Host nmap smoke test (-sV, the invocation that fails)"
+      ansible.builtin.command: nmap -sV -n -p 22 127.0.0.1
       register: _nc_host
       changed_when: false
       failed_when: false
@@ -109,7 +113,7 @@
         cmd: >-
           docker run --rm --network host
           -v {{ nmap_container_fips_off }}:/proc/sys/crypto/fips_enabled:ro
-          {{ nmap_container_image }} -sn -n 127.0.0.1
+          {{ nmap_container_image }} -sV -n -p 22 127.0.0.1
       register: _nc_test
       changed_when: false
       failed_when: false

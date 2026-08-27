@@ -109,7 +109,9 @@ cmd_image_load() {
   install -d -m 0700 /etc/stig-build
   [ -r "$FIPS_OFF" ] || printf '0\n' > "$FIPS_OFF"
   local mnt=(-v "$FIPS_OFF:/proc/sys/crypto/fips_enabled:ro")
-  if docker run --rm --network host "${mnt[@]}" "$img" -sn -n 127.0.0.1 >/dev/null 2>&1; then
+  # -sV, not -sn: nmap only initialises OpenSSL when it needs TLS, so a ping
+  # scan succeeds even on a box where the real scan cannot start.
+  if docker run --rm --network host "${mnt[@]}" "$img" -sV -n -p 22 127.0.0.1 >/dev/null 2>&1; then
     printf '%s\n' "$img" > "$NMAP_IMG_MARKER"; chmod 0644 "$NMAP_IMG_MARKER"
     ok "loaded and verified: $img"
   else

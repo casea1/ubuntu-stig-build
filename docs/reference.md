@@ -46,10 +46,12 @@ Each of these caused a real outage or a wrong conclusion.
 
 **13. Audit rules on disk are not audit rules in the kernel, and they may not be in `rules.d`.** Two separate traps in one place. First, `usg fix` writes **`/etc/audit/audit.rules` directly**, not `rules.d/*.rules` — so an empty `rules.d` is normal on a USG box, and counting only `rules.d` reports "no rules" on a box with a full ruleset. Second, whatever is on disk still has to reach the kernel: the STIG sets auditd `-e 2` (immutable), after which new rules are refused until a reboot. Either way **every file-based OVAL still passes**, because those check files. ASP-2 ran with **1 rule in the kernel** against 8.5 KB in `audit.rules` and the 96.41 % scan said nothing. `it-checklist` item 6 counts whichever source holds rules and compares it against the kernel. Diagnose with:
 
+> **Mind the glob.** `/etc/audit/rules.d` is `root:root 0750`, so `sudo cat /etc/audit/rules.d/*.rules` fails with *"No such file or directory"* — your **unprivileged shell** expands the glob before `sudo` runs, and it cannot read the directory. That looks exactly like an empty directory and is not. Wrap it: `sudo sh -c 'cat ...'`.
+
 ```bash
 sudo auditctl -l                                              # what the kernel enforces
 sudo grep -cvE '^\s*(#|$)' /etc/audit/audit.rules             # what usg fix wrote
-sudo cat /etc/audit/rules.d/*.rules | grep -cvE '^\s*(#|$)'   # what augenrules would compile
+sudo sh -c "cat /etc/audit/rules.d/*.rules | grep -cvE '^[[:space:]]*(#|$)'"   # rules.d
 sudo auditctl -s | grep enabled                               # 2 = immutable, needs a reboot
 sudo augenrules --check                                       # is audit.rules out of step with rules.d?
 ```
