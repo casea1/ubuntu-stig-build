@@ -110,7 +110,21 @@ sudo it-model-import /mnt/usb --images        # docker load + populate volumes
 sudo it-ai up
 ```
 
-For the **apt layer** air-gapped, you need an internal Ubuntu Pro/ESM mirror or a `.deb` bundle — this repo does not ship a mechanism for that, and it is the largest open gap in the offline patch story.
+### The apt layer air-gapped — a local repo (`it-offline-repo`)
+
+OS packages come from a repo tree hand-carried on media and read by apt over `file://`. The tree is the same one the ADM-Toolkit mirrors for the connected fleet (`ubuntu/<codename>/dists/…` + `pool/…`, built by the separate `linux-software` tool) — the difference is only how it reaches apt: the dev/AI boxes are pointed at the toolkit's HTTP repo server on the ADM PC, while a **standalone** box (the EMI laptop) keeps its own copy on disk.
+
+```bash
+sudo it-offline-repo load /media/$USER/SSD/repo   # copy the tree to /srv/repo
+sudo it-offline-repo enable                       # park the online sources, switch apt
+sudo apt upgrade                                  # patch from the carried repo
+```
+
+`enable` writes `offline_repo_enabled: true` into `/opt/it/site.yml`, so the switch survives the next `ansible-pull` — otherwise the playbook's own third-party repos (Microsoft/VS Code, NodeSource) would be re-added and every `apt-get update` would stall trying to reach them. `it-offline-repo disable` puts the original sources back verbatim from `/opt/it/apt-sources-backup/`, for a box that goes back online to be rebuilt.
+
+Full detail — where the tree lives and why, and what the unsigned repo means for trust — in [operate.md → *Running apt off a local repo*](operate.md#running-apt-off-a-local-repo-it-offline-repo).
+
+**Still missing:** Ubuntu Pro / ESM packages. The carried repo holds the main archive; ESM content needs an internal Pro mirror, which nothing here provides.
 
 ## Suggested cadence
 
@@ -137,7 +151,7 @@ Recorded deliberately — these are real and unresolved.
    
    Two consequences: rebuilding the same Dockerfile on two days produces different artifacts, and oikb's `sed` patches will silently no-op if upstream moves those lines. `openwiki` and `openwiki-view` are pinned and are the pattern the others should follow.
 3. **Models track `main`.** No revision/commit pin, so a re-fetch can change weights without any record. Pinning `--revision` would make model provenance auditable.
-4. **No offline apt path.** Container images and models have a USB workflow; OS packages do not.
+4. **No offline path for Ubuntu Pro / ESM packages.** The main archive is covered — `it-offline-repo` carries a repo tree in on media and apt reads it over `file://` (see above). ESM/Pro content is not: that needs an internal Pro mirror, and a fielded box's `pro` attachment cannot reach one. Anything shipped only through ESM has to be carried in as a loose `.deb`.
 5. **No CVE-to-component mapping.** Nothing correlates an advisory to "which of our images/packages is affected." The inventory in `docs/ai-stack.md` is the manual starting point.
 
 ## After any patch — verify

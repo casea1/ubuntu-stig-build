@@ -5,9 +5,14 @@
 - name: Install developer toolchains (compilers, SDKs, Docker)
   ansible.builtin.import_tasks: toolchains.yml
 
+# NodeSource is an internet apt repo; skipped on a box reading a local repo
+# (see offline_repo). Node then has to come from the offline repo if it is
+# needed at all.
 - name: Install Node.js (NodeSource LTS)
   ansible.builtin.import_tasks: nodejs.yml
-  when: dev_nodejs_enabled | default(true) | bool
+  when:
+    - dev_nodejs_enabled | default(true) | bool
+    - not (offline_repo_enabled | default(false) | bool)
 
 - name: Provision the shared Python environment (/opt/eng-venv)
   ansible.builtin.import_tasks: python_env.yml

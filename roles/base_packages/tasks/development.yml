@@ -50,8 +50,14 @@
     state: present
   when: editor_choice == "neovim"
 
+# Skipped when the box reads a local repo: packages.microsoft.com is
+# unreachable air-gapped, and a source entry left pointing at it makes every
+# later `apt-get update` stall on a timeout. VS Code has to come from the
+# offline repo (or already be installed) in that case.
 - name: Add Microsoft VS Code apt key and repo
-  when: editor_choice == "vscode"
+  when:
+    - editor_choice == "vscode"
+    - not (offline_repo_enabled | default(false) | bool)
   block:
     - name: Ensure keyrings dir exists
       ansible.builtin.file:
