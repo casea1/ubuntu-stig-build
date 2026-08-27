@@ -24,6 +24,24 @@
 # the pam_pkcs11 auth line -- this removes an auth *requirement*, never touches
 # pam_unix, so password login cannot be lost.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# FIRST, unconditionally: the PAM auth-stack checker.
+#
+# It has to exist before anything that edits or verifies PAM, and it did not.
+# It used to be installed ~60 lines BELOW the nullok verify that calls it, so on
+# a box that had never run this role the verify executed a command that was not
+# there yet -- `failed_when: false` swallowed the 127, stdout came back empty,
+# and the guard fired with an empty reason and aborted the play. That is exactly
+# what happened on dev-ai1, 2026-08-27, on a box whose auth stack was fine.
+# ---------------------------------------------------------------------------
+- name: "REMED | Install the PAM auth-stack checker"
+  ansible.builtin.copy:
+    src: pam-auth-check.py
+    dest: "{{ pam_auth_check_path }}"
+    owner: root
+    group: root
+    mode: "0750"
+
 - name: "REMED | Smart card / pam_pkcs11 cleanup"
   when: usg_cleanup_pam_pkcs11 | default(true) | bool
   block:
@@ -722,14 +740,27 @@
       changed_when: false
       failed_when: false
 
+    # Two different situations, and conflating them stopped a production run on
+    # a healthy box. Only a real BROKEN/UNKNOWN verdict is a reason to abort.
+    - name: "REMED | The checker itself did not run"
+      ansible.builtin.debug:
+        msg: >-
+          {{ pam_auth_check_path }} produced no verdict (rc={{ _nullok_verify.rc }}).
+          The auth stack was NOT evaluated -- this is a problem with the check,
+          not evidence of a problem with PAM. Verify by hand before rebooting:
+          `sudo {{ pam_auth_check_path }} /etc/pam.d/common-auth`.
+      when: (_nullok_verify.stdout | default('') | trim) | length == 0
+
     - name: "REMED | Fail loudly if the nullok edit broke the auth stack"
       ansible.builtin.fail:
         msg: >-
           Removing nullok left an auth stack that cannot authenticate:
-          {{ _nullok_verify.stdout | default('no output') | trim }}.
+          {{ _nullok_verify.stdout | trim }}.
           Restore with `pam-auth-update --force` and set
           usg_fix_pam_nullok: false.
-      when: "'OK' not in (_nullok_verify.stdout | default(''))"
+      when:
+        - (_nullok_verify.stdout | default('') | trim) | length > 0
+        - "'OK' not in _nullok_verify.stdout"
 
 # ---------------------------------------------------------------------------
 # 5f-2) PAM STACK: pam_faillock + pam_faildelay, via pam-auth-update profiles
@@ -771,14 +802,6 @@
 # Nothing in a normal build would have caught that, so check it explicitly and
 # say so loudly. This only READS the file.
 # ---------------------------------------------------------------------------
-- name: "REMED | Install the PAM auth-stack checker"
-  ansible.builtin.copy:
-    src: pam-auth-check.py
-    dest: "{{ pam_auth_check_path }}"
-    owner: root
-    group: root
-    mode: "0750"
-
 - name: "REMED | Pre-flight: can this box's PAM stack authenticate at all?"
   ansible.builtin.command:
     cmd: "{{ pam_auth_check_path }} /etc/pam.d/common-auth"
