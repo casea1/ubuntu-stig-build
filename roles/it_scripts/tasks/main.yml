@@ -109,8 +109,8 @@
 - name: "IT-SCRIPTS | Where the scripts are"
   ansible.builtin.debug:
     msg: >-
-      Status scripts in {{ it_scripts_dir }}. Run `it-status` (all), or
-      it-host / it-luks / it-checklist / it-usb / it-grub / it-oscap.
+      Status scripts in {{ it_scripts_dir }}. Run `it-help` to list every
+      it-* command on this box, or `it-status` for the health summary.
       {{ 'AI-stack tooling (it-ai, it-models, ...) installed.'
          if it_scripts_ai_enabled | bool
          else 'AI-stack tooling is not installed on this profile.' }}

@@ -8,6 +8,17 @@ Every task, as numbered steps. Find the scenario, follow the steps.
 
 ---
 
+## 0. What can this box do?
+
+```bash
+it-help                  # every it-* command on this box, one line each
+it-help it-clamav        # one command's full options
+it-help --all | less     # everything
+```
+
+It reads the commands from what is actually installed, so an EMI laptop lists `it-vulnscan`, an AI node lists `it-ai`, and neither shows the other's tooling. No list to keep in step.
+
+
 ## Contents
 
 | | |

@@ -16,6 +16,10 @@ it_scripts_emi_enabled: "{{ is_emi | default(false) | bool }}"
 
 # Placed on every profile.
 it_scripts_common:
+  # First on purpose: it-help is how someone who has never seen this box finds
+  # everything else. It DISCOVERS the commands from the installed symlinks
+  # rather than carrying a list, so it stays correct per profile on its own.
+  - { file: help.sh,               link: it-help }
   - { file: status.sh,             link: it-status }
   - { file: status-host.sh,        link: it-host }
   - { file: status-luks.sh,        link: it-luks }
