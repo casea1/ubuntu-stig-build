@@ -241,6 +241,34 @@ fi
 # grepping it would fold in every earlier scan of the same day.
 hits=$(printf '%s\n' "$nmap_out" | grep -cE '^\|.*(VULNERABLE|CVE-[0-9]{4}-[0-9]+)' || true)
 hits=${hits:-0}
+
+# SPLIT THE HITS, because the two kinds mean very different things and lumping
+# them makes the number useless.
+#
+#   confirmed -- a script probed the service and said VULNERABLE. Real until
+#                disproved. "NOT VULNERABLE" is a PASS and must not count.
+#   listed    -- the `vulners` script matched the BANNER VERSION STRING against
+#                its CVE database. On Ubuntu that is mostly noise: security
+#                fixes are BACKPORTED without bumping the upstream version, so
+#                a fully patched sshd still announces "OpenSSH 9.6p1" and
+#                collects every CVE ever filed against 9.6p1. ASP-2 reported
+#                CVE-2024-6387 (regreSSHion) while running
+#                9.6p1-3ubuntu13.18 -- fixed upstream of that in 13.3.
+confirmed=$(printf '%s\n' "$nmap_out" | grep -E '^\|' | grep -vi 'NOT VULNERABLE' \
+              | grep -c 'VULNERABLE' || true); confirmed=${confirmed:-0}
+listed=$(printf '%s\n' "$nmap_out" | grep -cE '^\|.*CVE-[0-9]{4}-[0-9]+' || true)
+listed=${listed:-0}
+
+# DID THE CVE-LISTING HALF RUN AT ALL?
+# `vulners` is the only script here that needs the INTERNET -- it posts the
+# detected service versions to vulners.com. Air-gapped it returns nothing, in
+# silence, and the scan then reads "nmap flagged nothing as vulnerable" when
+# what actually happened is that the check did not run. Same failure shape as
+# NMAP-FAULT, and it gets reported the same way: a check that did not run is
+# not a pass. Every OTHER vuln script probes the target directly and is
+# unaffected offline.
+vulners_ran=0
+printf '%s\n' "$nmap_out" | grep -q '^| *vulners:' && vulners_ran=1
 open=$(printf '%s\n' "$nmap_out" | grep -cE '^[0-9]+/(tcp|udp)[[:space:]]+open' || true)
 open=${open:-0}
 
@@ -366,9 +394,33 @@ fi
 if [ "$nmap_verdict" = FAULT ]; then
   :
 elif [ "$hits" -gt 0 ]; then
-  bad "nmap flagged $hits line(s) as VULNERABLE / CVE -- review them"
-  grep -E '^\|.*(VULNERABLE|CVE-[0-9]{4}-[0-9]+)' "$LOG" | head -10 | sed 's/^/    /'
-  [ "$hits" -gt 10 ] && printf '    %s... %d more in the log%s\n' "$DIM" "$((hits-10))" "$R"
+  if [ "$confirmed" -gt 0 ]; then
+    bad "$confirmed line(s) CONFIRMED VULNERABLE by a probe -- treat as real"
+    grep -E '^\|' "$LOG" | grep -vi 'NOT VULNERABLE' | grep 'VULNERABLE' \
+      | head -10 | sed 's/^/    /'
+  else
+    ok "no script probed a service and found it vulnerable"
+  fi
+  if [ "$listed" -eq 0 ] && [ "$vulners_ran" -eq 0 ] && [ "$open" -gt 0 ]; then
+    warn "vulners produced NO output -- the CVE-listing half of this scan did not run"
+    printf '    %sIt is the one script here that needs the internet (it posts service\n' "$DIM"
+    printf '    versions to vulners.com). Air-gapped it returns nothing, in silence.\n'
+    printf '    The local probe scripts above DID run. Do NOT read this as "no CVEs"\n'
+    printf '    -- judge patch state from the box itself:%s\n' "$R"
+    printf '      sudo pro security-status        # local apt data, works OFFLINE\n'
+    printf '      apt list --upgradable\n'
+  fi
+  if [ "$listed" -gt 0 ]; then
+    warn "$listed CVE(s) LISTED by vulners from the banner version -- NOT confirmed"
+    grep -E '^\|.*CVE-[0-9]{4}-[0-9]+' "$LOG" | head -5 | sed 's/^/    /'
+    [ "$listed" -gt 5 ] && printf '    %s... %d more in the log%s\n' "$DIM" "$((listed-5))" "$R"
+    printf '    %svulners matches the VERSION STRING, and Ubuntu BACKPORTS fixes without\n' "$DIM"
+    printf '    bumping it -- a patched sshd still announces "OpenSSH 9.6p1". Most of\n'
+    printf '    these are false positives. Confirm before filing any of them:%s\n' "$R"
+    printf '      sudo pro fix --dry-run CVE-2024-6387   # authoritative; NEEDS INTERNET\n'
+    printf '      sudo pro security-status               # local apt data, works OFFLINE\n'
+    printf '      apt list --upgradable | grep -i openssh\n'
+  fi
 else
   ok "nmap flagged nothing as vulnerable"
 fi
