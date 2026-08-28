@@ -80,7 +80,11 @@ ctr_nmap() {   # args -> nmap args. --network host so loopback means the host's.
   [ -n "$img" ] || return 127
   local mnt=()
   [ -r "$FIPS_OFF" ] && mnt=(-v "$FIPS_OFF:/proc/sys/crypto/fips_enabled:ro")
-  docker run --rm --network host "${mnt[@]}" "$img" "$@"
+  # --ulimit: dockerd runs with LimitNOFILE=infinity and containers inherit it.
+  # nmap sizes its socket tables from the fd limit, so an unbounded one makes it
+  # allocate for a billion descriptors. Bound it the same way the image build does.
+  docker run --rm --network host --ulimit nofile="${NMAP_CTR_NOFILE:-1024:65536}" \
+    "${mnt[@]}" "$img" "$@"
 }
 
 cmd_image_save() {

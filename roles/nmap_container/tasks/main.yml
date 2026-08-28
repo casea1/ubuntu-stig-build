@@ -117,7 +117,8 @@
     - name: "NMAP-CTR | Build the image"
       ansible.builtin.command:
         cmd: >-
-          docker build --build-arg BASE={{ nmap_container_base }}
+          docker build --ulimit nofile={{ nmap_container_nofile | default('1024:65536') }}
+          --build-arg BASE={{ nmap_container_base }}
           -t {{ nmap_container_image }} /opt/it/docker/nmap
       register: _nc_build
       changed_when: _nc_build.rc == 0
@@ -150,6 +151,7 @@
       ansible.builtin.command:
         cmd: >-
           docker run --rm --network host
+          --ulimit nofile={{ nmap_container_nofile | default('1024:65536') }}
           -v {{ nmap_container_fips_off }}:/proc/sys/crypto/fips_enabled:ro
           {{ nmap_container_image }} -sV -n -p 22 127.0.0.1
       register: _nc_test
