@@ -24,6 +24,10 @@ usg_fix_log_permissions: true
 # /lib, /lib64, /usr/lib, /usr/lib64 that is not already group root).
 usg_fix_library_group: true
 
+# Create /var/log/sudo.log and point sudo at it, so UBTU-24-500010's audit
+# watch can load (a watch on a missing path aborts the whole rule load).
+usg_sudo_logfile_enabled: true
+
 # --- Audited privileged commands (UBTU-24-900080 .. 900330) -----------------
 # `usg fix` writes rules for only part of the set the benchmark checks, so ~19
 # of these fail an otherwise clean audit. Every path here is exactly what the

@@ -176,6 +176,8 @@ The ones worth knowing:
 | `usg_fix_log_permissions` | true | `/var/log` file modes (UBTU-24-700010). Swept at build time and daily by `stig-log-perms.timer` |
 | `usg_fix_library_group` | true | `chgrp root` on `*.so*` under the library dirs (UBTU-24-300009) |
 | `audit_cron_rules_enabled` | true | `72-cron.rules` — watch `/etc/cron.d` and the cron spool, key `cronjobs` (UBTU-24-200270) |
+| `audit_reboot_rules_syscalls` | `reboot`, `kexec_load` | Names are resolved per-arch before the rule is written — i386 says `sys_kexec_load`, x86_64 says `kexec_load`, and a wrong name aborts the **whole** rule load |
+| `usg_sudo_logfile_enabled` | true | Create `/var/log/sudo.log` + `Defaults logfile` so UBTU-24-500010's watch can load |
 | `grub_password_pbkdf2` | `CHANGEME` | The role skips until a real hash is vaulted |
 | `tpm_luks_enabled` | true except `emi-unclass` | Binds LUKS to PCR 7 |
 | `offline_repo_enabled` | false | Switch apt to `/srv/repo`. Set by `it-offline-repo enable` |

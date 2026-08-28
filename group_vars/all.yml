@@ -514,6 +514,15 @@ classification_banner_force_xorg: true
 # post-build REBOOT rather than live. Set false to leave auditing to USG alone.
 audit_reboot_rules_enabled: true
 audit_reboot_rules_key: reboot        # the -k key on the rule (ausearch -k <key>)
+# Syscalls the reboot rule audits. Names are resolved per-architecture against
+# the box's own tables before the rule is written, because they DIFFER: the
+# i386 table calls entry 283 `sys_kexec_load` while x86_64 calls it
+# `kexec_load`. Hardcoding the x86_64 name on the b32 line is what made
+# auditctl reject the rule -- and auditctl stops at the first rule it cannot
+# apply, so it took the other 67 rules down with it on every box in the fleet.
+audit_reboot_rules_syscalls:
+  - reboot
+  - kexec_load
 
 # UBTU-24-200270: audit anything cron is given to run as root or a privileged
 # user. USG ships no watch on /etc/cron.d or the cron spool, so the rule failed
@@ -1384,6 +1393,13 @@ usg_fix_log_permissions: true
 # groups are load-bearing and which the STIG's own wording permits. See the
 # UBTU-24-300009 entry in roles/scap_scan/templates/ckl-answers.yml.j2.
 usg_fix_library_group: true
+
+# UBTU-24-500010 watches /var/log/sudo.log, and USG writes that watch. The file
+# has to exist or auditctl rejects the watch and aborts the rest of the load,
+# so create it -- and point sudo at it, since an empty file would satisfy the
+# scanner and record nothing. Writes /etc/sudoers.d/99-stig-logfile, validated
+# with visudo before it is installed.
+usg_sudo_logfile_enabled: true
 
 # Chrony: the STIG requires a remote time source configured with the `server`
 # directive (not `pool`). We write these as `server <host> iburst maxpoll <N>`
