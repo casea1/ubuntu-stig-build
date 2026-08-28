@@ -570,12 +570,26 @@
         - audit_cron_rules_enabled | default(true) | bool
         - audit_cron_spool_create | default(true) | bool
 
+    # THE TWO WATCH STRINGS ARE NOT WRITTEN THE SAME WAY, AND THAT IS DELIBERATE.
+    # SSG's two OVALs for this one STIG rule disagree with each other about the
+    # trailing slash -- verified against ssg-ubuntu2404-ds.xml 0.1.81:
+    #   /etc/cron.d/     contains: ^\s*-w\s+/etc/cron.d/\s+-p\s+wa(\s|$)+
+    #   /var/spool/cron  contains: ^\s*-w\s+/var/spool/cron\s+-p\s+wa(\s|$)+
+    # One requires the slash, the other requires its absence. Writing both with
+    # a uniform trailing slash -- which is what DISA's fix text tells you to do
+    # -- passes audit_rules_etc_cron_d and fails audit_rules_var_spool_cron,
+    # which is exactly what dev-ai1 reported on 2026-08-28.
+    #
+    # auditctl normalises the trailing slash away, so `auditctl -l` prints
+    # `-w /etc/cron.d -p wa -k cronjobs` either way and DISA's own check text
+    # (which greps the KERNEL) is satisfied by both forms. Only the file-reading
+    # OVAL cares. So: match each OVAL exactly, per path.
     - name: "REMED | Which cron paths exist on this box?"
       ansible.builtin.stat:
-        path: "{{ item }}"
-      loop:
-        - /etc/cron.d
-        - /var/spool/cron
+        path: "{{ item.path }}"
+      loop: "{{ audit_cron_watches }}"
+      loop_control:
+        label: "{{ item.path }}"
       register: _cron_paths
       when:
         - _audit_rulesd.stat.exists | default(false)
@@ -598,7 +612,7 @@
           ## -> ausearch -k cronjobs
           {% for r in _cron_paths.results | default([]) %}
           {% if r.stat.exists | default(false) %}
-          -w {{ r.item }}/ -p wa -k cronjobs
+          -w {{ r.item.write_as }} -p wa -k cronjobs
           {% endif %}
           {% endfor %}
       notify: Load audit rules
@@ -607,7 +621,7 @@
       ansible.builtin.debug:
         msg: >-
           {{ _cron_paths.results | default([]) | rejectattr('stat.exists')
-             | map(attribute='item') | list }} do(es) not exist, so UBTU-24-200270
+             | map(attribute='item.path') | list }} do(es) not exist, so UBTU-24-200270
           cannot be fully satisfied on this box. The DISA check greps `auditctl -l`
           for both watches. Install the `cron` package if this box is meant to run
           cron jobs; if it genuinely has no cron, adjudicate the rule instead.
