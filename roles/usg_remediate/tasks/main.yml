@@ -549,6 +549,27 @@
     #
     # As with 71-reboot.rules, `usg fix` has already made the running config
     # immutable, so this lands in the kernel on the next reboot, not now.
+    # /var/spool/cron ships with the `cron` package. The AI nodes schedule with
+    # systemd timers and do not have it, so the directory is absent, the watch
+    # was skipped, and UBTU-24-200270 stayed half-satisfied
+    # (audit_rules_etc_cron_d passed, audit_rules_var_spool_cron did not).
+    #
+    # Create it rather than leave the control unmet. An empty spool directory
+    # costs nothing, and the point of the rule is that ANYTHING appearing there
+    # is audited -- which only works if the watch is loaded before something
+    # does. dpkg takes ownership cleanly if `cron` is installed later.
+    # Debian's own mode for it is 0755 root:root.
+    - name: "REMED | Ensure the cron spool exists so its audit watch can load"
+      ansible.builtin.file:
+        path: /var/spool/cron
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when:
+        - audit_cron_rules_enabled | default(true) | bool
+        - audit_cron_spool_create | default(true) | bool
+
     - name: "REMED | Which cron paths exist on this box?"
       ansible.builtin.stat:
         path: "{{ item }}"

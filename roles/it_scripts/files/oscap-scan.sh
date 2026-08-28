@@ -121,6 +121,17 @@ echo "Tailorng: ${TAILOR:-none (untailored benchmark)}"
 mkdir -p "$DIR" && chmod 0750 "$DIR"
 TS="$(date +%Y%m%d-%H%M%S)"
 
+# Re-apply /var/log modes first. apt, dpkg and unattended-upgrades recreate
+# their logs 0644 whenever they run, so between the daily stig-log-perms.timer
+# and this scan a fresh 0644 log can appear and fail UBTU-24-700010 on a box
+# that is otherwise correct. Starting the unit is idempotent and takes under a
+# second. It is the SAME unit usg_remediate installs -- one definition of what
+# the STIG wants. Absent (usg_remediate never ran) it is a no-op and the rule
+# reports honestly rather than being quietly papered over.
+if systemctl list-unit-files stig-log-perms.service >/dev/null 2>&1; then
+  systemctl start stig-log-perms.service >/dev/null 2>&1 || true
+fi
+
 # --fetch-remote-resources is deliberately NOT used: these boxes are air-gapped
 # or heading there, and it would stall the scan waiting on a network fetch.
 oscap xccdf eval \

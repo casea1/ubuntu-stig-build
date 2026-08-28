@@ -533,6 +533,13 @@ audit_reboot_rules_syscalls:
 # the key is not a free choice. Loads on the post-build reboot (auditd is -e 2).
 #   ausearch -k cronjobs
 audit_cron_rules_enabled: true
+# Create /var/spool/cron when it is absent. It ships with the `cron` package,
+# which the AI nodes do not have (they schedule with systemd timers), so the
+# watch could not be written and half the rule stayed unmet. An empty spool
+# directory is harmless and makes the watch loadable -- the control's point is
+# that anything appearing there is audited, which needs the watch in place
+# first. Set false to leave the rule unsatisfied on a box with no cron.
+audit_cron_spool_create: true
 
 # =============================================================================
 # STIG GAP-REMEDIATION TUNABLES
