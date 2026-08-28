@@ -44,7 +44,14 @@ emit() {
     n=$(basename "$d")
     [ -f "$d/compose.override.yaml" ] && extra="  +override"
     [ -f "$d/.env" ] && extra="$extra  +env(not shown)"
-    ls "$d"compose.y*ml "$d"docker-compose.y*ml >/dev/null 2>&1 || extra="$extra  NO-COMPOSE-FILE"
+    # Test the names ONE AT A TIME. `ls a b` exits non-zero when only ONE of
+    # them exists, so the old single call labelled EVERY stack NO-COMPOSE-FILE
+    # -- including the ones whose compose file this script then printed in full.
+    local have=0
+    for c in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
+      [ -f "$d$c" ] && { have=1; break; }
+    done
+    [ "$have" = 1 ] || extra="$extra  NO-COMPOSE-FILE"
     printf '  %-18s%s\n' "$n" "$extra"
   done
   echo
@@ -96,10 +103,19 @@ emit() {
 }
 
 if [ -n "$OUT" ]; then
-  emit | tee "$OUT"
-  chmod 0640 "$OUT" 2>/dev/null || true
-  echo
-  echo "Also written to $OUT"
+  # Report the write HONESTLY. This used to print "Also written to $OUT"
+  # unconditionally, so a tee that failed (permission denied on the path) still
+  # read as success and the operator walked away believing a file existed.
+  if emit | tee "$OUT"; then
+    chmod 0640 "$OUT" 2>/dev/null || true
+    echo
+    echo "Also written to $OUT"
+  else
+    emit
+    echo
+    echo "WARNING: could not write $OUT -- the report above was NOT saved." >&2
+    echo "Pick a path you can write as root, e.g. /opt/ia/stacks-\$(hostname).txt" >&2
+  fi
 else
   emit
 fi
