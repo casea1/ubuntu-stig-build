@@ -340,13 +340,20 @@ The whole process, end to end. Two scanners run on these boxes and they answer d
 
 | | `usg audit` | `it-oscap` |
 |---|---|---|
-| Content | Canonical's USG (SSG-derived) | the SSG datastream `scap_scan` stages |
+| Content | Canonical's USG, **whatever SSG version the `usg` package bundles** (e.g. 0.1.78) | the SSG datastream `scap_scan` stages, pinned by `ssg_content_version` (e.g. 0.1.81) |
 | Tailoring | uses `/etc/usg/managed-tailoring.xml` | now uses it too (`--no-tailoring` to skip) |
 | Runs | inside the build, after `usg_remediate` | by hand, and weekly by timer |
 | Output | `/opt/ia/usg/usg-report-*.html` + `usg-results-*.xml` | `/opt/ia/oscap/{build,scheduled,manual}/stig-{report,arf,viewer}-*` |
 | Use it for | the compliance score and the accreditation artifact | the checklist, and ad-hoc re-checks |
+| Why both | it is what `usg fix` applied, so the score measures the tool's own work | newer content, and the only source of the STIG Viewer XML `it-ckl` needs |
 
-**They must be tailored the same way or they disagree.** `usg_harden` de-selects the smart-card and SSSD rules — this fleet is password-login only with no CAC reader — and a raw `oscap` run ignores that, reporting `smartcard_pam_enabled`, `service_sssd_enabled` and `sssd_enable_user_cert` as findings the accredited baseline has formally de-scoped. `it-oscap` now picks up the tailoring file automatically.
+**The two scores will not match, and that is expected.** They evaluate *different versions of the same benchmark*. `usg audit` uses the SSG content bundled inside the `usg` package; `it-oscap` uses the ComplianceAsCode release this repo pins in `ssg_content_version`, which is normally newer. A newer SSG adds rules and tightens existing checks, so it evaluates more and typically scores lower — dev-ai2 in Aug 2026 read 93.08% under USG's 0.1.78 and 91.58% under 0.1.81. Neither number is wrong; they answer different questions.
+
+Which to quote: **`usg audit` is the accreditation artifact.** It is the same content `usg fix` applied, so it measures exactly what the hardening tool did — an assessor asking "what does Ubuntu Security Guide say about this box" wants that file. `it-oscap`'s value is that it runs newer content (an early view of what the next USG release will flag) and that it emits the `--stig-viewer` XML `it-ckl` needs to build the `.cklb`; `usg audit` produces no such file.
+
+To make them agree, pin `ssg_content_version` to the version `usg` ships. That trades the early warning for a single number, and is a deliberate choice rather than a default.
+
+**They must also be tailored the same way or they disagree for a second, avoidable reason.** `usg_harden` de-selects the smart-card and SSSD rules — this fleet is password-login only with no CAC reader — and a raw `oscap` run ignores that, reporting `smartcard_pam_enabled`, `service_sssd_enabled` and `sssd_enable_user_cert` as findings the accredited baseline has formally de-scoped. `it-oscap` now picks up the tailoring file automatically.
 
 
 ### Which tool is which
