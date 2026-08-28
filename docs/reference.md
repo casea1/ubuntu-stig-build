@@ -12,6 +12,7 @@ Lookup tables. For "how do I do X", see [procedures.md](procedures.md).
 | **[Paths](#paths)** | where everything lives |
 | **[Configuration](#configuration)** | the variables worth knowing |
 | **[AI stack](#ai-stack)** | nodes, ports, stacks, volumes, models |
+| **[AI nodes — as-built](#ai-nodes--as-built-2026-08-28)** | what the two boxes actually run, drift and faults included |
 | **[Software inventory](#software-inventory)** | IA/DCSA inventory per profile |
 
 ---
@@ -302,6 +303,130 @@ What to send as `model` to the OpenAI-compatible endpoints. This is vLLM's `--se
 | granite-vision-4.1-4b | S2 | `:8003` | `granite-vision-4.1-4b` |
 
 System 1's two chat models are **alternates** — both are served tensor-parallel across its two 48 GB GPUs and only one fits.
+
+---
+
+## AI nodes — as-built, 2026-08-28
+
+**This records what the boxes ACTUALLY run, faults included.** It is not a target state and not a repo description — where the live config differs from `roles/ai_compose/files/stacks/`, the live config is what is written here, because that is what an assessor will find and what an engineer will be debugging. The repo remains the intended state; the drift table below is the delta.
+
+Captured read-only from both nodes. Nothing was changed. Reproduce with `sudo it-stack-diff --full` plus the runtime capture in [procedures.md §4](procedures.md).
+
+### Nodes
+
+| | System 1 | System 2 |
+|---|---|---|
+| Host | `dev-ai1` | `dev-ai2` |
+| Address | 192.168.1.104 | 192.168.1.110 |
+| Kernel | 6.8.0-136-fips | 6.8.0-136-fips |
+| FIPS | enabled (`fips_enabled=1`) | enabled |
+| GPU | **2 ×** RTX 6000 Ada, 48 GB, driver 595.84 | **1 ×** RTX 6000 Ada, 48 GB, driver 595.84 |
+| Docker | 29.6.2, Compose v5.3.1 | 29.6.2, Compose v5.3.1 |
+| Baseline at capture | `06d49fc` | `6b458b1` |
+| Pending apt updates | 51 | 47 |
+
+Both baselines are behind `main`, and they differ from each other — the two nodes are not on the same commit.
+
+### System 1 — running containers
+
+| Container | Image | Published | Restart | Mem limit | GPU |
+|---|---|---|---|---|---|
+| `open-webui` | `ghcr.io/open-webui/open-webui:v0.10.2` | `3000→8080`, **`8050→8050`** | unless-stopped | — | — |
+| `vllm-server` | `vllm/vllm-openai:v0.22.1-cu129-ubuntu2404` | `8000` | unless-stopped | — | both |
+| `pgvector` | `pgvector/pgvector:pg16-trixie` | — | unless-stopped | **2 G** | — |
+| `pg-bouncer` | `edoburu/pgbouncer:v1.25.1-p0` | **`5432→5432`** | unless-stopped | — | — |
+| `redis` | `redis:7.2.14-bookworm` | — | unless-stopped | — | — |
+| `dockge` | `louislam/dockge:1` | `9001→5001` | always | — | — |
+| `clamav-container` | `clamav/clamav:1.4.3` | — | **no** | 3 G | — |
+
+`vllm-granite` is defined but not running — it sits behind the `granite` profile and only one chat model fits VRAM. Correct behaviour.
+
+### System 2 — running containers
+
+| Container | Image | Published | Restart | GPU |
+|---|---|---|---|---|
+| `vllm-embed` | `vllm/vllm-openai:v0.22.1-…` | `8002` | unless-stopped | yes |
+| `docling-serve` | `ghcr.io/docling-project/docling-serve-cu128:v1.24.0` | `5001` | **no** | yes |
+| `tika` | `apache/tika:3.3.1.0` | `9998` | unless-stopped | — |
+| `open-webui-lgtm` | `grafana/otel-lgtm:0.29.0` | `3001→3000`, `4317`, `4318` | unless-stopped | — |
+| `prometheus-standalone` | `prom/prometheus:v3.14.0` | `9091→9090` | unless-stopped | — |
+| `mlflow-db` | `pgvector/pgvector:pg16-trixie` | — | unless-stopped | — |
+| `mlflow-mlflow-1…5` | `mlflow:v3.15.1-psycopg2` | — | unless-stopped | — |
+| `mlflow-proxy` | `nginx:1.30.4-alpine` | `5000` | unless-stopped | — |
+| `pg-bouncer` | `edoburu/pgbouncer:v1.25.1-p0` | **`5432→5432`** | unless-stopped | — |
+| `openwiki-view` | `openwiki:latest` | `4321→8080` | unless-stopped | — |
+| `openwiki-view-proxy` | `openwiki-view:latest` | (shares netns) | unless-stopped | — |
+| `dockge` | `louislam/dockge:1` | `9001→5001` | always | — |
+| `clamav-container` | `clamav/clamav:1.4.3` | — | **no** | — |
+
+**Not running:**
+
+| Container | State | Consequence |
+|---|---|---|
+| `vllm-vision` | Exited (0), 2 weeks | **Open WebUI on System 1 still lists `http://192.168.1.110:8003/v1` as a chat endpoint.** The vision model is a dead endpoint from the UI's point of view. |
+| `oikb` | Exited (1), 2 weeks | Its `profiles: ["oikb"]` guard was commented out on the box, so it starts by default and crash-loops. In the repo the profile keeps it off. |
+
+### Drift from the repo
+
+Every item below is the **box** differing from `roles/ai_compose/files/stacks/`. A pull with `ai_compose` un-skipped would revert all of it.
+
+**System 1**
+
+| Stack | Repo | On the box | Why it matters |
+|---|---|---|---|
+| `pgbouncer` | no `ports:` at all | `5432:5432` | Postgres reachable from the LAN. A published container port **cannot** be filtered by ufw (trap 1), so this is genuinely open. |
+| `open-webui` | `3000:8080` only | also `8050:8050` | Undocumented second listener. |
+| `pgvector` | `limits: memory 4G` | `2G` | Halved. Under RAG load this is where an OOM would come from. |
+| `vllm-gptoss` | `${SYSTEM2_ADDR}` | hardcoded `192.168.1.110` | `it-set-ip` cannot renumber the box. |
+| `vllm-gptoss` | `--override-generation-config={"temperature":1.0,"top_p":1.0,"repetition_penalty":1.1}` | dropped | Sampling defaults differ from the accredited config. |
+
+**System 2**
+
+| Stack | Repo | On the box | Why it matters |
+|---|---|---|---|
+| `mlflow` (`pg-bouncer`) | no `ports:` | `5432:5432` | Same LAN exposure as System 1, second instance. |
+| `docling` | `restart: unless-stopped` | commented out | **Docling does not come back after a reboot.** Runtime confirms `restart=no`. |
+| `oikb` | `profiles: ["oikb"]` | commented out | Starts unguarded, crash-loops. |
+| `vllm-vision` | no `logging:` block | `logging:` **misindented under `deploy:`** | Not a valid service key there, so the container has **no log rotation**. |
+| `prometheus` | `container_name: prometheus`, named volume `prometheus-data`, `./prometheus.yml` | `prometheus-standalone`, **anonymous** volume, `/opt/it/docker/grafana/prometheus.yml` | TSDB is in an unnamed volume nothing tracks; config comes from the stale pre-split path. |
+
+**Both nodes**
+
+| Item | State |
+|---|---|
+| `/opt/stacks/ai` | symlink → `/opt/it/docker`; holds `docker-compose.consolidated.yaml`, `docker-compose.yaml.bac`, `.env`, `fips_off` — the pre-split layout |
+| `/opt/stacks/ai-system1` / `ai-system2` | empty directories, no compose file |
+| `DOCKER-USER` chain | `-N DOCKER-USER` — **empty**, confirming trap 1 fleet-wide |
+
+### Network exposure, as measured
+
+Published container ports bypass ufw entirely (trap 1). What is actually reachable on the LAN:
+
+| Node | Port | Service |
+|---|---|---|
+| S1 | 3000 | Open WebUI |
+| S1 | 8000 | vLLM gpt-oss-120b (no auth) |
+| S1 | 8050 | Open WebUI, second listener (undocumented) |
+| S1 | **5432** | **PgBouncer → Postgres** |
+| S1/S2 | 9001 | Dockge |
+| S2 | 3001 / 4317 / 4318 | Grafana / OTLP |
+| S2 | 5000 | MLflow (behind its nginx allow-list) |
+| S2 | 5001 | Docling |
+| S2 | 8002 | vLLM embeddings |
+| S2 | 9091 | Prometheus |
+| S2 | 9998 | Tika |
+| S2 | **5432** | **PgBouncer → MLflow Postgres** |
+| S2 | 4321 | OpenWiki viewer |
+
+**The ufw allow-list for 8002 names the wrong host.** Both nodes carry `8002/tcp ALLOW IN 192.168.1.102`, but System 1 is **192.168.1.104**. Embeddings work today only because the published port bypasses ufw. The day `DOCKER-USER` rules are added — the planned fix for trap 1 — RAG embeddings break unless this is corrected first.
+
+### Volumes
+
+System 1: `open-webui`, `pgvector-data`, `redis-data`, `vllm`, `encodings`, `granite32b`, `dockge_data`. Unused leftovers: `docling-models`, `granite-embed`, `portainer_data`.
+
+System 2: `granite-embed`, `granite-vision`, `lgtm-data`, `mlflow-artifacts`, `postgres_mlflow_data`, `openwiki-out`, `docling-models`, `dockge_data`, `pg-bouncer`, plus **seven anonymous hash-named volumes** (one is Prometheus' TSDB) and `portainer_data` from a container that no longer exists.
+
+`docling-models` exists on both nodes and is mounted by nothing — correct, per trap 8: Docling's models are baked into the image and mounting over the cache hides them.
 
 ---
 
