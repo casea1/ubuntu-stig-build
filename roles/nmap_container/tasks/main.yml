@@ -34,6 +34,24 @@
         path: /usr/bin/docker
       register: _nc_docker
 
+# The build block below needs BOTH a broken host nmap and docker. When docker
+# is the missing half the whole block just skipped and said nothing, so an
+# operator saw only it-vulnscan's "No containerised nmap on this box" with no
+# way to tell whether the role had run, skipped, or failed. Name the reason.
+- name: "NMAP-CTR | WARN -- host nmap is broken and docker is not installed"
+  ansible.builtin.debug:
+    msg: >-
+      nmap exited {{ _nc_host.rc }} on this host and /usr/bin/docker is absent,
+      so no containerised replacement can be built and `it-vulnscan` has no
+      working nmap. Either install docker on this box, or build the image
+      elsewhere and carry it in with `it-vulnscan image-load <dir>`
+      (which also needs docker). See docs/procedures.md 3.3.
+  when:
+    - nmap_container_enabled | default(true) | bool
+    - _nc_host is defined
+    - _nc_host.rc | default(0) != 0
+    - not (_nc_docker.stat.exists | default(false))
+
 - name: "NMAP-CTR | Host nmap is broken -- build the containerised one"
   when:
     - nmap_container_enabled | default(true) | bool
@@ -108,6 +126,26 @@
 
     # Prove it before recording it. A marker pointing at an image that cannot
     # scan would be worse than no marker -- it-vulnscan would trust it.
+    # An air-gapped box cannot pull the base image from Docker Hub, and that is
+    # the single most likely reason this role runs and still leaves no image.
+    # Say so with the actual error rather than letting the smoke test below
+    # fail with nothing to explain it.
+    - name: "NMAP-CTR | WARN -- the image build failed"
+      ansible.builtin.debug:
+        msg: >-
+          `docker build` exited {{ _nc_build.rc }}, so there is no containerised
+          nmap. {% if 'lookup' in (_nc_build.stderr | default('')) or 'dial tcp' in (_nc_build.stderr | default('')) or 'no such host' in (_nc_build.stderr | default('')) or 'timeout' in (_nc_build.stderr | default('')) %}
+          This looks like no route to the registry -- expected on an air-gapped
+          box. Build the image on a connected box and carry it in with
+          `it-vulnscan image-load <dir>`.
+          {% else %}
+          Error: {{ (_nc_build.stderr | default('')) | trim | truncate(400) }}
+          {% endif %}
+      when:
+        - _nc_build is defined
+        - not (_nc_build is skipped)
+        - _nc_build.rc | default(0) != 0
+
     - name: "NMAP-CTR | Does the containerised nmap actually run?"
       ansible.builtin.command:
         cmd: >-

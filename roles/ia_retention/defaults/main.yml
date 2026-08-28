@@ -1,0 +1,5 @@
+---
+# See group_vars/all.yml for the documented settings. These are fallbacks so
+# the role is safe to run standalone.
+ia_retention_enabled: true
+ia_retention_keep: 3
