@@ -130,6 +130,17 @@ if active auditd; then
   imm=$(auditctl -s 2>/dev/null | awk '/^enabled/{print $2}')
   immnote=""
   [ "$imm" = 2 ] && immnote=" (immutable: -e 2, needs a REBOOT to load)"
+  # WHY the load failed, read-only. auditctl STOPS at the first rule it cannot
+  # apply, so a single `-w` naming a path that does not exist on this box takes
+  # every rule after it down with it -- which is what "1 of 68 loaded" looks
+  # like. Checking the watch paths needs no load and names the culprit outright.
+  badw=""
+  if [ "$src" = "rules.d" ]; then wsrc=$(cat /etc/audit/rules.d/*.rules 2>/dev/null)
+  else wsrc=$(cat /etc/audit/audit.rules 2>/dev/null); fi
+  for wp in $(printf '%s\n' "$wsrc" | sed -n 's/^[[:space:]]*-w[[:space:]]\+\([^[:space:]]\+\).*/\1/p' | sort -u); do
+    [ -e "${wp%/}" ] || badw="$badw ${wp}"
+  done
+  [ -n "$badw" ] && immnote="$immnote -- WATCH RULES NAME MISSING PATHS:$badw (auditctl stops at the first one)"
   if [ "$ondisk" -eq 0 ]; then
     row FAIL 6 "Audit rules" "NO rules on disk (rules.d and audit.rules both empty); $loaded in the kernel$immnote"
   elif [ "$loaded" -eq 0 ]; then
@@ -348,9 +359,18 @@ fix_for() {
         echo "  sudo it-clamav image-load /mnt/usb && sudo ansible-pull ..." ;;
     5)  echo "  sudo ansible-pull ...        # usg fix owns pwquality/faillock"
         echo "  sudo usg audit disa_stig     # the authoritative check" ;;
-    6)  echo "Rules on disk are not reaching the kernel."
-        echo "  sudo augenrules --load       # READ the errors it prints -- it names the bad rule"
-        echo "  sudo auditctl -s | grep enabled   # 2 = immutable, needs a reboot instead"
+    6)  echo "Rules on disk are not reaching the kernel. auditctl applies the"
+        echo "compiled ruleset top-down and STOPS at the first rule it rejects,"
+        echo "so one bad line leaves everything after it unloaded."
+        echo "  sudo auditctl -s | grep enabled   # 2 = immutable: reboot, nothing else will load"
+        echo "Find the offending line (prints it, and the rules.d file it came from):"
+        echo "  sudo augenrules --load 2>&1 | tee /tmp/augen.txt"
+        echo "  n=\$(sed -n 's/.*error in line \\([0-9]\\+\\).*/\\1/p' /tmp/augen.txt | head -1)"
+        echo "  [ -n \"\$n\" ] && sudo sed -n \"\${n}p\" /etc/audit/audit.rules"
+        echo "  [ -n \"\$n\" ] && sudo grep -Fn \"\$(sudo sed -n \"\${n}p\" /etc/audit/audit.rules)\" /etc/audit/rules.d/*.rules"
+        echo "Most common cause -- a watch on a path this box does not have:"
+        echo "  sudo sh -c \"cat /etc/audit/rules.d/*.rules\" | awk '/^[[:space:]]*-w/{print \$2}' \\"
+        echo "    | sed 's:/\$::' | sort -u | while read p; do [ -e \"\$p\" ] || echo \"MISSING: \$p\"; done"
         echo "  sudo auditctl -l | wc -l     # confirm afterwards" ;;
     7)  echo "Firmware, not the OS. Nothing here can set it."
         echo "  Reboot -> BIOS/UEFI setup -> set an admin/supervisor password."

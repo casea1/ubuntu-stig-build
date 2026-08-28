@@ -461,8 +461,26 @@
     # DISA check greps `auditctl -l` for these two lines VERBATIM -- including
     # the key `cronjobs` -- so the text below is not stylistic.
     #
+    # STAT THE PATHS FIRST. `auditctl -w` on a path that does not exist fails,
+    # and auditctl STOPS at the first bad line -- so one unguarded watch takes
+    # every rule after it down with it and the box silently audits almost
+    # nothing. /var/spool/cron ships with the `cron` package and is absent on a
+    # box that does not have it. Same guard the privileged-command block uses,
+    # and for the same reason.
+    #
     # As with 71-reboot.rules, `usg fix` has already made the running config
     # immutable, so this lands in the kernel on the next reboot, not now.
+    - name: "REMED | Which cron paths exist on this box?"
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/cron.d
+        - /var/spool/cron
+      register: _cron_paths
+      when:
+        - _audit_rulesd.stat.exists | default(false)
+        - audit_cron_rules_enabled | default(true) | bool
+
     - name: "REMED | Cron audit rules (UBTU-24-200270)"
       when:
         - _audit_rulesd.stat.exists | default(false)
@@ -475,10 +493,26 @@
         content: |
           ## Managed by usg_remediate -- do not edit by hand.
           ## Audit anything cron is given to run as root or a privileged user.
+          ## Only paths that exist are watched -- a watch on a missing path
+          ## fails and aborts the rest of the rule load.
           ## -> ausearch -k cronjobs
-          -w /etc/cron.d/ -p wa -k cronjobs
-          -w /var/spool/cron/ -p wa -k cronjobs
+          {% for r in _cron_paths.results | default([]) %}
+          {% if r.stat.exists | default(false) %}
+          -w {{ r.item }}/ -p wa -k cronjobs
+          {% endif %}
+          {% endfor %}
       notify: Load audit rules
+
+    - name: "REMED | WARN -- a cron path is missing, so its audit rule is not written"
+      ansible.builtin.debug:
+        msg: >-
+          {{ _cron_paths.results | default([]) | rejectattr('stat.exists')
+             | map(attribute='item') | list }} do(es) not exist, so UBTU-24-200270
+          cannot be fully satisfied on this box. The DISA check greps `auditctl -l`
+          for both watches. Install the `cron` package if this box is meant to run
+          cron jobs; if it genuinely has no cron, adjudicate the rule instead.
+      when:
+        - _cron_paths.results | default([]) | rejectattr('stat.exists') | list | length > 0
 
 # ---------------------------------------------------------------------------
 # 5b) DID THE RULES ACTUALLY REACH THE KERNEL?
