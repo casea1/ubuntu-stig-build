@@ -1501,3 +1501,33 @@ managed_dirs:
   - "{{ it_dir }}/clamavsigs"   # drop ClamAV signature archives here, then `it-clamav install`
   - "{{ ia_dir }}/goclassified" # pre-classification gate records (it-goclassified)
   - "{{ ia_dir }}/vulnscans"    # nmap + AV vulnerability scan reports (it-vulnscan, emi)
+
+# =============================================================================
+# EVIDENCE RETENTION  (ia_retention role -- runs last, after the scan + checklist)
+# =============================================================================
+# Every pull writes a new OpenSCAP scan set, a new .cklb and a new USG report.
+# Nothing removed the old ones, so a box pulled daily grew a scan set per day
+# forever -- and the tree exists so an assessor can find the CURRENT evidence,
+# which a hundred near-identical files works against.
+#
+# KEEP is per file KIND, not per directory: a scan is a SET (arf + report +
+# stig-viewer XML) written together, so "newest 3 files" in a directory holding
+# three kinds would keep one complete set and two orphans.
+#
+# 3, not 1, on purpose: a pull that produces a broken or partial scan must not
+# be able to destroy the last good evidence in the same run. Set
+# ia_retention_keep: 1 if you genuinely want only the newest.
+ia_retention_enabled: true
+ia_retention_keep: 3
+
+# Only the PULL-CREATED directories. The scheduled and ad-hoc oscap dirs prune
+# themselves via `it-oscap --keep` (scap_schedule_keep, default 12) and are
+# deliberately left to it -- two mechanisms pruning one directory is how you end
+# up unable to say why a file is missing. Lower scap_schedule_keep to thin those.
+ia_retention_targets:
+  - dir: "{{ scap_build_dir }}"                 # per-pull OpenSCAP scan sets
+    patterns: ["stig-arf-*", "stig-report-*", "stig-viewer-*", "stig-results-*"]
+  - dir: "{{ scap_stig_dir }}/checklists"       # per-pull .cklb from it-ckl
+    patterns: ["*.cklb", "*.ckl"]
+  - dir: "{{ usg_report_dir }}"                 # `usg audit` report + results
+    patterns: ["*.html", "*.xml"]

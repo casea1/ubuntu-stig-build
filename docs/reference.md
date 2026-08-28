@@ -178,6 +178,8 @@ The ones worth knowing:
 | `audit_cron_rules_enabled` | true | `72-cron.rules` — watch `/etc/cron.d` and the cron spool, key `cronjobs` (UBTU-24-200270) |
 | `audit_reboot_rules_syscalls` | `reboot`, `kexec_load` | Names are resolved per-arch before the rule is written — i386 says `sys_kexec_load`, x86_64 says `kexec_load`, and a wrong name aborts the **whole** rule load |
 | `usg_sudo_logfile_enabled` | true | Create `/var/log/sudo.log` + `Defaults logfile` so UBTU-24-500010's watch can load |
+| `ia_retention_keep` | 3 | How many of each pull-created evidence file to keep (scan sets, `.cklb`, USG reports). Per file **kind**, so a scan set stays whole. `1` keeps only the newest |
+| `ia_retention_targets` | see `group_vars` | Which directories and globs the prune covers. Scheduled/ad-hoc oscap dirs are excluded — they self-prune via `scap_schedule_keep` |
 | `grub_password_pbkdf2` | `CHANGEME` | The role skips until a real hash is vaulted |
 | `tpm_luks_enabled` | true except `emi-unclass` | Binds LUKS to PCR 7 |
 | `offline_repo_enabled` | false | Switch apt to `/srv/repo`. Set by `it-offline-repo enable` |

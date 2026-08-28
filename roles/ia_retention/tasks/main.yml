@@ -1,0 +1,59 @@
+---
+# =============================================================================
+# ia_retention -- keep the evidence tree from growing without bound.
+#
+# Every pull writes a fresh OpenSCAP scan set, a fresh .cklb checklist and a
+# fresh USG report. Nothing deleted the old ones, so a box pulled daily
+# accumulated a scan set per day forever -- and the point of the tree is that
+# an assessor can find the CURRENT evidence, which a hundred near-identical
+# files actively works against.
+#
+# Runs LAST, after scap_scan and powerstrux have written this pull's output,
+# so the run that just finished is always among the files kept.
+#
+# Scope is deliberately the PULL-CREATED directories. The scheduled and ad-hoc
+# oscap dirs prune themselves via `it-oscap --keep` (scap_schedule_keep,
+# default 12) and are left to it -- two mechanisms pruning one directory is
+# how you end up unable to say why a file is missing.
+#
+# Pruning is per PATTERN, not per directory: a scan is a SET (arf + report +
+# stig-viewer XML) written together, and keeping "the newest 3 files" in a
+# directory holding three kinds would keep one complete set and two orphans.
+# =============================================================================
+
+- name: "RETAIN | Prune superseded evidence (keeping {{ ia_retention_keep }})"
+  when:
+    - ia_retention_enabled | default(true) | bool
+    - (ia_retention_keep | int) > 0
+  block:
+    - name: "RETAIN | Prune {{ item.dir }}"
+      ansible.builtin.shell:
+        cmd: |
+          d={{ item.dir | quote }}
+          [ -d "$d" ] || exit 0
+          keep={{ ia_retention_keep | int }}
+          for pat in {{ item.patterns | map('quote') | join(' ') }}; do
+            # Unquoted on purpose -- the glob has to expand. -t sorts newest
+            # first, so tail -n +keep+1 is everything past the ones we keep.
+            ls -1td $d/$pat 2>/dev/null | tail -n +$((keep + 1)) | while read -r old; do
+              [ -f "$old" ] || continue
+              rm -f -- "$old" && echo "$old"
+            done
+          done
+          exit 0
+      loop: "{{ ia_retention_targets }}"
+      loop_control:
+        label: "{{ item.dir }}"
+      register: _retain
+      changed_when: (_retain.stdout | default('') | trim) | length > 0
+
+    - name: "RETAIN | What was removed"
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.item.dir }}: removed {{ (item.stdout_lines | default([])) | length }}
+          superseded file(s){{ ':' if (item.stdout_lines | default([])) | length > 0 else '' }}
+          {{ (item.stdout_lines | default([])) | map('basename') | list | join(', ') }}
+      loop: "{{ _retain.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.dir }}"
+      when: (item.stdout_lines | default([])) | length > 0

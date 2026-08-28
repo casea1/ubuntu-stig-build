@@ -266,6 +266,11 @@
     - role: dta_log                 # data-transfer staging folders + transfer record/scan tool
       when: dta_log_enabled | default(false) | bool
 
+    # Evidence retention. Must run AFTER scap_scan and powerstrux, so this
+    # pull's own scan and checklist are among the files kept.
+    - role: ia_retention            # prune superseded scan sets / checklists / USG reports
+      when: ia_retention_enabled | default(true) | bool
+
     # -------------------------------------------------------------------------
     # OFFLINE APT  -- runs LAST, deliberately. Imaging is done ONLINE: every
     # role above installs from Ubuntu's archive and the vendor repos, which is

@@ -124,8 +124,13 @@ if active auditd; then
   # audit.rules directly -- so an EMPTY rules.d is normal here, and counting only
   # rules.d reports "0 on disk" on a box with a full ruleset. Count whichever
   # actually holds rules; prefer rules.d when it has any.
-  rd=$(cat /etc/audit/rules.d/*.rules 2>/dev/null | grep -cvE '^\s*(#|$)' || true); rd=${rd:-0}
-  ar=$(grep -cvE '^\s*(#|$)' /etc/audit/audit.rules 2>/dev/null || true); ar=${ar:-0}
+  # Count RULES, not every non-comment line. A rules file also carries control
+  # directives -- -D, -b, -f, -e, --backlog_wait_time, --loginuid-immutable --
+  # which configure auditd and are NOT rules, so they never appear in
+  # `auditctl -l`. Counting them made a fully-loaded box read "65 of 70" and
+  # look like it had 5 rules stuck on disk. Only -a/-A/-w are rules.
+  rd=$(cat /etc/audit/rules.d/*.rules 2>/dev/null | grep -cE '^\s*-[aAw]\b' || true); rd=${rd:-0}
+  ar=$(grep -cE '^\s*-[aAw]\b' /etc/audit/audit.rules 2>/dev/null || true); ar=${ar:-0}
   if [ "$rd" -gt 0 ]; then ondisk=$rd; src="rules.d"; else ondisk=$ar; src="audit.rules"; fi
   imm=$(auditctl -s 2>/dev/null | awk '/^enabled/{print $2}')
   immnote=""
