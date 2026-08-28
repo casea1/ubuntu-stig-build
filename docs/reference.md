@@ -43,7 +43,16 @@ Each of these caused a real outage or a wrong conclusion.
 
 **11. Open WebUI RAG settings are `PersistentConfig`.** Env seeds a *fresh* database only. On an existing box they must be changed in the UI.
 
-**12. A passing benchmark is not a compliant box.** `usg fix` leaves `PermitRootLogin prohibit-password`, which satisfies the STIG rule (it only forbids a root *password* login) while still allowing root in **by SSH key** — which the org checklist forbids outright. Found on ASP-2 with a 96.41 % scan. Check what the rule actually asserts, not just its colour.
+**12. SSG's two cron audit OVALs disagree about a trailing slash.** One STIG rule (UBTU-24-200270), two automated checks, and they want the watch written differently — verified against `ssg-ubuntu2404-ds.xml` 0.1.81:
+
+```
+/etc/cron.d/      contains: ^\s*-w\s+/etc/cron.d/\s+-p\s+wa(\s|$)+     <- requires the slash
+/var/spool/cron   contains: ^\s*-w\s+/var/spool/cron\s+-p\s+wa(\s|$)+  <- requires NO slash
+```
+
+Writing both with a trailing slash — which is exactly what DISA's fix text tells you to do — passes `audit_rules_etc_cron_d` and fails `audit_rules_var_spool_cron`. `auditctl` normalises the slash away, so `auditctl -l` prints the same thing either way and DISA's own check text (which greps the **kernel**) is satisfied by both forms; only the file-reading OVAL cares. `audit_cron_watches` in `group_vars` carries the exact text per path. **Do not tidy them into a consistent form.**
+
+**13. A passing benchmark is not a compliant box.** `usg fix` leaves `PermitRootLogin prohibit-password`, which satisfies the STIG rule (it only forbids a root *password* login) while still allowing root in **by SSH key** — which the org checklist forbids outright. Found on ASP-2 with a 96.41 % scan. Check what the rule actually asserts, not just its colour.
 
 **13. Audit rules on disk are not audit rules in the kernel, and they may not be in `rules.d`.** Two separate traps in one place. First, `usg fix` writes **`/etc/audit/audit.rules` directly**, not `rules.d/*.rules` — so an empty `rules.d` is normal on a USG box, and counting only `rules.d` reports "no rules" on a box with a full ruleset. Second, whatever is on disk still has to reach the kernel: the STIG sets auditd `-e 2` (immutable), after which new rules are refused until a reboot. Either way **every file-based OVAL still passes**, because those check files. ASP-2 ran with **1 rule in the kernel** against 8.5 KB in `audit.rules` and the 96.41 % scan said nothing. `it-checklist` item 6 counts whichever source holds rules and compares it against the kernel. Diagnose with:
 

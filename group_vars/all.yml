@@ -541,6 +541,17 @@ audit_cron_rules_enabled: true
 # first. Set false to leave the rule unsatisfied on a box with no cron.
 audit_cron_spool_create: true
 
+# The exact watch text per path. `path` is what gets stat'd; `write_as` is what
+# lands in the rule file. They differ because SSG's two OVALs for this single
+# STIG rule disagree about the trailing slash (verified against
+# ssg-ubuntu2404-ds.xml 0.1.81): /etc/cron.d/ requires it, /var/spool/cron
+# requires its absence. auditctl normalises the slash away, so the KERNEL and
+# DISA's own `auditctl -l` check are satisfied either way -- only the
+# file-reading OVAL cares. Do not "tidy" these into a consistent form.
+audit_cron_watches:
+  - { path: /etc/cron.d,     write_as: "/etc/cron.d/" }
+  - { path: /var/spool/cron, write_as: "/var/spool/cron" }
+
 # =============================================================================
 # STIG GAP-REMEDIATION TUNABLES
 # =============================================================================
