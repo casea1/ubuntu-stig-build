@@ -73,6 +73,34 @@
     state: directory
     mode: "0750"
 
+# RE-APPLY /var/log MODES IMMEDIATELY BEFORE THE SCAN.
+#
+# usg_remediate sweeps these, and then THIS ROLE runs apt (the SSG content
+# package, above) -- which recreates /var/log/dpkg.log and /var/log/apt/*.log
+# at 0644 after that sweep and before the scan below reads them. That is why
+# file_permissions_var_log_stig (UBTU-24-700010) kept failing on a box whose
+# remediation had run correctly minutes earlier.
+#
+# Start the unit usg_remediate installs rather than repeating its find here:
+# one definition of "what the STIG wants", in one place. If the unit is absent
+# (usg_remediate skipped) this is a no-op and the rule reports honestly.
+- name: Re-apply /var/log permissions before scanning (UBTU-24-700010)
+  ansible.builtin.systemd:
+    name: stig-log-perms.service
+    state: started
+  register: _log_perms_pre_scan
+  failed_when: false
+  changed_when: false
+
+- name: "Note when the /var/log sweep could not run"
+  ansible.builtin.debug:
+    msg: >-
+      stig-log-perms.service is not present, so /var/log modes were NOT
+      re-applied before this scan. Expect file_permissions_var_log_stig to fail
+      on any log apt recreated during this run. Installed by usg_remediate --
+      check whether that role was skipped.
+  when: _log_perms_pre_scan is failed or (_log_perms_pre_scan.status is not defined)
+
 - name: Run OpenSCAP STIG evaluation
   # oscap returns 0 = all pass, 2 = some rules failed. Both mean "scan ran OK";
   # only treat other codes as a real error.
