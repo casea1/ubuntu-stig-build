@@ -135,6 +135,34 @@ Checklists from dev-13, dev-ai1 and dev-ai2 (194 rules each). Five distinct rule
 
 Expected after the next pull and reboot: two Open on the AI nodes and dev-13 (GRUB until `it-grub set`, USB where the deviation applies), both carrying their justification and evidence rather than "NO SITE ADJUDICATION RECORDED".
 
+### The audit ruleset was not reaching the kernel at all (2026-08-28)
+
+Item 6 of `it-checklist` reported `only 1 of 68 (rules.d) reached the kernel` on dev-13, with `auditctl -s` showing `enabled 1` — so not the immutable case, and a reboot did not help. `augenrules --load` named it:
+
+```
+Syscall name unknown: kexec_load
+There was an error in line 6 of /etc/audit/audit.rules
+```
+
+Line 6 was this repo's own `71-reboot.rules`:
+
+```
+-a always,exit -F arch=b32 -S reboot -S kexec_load -k reboot
+```
+
+**Syscall names are per-architecture.** In the i386 table, entry 283 is `sys_kexec_load`; only the x86_64 table calls it `kexec_load`. And **auditctl applies the compiled ruleset top-down and stops at the first rule it cannot apply** — so one wrong name on line 6 left the other 67 rules unloaded. Every file-based OVAL still passed, because the audit OVALs read files, not the kernel. Nothing in any scan showed it.
+
+A second instance of the same class was queued behind it: USG watches `/var/log/sudo.log` (UBTU-24-500010) and nothing in the build ever created that file, so a watch on a missing path would have aborted the load at the next line.
+
+| Fix | Where |
+| --- | --- |
+| Resolve syscall names against the box's own tables before writing the rule; skip an architecture with nothing resolvable | `usg_remediate`, `audit_reboot_rules_syscalls` |
+| Create `/var/log/sudo.log` and point sudo at it (`Defaults logfile`, visudo-validated) | `usg_sudo_logfile_enabled` |
+| Report the failing line and the `rules.d` file it came from whenever `augenrules --load` fails | `usg_remediate` handlers |
+| Check both faults read-only and name them in the FAIL line | `it-checklist` item 6 |
+
+> **`ausyscall <arch> <name>` is not a valid check.** It fuzzy-matches and exits 0 for `b32 kexec_load`, the exact name auditctl rejects. Test for an exact match in `ausyscall <arch> --dump`.
+
 **The pattern worth keeping:** three of the five had a correct fix in the repo already. Two failed on *ordering* (a sweep overtaken by later tasks; audit rules staged but not yet in the kernel) and one on *scope* (an adjudication gated on the wrong variable). None of them showed up as an Ansible failure — the same lesson as ASP-2. Read the checklist, not the playbook output.
 
 ### NTP / time source

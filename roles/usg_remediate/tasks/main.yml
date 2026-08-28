@@ -436,10 +436,53 @@
           skipped. If that is not deliberate, install auditd and re-run.
       when: not (_auditctl.stat.exists | default(false))
 
+    # RESOLVE THE SYSCALL NAMES AGAINST THIS BOX'S OWN TABLES FIRST.
+    #
+    # This is what took the whole fleet's audit ruleset down. The b32 line used
+    # to hardcode `-S kexec_load`, but syscall names are per-architecture: in
+    # the i386 table entry 283 is called `sys_kexec_load`, and only the x86_64
+    # table calls it `kexec_load`. auditctl rejected the b32 line with
+    #   Syscall name unknown: kexec_load
+    #   There was an error in line 6 of /etc/audit/audit.rules
+    # and, because auditctl STOPS at the first rule it cannot apply, every rule
+    # after line 6 never reached the kernel -- 68 rules on disk, 1 loaded, on
+    # every box. The file-based OVALs all still passed, so no scan caught it.
+    #
+    # `ausyscall <arch> <name>` is NOT a usable oracle: it fuzzy-matches and
+    # exits 0 for `b32 kexec_load` even though auditctl rejects that name. An
+    # EXACT match against `ausyscall <arch> --dump` does predict auditctl, so
+    # test that, trying the bare name then the `sys_`-prefixed variant, and emit
+    # only what this box can actually load. An arch with nothing resolvable
+    # (b32 on arm64, say) is skipped rather than written and rejected.
+    - name: "REMED | Resolve reboot-audit syscall names per architecture"
+      ansible.builtin.shell:
+        cmd: |
+          for a in b64 b32; do
+            names=""
+            for s in {{ audit_reboot_rules_syscalls | default(['reboot', 'kexec_load']) | join(' ') }}; do
+              for cand in "$s" "sys_$s"; do
+                if ausyscall "$a" --dump 2>/dev/null \
+                     | awk -v n="$cand" '$2==n{f=1} END{exit !f}'; then
+                  names="$names -S $cand"; break
+                fi
+              done
+            done
+            [ -n "$names" ] && echo "$a$names"
+          done
+          exit 0
+      register: _reboot_syscalls
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when:
+        - _audit_rulesd.stat.exists | default(false)
+        - audit_reboot_rules_enabled | default(true) | bool
+
     - name: "REMED | Install the reboot/shutdown audit rule (key={{ audit_reboot_rules_key | default('reboot') }})"
       when:
         - _audit_rulesd.stat.exists | default(false)
         - audit_reboot_rules_enabled | default(true) | bool
+        - (_reboot_syscalls.stdout_lines | default([])) | length > 0
       ansible.builtin.copy:
         dest: /etc/audit/rules.d/71-reboot.rules
         owner: root
@@ -449,11 +492,47 @@
           ## Managed by usg_remediate -- do not edit by hand.
           ## Audit system reboot / shutdown / power-off / kexec. reboot(2) is the
           ## kernel entry point for reboot, poweroff and halt; kexec_load(2) is the
-          ## kexec reboot path. Keyed '{{ audit_reboot_rules_key | default('reboot') }}'
+          ## kexec reboot path. Syscall NAMES differ per arch (i386 calls it
+          ## sys_kexec_load), so these were resolved against this box's own
+          ## tables -- do not hand-edit one in without checking `ausyscall`.
           ## -> find them with: ausearch -k {{ audit_reboot_rules_key | default('reboot') }}
-          -a always,exit -F arch=b64 -S reboot -S kexec_load -k {{ audit_reboot_rules_key | default('reboot') }}
-          -a always,exit -F arch=b32 -S reboot -S kexec_load -k {{ audit_reboot_rules_key | default('reboot') }}
+          {% for line in _reboot_syscalls.stdout_lines %}
+          -a always,exit -F arch={{ line.split() | first }} {{ line.split()[1:] | join(' ') }} -k {{ audit_reboot_rules_key | default('reboot') }}
+          {% endfor %}
       notify: Load audit rules
+
+    # UBTU-24-500010 puts a watch on /var/log/sudo.log, and USG writes it. A
+    # watch on a path that does not exist is rejected exactly like an unknown
+    # syscall -- and aborts the load in exactly the same way. Nothing in this
+    # build ever created the file, so once the syscall fault above is fixed
+    # this one takes over as the next line the load dies on.
+    #
+    # Creating an empty file would satisfy auditctl and leave the control
+    # hollow, so point sudo at it too. `validate` is not optional here: a
+    # malformed sudoers drop-in costs everyone sudo.
+    - name: "REMED | sudo logs to /var/log/sudo.log (UBTU-24-500010)"
+      when: usg_sudo_logfile_enabled | default(true) | bool
+      block:
+        - name: "REMED | sudoers drop-in for the sudo logfile"
+          ansible.builtin.copy:
+            dest: /etc/sudoers.d/99-stig-logfile
+            owner: root
+            group: root
+            mode: "0440"
+            content: |
+              ## Managed by usg_remediate -- do not edit by hand.
+              Defaults logfile="/var/log/sudo.log"
+            validate: "visudo -cf %s"
+
+        - name: "REMED | Create /var/log/sudo.log so its audit watch can load"
+          ansible.builtin.file:
+            path: /var/log/sudo.log
+            state: touch
+            owner: root
+            group: root
+            mode: "0600"
+            modification_time: preserve
+            access_time: preserve
 
     # UBTU-24-200270 / V-274870. USG's ruleset ships no watch on the cron
     # spool or /etc/cron.d, so the rule failed on every box in the fleet

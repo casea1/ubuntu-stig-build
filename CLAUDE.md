@@ -117,10 +117,27 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   - `pgvector` memory limit 2G on the box, 4G in the repo.
   - `/opt/stacks/ai` and `/opt/stacks/ai-system1` exist with no compose file —
     the stale pre-split dirs, confirmed present.
-- **ASP-2's audit-rule gap is NOT fleet-wide.** dev-ai1 loads 60 of 68 rules
-  from `rules.d` and passes item 6. ASP-2 has 101 on disk and 1 in the kernel
-  with auditd NOT immutable, so `augenrules --load` is failing on that box
-  specifically. Get the error from `sudo augenrules --load` there.
+- **The audit-rule gap WAS fleet-wide, and the cause is found (2026-08-28).**
+  This was recorded here as ASP-2-specific on the strength of dev-ai1 loading
+  60 of 68 rules; that reading was wrong. dev-13 showed the same 1-of-68 with
+  auditd NOT immutable, and `augenrules --load` named it:
+  `Syscall name unknown: kexec_load` / `error in line 6`. Line 6 was this
+  repo's own `71-reboot.rules` b32 line. **Syscall names are per-architecture**
+  -- the i386 table calls entry 283 `sys_kexec_load`, only x86_64 calls it
+  `kexec_load` -- and **auditctl stops at the first rule it cannot apply**, so
+  one bad name left the other 67 rules unloaded while every file-based OVAL
+  still passed. A box showing more than 1 loaded was running rules from an
+  earlier boot under `-e 2`, not succeeding.
+  Fixed: names are now resolved against the box's own tables before the rule is
+  written. Two things to know if you touch this:
+  1. `ausyscall <arch> <name>` is NOT a valid oracle -- it fuzzy-matches and
+     exits 0 for `b32 kexec_load`, which auditctl rejects. Test for an EXACT
+     match in `ausyscall <arch> --dump`.
+  2. The same abort happens for a watch on a path that does not exist. USG
+     watches `/var/log/sudo.log` (UBTU-24-500010) and nothing created it, so it
+     was the next line the load would have died on. `usg_remediate` now creates
+     it and points sudo at it.
+  `it-checklist` item 6 checks for both faults read-only and names them.
 - **Offline apt is half-solved.** The main archive is covered: `offline_repo` +
   `it-offline-repo` carry a repo tree in on media and point apt at
   `/srv/repo` over `file://` (standalone/EMI only -- the dev/ai fleet uses the

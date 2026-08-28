@@ -26,6 +26,32 @@
 # legitimately refuses a live load until reboot, and that must not fail a build.
 # But a SILENT refusal is how ASP-2 ran with 1 rule in the kernel against 101 on
 # disk while every file-based OVAL passed. Say what happened.
+# rc alone does not say WHICH rule broke, and hunting for it by hand is how
+# the kexec_load fault survived on the fleet for weeks. auditctl reports the
+# line number of the rule it choked on; print that line and the rules.d file it
+# came from, so the next one is named the moment it appears.
+- name: Locate the audit rule that failed to load
+  ansible.builtin.shell:
+    cmd: |
+      n=$(printf '%s\n' "{{ (_augenrules_load.stderr | default('') ~ ' ' ~ (_augenrules_load.stdout | default(''))) | regex_replace('[\"$`]', '') }}" \
+          | sed -n 's/.*error in line \([0-9][0-9]*\).*/\1/p' | head -1)
+      [ -n "$n" ] || exit 0
+      rule=$(sed -n "${n}p" /etc/audit/audit.rules)
+      echo "line $n of /etc/audit/audit.rules: $rule"
+      grep -Fn -e "$rule" /etc/audit/rules.d/*.rules 2>/dev/null || echo "(not found in rules.d -- usg fix writes audit.rules directly)"
+      exit 0
+  register: _augenrules_culprit
+  changed_when: false
+  failed_when: false
+  when: _augenrules_load.rc | default(0) != 0
+
+- name: Report the audit rule that failed to load
+  ansible.builtin.debug:
+    msg: "{{ _augenrules_culprit.stdout_lines | default([]) }}"
+  when:
+    - _augenrules_load.rc | default(0) != 0
+    - (_augenrules_culprit.stdout | default('') | trim) | length > 0
+
 - name: Report the audit-rule load
   ansible.builtin.debug:
     msg: >-

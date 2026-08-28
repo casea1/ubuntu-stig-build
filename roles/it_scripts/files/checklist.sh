@@ -141,6 +141,31 @@ if active auditd; then
     [ -e "${wp%/}" ] || badw="$badw ${wp}"
   done
   [ -n "$badw" ] && immnote="$immnote -- WATCH RULES NAME MISSING PATHS:$badw (auditctl stops at the first one)"
+  # Same class of fault, other half: a syscall NAME that does not exist in that
+  # architecture's table. Names are per-arch -- i386 calls entry 283
+  # sys_kexec_load where x86_64 calls it kexec_load -- and auditctl rejects the
+  # wrong one. `ausyscall <arch> <name>` fuzzy-matches and exits 0 on a name
+  # auditctl refuses, so it is no use here; an EXACT match against `--dump` is
+  # what auditctl actually does.
+  bads=""
+  if have ausyscall; then
+    pairs=$(printf '%s\n' "$wsrc" | awk '
+      /-F[ \t]*arch=/ {
+        a=""
+        for (i = 1; i <= NF; i++) {
+          if ($i ~ /^arch=/) { split($i, p, "="); a = p[2] }
+          if ($i == "-S" && a != "") print a, $(i+1)
+        }
+      }' | sort -u)
+    while read -r arch call; do
+      [ -n "$arch" ] && [ -n "$call" ] || continue
+      ausyscall "$arch" --dump 2>/dev/null | awk -v n="$call" '$2==n{f=1} END{exit !f}' \
+        || bads="$bads ${arch}:${call}"
+    done <<EOF
+$pairs
+EOF
+  fi
+  [ -n "$bads" ] && immnote="$immnote -- UNKNOWN SYSCALL NAMES (arch:name):$bads"
   if [ "$ondisk" -eq 0 ]; then
     row FAIL 6 "Audit rules" "NO rules on disk (rules.d and audit.rules both empty); $loaded in the kernel$immnote"
   elif [ "$loaded" -eq 0 ]; then
@@ -367,8 +392,10 @@ fix_for() {
         echo "  sudo augenrules --load 2>&1 | tee /tmp/augen.txt"
         echo "  n=\$(sed -n 's/.*error in line \\([0-9]\\+\\).*/\\1/p' /tmp/augen.txt | head -1)"
         echo "  [ -n \"\$n\" ] && sudo sed -n \"\${n}p\" /etc/audit/audit.rules"
-        echo "  [ -n \"\$n\" ] && sudo grep -Fn \"\$(sudo sed -n \"\${n}p\" /etc/audit/audit.rules)\" /etc/audit/rules.d/*.rules"
-        echo "Most common cause -- a watch on a path this box does not have:"
+        echo "  [ -n \"\$n\" ] && sudo grep -Fn -e \"\$(sudo sed -n \"\${n}p\" /etc/audit/audit.rules)\" /etc/audit/rules.d/*.rules"
+        echo "Cause 2 -- a syscall name that is wrong for that architecture:"
+        echo "  ausyscall b32 --dump | grep kexec   # i386: sys_kexec_load / x86_64: kexec_load"
+        echo "Cause 1 -- a watch on a path this box does not have:"
         echo "  sudo sh -c \"cat /etc/audit/rules.d/*.rules\" | awk '/^[[:space:]]*-w/{print \$2}' \\"
         echo "    | sed 's:/\$::' | sort -u | while read p; do [ -e \"\$p\" ] || echo \"MISSING: \$p\"; done"
         echo "  sudo auditctl -l | wc -l     # confirm afterwards" ;;
