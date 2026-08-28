@@ -353,6 +353,8 @@ Which to quote: **`usg audit` is the accreditation artifact.** It is the same co
 
 To make them agree, pin `ssg_content_version` to the version `usg` ships. That trades the early warning for a single number, and is a deliberate choice rather than a default.
 
+**The tailoring file only covers rules USG's own content carries.** `usg generate-tailoring` emits a `<select>` line per rule in *its* SSG version, so a rule that exists only in the newer release has nothing to de-select and is evaluated by default. That is not theoretical: SSG 0.1.81 added `smartcard_pam_enabled`, `service_sssd_enabled` and `sssd_enable_user_cert` as new rules, and the 2026-08-27 scan reported all three as findings the accredited baseline had already de-scoped. `usg_harden` now adds an explicit de-select for any rule in `usg_disable_smartcard_rules` that the generated file does not mention; an idref the evaluated datastream lacks is ignored, so it is safe against older content too.
+
 **They must also be tailored the same way or they disagree for a second, avoidable reason.** `usg_harden` de-selects the smart-card and SSSD rules — this fleet is password-login only with no CAC reader — and a raw `oscap` run ignores that, reporting `smartcard_pam_enabled`, `service_sssd_enabled` and `sssd_enable_user_cert` as findings the accredited baseline has formally de-scoped. `it-oscap` now picks up the tailoring file automatically.
 
 
