@@ -94,6 +94,11 @@ Gating is computed in `group_vars` — `is_ai`, `is_emi`, `emi_classified`, `is_
 
 All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into `/usr/local/sbin`.
 
+> **`it-help` lists all of this, on the box.** It discovers the commands from
+> what is actually installed, so it is right for that machine's profile without
+> anyone maintaining a list. `it-help <command>` prints one command's full
+> options; `it-help --all` prints every one.
+
 ### Every profile
 
 | Command | Does |
