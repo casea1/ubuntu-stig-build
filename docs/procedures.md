@@ -310,6 +310,20 @@ OpenSSL failed to create a new SSL_CTX: error:0A0000A1:SSL routines::library has
 
 Same dead end as ClamAV, for the same reason: nmap links the host OpenSSL, and Ubuntu's FIPS OpenSSL takes FIPS from the kernel flag, so no config can turn it off for one process.
 
+**Offline, this scan is only half a scan, and it says so.** Everything in `--script vuln` probes the target directly and works air-gapped — except `vulners`, which posts the detected service versions to vulners.com. With no route out it returns nothing, in silence. `it-vulnscan` detects that (no `vulners:` section against open ports) and reports the CVE-listing half as **not run** rather than letting it read as "no CVEs found". Judge patch state from the box instead:
+
+```bash
+sudo pro security-status     # local apt data, works offline
+apt list --upgradable
+```
+
+**`vulners` findings are version-string matches, not confirmed vulnerabilities.** It reads the banner — `OpenSSH 9.6p1` — and lists every CVE ever filed against that upstream version. Ubuntu backports security fixes *without bumping the version*, so a fully patched sshd collects the lot. ASP-2 reported CVE-2024-6387 (regreSSHion) while running `9.6p1-3ubuntu13.18`, many revisions past the `13.3` that fixed it. The summary separates the two:
+
+- **CONFIRMED VULNERABLE** — a script probed the service and said so. Real until disproved.
+- **LISTED by vulners** — version-matched. Confirm each before filing: `sudo pro fix --dry-run CVE-2024-6387` (authoritative, needs internet).
+
+Note the exit code counts both, so a box with only vulners noise still exits non-zero.
+
 **If the build fails with a wall of `out of memory`** — every package installing fine and then one postinst dying — that is not the box running out of RAM. Seen on ASP-2: `ca-certificates`' postinst failed once per certificate (146 of them) while `nmap` itself installed cleanly.
 
 The image no longer installs `ca-certificates`, which sidesteps it — nmap's TLS scripts read what a target presents rather than validating it against a CA bundle, so the package bought nothing here.
