@@ -289,6 +289,28 @@ A scheduled scan already runs weekly into `/opt/ia/oscap/scheduled/`:
 systemctl list-timers oscap-scan.timer
 ```
 
+## 3.2b Scan files brought on from removable media
+
+After copying anything onto a box — before you use it, and before it moves anywhere else:
+
+```bash
+sudo it-clamav scan /opt/dta/incoming
+sudo it-clamav scan /home/austin_case/Downloads/batch.zip /mnt/usb
+```
+
+It proves the engine detects the EICAR test file **first** and refuses to scan if it does not, because on a FIPS host ClamAV loads every signature and then scans zero bytes, reporting everything clean (trap 4). A CLEAN verdict from an unverified engine is worse than no scan.
+
+| Result | Exit | Meaning |
+|---|---|---|
+| CLEAN | 0 | 0 infected, engine verified |
+| INFECTED | 1 | Do not move the data. Isolate the media and report it. |
+| PARTIAL | 2 | 0 infected, but files could not be read — they were **not** scanned. Re-run as root or fix permissions. |
+| ENGINE-FAULT | 2 | No scan summary produced. Treat as not scanned; run `sudo it-clamav test`. |
+
+Every run appends to `/var/log/clamav-scan.log` (timestamp, who, paths, verdict).
+
+**For a transfer that needs a signed record** — who moved what, when, with per-file hashes — use `dta-log` instead. It scans *and* writes the transfer record in one step. `it-clamav scan` is the quick check; `dta-log` is the evidence.
+
 ## 3.3 Run a vulnerability scan (EMI)
 
 ```bash

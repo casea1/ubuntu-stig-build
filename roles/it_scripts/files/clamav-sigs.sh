@@ -9,6 +9,9 @@
 #   it-clamav check              ...the same thing
 #   it-clamav list               archives waiting in /opt/it/clamavsigs
 #   it-clamav install [ARCHIVE]  install the newest archive (or the one named)
+#   it-clamav scan PATH...       scan a file or folder ON DEMAND (proves the
+#                                engine first, then scans; use after bringing
+#                                files on from removable media)
 #   it-clamav test               does the engine actually DETECT? (EICAR)
 #   it-clamav image-save <dir>   AIR-GAP: save the scanner image to a USB
 #   it-clamav image-load <dir>   AIR-GAP: load it on the fielded box
@@ -744,8 +747,112 @@ cmd_rollback() {
   say ""
 }
 
+# ---- on-demand scan ---------------------------------------------------------
+# Why this exists: `dta-log` scans a transfer as part of RECORDING it, but only
+# on profiles with a dta group and only inside that workflow. The weekly job
+# scans the whole box. Neither covers "I just copied a folder on, is it clean?"
+#
+# PROVE THE ENGINE FIRST, every time. On a FIPS host ClamAV loads every
+# signature and then scans zero bytes, reporting every file OK -- so a CLEAN
+# verdict from an unverified engine is worse than no scan at all. If the canary
+# is not detected this refuses to scan rather than hand back a false CLEAN.
+SCAN_LOG=/var/log/clamav-scan.log
+
+cmd_scan() {
+  [ "$#" -gt 0 ] || die "scan needs at least one file or directory"
+  local p
+  for p in "$@"; do
+    [ -e "$p" ] || die "no such file or directory: $p"
+  done
+
+  command -v clamscan >/dev/null 2>&1 || { bad "clamav is not installed."; exit 2; }
+
+  if [ "$DO_TEST" -eq 1 ]; then
+    head2 "Proving the engine detects before trusting a verdict"
+    if engine_selftest; then
+      ok "$SELFTEST_ENGINE detects the EICAR test file"
+    else
+      bad "$SELFTEST_ENGINE did NOT detect the EICAR test file -- REFUSING to scan."
+      say "A CLEAN result from this engine would be meaningless. Fix it first:"
+      say "  sudo it-clamav test        # the same check, with detail"
+      say "  sudo it-clamav check       # signature age / daemon state"
+      exit 2
+    fi
+  else
+    engine_selftest >/dev/null 2>&1 || true
+    warn "--no-test given: the engine was NOT proved. A CLEAN verdict here means little."
+  fi
+
+  head2 "Scanning"
+  for p in "$@"; do say "  $p"; done
+
+  # Same engine the selftest just used, so the verdict comes from the engine we
+  # proved. clamdscan recurses into directories on its own; clamscan needs -r.
+  local out rc
+  if [ -r "$CTR_CONF" ] && ctr_alive; then
+    out=$(clamdscan -c "$CTR_CONF" --fdpass "$@" 2>&1); rc=$?
+  elif clamdscan --ping=1 >/dev/null 2>&1; then
+    out=$(clamdscan --fdpass "$@" 2>&1); rc=$?
+  else
+    out=$(clamscan -r "$@" 2>&1); rc=$?
+  fi
+
+  printf '%s\n' "$out" | sed 's/^/  /'
+
+  # Judge by the SUMMARY, not the exit code. clamdscan exits non-zero for an
+  # unreadable path as well as for a detection, and a targeted scan of a
+  # transfer folder hits neither often -- but conflating them would turn a
+  # permission problem into a virus alert.
+  local infected found errs
+  infected=$(printf '%s\n' "$out" | sed -n 's/^Infected files: *\([0-9][0-9]*\).*/\1/p' | tail -1)
+  infected=${infected:-}
+  found=$(printf '%s\n' "$out" | grep -cE ' FOUND$' || true); found=${found:-0}
+  # A file the scanner could not READ is a file that was not checked. On a
+  # whole-system sweep those are benign noise (sockets, /proc); here you named
+  # the path deliberately, so an unreadable one has to be reported, not folded
+  # into "0 infected". Same rule as everywhere else in this repo: a check that
+  # did not run is never a pass.
+  errs=$(printf '%s\n' "$out" | grep -cE '(: Access denied|: Can.t open file or directory|ERROR)' || true)
+  errs=${errs:-0}
+  local terr; terr=$(printf '%s\n' "$out" | sed -n 's/^Total errors: *\([0-9][0-9]*\).*/\1/p' | tail -1)
+  [ -n "${terr:-}" ] && [ "$terr" -gt "$errs" ] && errs=$terr
+
+  local who; who="${SUDO_USER:-$(id -un)}"
+  head2 "Result"
+  if [ -z "$infected" ]; then
+    bad "The scanner produced no summary -- treat this as NOT SCANNED (exit $rc)."
+    printf '%s\t%s\t%s\t%s\n' "$(date -Is)" "$who" "$*" "ENGINE-FAULT" >> "$SCAN_LOG" 2>/dev/null
+    chmod 0640 "$SCAN_LOG" 2>/dev/null || true
+    exit 2
+  elif [ "$infected" -gt 0 ] || [ "$found" -gt 0 ]; then
+    bad "INFECTED -- $infected file(s) flagged. Do NOT move this data."
+    printf '%s\n' "$out" | grep -E ' FOUND$' | sed 's/^/    /'
+    say ""
+    say "Isolate the media and report it per the incident procedure."
+    printf '%s\t%s\t%s\t%s\n' "$(date -Is)" "$who" "$*" "INFECTED:$infected" >> "$SCAN_LOG" 2>/dev/null
+    chmod 0640 "$SCAN_LOG" 2>/dev/null || true
+    exit 1
+  elif [ "$errs" -gt 0 ]; then
+    warn "PARTIAL -- 0 infected, but $errs path(s) could NOT be read and were not scanned."
+    printf '%s\n' "$out" | grep -E '(: Access denied|: Can.t open file or directory|ERROR)' \
+      | head -10 | sed 's/^/    /'
+    say ""
+    say "Re-run as root, or fix the permissions, before calling this data clean."
+    printf '%s\t%s\t%s\t%s\n' "$(date -Is)" "$who" "$*" "PARTIAL:$errs-unread" >> "$SCAN_LOG" 2>/dev/null
+    chmod 0640 "$SCAN_LOG" 2>/dev/null || true
+    exit 2
+  else
+    ok "CLEAN -- 0 infected, verified against $SELFTEST_ENGINE."
+    printf '%s\t%s\t%s\t%s\n' "$(date -Is)" "$who" "$*" "CLEAN" >> "$SCAN_LOG" 2>/dev/null
+    chmod 0640 "$SCAN_LOG" 2>/dev/null || true
+  fi
+  say ""
+  say "Recorded in $SCAN_LOG"
+  say "For a transfer that needs a signed RECORD (who/what/when + hashes), use dta-log."
+}
+
 # ---- dispatch ---------------------------------------------------------------
-CMD=""; ARG=""
+CMD=""; ARG=""; SCAN_PATHS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
@@ -753,6 +860,9 @@ while [ $# -gt 0 ]; do
     --no-test) DO_TEST=0; shift ;;
     --purge)   PURGE=1; shift ;;
     check|list|install|rollback|test|sync|revert|image-save|image-load) CMD="$1"; shift ;;
+    # scan takes MANY paths, so it swallows the rest of the line rather than
+    # the single ARG the other verbs use.
+    scan) CMD=scan; shift; SCAN_PATHS=("$@"); break ;;
     -*) die "unknown option: $1  (try --help)" ;;
     *)  [ -z "$CMD" ] && die "unknown command: $1  (try --help)"; ARG="$1"; shift ;;
   esac
@@ -766,6 +876,7 @@ case "${CMD:-check}" in
   sync)       cmd_sync ;;
   revert)     cmd_revert ;;
   test)       cmd_test ;;
+  scan)       cmd_scan "${SCAN_PATHS[@]}" ;;
   image-save) cmd_image_save "$ARG" ;;
   image-load) cmd_image_load "$ARG" ;;
 esac
