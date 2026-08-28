@@ -310,6 +310,8 @@ OpenSSL failed to create a new SSL_CTX: error:0A0000A1:SSL routines::library has
 
 Same dead end as ClamAV, for the same reason: nmap links the host OpenSSL, and Ubuntu's FIPS OpenSSL takes FIPS from the kernel flag, so no config can turn it off for one process.
 
+**If the build fails with a wall of `out of memory`** — packages installing fine and then one postinst dying — that is not the box running out of RAM. `dockerd` ships `LimitNOFILE=infinity`, containers inherit it, and anything that sizes a buffer from the fd limit tries to allocate for ~10^9 descriptors. On ASP-2 it killed `ca-certificates`' postinst inside `openssl rehash`. The build and every `docker run` now pass `--ulimit nofile=1024:65536` (`nmap_container_nofile`), and the image no longer installs `ca-certificates` at all — nmap's TLS scripts read what a target presents rather than validating it against a CA bundle, so it bought nothing.
+
 The `nmap_container` role builds an image from a stock Ubuntu base — whose OpenSSL is not the FIPS variant — and records it **only after proving it can scan**. `it-vulnscan` then tries the host binary first and falls back to the container, reporting which one ran:
 
 ```

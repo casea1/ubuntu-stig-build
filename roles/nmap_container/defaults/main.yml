@@ -21,6 +21,15 @@ nmap_container_base: "ubuntu:24.04"
 # Recorded here for it-vulnscan to find. Absent = no containerised nmap.
 nmap_container_marker: /etc/stig-build/nmap-image
 
+# soft:hard RLIMIT_NOFILE for `docker build` and `docker run`.
+# dockerd ships LimitNOFILE=infinity and containers inherit it, so anything that
+# sizes a buffer from the fd limit tries to allocate for ~1e9 descriptors. On
+# ASP-2 that killed the image build: ca-certificates' postinst died in
+# `openssl rehash` with a wall of "out of memory" while every other package
+# installed fine. nmap itself sizes its socket tables the same way, so the
+# scan-time `docker run` is bounded too (override with NMAP_CTR_NOFILE).
+nmap_container_nofile: "1024:65536"
+
 # Some images abort on a FIPS host because their runtime reads
 # /proc/sys/crypto/fips_enabled directly (this is why the vLLM and Docling
 # stacks carry a fips_off file). Mount the same carve-out here so the container
