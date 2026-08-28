@@ -471,6 +471,73 @@ fi
 
 echo
 printf 'PASS=%d  FAIL=%d  N/A=%d  MANUAL=%d\n' "$P" "$F" "$N" "$M"
+
+# ---------------------------------------------------------------------------
+# THE OTHER TWO NUMBERS. The rows above say whether the box is configured the
+# way we said; they do NOT say what the benchmark scored or how many STIG items
+# are still open. Those live in two other artifacts, and having to open both to
+# get the whole picture is how a box stays half-checked. Read them here.
+#
+# Both are READ-ONLY and best-effort: this prints what the last scan and the
+# last checklist found. It does not run either -- a status command that
+# silently launches a scan is a trap.
+# ---------------------------------------------------------------------------
+scap_score=""; scap_src=""
+# The XCCDF score lives in the results XML, not the HTML. ARF first (it-oscap
+# writes stig-arf-*), then the stig-viewer XML as a fallback.
+sx=$(find /opt/ia/oscap -name 'stig-arf-*.xml' -o -name 'stig-viewer-*.xml' 2>/dev/null \
+       | xargs -r ls -1t 2>/dev/null | head -1)
+if [ -n "$sx" ]; then
+  scap_score=$(grep -o '<[a-zA-Z:]*score[^>]*>[0-9.]*<' "$sx" 2>/dev/null \
+                 | sed 's/.*>\([0-9.]*\)<.*/\1/' | head -1)
+  # 91.666667 -> 91.67; leave it alone if it is not a plain number.
+  case "$scap_score" in
+    *[!0-9.]*|"") : ;;
+    *) scap_score=$(printf '%.2f' "$scap_score" 2>/dev/null || echo "$scap_score") ;;
+  esac
+  scap_src=$(basename "$sx")
+fi
+
+ckl_line=""
+ck=$(find /opt/ia/stig/checklists -name '*.cklb' 2>/dev/null \
+       | xargs -r ls -1t 2>/dev/null | head -1)
+if [ -n "$ck" ] && have python3; then
+  ckl_line=$(python3 - "$ck" <<'PY' 2>/dev/null
+import json, sys, collections
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+c = collections.Counter(
+    r.get("status", "?")
+    for s in d.get("stigs", [])
+    for r in s.get("rules", [])
+)
+tot = sum(c.values())
+if not tot:
+    sys.exit(1)
+print("%d open, %d not-a-finding, %d N/A, %d not-reviewed  (of %d)" % (
+    c.get("open", 0), c.get("not_a_finding", 0),
+    c.get("not_applicable", 0), c.get("not_reviewed", 0), tot))
+PY
+)
+fi
+
+if [ -n "$scap_score" ] || [ -n "$ckl_line" ]; then
+  echo
+  if [ -n "$scap_score" ]; then
+    printf 'SCAP score      %s%%  (%s)\n' "$scap_score" "$scap_src"
+  else
+    printf 'SCAP score      no results XML under /opt/ia/oscap -- run: sudo it-oscap\n'
+  fi
+  if [ -n "$ckl_line" ]; then
+    printf 'STIG checklist  %s\n' "$ckl_line"
+    printf '                %s\n' "$(basename "$ck")"
+  else
+    printf 'STIG checklist  none under /opt/ia/stig/checklists -- run: sudo it-ckl\n'
+  fi
+fi
+
 echo 'Authoritative evidence is `usg audit disa_stig` / it-oscap, not this script.'
 
 # Point at --fix when there is something to fix and it was not already asked

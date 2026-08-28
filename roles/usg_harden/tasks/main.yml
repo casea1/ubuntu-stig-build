@@ -165,6 +165,52 @@
             replace: '\1false\2'
           loop: "{{ usg_disable_smartcard_rules }}"
 
+        # `usg generate-tailoring` emits <select> lines only for rules that exist
+        # in USG'S OWN bundled SSG content. it-oscap evaluates the NEWER
+        # ComplianceAsCode release pinned in ssg_content_version, which adds
+        # rules -- and a rule with no <select> line has nothing for the replace
+        # above to flip, so it is selected by default and fails.
+        #
+        # That is exactly what happened to the smart-card family: USG 0.1.78
+        # does not carry smartcard_pam_enabled, service_sssd_enabled or
+        # sssd_enable_user_cert, so the tailoring said nothing about them and
+        # the 0.1.81 scan reported all three as findings the accredited
+        # baseline had already de-scoped. Add the missing ones explicitly.
+        #
+        # An idref the evaluated datastream does not contain is ignored, so
+        # these are harmless against older content.
+        - name: "USG | Read back the tailoring file"
+          ansible.builtin.slurp:
+            src: "{{ usg_managed_tailoring_file }}"
+          register: _usg_tailoring_raw
+
+        - name: "USG | Which de-selects did USG's own content not carry?"
+          ansible.builtin.set_fact:
+            _usg_tailoring_missing: >-
+              {{ usg_disable_smartcard_rules
+                 | reject('in', (_usg_tailoring_raw.content | b64decode))
+                 | list }}
+
+        - name: "USG | Add de-selects for rules only the newer SSG carries"
+          ansible.builtin.blockinfile:
+            path: "{{ usg_managed_tailoring_file }}"
+            marker: "<!-- {mark} ansible: de-selects absent from USG's own content -->"
+            insertbefore: '</(xccdf:)?Profile>'
+            block: |
+              {% for r in _usg_tailoring_missing %}
+              <xccdf:select idref="xccdf_org.ssgproject.content_rule_{{ r }}" selected="false"/>
+              {% endfor %}
+          when: (_usg_tailoring_missing | default([])) | length > 0
+
+        - name: "USG | Report the added de-selects"
+          ansible.builtin.debug:
+            msg: >-
+              {{ _usg_tailoring_missing }} are not in USG's bundled content, so
+              the generated tailoring had no <select> line to flip. Added
+              explicit de-selects -- without them a scan against the newer SSG
+              (ssg_content_version) reports rules this baseline has de-scoped.
+          when: (_usg_tailoring_missing | default([])) | length > 0
+
         - name: "USG | Mark the generated tailoring file as in play"
           ansible.builtin.set_fact:
             _managed_tailoring_used: true
