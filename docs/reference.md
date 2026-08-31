@@ -105,6 +105,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 
 | Command | Does |
 |---|---|
+| `it-pull` | Re-run the baseline. `it-pull` (light — config + scripts, no apt, no scan, **no container touched**), `full` (+ packages and a fresh audit/scan), `scripts` (that role alone), `ai` (opts into the compose stacks), `check`, `status` (is this box behind origin?), `log`. Reads the repo/branch off the box's own `ansible-pull` checkout; override in `/etc/stig-build/pull.conf` |
 | `it-status` | Everything at a glance |
 | `it-host` | OS, kernel, FIPS, uptime, disks |
 | `it-luks` | Encryption state + TPM binding |
@@ -206,7 +207,9 @@ The ones worth knowing:
 | `offline_repo_enabled` | false | Switch apt to `/srv/repo`. Set by `it-offline-repo enable` |
 | `base_packages_full_upgrade` | false | `apt full-upgrade` early in the build |
 | `scap_stig_manual_xccdf` | `U_CAN_…_V1R6_Manual-xccdf.xml` | DISA's manual STIG, shipped in `roles/scap_scan/files/`. Update on a new STIG release |
-| `scap_ckl_on_pull` | true | Build the `.cklb` at the end of every pull, from the scan that just ran |
+| `usg_audit_on_pull` | `build` | When `usg audit` runs during a pull. `build` = only on a box with no report yet; `always` = every pull (pre-2026-08 behaviour, what `it-pull full` passes); `never` = timer only. The `usg_harden`-stage audit is now skipped whenever `usg_remediate` will re-audit — one evaluation, not two |
+| `scap_scan_on_pull` | `build` | Same for `oscap xccdf eval`. A routine pull runs **no** benchmark evaluation; evidence comes from the first build, the weekly `oscap-scan.timer`, and `it-stig run` |
+| `scap_ckl_on_pull` | true | Build the `.cklb` from the scan that just ran. Now also requires that a scan actually ran this pull — without one it would rewrite an identical checklist every time |
 | `local_accounts_enabled` | true | Org users/groups/ACL'd folders |
 | `ai_model_fetch` | — | Fetch model weights during the build |
 | `ai_compose_deploy` | — | Bring the stacks up during the build |

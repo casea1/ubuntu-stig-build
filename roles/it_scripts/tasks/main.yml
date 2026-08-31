@@ -37,6 +37,21 @@
   changed_when: false
   failed_when: false
 
+# Where this box actually pulls from, read off the ansible-pull checkout itself
+# rather than hardcoded in a script: a box built from a mirror keeps using that
+# mirror, and `it-pull` cannot silently point a closed-network box back at a
+# URL it cannot reach.
+- name: "IT-SCRIPTS | Which repo + branch does this box pull from?"
+  ansible.builtin.command: "git -C {{ playbook_dir }} {{ item }}"
+  register: _it_origin
+  changed_when: false
+  failed_when: false
+  loop:
+    - "config --get remote.origin.url"
+    - "rev-parse --abbrev-ref HEAD"
+  loop_control:
+    label: "{{ item }}"
+
 - name: "IT-SCRIPTS | Record the deployment profile for the scripts to read"
   ansible.builtin.copy:
     dest: /etc/stig-build/profile
@@ -48,6 +63,8 @@
       deployment_profile={{ deployment_profile | default('development') }}
       emi_classified={{ (emi_classified | default(true) | bool) | lower }}
       baseline_revision={{ (_it_rev.stdout | default('') | trim) or 'unknown' }}
+      baseline_repo={{ (_it_origin.results[0].stdout | default('') | trim) or 'unknown' }}
+      baseline_branch={{ (_it_origin.results[1].stdout | default('') | trim) or 'main' }}
 
 - name: "IT-SCRIPTS | Ensure the scripts dir exists ({{ it_scripts_dir }})"
   ansible.builtin.file:

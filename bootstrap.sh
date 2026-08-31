@@ -216,3 +216,9 @@ else
   echo "    RDP:          connect an RDP client to this host:3389 (TLS) and log in as a local user."
   echo "    Then REBOOT to apply USG hardening; the box comes up to GDM with the DCSA banner."
 fi
+
+echo
+echo "    AFTER this first build, updates are one command -- no curl, no flags:"
+echo "      sudo it-pull            light: config + scripts, no apt, no scan, no container touched"
+echo "      sudo it-pull full       + packages and a fresh usg audit / SCAP scan"
+echo "      sudo it-pull status     is this box behind the repo?"

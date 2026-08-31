@@ -20,6 +20,8 @@ it_scripts_common:
   # everything else. It DISCOVERS the commands from the installed symlinks
   # rather than carrying a list, so it stays correct per profile on its own.
   - { file: help.sh,               link: it-help }
+  # Second: how the box gets updated at all. Light by default -- see it-pull help.
+  - { file: pull.sh,               link: it-pull }
   - { file: status.sh,             link: it-status }
   - { file: status-host.sh,        link: it-host }
   - { file: status-luks.sh,        link: it-luks }

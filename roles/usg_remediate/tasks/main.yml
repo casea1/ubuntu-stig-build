@@ -1419,10 +1419,26 @@
 # remediated box rather than the mid-build snapshot. Pro-attached boxes only.
 # (_usg_active / _usg_target are facts set by usg_harden earlier in this play.)
 # ---------------------------------------------------------------------------
+- name: "REMED | Any USG report on this box already?"
+  ansible.builtin.find:
+    paths: "{{ usg_report_dir }}"
+    patterns: ["*.html", "*.xml"]
+    file_type: file
+  register: _usg_prior_reports
+  changed_when: false
+  failed_when: false
+
+# usg_audit_on_pull: build (default) -> only on a box with no report yet, i.e.
+# the first build. After that the weekly oscap timer and `it-stig run` are the
+# evidence sources; see group_vars/all.yml. 'always' restores the old
+# every-pull behaviour, which is what `it-pull full` passes.
 - name: "REMED | Regenerate the USG compliance report (post-build)"
   when:
     - usg_remediate_reaudit | default(true) | bool
     - _usg_active | default(false) | bool
+    - (usg_audit_on_pull | default('build')) == 'always'
+      or ((usg_audit_on_pull | default('build')) == 'build'
+          and (_usg_prior_reports.files | default([]) | length) == 0)
   block:
     - name: "REMED | Re-run `usg audit {{ usg_profile }}` after remediation"
       ansible.builtin.command: "usg audit {{ _usg_target | default(usg_profile) }}"

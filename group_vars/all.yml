@@ -409,6 +409,26 @@ ssg_content_version: "0.1.81"
 #            at the next boot. Correct for the EMI laptop.
 #   cron  -- literal "crontab" compliance if an assessor greps for it; a missed
 #            run while powered off is simply lost.
+# ---- How often the EXPENSIVE evidence steps run on an ansible-pull ----------
+# A pull used to run THREE full benchmark evaluations -- `usg audit` in
+# usg_harden, `usg audit` again in usg_remediate, and `oscap xccdf eval` here --
+# plus a checklist build, on every single run. That is minutes of scanning to
+# deploy a one-line config change, and it buried the useful evidence under a
+# pile of near-identical result sets.
+#
+# Evidence now comes from three places that are actually meaningful:
+#   the FIRST build of a box     (these vars, mode 'build')
+#   the WEEKLY timer             (scap_schedule_* above / oscap-scan.timer)
+#   on demand                    (`sudo it-stig run`)
+#
+#   build  (default) -- run only when the box has no artifact of that kind yet
+#   always           -- every pull (the pre-2026-08 behaviour)
+#   never            -- rely entirely on the timer + it-stig
+#
+# `it-pull full` passes always for both; nothing else needs a flag.
+usg_audit_on_pull: build
+scap_scan_on_pull: build
+
 scap_schedule_enabled: true
 scap_schedule_method: timer          # timer | cron
 scap_schedule_oncalendar: weekly     # systemd OnCalendar (timer method)

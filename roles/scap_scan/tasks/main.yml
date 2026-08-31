@@ -101,7 +101,49 @@
       check whether that role was skipped.
   when: _log_perms_pre_scan is failed or (_log_perms_pre_scan.status is not defined)
 
+# ---------------------------------------------------------------------------
+# SHOULD THIS PULL SCAN AT ALL?
+#
+# scap_scan_on_pull: build (default) -- scan only when this box has no
+# build-time result yet. A routine pull (a config change, a new it-* script)
+# then costs no benchmark evaluation at all, and the evidence still comes from
+# the weekly oscap-scan.timer below and from `sudo it-stig run` on demand.
+# 'always' is the pre-2026-08 behaviour and is what `it-pull full` passes;
+# 'never' leaves the timer as the only source. See group_vars/all.yml.
+#
+# Everything ABOVE this point still runs on every pull -- staging the SSG
+# datastream, the report dir, the /var/log sweep -- and so does everything
+# below it except the evaluation itself: answers.yml, the tailoring and the
+# timer are configuration, and a light pull is exactly when you want them
+# updated.
+# ---------------------------------------------------------------------------
+- name: "SCAP | Existing build-time results?"
+  ansible.builtin.find:
+    paths: "{{ scap_build_dir }}"
+    patterns: ["stig-*.xml", "stig-*.html"]
+    file_type: file
+  register: _scap_prior
+  changed_when: false
+  failed_when: false
+
+- name: "SCAP | Decide whether to evaluate this run"
+  ansible.builtin.set_fact:
+    _scap_eval_now: >-
+      {{ (scap_scan_on_pull | default('build')) == 'always'
+         or ((scap_scan_on_pull | default('build')) == 'build'
+             and (_scap_prior.files | default([]) | length) == 0) }}
+
+- name: "SCAP | Not evaluating this run"
+  ansible.builtin.debug:
+    msg: >-
+      Skipping the build-time SCAP evaluation (scap_scan_on_pull={{ scap_scan_on_pull | default('build') }},
+      {{ _scap_prior.files | default([]) | length }} existing result file(s) in {{ scap_build_dir }}).
+      Evidence comes from the weekly oscap-scan timer and `sudo it-stig run`.
+      Force one now with `sudo it-pull full` or `sudo it-stig run`.
+  when: not (_scap_eval_now | bool)
+
 - name: Run OpenSCAP STIG evaluation
+  when: _scap_eval_now | bool
   # oscap returns 0 = all pass, 2 = some rules failed. Both mean "scan ran OK";
   # only treat other codes as a real error.
   ansible.builtin.command:
@@ -118,6 +160,7 @@
   changed_when: false
 
 - name: Report where the results landed
+  when: _scap_eval_now | bool
   ansible.builtin.debug:
     msg: >
       SCAP scan complete (rc={{ oscap_run.rc }}).
@@ -290,9 +333,13 @@
 # NOT fatal on failure: a missing input or an odd scan should never fail a
 # build whose real job is hardening. It says what went wrong instead.
 # ---------------------------------------------------------------------------
+# Gated on the evaluation having run THIS pull: it-ckl reads the newest scan
+# results, so without a new scan it would rewrite an identical checklist on
+# every pull -- more files to prune, no new information.
 - name: "SCAP | Build the STIG checklist"
   when:
     - scap_ckl_on_pull | default(true) | bool
+    - _scap_eval_now | bool
     - (_stig_manual.files | length) > 0
   block:
     - name: "SCAP | Is it-ckl installed?"
