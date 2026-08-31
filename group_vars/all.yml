@@ -197,6 +197,46 @@ base_common_packages:
   - unzip
   - cron                       # provides /usr/bin/crontab + the cron daemon
 
+# ---- Active Directory join prerequisites -----------------------------------
+# development / ai / baseline only. The EMI laptop stays standalone.
+#
+# WHAT IS INSTALLED, AND WHAT DELIBERATELY IS NOT.
+#
+# These are the tools needed to PREPARE for and PERFORM a join -- realmd to
+# discover and drive it, adcli to create the computer object, krb5-user for
+# kinit/klist, samba-common-bin for net/testparm, oddjob-mkhomedir to create
+# home directories at first logon. None of them touch the PAM stack.
+#
+# sssd-ad / sssd-tools are NOT here on purpose. They pull libpam-sss, whose
+# postinst runs `pam-auth-update --package` -- which REGENERATES
+# /etc/pam.d/common-auth on a box that is not joined to anything. This build
+# keeps usg_fix_pam_stack false by default precisely because regenerating that
+# file is how ASP-2 became unloggable and needed live-USB recovery. Pulling it
+# in during a routine pull would do the same thing silently, weeks before
+# anyone intended to join.
+#
+# They are installed at JOIN time instead, by `it-domain join`, which takes a
+# backup of the PAM stack first and verifies it afterwards. Before a box goes
+# air-gapped, `it-domain stage` downloads them so the join works offline.
+ad_prep_enabled: "{{ not (is_emi | default(false) | bool) }}"
+ad_prep_packages:
+  - realmd                 # discover + drive the join
+  - adcli                  # create the computer object in AD
+  - krb5-user              # kinit / klist / kdestroy
+  - samba-common-bin       # net, testparm -- SMB diagnostics
+  - oddjob                 # runs the mkhomedir helper
+  - oddjob-mkhomedir       # create a home directory at first domain logon
+  - packagekit             # realmd asks it to install what a join needs
+  - dnsutils               # dig -- the SRV-record check a join depends on
+
+# Installed only when `it-domain join` runs. Listed here so `it-domain stage`
+# knows what to download for an offline join.
+ad_join_packages:
+  - sssd-ad
+  - sssd-tools
+  - libnss-sss
+  - libpam-sss
+
 # ---- Inventory report (BOTH profiles) --------------------------------------
 # Writes a basic hardware/system inventory (serials, MACs, BIOS, disks, GPU) to
 # /opt/it/inventory-<host>.txt at the end of the build, for cross-referencing
@@ -823,20 +863,31 @@ local_shared_dirs:
 # false / PROFILE=emi-unclass): that box wants USB to just work with no dta gate,
 # so the dta group + dta accounts + USB polkit/udev restriction are NOT created
 # and any local desktop user can mount removable media normally. Force per box.
-local_usb_transfer_enabled: "{{ (is_development | default(true) | bool) or (is_baseline | default(false) | bool) or ((is_emi | default(false) | bool) and (emi_classified | default(true) | bool)) }}"
+# EMI-CLASSIFIED ONLY. The development and AI boxes are being domain-joined and
+# have no data-transfer mission: they get no dta group, no dta accounts, and no
+# USB storage at all (see usb_storage_enabled below). Only the classified EMI
+# laptop moves data on removable media, so only it needs the granular carve-out.
+local_usb_transfer_enabled: "{{ (is_emi | default(false) | bool) and (emi_classified | default(true) | bool) }}"
 
 # USB storage is restricted to members of this group (udisks2 polkit + udev).
 usb_access_group: dta
 
-# Re-enable the usb-storage kernel module. The lockdown role (stig_harden)
-# blacklists usb-storage per the DISA STIG "disable USB mass storage" control --
-# which disables USB storage for EVERYONE and would defeat the dta carve-out
-# above (no block device ever appears). This fleet needs USB for data-transfer
-# agents, so stig_harden strips that blacklist AFTER the lockdown role and loads
-# the module; the dta udev + polkit policy then governs who may mount. Documented
-# deviation (docs/compliance.md). Set false to keep USB mass storage fully
-# disabled (the dta carve-out is then moot).
-usb_storage_enabled: true
+# Re-enable the usb-storage kernel module -- ONLY where the mission needs it.
+#
+# USG blacklists usb-storage per the DISA STIG "disable USB mass storage"
+# control (UBTU-24-300039). That disables USB storage for EVERYONE, which is
+# the correct posture and what we now keep on development, ai and baseline:
+# those boxes have no data-transfer role, and once domain-joined they have no
+# dta accounts either. The rule PASSES there, with no deviation to adjudicate.
+#
+# The classified EMI laptop is the exception: moving data on removable media IS
+# its mission, so desktop_hardening strips the blacklist there and loads the
+# module, and the dta udev + polkit policy governs who may mount. That single
+# remaining deviation is adjudicated in ckl-answers.yml.j2.
+#
+# Force true per box in site.yml if a development box genuinely needs removable
+# media -- and expect UBTU-24-300039 to open, with the adjudication rendering.
+usb_storage_enabled: "{{ (is_emi | default(false) | bool) and (emi_classified | default(true) | bool) }}"
 
 # Base-box default accounts to PURGE if present. Vagrant/Packer base images ship
 # a 'vagrant' user with a known password, NOPASSWD sudo (/etc/sudoers.d/vagrant),

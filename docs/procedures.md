@@ -569,6 +569,60 @@ The carried repo is **unsigned**, so apt is told to trust it. The trust boundary
 
 **Ubuntu Pro / ESM packages are not covered.** The tree holds the main archive only; anything shipped through ESM has to be carried in as a loose `.deb`.
 
+## 4.3b Join a box to Active Directory
+
+`development`, `ai` and `baseline` only. The EMI laptop stays standalone.
+
+```bash
+sudo it-domain preflight corp.example.mil   # changes nothing
+sudo it-domain stage                        # download join packages for an OFFLINE join
+sudo it-domain join corp.example.mil        # preflight, back up PAM, join, verify
+sudo it-domain test alice                   # can it resolve a domain user?
+sudo it-domain                              # status
+```
+
+> **A join regenerates the PAM stack.** `realm join` installs `libpam-sss`, whose postinst runs `pam-auth-update`, which rewrites `/etc/pam.d/common-*`. This build keeps `usg_fix_pam_stack: false` by default *because* regenerating those files is how a box in this fleet became unloggable and needed live-USB recovery.
+>
+> `it-domain join` backs them up first and verifies the stack afterwards with `pam-auth-check` — but **do it on a throwaway box first, and keep a second root TTY open.** Recovery is `sudo it-domain pam-restore`.
+
+### What preflight checks
+
+Everything that makes a join fail, before it can:
+
+| Check | Why |
+|---|---|
+| `realm`, `adcli`, `kinit`, `net` present | the prerequisites the join needs |
+| FQDN | AD wants `host.domain`, not a short name |
+| `_ldap._tcp` / `_kerberos._udp` SRV records | this is what realmd actually discovers — DNS must be the DCs |
+| Clock offset | **Kerberos rejects more than 300 s of skew** |
+| TCP 88, 389, 445, 464, 3268 to a DC | Kerberos, LDAP, SMB, kpasswd, Global Catalog |
+| Current PAM stack health | so you know it was sound *before* the join changed it |
+
+### What is installed when
+
+`ad_prep_packages` — `realmd`, `adcli`, `krb5-user`, `samba-common-bin`, `oddjob`, `oddjob-mkhomedir`, `packagekit`, `dnsutils` — ship on every non-EMI box at build time. **None of them touch PAM.**
+
+`sssd-ad`, `sssd-tools`, `libnss-sss`, `libpam-sss` are installed **at join time only**, deliberately, because they are the ones that rewrite the PAM stack. `it-domain stage` downloads them to `/opt/it/ad-packages` so a join still works after the box is air-gapped.
+
+### What changes, and what does not
+
+| | Effect of joining |
+|---|---|
+| **Patching** | **Nothing changes.** AD membership has no effect on apt, Ubuntu Pro or ESM. WSUS does not serve Linux. |
+| **Policy** | **Group Policy does not apply to Linux.** Ansible stays the policy engine and the STIG source of truth. |
+| **Identity** | Domain logins, central account lifecycle, home directory at first logon, offline credential caching. |
+| **sudo** | Can move to AD groups via `/etc/sudoers.d` or SSSD's sudo provider — a real gain over per-box `local_users`. |
+| **SMB shares** | Replace guest/credential mounts with `--options sec=krb5`: the machine account authenticates and no share credentials are stored anywhere. |
+| **Time** | Point `usg_chrony_servers` at the domain controllers. Kerberos will not tolerate drift. |
+
+### The compliance consequence
+
+The STIG adjudications currently de-scope the SSSD and smart-card rules on the grounds that this is a standalone box with local accounts and no directory service — `UBTU-24-100660`, `400020`, `400370`, `300020` in `ckl-answers.yml.j2`.
+
+**Joining AD invalidates that justification.** `service_sssd_enabled` becomes genuinely applicable and should be re-selected in the tailoring rather than de-selected. It will pass, because SSSD really will be running — but it has to be a deliberate step, not a surprise at the next assessment.
+
+It also moves the **CAC/PIV POA&M** materially closer: smart-card auth against AD is the standard path.
+
 ## 4.4a Mount a Windows / SMB file share
 
 ```bash
