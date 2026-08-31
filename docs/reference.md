@@ -113,6 +113,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `it-oscap` | Run an OpenSCAP DISA-STIG scan now |
 | `it-ckl` | Build the DISA `.cklb`/`.ckl` from the scan + `answers.yml` |
 | `it-stig` | `status` / `run` / `scan` / `checklist` / `archive` — wraps the two above |
+| `it-offload` | `status`, `setup`, `creds`, `containers on\|off`, `push on\|off`, `test`, `log [N]`, `apply`. Configures the weekly audit/log offload — what is collected, the remote share, the credentials. Writes to `/opt/it/site.yml` so it survives `ansible-pull`; re-running is idempotent |
 | `it-clamav` | `check`, `list`, `install`, **`scan PATH...`**, `test`, `sync`, `rollback`, `revert`, `image-save`, `image-load`. `scan` proves the engine detects EICAR **before** trusting a verdict and refuses to scan if it does not — a CLEAN from an unverified engine is worse than no scan. Reports unreadable paths as PARTIAL rather than folding them into "0 infected". Records every run in `/var/log/clamav-scan.log` |
 | `it-goclassified` | Pre-classification gate. `--report` for machine checks only |
 | `it-offline-repo` | `load` / `enable` / `disable` / `verify` — run apt off a local repo |

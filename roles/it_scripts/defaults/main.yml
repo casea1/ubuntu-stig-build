@@ -26,6 +26,7 @@ it_scripts_common:
   - { file: luks-rebind.sh,        link: it-luks-rebind }
   - { file: set-classification.sh, link: it-set-classification }
   - { file: oscap-scan.sh,         link: it-oscap }
+  - { file: audit-offload.sh,      link: it-offload }
   - { file: usb-guard.sh,          link: it-usb }
   - { file: usb-render.py,         link: '' }
   - { file: grub-password.sh,      link: it-grub }
