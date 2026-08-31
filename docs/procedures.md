@@ -569,6 +569,58 @@ The carried repo is **unsigned**, so apt is told to trust it. The trust boundary
 
 **Ubuntu Pro / ESM packages are not covered.** The tree holds the main archive only; anything shipped through ESM has to be carried in as a loose `.deb`.
 
+## 4.4a Mount a Windows / SMB file share
+
+```bash
+sudo it-smb add                 # interactive
+sudo it-smb                     # every managed share, mounted or idle
+sudo it-smb test <name>         # why will it not mount?
+```
+
+Non-interactively:
+
+```bash
+sudo it-smb add --name audit-logs --share '//logsrv.corp.local/audit$' \
+  --user svc_audit --domain CORP --vers 3.1.1
+sudo it-smb add --name eng --share '//fs01/Engineering' --user eng --domain CORP --ro
+```
+
+Options: `--mountpoint`, `--vers 3.1.1|3.0|2.1`, `--ro`, `--uid/--gid`, `--options "k=v,..."`.
+
+### Shares are automount units, not fstab lines
+
+Three reasons, all of which bite on a hardened box:
+
+- a share unreachable at boot **cannot delay or block the boot**;
+- it mounts on first access and unmounts when idle, so a server that is down costs nothing until something wants the share;
+- `systemctl status` and the journal give a real error, where a bad fstab line gives a boot-time message nobody sees.
+
+The units *are* the registry — mountpoints under `/mnt/smb/<name>`, no second state file to drift.
+
+### When it will not mount
+
+`it-smb test <name>` walks the chain in order and stops at the first thing that is actually wrong:
+
+```
+  cifs-utils installed
+  credentials /etc/stig-build/smb/audit-logs.cred (600)
+  logsrv.corp.local does NOT resolve. DNS, /etc/hosts, or use an IP.
+```
+
+If it gets as far as a mount attempt, it captures **both** stderr and the kernel log — cifs puts the useful part in `dmesg`, which is why `mount error(13)` on its own tells you nothing — and translates the status code:
+
+| What cifs says | What it tells you |
+|---|---|
+| `NT_STATUS_LOGON_FAILURE` | username, password or domain is wrong |
+| `NT_STATUS_ACCESS_DENIED` | account is valid; no permission on the share |
+| `NT_STATUS_BAD_NETWORK_NAME` | the share does not exist on that server |
+| `mount error(95)` | dialect rejected — try `--vers 3.0` or `2.1` |
+| `mount error(128)` | keyring rejected the credentials — suspect crypto/FIPS |
+
+**On a FIPS host** the diagnosis warns when a share uses NTLM: if every check above is green and authentication still fails, that is the first thing to test.
+
+Credentials live one file per share in `/etc/stig-build/smb/<name>.cred`, `0600 root:root`, prompted with the input masked and never written to the repo. `it-smb remove` shreds them.
+
 ## 4.4b Offload logs to a share (closed space)
 
 The weekly `/etc/cron.weekly/audit-offload` job stages the rotated audit trail locally. In the closed space it can also collect container logs and push everything to an SMB share. **Off by default.**
