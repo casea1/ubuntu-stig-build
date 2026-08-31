@@ -373,4 +373,3 @@
           them with `sudo it-clamav revert --purge` once you are satisfied.
       when: _cc_gone is changed
       failed_when: false
-      when: _cc_gone is changed

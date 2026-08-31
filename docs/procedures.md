@@ -175,17 +175,54 @@ ls -l /var/lib/aide/aide.db
 sudo it-oscap
 ```
 
-## 1.10 Re-running the build
+## 1.10 Re-running the build — `it-pull`
 
 Safe and idempotent — Ansible applies only the delta. After changing anything in the repo:
+
+```bash
+sudo it-pull            # the light path. This is the one you want almost every time.
+```
+
+No URL, no tags, no `systemd-run`. It reads the repo and branch off the box's own
+`ansible-pull` checkout (falling back to `https://git.asplab.com/ASPLAB/ubuntu-stig-build.git`),
+runs detached as a transient unit so an RDP or GDM restart cannot kill it mid-run, and
+follows the output. Ctrl-C stops watching, not the run.
+
+| Command | What it runs | Reach for it when |
+|---|---|---|
+| `sudo it-pull` | config, `it-*` scripts, hardening re-assert. **No apt, no image builds, no scan, no container touched** | a config change, a new or fixed script — nearly always |
+| `sudo it-pull scripts` | the `it_scripts` role alone | shipping a script fix, fastest path |
+| `sudo it-pull full` | the above **plus** packages/images **plus** a fresh `usg audit` and SCAP scan | a package list changed, or you want evidence now |
+| `sudo it-pull ai` | light **plus** the Docker/compose stacks | deliberately updating an AI node's containers (§5.8) |
+| `sudo it-pull check` | `--check --diff` | previewing a change. Best-effort: tasks that read command output report errors in check mode |
+| `sudo it-pull status` | nothing | "is this box behind?" — compares the box's commit to `origin/main` without fetching |
+| `sudo it-pull log` | nothing | the last run's output, or follow one in progress |
+
+**Neither `light` nor `full` touches Docker.** Both skip `ai-runtime` and `ai-gpu`, so an
+AI node takes STIG, audit and script updates with its containers left alone — §5.8's
+manual command is now just `sudo it-pull`. `it-pull ai` is the deliberate opt-in.
+
+**A routine pull no longer scans.** It used to run three full benchmark evaluations —
+`usg audit` in `usg_harden`, `usg audit` again in `usg_remediate`, and `oscap xccdf eval`
+in `scap_scan` — plus a checklist build, every time. Evidence now comes from a box's
+**first build**, the **weekly `oscap-scan.timer`**, and **`sudo it-stig run`** on demand.
+That is `usg_audit_on_pull` / `scap_scan_on_pull` in `group_vars/all.yml` (`build` by
+default, `always` restores the old behaviour), so a plain `ansible-pull` gets the same
+treatment; `it-pull full` passes `always`.
+
+**Overrides.** `REPO_URL=... BRANCH=... sudo -E it-pull` for one run, or put `REPO_URL=` /
+`BRANCH=` in `/etc/stig-build/pull.conf` permanently — a box built from a mirror keeps
+using that mirror.
+
+Reboot afterwards for anything that needs it.
+
+The long form still works, and `bootstrap.sh` is still what a *fresh* box runs:
 
 ```bash
 sudo systemd-run --unit=stig-build --collect \
   ansible-pull -U https://git.asplab.com/ASPLAB/ubuntu-stig-build.git -C main -i localhost, local.yml \
   -e deployment_profile=emi
 ```
-
-Reboot afterwards for anything that needs it.
 
 ---
 
@@ -290,7 +327,17 @@ Output: `/opt/ia/stig/checklists/<host>-<ts>.cklb`, plus the scan artifacts in `
 
 `it-stig` wraps `it-oscap` (the scanner) and `it-ckl` (the checklist builder); run either alone when you only need one half.
 
-**DISA's manual STIG XCCDF ships in the repo** (`roles/scap_scan/files/`) and lands on every box, so there is nothing to fetch from cyber.mil per machine. **A `.cklb` is built at the end of every pull** from the scan that just ran — `scap_ckl_on_pull: false` turns that off.
+**DISA's manual STIG XCCDF ships in the repo** (`roles/scap_scan/files/`) and lands on every box, so there is nothing to fetch from cyber.mil per machine.
+
+**Where evidence comes from — three places, and a routine pull is not one of them.**
+
+| Source | When | Lands in |
+|---|---|---|
+| A box's **first build** | once, at imaging | `/opt/ia/oscap/build/`, `/opt/ia/usg/` |
+| The **weekly timer** | `oscap-scan.timer`, `Persistent=true` so a run missed while powered off fires at next boot | `/opt/ia/oscap/scheduled/` |
+| **On demand** | `sudo it-stig run` | `/opt/ia/oscap/manual/` |
+
+A pull used to run three full benchmark evaluations plus a checklist build *every time*, which is minutes of scanning to deploy a one-line change and a pile of near-identical result sets to prune. `usg_audit_on_pull` and `scap_scan_on_pull` (both `build`) now hold that to the first build; `sudo it-pull full` passes `always` when you want a fresh set immediately. The `.cklb` is built whenever a scan actually runs.
 
 On a new STIG release: drop the new `*Manual-xccdf.xml` into `roles/scap_scan/files/`, point `scap_stig_manual_xccdf` at it, and delete the old one — `it-ckl` takes the newest match, so leaving both makes "which release is this checklist against" a guess.
 
@@ -856,13 +903,20 @@ For a genuine per-box exception use `compose.override.yaml` — nothing manages 
 Brings a running node up to date on everything **except** Docker and the compose stacks — STIG remediation, audit rules, SCAP content, `it-*` scripts, GRUB, accounts, ClamAV, USBGuard.
 
 ```bash
+sudo it-pull            # skips ai-runtime and ai-gpu by default -- this IS the safe path
+```
+
+`it-pull full` is equally container-safe and adds packages and a scan. Only `it-pull ai`
+opts into the runtime. The long form is unchanged if you prefer it:
+
+```bash
 sudo systemd-run --unit=stig-build --collect \
   ansible-pull -U https://git.asplab.com/ASPLAB/ubuntu-stig-build.git -C main \
   -i localhost, local.yml -e deployment_profile=ai \
   --skip-tags ai-runtime,ai-gpu
 ```
 
-Watch it: `sudo journalctl -u stig-build -f`
+Watch it: `sudo it-pull log` (or `sudo journalctl -u stig-build -f` for the long form)
 
 **What `ai-runtime` covers** — the three roles that can disturb a running container:
 

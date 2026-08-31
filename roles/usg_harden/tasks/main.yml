@@ -317,7 +317,22 @@
           ansible.builtin.set_fact:
             usg_reboot_required: true
 
-    # ---- Audit (always; produces the compliance report) --------------------
+    # ---- Audit -- NORMALLY SKIPPED HERE ------------------------------------
+    # usg_remediate re-runs the same `usg audit` after remediation, and that is
+    # the one worth keeping: it reflects the finished box, not a box half-way
+    # through the build. Running it in both places cost a full benchmark
+    # evaluation on every pull and produced a report that was superseded
+    # minutes later. So this one fires only when the re-audit will NOT --
+    # usg_remediate disabled, its re-audit turned off, or audits switched off
+    # entirely -- which keeps the guarantee that a box always ends a build with
+    # a report.
+    - name: "USG | Will usg_remediate re-audit after this?"
+      ansible.builtin.set_fact:
+        _usg_audit_here: >-
+          {{ (usg_audit_on_pull | default('build')) != 'never'
+             and not (usg_remediate_enabled | default(true) | bool
+                      and usg_remediate_reaudit | default(true) | bool) }}
+
     - name: "USG | Ensure the report dir exists"
       ansible.builtin.file:
         path: "{{ usg_report_dir }}"
@@ -327,6 +342,7 @@
         mode: "{{ usg_report_dir_mode | default('0750') }}"
 
     - name: "USG | Snapshot the report set before the audit (to detect a fresh one)"
+      when: _usg_audit_here | bool
       # usg audit returns rc=2 BOTH for a normal scan with failing rules AND for a
       # usage error (e.g. profile+tailoring together) that produces no report, so rc
       # alone can't tell success from failure. A successful run writes a NEW
@@ -338,6 +354,7 @@
       register: _usg_reports_before
 
     - name: "USG | Run `usg audit {{ usg_profile }}` -> compliance report"
+      when: _usg_audit_here | bool
       # usg audit writes its HTML + XCCDF results into /var/lib/usg/ by default
       # (no output-path flags in the stock CLI). We run it plainly for maximum
       # version compatibility, then copy the artifacts into the collection dir.
@@ -349,6 +366,7 @@
       failed_when: false
 
     - name: "USG | Collect the usg audit artifacts from /var/lib/usg"
+      when: _usg_audit_here | bool
       ansible.builtin.find:
         paths: /var/lib/usg
         patterns: ["*.html", "*.xml"]
@@ -356,6 +374,7 @@
       register: _usg_artifacts
 
     - name: "USG | Copy audit artifacts into {{ usg_report_dir }} (single collection point)"
+      when: _usg_audit_here | bool
       ansible.builtin.copy:
         src: "{{ item.path }}"
         dest: "{{ usg_report_dir }}/"
@@ -368,6 +387,7 @@
         label: "{{ item.path | basename }}"
 
     - name: "USG | Audit result"
+      when: _usg_audit_here | bool
       # A fresh audit adds a new timestamped report, so the count grows; if it did
       # NOT grow, the audit produced nothing (usage error / quirk) -- surface that
       # loudly instead of pointing at stale reports.

@@ -13,6 +13,7 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
 |---|---|
 | `local.yml` | the playbook `ansible-pull` runs |
 | `bootstrap.sh` | what an operator runs on a fresh box |
+| `it-pull` (`roles/it_scripts/files/pull.sh`) | what an operator runs on an EXISTING box. `it-pull` = light (no apt, no scan, no container touched), `full`, `scripts`, `ai`, `check`, `status`, `log` |
 | `group_vars/all.yml` | nearly all configuration and profile gating |
 | `roles/` | one role per concern (`ai_compose`, `ai_stack`, `usg_harden`, `local_accounts`, …) |
 | `roles/ai_compose/files/stacks/<stack>/compose.yaml` | the per-service Docker stacks, deployed to `/opt/stacks/<stack>/` |
@@ -35,6 +36,15 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   comments. Keep a comment only if removing it would let someone break something
   (the FIPS carve-out, the docling mount trap, PersistentConfig). Do not restate
   the YAML or narrate history.
+- **A routine pull no longer scans.** It used to run three full benchmark
+  evaluations (`usg audit` in `usg_harden`, again in `usg_remediate`, and
+  `oscap xccdf eval` in `scap_scan`) plus a checklist build, every time.
+  `usg_audit_on_pull` / `scap_scan_on_pull` (both `build`) hold those to a box's
+  first build; evidence otherwise comes from the weekly `oscap-scan.timer` and
+  `it-stig run`. The `usg_harden`-stage audit is skipped whenever
+  `usg_remediate` will re-audit. Role tags `packages` and `scripts` exist
+  alongside `ai-runtime`/`ai-gpu`; `it-pull` is the only place the skip-tag
+  strings are written down.
 - **Verify before asserting.** Several bugs here came from plausible-sounding
   assumptions. Check the actual file, the actual package, the actual box.
 - **Profile gating** is computed in `group_vars` (`is_ai`, `is_emi`,
