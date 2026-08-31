@@ -1175,6 +1175,60 @@
 # false so a box that never installed CUPS (e.g. a headless AI node) is a no-op.
 # Set disable_cups: false per box if you genuinely need local printing.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 5g2) USB MASS STORAGE -- close the UAS bypass where storage is meant to be off.
+#
+# USG's UBTU-24-300039 remediation blacklists `usb-storage` only. That module
+# drives the BULK-ONLY transport; a USB3 device that speaks USB Attached SCSI
+# binds `uas` instead, which is a separate module SSG does not touch -- so a
+# modern USB SSD can still attach on a box that "passes" the rule. Where the
+# mission has no removable-media role (everything except the classified EMI
+# laptop) both modules are blacklisted here, after desktop_hardening, so the
+# block does not depend on USG having written its line.
+#
+# NOT a general USB kill: only the mass-storage class drivers are listed.
+# HID, serial/COM adapters (ftdi_sio, cp210x, ch341, cdc_acm), licence dongles,
+# printers and everything else enumerate normally -- USBGuard, not this file,
+# is what governs whether an unknown device of ANY class is authorised, and a
+# new dongle still needs `it-usb enroll` once.
+#
+# On the EMI laptop (usb_storage_enabled true) the file is REMOVED: that box's
+# dta workflow needs both modules, and desktop_hardening has already stripped
+# USG's own blacklist by the time this runs.
+# ---------------------------------------------------------------------------
+- name: "REMED | Blacklist the USB mass-storage drivers (usb-storage + uas)"
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/zz-stig-usb-storage.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by usg_remediate -- do not edit by hand.
+      # USB mass storage is disabled on this profile (UBTU-24-300039). `uas` is
+      # listed alongside `usb-storage` because USB3 drives bind it instead and
+      # SSG's rule does not cover it. Non-storage USB is unaffected.
+      {% for m in usb_storage_block_modules %}
+      blacklist {{ m }}
+      install {{ m }} /bin/false
+      {% endfor %}
+  when: not (usb_storage_enabled | default(true) | bool)
+
+- name: "REMED | Unload the mass-storage drivers now (no reboot needed)"
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: absent
+  loop: "{{ usb_storage_block_modules }}"
+  loop_control:
+    label: "{{ item }}"
+  failed_when: false          # in use by a mounted device, or never loaded
+  when: not (usb_storage_enabled | default(true) | bool)
+
+- name: "REMED | Remove the mass-storage blacklist where USB storage IS the mission"
+  ansible.builtin.file:
+    path: /etc/modprobe.d/zz-stig-usb-storage.conf
+    state: absent
+  when: usb_storage_enabled | default(true) | bool
+
 - name: "REMED | Disable + mask CUPS printing services (all profiles)"
   ansible.builtin.systemd:
     name: "{{ item }}"

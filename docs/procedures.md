@@ -430,6 +430,17 @@ sudo it-usb trust <id>          # allow this exact device across reboots
 
 USBGuard runs on every profile including EMI. The initial policy is generated from whatever was attached at build time, so the built-in keyboard is always authorised.
 
+**USBGuard is the layer that governs non-storage devices.** Blacklisting the USB
+mass-storage drivers (`usb-storage` + `uas`, everywhere except the classified EMI
+laptop) stops USB *drives* only — dongles, serial/COM adapters, printers, HID and
+everything else still enumerate normally. What stops them is USBGuard's
+allow-list: anything not attached when the policy was generated is blocked until
+somebody enrols it. So on development and AI boxes, plan on `sudo it-usb enroll`
+for each licence dongle, USB-serial cable and KVM the first time it is plugged in.
+
+A device that is refused shows up in `sudo it-usb blocked` — that, not a broken
+cable, is the usual reason a new dongle "does nothing".
+
 ## 3.6 Back up an EMI box
 
 Offline SSD duplication, by hand, **logged on paper**. Nothing on the box records it and nothing here tries to — `it-checklist` item 23 reports MANUAL and you verify it against the paper record.
