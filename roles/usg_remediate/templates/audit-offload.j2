@@ -2,36 +2,152 @@
 # Managed by usg_remediate -- do not edit by hand.
 # Weekly offload of the audit trail (AU-4(1) / UBTU-24-900240).
 #
-# These boxes have no reachable syslog/SIEM host, so "offload" means: take the
-# rotated audit logs off auditd's own filesystem, compress them, and stage them
-# where an operator collects them. Set usg_audit_offload_command in site.yml to
-# push to a log host instead.
+# Three stages, each independent and each optional:
+#   1. AUDIT   stage the rotated auditd logs as audit-<host>-<date>.tar.gz
+#   2. EXTRA   stage other log sources (container logs, app audit trails) as a
+#              SEPARATE logs-<host>-<date>.tar.gz -- deliberately not mixed into
+#              the audit archive, so the AU-4 artifact an assessor opens holds
+#              the audit trail and nothing else
+#   3. PUSH    copy both to a remote share
+#
+# THE LOCAL COPY IS ALWAYS KEPT, even when the push succeeds. A share that is
+# unreachable, full, or misconfigured must never be the reason an audit trail
+# went missing -- so the push is a copy, not a move, and its failure is loud
+# but not destructive.
 set -eu
 
 SRC=/var/log/audit
 DEST={{ usg_audit_offload_dir }}
 KEEP={{ usg_audit_offload_keep }}
+LOG=/var/log/audit-offload.log
+
+log() { printf '%s %s\n' "$(date -Is)" "$*" >> "$LOG"; }
 {% if usg_audit_offload_command | default('') | length > 0 %}
 
+# usg_audit_offload_command REPLACES everything above. Kept for a site that
+# already pushes to a syslog/SIEM host its own way.
 {{ usg_audit_offload_command }}
 exit $?
 {% else %}
 
-[ -d "$SRC" ] || exit 0
 install -d -m 0750 -o root "$DEST"
-
 stamp=$(date +%Y%m%d)
-out="$DEST/audit-$(hostname -s)-$stamp.tar.gz"
+host=$(hostname -s)
 
-# Only the ROTATED logs: audit.log itself is open and being written.
-set -- "$SRC"/audit.log.*
-[ -e "$1" ] || exit 0
+# ---- 1. the audit trail ----------------------------------------------------
+if [ -d "$SRC" ]; then
+  set -- "$SRC"/audit.log.*
+  if [ -e "$1" ]; then
+    out="$DEST/audit-$host-$stamp.tar.gz"
+    # Only the ROTATED logs: audit.log itself is open and being written.
+    if tar -czf "$out.tmp" -C "$SRC" -- $(cd "$SRC" && ls audit.log.*) 2>>"$LOG"; then
+      mv -f "$out.tmp" "$out"; chmod 0640 "$out"
+      log "audit archive: $out"
+    else
+      rm -f "$out.tmp"; log "ERROR: audit archive failed"
+    fi
+  fi
+fi
 
-tar -czf "$out.tmp" -C "$SRC" -- $(cd "$SRC" && ls audit.log.*) && mv -f "$out.tmp" "$out"
-chmod 0640 "$out"
+{% if (usg_audit_offload_containers | default(false) | bool) or (usg_audit_offload_extra | default([]) | length > 0) %}
+# ---- 2. everything else ----------------------------------------------------
+# Container stdout/stderr is NOT in /var/log and NOT in journald: the daemon
+# runs the json-file driver, so it lives under /var/lib/docker capped at
+# 30 MB per container and is then discarded. Nothing collected it. Same for
+# an application audit trail written inside a container's volume.
+extra_tmp=$(mktemp -d /tmp/offload-extra.XXXXXX) || extra_tmp=""
+if [ -n "$extra_tmp" ]; then
+{% if usg_audit_offload_containers | default(false) | bool %}
+  # `docker logs` rather than reaching into /var/lib/docker: it is the supported
+  # interface, works whatever log driver is set, and names files by CONTAINER
+  # rather than by the 64-char id the on-disk files use.
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    mkdir -p "$extra_tmp/containers"
+    for c in $(docker ps -a --format '{{ '{{' }}.Names{{ '}}' }}' 2>/dev/null); do
+{% if (usg_audit_offload_container_names | default([]) | length) > 0 %}
+      case " {{ usg_audit_offload_container_names | join(' ') }} " in
+        *" $c "*) ;;
+        *) continue ;;
+      esac
+{% endif %}
+      docker logs --timestamps "$c" > "$extra_tmp/containers/$c.log" 2>&1 || true
+    done
+    log "container logs: $(ls -1 "$extra_tmp/containers" 2>/dev/null | wc -l) container(s)"
+  else
+    log "WARNING: docker not available -- container logs NOT collected"
+  fi
+{% endif %}
+{% for p in usg_audit_offload_extra | default([]) %}
+  # {{ p }}
+  for f in {{ p }}; do
+    [ -r "$f" ] || { log "WARNING: unreadable, not collected: $f"; continue; }
+    mkdir -p "$extra_tmp/files"
+    cp -p "$f" "$extra_tmp/files/$(printf '%s' "$f" | tr '/' '_')" 2>>"$LOG" \
+      && log "extra: $f" || log "ERROR: could not copy $f"
+  done
+{% endfor %}
+  if [ -n "$(ls -A "$extra_tmp" 2>/dev/null)" ]; then
+    lout="$DEST/logs-$host-$stamp.tar.gz"
+    tar -czf "$lout.tmp" -C "$extra_tmp" . 2>>"$LOG" \
+      && { mv -f "$lout.tmp" "$lout"; chmod 0640 "$lout"; log "logs archive: $lout"; } \
+      || { rm -f "$lout.tmp"; log "ERROR: logs archive failed"; }
+  fi
+  rm -rf "$extra_tmp"
+fi
+{% endif %}
 
-# Keep the last N archives; the originals stay until auditd rotates them out.
-ls -1t "$DEST"/audit-*.tar.gz 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r old; do
+{% if usg_audit_offload_smb_enabled | default(false) | bool %}
+# ---- 3. push to the share --------------------------------------------------
+# Mounted ON DEMAND and unmounted straight after. A share left permanently
+# mounted is a path onto the box and a boot-time dependency on a server that
+# may not be there.
+SMB_SHARE='{{ usg_audit_offload_smb_share }}'
+SMB_CRED='{{ usg_audit_offload_smb_credentials }}'
+SMB_OPTS='{{ usg_audit_offload_smb_options }}'
+SMB_SUB='{{ usg_audit_offload_smb_subdir }}'
+MNT=/run/audit-offload.mnt
+
+push_failed=0
+if [ ! -r "$SMB_CRED" ]; then
+  log "ERROR: no credentials file at $SMB_CRED -- push SKIPPED, local copy kept"
+  push_failed=1
+elif ! command -v mount.cifs >/dev/null 2>&1; then
+  log "ERROR: cifs-utils not installed -- push SKIPPED, local copy kept"
+  push_failed=1
+else
+  mkdir -p "$MNT"
+  if mount -t cifs "$SMB_SHARE" "$MNT" -o "credentials=$SMB_CRED,$SMB_OPTS" 2>>"$LOG"; then
+    dst="$MNT/$SMB_SUB"
+    if mkdir -p "$dst" 2>>"$LOG"; then
+      for f in "$DEST"/audit-"$host"-"$stamp".tar.gz "$DEST"/logs-"$host"-"$stamp".tar.gz; do
+        [ -f "$f" ] || continue
+        cp -p "$f" "$dst/" 2>>"$LOG" && log "pushed: $(basename "$f") -> $SMB_SHARE/$SMB_SUB" \
+          || { log "ERROR: push failed for $(basename "$f")"; push_failed=1; }
+      done
+    else
+      log "ERROR: cannot create $dst on the share"; push_failed=1
+    fi
+    umount "$MNT" 2>>"$LOG" || log "WARNING: umount $MNT failed"
+  else
+    log "ERROR: could not mount $SMB_SHARE -- push SKIPPED, local copy kept"
+    push_failed=1
+  fi
+fi
+{% endif %}
+
+# ---- retention -------------------------------------------------------------
+# Only ever prunes archives this script wrote, and only the LOCAL copies.
+for pat in "audit-" "logs-"; do
+  ls -1t "$DEST/$pat"*.tar.gz 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r old; do
     rm -f -- "$old"
+  done
 done
+
+chmod 0640 "$LOG" 2>/dev/null || true
+{% if usg_audit_offload_smb_enabled | default(false) | bool %}
+# Non-zero so cron mails root / the run shows as failed. The trail is safe
+# locally either way -- this says the OFFLOAD did not complete.
+[ "$push_failed" -eq 0 ] || exit 1
+{% endif %}
+exit 0
 {% endif %}

@@ -569,6 +569,57 @@ The carried repo is **unsigned**, so apt is told to trust it. The trust boundary
 
 **Ubuntu Pro / ESM packages are not covered.** The tree holds the main archive only; anything shipped through ESM has to be carried in as a loose `.deb`.
 
+## 4.4b Offload logs to a share (closed space)
+
+The weekly `/etc/cron.weekly/audit-offload` job stages the rotated audit trail locally. In the closed space it can also collect container logs and push everything to an SMB share. **Off by default** — nothing changes until you set these.
+
+**1. Decide what gets collected.** In `/opt/it/site.yml` (per box) or `group_vars`:
+
+```yaml
+usg_audit_offload_containers: true          # `docker logs` for every container
+usg_audit_offload_container_names: []       # or name a subset
+usg_audit_offload_extra:                    # globs; app audit trails live in volumes
+  - /var/lib/docker/volumes/open-webui/_data/audit.log
+  - /var/log/clamav-scan.log
+```
+
+These land in a **separate** `logs-<host>-<date>.tar.gz`. The audit archive stays audit-only, so the AU-4 artifact an assessor opens holds the audit trail and nothing else.
+
+**2. Point it at the share:**
+
+```yaml
+usg_audit_offload_smb_enabled: true
+usg_audit_offload_smb_share: "//logsrv.example.mil/audit$"
+usg_audit_offload_smb_subdir: "{{ ansible_hostname }}"
+usg_audit_offload_smb_options: "vers=3.1.1,sec=ntlmssp,uid=0,gid=0,file_mode=0640,dir_mode=0750"
+```
+
+**3. Put the credentials on the box by hand.** Never in the repo:
+
+```bash
+sudo install -d -m 0700 /etc/stig-build
+printf 'username=svc_audit
+password=<password>
+domain=<DOMAIN>
+'   | sudo tee /etc/stig-build/audit-offload.cred >/dev/null
+sudo chmod 0600 /etc/stig-build/audit-offload.cred
+```
+
+The pull warns at build time if this file is missing rather than letting the first failure be a silent cron job a week later.
+
+**4. Test it without waiting a week:**
+
+```bash
+sudo /etc/cron.weekly/audit-offload
+echo "exit=$?"                       # non-zero = the push failed
+sudo cat /var/log/audit-offload.log  # what it archived and pushed
+ls -l /opt/ia/audit-offload/
+```
+
+**The local copy is always kept, even when the push succeeds.** The share is mounted on demand and unmounted straight after — a share left permanently mounted is a path onto the box and a boot-time dependency on a server that may not be there. If the mount fails the job logs the reason, exits non-zero so cron reports it, and the trail is still staged locally.
+
+> **`usg_audit_offload_command` replaces the whole job**, staging included. It predates the above and is kept for a site already pushing to a SIEM its own way. Use the settings above instead unless you need to.
+
 ## 4.5 Suggested cadence
 
 | Activity | Cadence |

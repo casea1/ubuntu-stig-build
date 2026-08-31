@@ -1130,6 +1130,35 @@
         group: "{{ ia_it_group | default('sudo') }}"
         mode: "0750"
 
+    - name: "REMED | cifs-utils, for the remote-share push"
+      ansible.builtin.apt:
+        name: cifs-utils
+        state: present
+      when: usg_audit_offload_smb_enabled | default(false) | bool
+      failed_when: false        # air-gapped with no local repo: warned below, not fatal
+
+    # The credentials file is NEVER written by this repo and never committed.
+    # It is placed by hand (or by vault) on the box, root-only, and the offload
+    # script refuses to mount without it. Say so at build time rather than
+    # letting the first failure be a silent cron job in a week's time.
+    - name: "REMED | Is the share credentials file present?"
+      ansible.builtin.stat:
+        path: "{{ usg_audit_offload_smb_credentials }}"
+      register: _offload_cred
+      when: usg_audit_offload_smb_enabled | default(false) | bool
+
+    - name: "REMED | WARN -- offload push is configured but has no credentials"
+      ansible.builtin.debug:
+        msg: >-
+          usg_audit_offload_smb_enabled is true but {{ usg_audit_offload_smb_credentials }}
+          does not exist, so the weekly push will SKIP (the local copy is still
+          staged in {{ usg_audit_offload_dir }}). Create it root-only, 0600:
+          printf 'username=svc_audit\npassword=...\ndomain=...\n' >
+          {{ usg_audit_offload_smb_credentials }} && chmod 0600 {{ usg_audit_offload_smb_credentials }}
+      when:
+        - usg_audit_offload_smb_enabled | default(false) | bool
+        - not (_offload_cred.stat.exists | default(false))
+
     - name: "REMED | Install /etc/cron.weekly/audit-offload"
       ansible.builtin.template:
         src: audit-offload.j2
