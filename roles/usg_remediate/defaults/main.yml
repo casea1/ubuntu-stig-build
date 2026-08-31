@@ -66,6 +66,23 @@ usg_audit_offload_dir: /opt/ia/audit-offload
 usg_audit_offload_keep: 8
 usg_audit_offload_command: ""
 
+# ---- extra log sources -----------------------------------------------------
+# Staged as a SEPARATE logs-<host>-<date>.tar.gz, never mixed into the audit
+# archive: the AU-4 artifact an assessor opens should hold the audit trail and
+# nothing else.
+usg_audit_offload_containers: false      # collect `docker logs` for containers
+usg_audit_offload_container_names: []    # empty = every container
+usg_audit_offload_extra: []              # globs, e.g. an app audit log in a volume
+
+# ---- push to a remote share ------------------------------------------------
+# Mounted on demand and unmounted straight after. The LOCAL copy is always
+# kept, so an unreachable share never loses the trail.
+usg_audit_offload_smb_enabled: false
+usg_audit_offload_smb_share: ""                                    # //server/share
+usg_audit_offload_smb_credentials: /etc/stig-build/audit-offload.cred
+usg_audit_offload_smb_options: "vers=3.1.1,sec=ntlmssp,uid=0,gid=0,file_mode=0640,dir_mode=0750"
+usg_audit_offload_smb_subdir: "{{ ansible_hostname | default('unknown') }}"
+
 usg_audit_privileged_commands_enabled: true
 usg_audit_privileged_commands_key: privileged
 usg_audit_privileged_commands:
