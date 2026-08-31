@@ -572,12 +572,14 @@ The carried repo is **unsigned**, so apt is told to trust it. The trust boundary
 ## 4.4a Mount a Windows / SMB file share
 
 ```bash
-sudo it-smb add                 # interactive
+sudo it-smb add                 # asks for everything, one field at a time
 sudo it-smb                     # every managed share, mounted or idle
 sudo it-smb test <name>         # why will it not mount?
 ```
 
-Non-interactively:
+`add` with no arguments is the normal way in — you do not need to remember any syntax. It asks for the name, server, share, username, domain, password, mount point, read-only, and SMB version in turn, each with a default in brackets, **re-asking on bad input rather than dropping you back to the shell**. It probes the server on port 445 as soon as you name it, so you find out it is unreachable *before* typing a password. Nothing is written until you confirm at a review screen, and it offers to test the mount immediately afterwards.
+
+The flags below exist for scripting and Ansible:
 
 ```bash
 sudo it-smb add --name audit-logs --share '//logsrv.corp.local/audit$' \
