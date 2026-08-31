@@ -589,6 +589,25 @@ sudo it-smb add --name eng --share '//fs01/Engineering' --user eng --domain CORP
 
 Options: `--mountpoint`, `--vers 3.1.1|3.0|2.1`, `--ro`, `--uid/--gid`, `--options "k=v,..."`.
 
+### A guest / anonymous share, available to everyone
+
+For a file server with no user accounts — the Linux equivalent of the login-script drive mapping on the Windows boxes:
+
+```bash
+sudo it-smb add --name pubshare --share '//fileserver/Public' --guest --group users
+```
+
+`--guest` stores **no credentials at all** (the mount option is `guest`, i.e. an empty password), so there is nothing on disk to protect or rotate. `--group NAME` makes the mount readable — and writable, unless `--ro` — by that group's members rather than root only.
+
+**Do not do this per user.** One system automount serves everyone: it mounts on first access, survives logout, needs no login script, and there is one place to change it. If people want it to look like a mapped drive, symlink it into their home:
+
+```bash
+ln -s /mnt/smb/pubshare ~/Public          # per user
+sudo ln -s /mnt/smb/pubshare /etc/skel/Public   # and for every future account
+```
+
+> Windows disables guest SMB2+ access by default from Windows 10 1709 onward. If the share works from your Windows boxes today, the server has it enabled and this will work too. Once the machines are domain-joined, replace this with `--options sec=krb5` and drop guest access entirely.
+
 ### Shares are automount units, not fstab lines
 
 Three reasons, all of which bite on a hardened box:

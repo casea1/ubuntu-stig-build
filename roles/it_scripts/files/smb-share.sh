@@ -20,6 +20,9 @@
 #   it-smb add                   add a share, interactively
 #   it-smb add --name NAME --share //SERVER/SHARE [options]
 #        --user U --domain D     credentials (prompted if not given)
+#        --guest                 anonymous/guest share -- no credentials at all
+#        --group NAME            let members of NAME read (and write, unless
+#                                --ro) the mount, instead of root only
 #        --mountpoint PATH       default /mnt/smb/<name>
 #        --vers 3.1.1|3.0|2.1    SMB dialect (default 3.1.1)
 #        --ro                    mount read-only
@@ -128,8 +131,10 @@ diagnose() {  # name -- read-only checks, then a real mount attempt
   if command -v mount.cifs >/dev/null 2>&1; then ok "cifs-utils installed"
   else bad "cifs-utils NOT installed -- apt install cifs-utils"; return 2; fi
 
-  # 2. credentials
-  if [ -r "$cred" ]; then
+  # 2. credentials -- unless this is a guest share, which has none by design
+  if printf '%s' "$(share_field "$name" Options)" | grep -qE '(^|,)guest(,|$)'; then
+    ok "guest share -- no credentials to check"
+  elif [ -r "$cred" ]; then
     local mode; mode=$(stat -c %a "$cred")
     [ "$mode" = 600 ] && ok "credentials $cred ($mode)" || warn "credentials $cred is $mode -- should be 0600"
     grep -q '^username=' "$cred" || bad "credentials file has no username= line"
@@ -266,7 +271,7 @@ cmd_creds() {
 }
 
 cmd_add() {
-  local name="" what="" mp="" vers="3.1.1" ro=0 uid=0 gid=0 extra="" user="" dom=""
+  local name="" what="" mp="" vers="3.1.1" ro=0 uid=0 gid=0 extra="" user="" dom="" guest=0 group=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --name) name="${2:?}"; shift 2 ;;
@@ -278,6 +283,8 @@ cmd_add() {
       --uid) uid="${2:?}"; shift 2 ;;
       --gid) gid="${2:?}"; shift 2 ;;
       --options) extra="${2-}"; shift 2 ;;
+      --guest) guest=1; shift ;;
+      --group) group="${2:?}"; shift 2 ;;
       --ro) ro=1; shift ;;
       *) die "unknown option to add: $1" ;;
     esac
@@ -320,9 +327,26 @@ cmd_add() {
     what="//$server/$sharename"
     say ""
 
-    user=$(ask "Username to connect as" "" "" "")
-    dom=$(ask_optional "Domain (blank for a workgroup / local account)")
-    pw=$(ask_secret "Password")
+    if ask_yn "Does this share need a username and password?" y; then
+      user=$(ask "Username to connect as" "" "" "")
+      dom=$(ask_optional "Domain (blank for a workgroup / local account)")
+      pw=$(ask_secret "Password")
+    else
+      guest=1
+      ok "guest / anonymous -- no credentials will be stored"
+      say "    ${DIM}Note: Windows disables guest SMB2+ access by default since"
+      say "    Windows 10 1709. If it works from your Windows boxes today, the"
+      say "    server has it turned on and this will work too.${R}"
+    fi
+    say ""
+
+    # Who can read it. A share mounted root-only is invisible to the people who
+    # need it, and 0777 is a finding -- so name a group instead.
+    if ask_yn "Should ordinary users have access (not just root)?" y; then
+      group=$(ask "Group that gets access" "users" "" "")
+      getent group "$group" >/dev/null 2>&1 \
+        || warn "group '$group' does not exist yet -- create it, or add users to it, before they can read the mount"
+    fi
     say ""
 
     mp=$(ask "Mount point" "$(mp_of "$name")" v_abspath "must be an absolute path")
@@ -340,7 +364,9 @@ cmd_add() {
     printf '  %-16s %s\n' "name"        "$name"
     printf '  %-16s %s\n' "share"       "$what"
     printf '  %-16s %s\n' "mount point" "$mp"
-    printf '  %-16s %s%s\n' "user"      "${dom:+$dom\\}" "$user"
+    if [ "$guest" -eq 1 ]; then printf '  %-16s %s\n' "authentication" "guest / anonymous (no credentials)"
+    else printf '  %-16s %s%s\n' "user" "${dom:+$dom\\}" "$user"; fi
+    [ -n "$group" ] && printf '  %-16s %s\n' "readable by" "group $group"
     printf '  %-16s %s\n' "access"      "$([ "$ro" -eq 1 ] && echo read-only || echo read-write)"
     printf '  %-16s %s\n' "SMB version" "$vers"
     printf '  %-16s %s:%s\n' "files owned by" "$uid" "$gid"
@@ -356,7 +382,10 @@ cmd_add() {
   mp="${mp:-$(mp_of "$name")}"
 
   local cred; cred=$(cred_of "$name")
-  if [ "$wizard" -eq 1 ]; then
+  if [ "$guest" -eq 1 ]; then
+    cred=""
+    ok "guest share -- no credentials file"
+  elif [ "$wizard" -eq 1 ]; then
     install -d -m 0700 -o root -g root "$CRED_DIR"; umask 077
     { printf 'username=%s\n' "$user"; printf 'password=%s\n' "$pw"
       [ -n "$dom" ] && printf 'domain=%s\n' "$dom"; } > "$cred"
@@ -379,12 +408,30 @@ cmd_add() {
     ok "using existing credentials at $cred"
   fi
 
-  local opts="credentials=$cred,vers=$vers,uid=$uid,gid=$gid,file_mode=0640,dir_mode=0750,iocharset=utf8,_netdev,nofail"
+  # Named group -> that gid owns the mount, and the modes open up enough for
+  # its members. Without this the mount is root-only and the people who need
+  # the share cannot see it; 0777 would work too and is a STIG finding.
+  local fmode=0640 dmode=0750
+  if [ -n "$group" ]; then
+    local ggid; ggid=$(getent group "$group" 2>/dev/null | cut -d: -f3)
+    [ -n "$ggid" ] && gid="$ggid" || warn "group '$group' not found -- leaving gid=$gid"
+    if [ "$ro" -eq 1 ]; then fmode=0640; dmode=0750; else fmode=0664; dmode=0775; fi
+  fi
+
+  local opts
+  if [ "$guest" -eq 1 ]; then
+    # `guest` is username= with an empty password. No credentials file exists,
+    # so there is nothing on disk to protect or rotate.
+    opts="guest,vers=$vers,uid=$uid,gid=$gid,file_mode=$fmode,dir_mode=$dmode,iocharset=utf8,_netdev,nofail"
+  else
+    opts="credentials=$cred,vers=$vers,uid=$uid,gid=$gid,file_mode=$fmode,dir_mode=$dmode,iocharset=utf8,_netdev,nofail"
+  fi
   [ "$ro" -eq 1 ] && opts="$opts,ro"
   [ -n "$extra" ] && opts="$opts,$extra"
 
   install -d -m 0755 "$MOUNT_ROOT"
-  install -d -m 0750 "$mp"
+  if [ -n "$group" ]; then install -d -m 0755 -g "$group" "$mp" 2>/dev/null || install -d -m 0755 "$mp"
+  else install -d -m 0750 "$mp"; fi
 
   local mu au; mu="$UNIT_DIR/$(unit_of "$mp")"; au="$UNIT_DIR/$(amount_of "$mp")"
   cat > "$mu" <<EOF
@@ -421,7 +468,7 @@ EOF
   systemctl enable --now "$(amount_of "$mp")" >/dev/null 2>&1 \
     && ok "automount enabled -- the share mounts on first access" \
     || warn "could not enable the automount unit; see: systemctl status $(amount_of "$mp")"
-  logline "add $name -> $what at $mp (vers=$vers ro=$ro)"
+  logline "add $name -> $what at $mp (vers=$vers ro=$ro guest=$guest group=${group:-none})"
   say ""
   if [ "$wizard" -eq 1 ] && ask_yn "Test the mount now?" y; then
     diagnose "$name"
