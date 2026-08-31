@@ -889,6 +889,17 @@ usb_access_group: dta
 # media -- and expect UBTU-24-300039 to open, with the adjudication rendering.
 usb_storage_enabled: "{{ (is_emi | default(false) | bool) and (emi_classified | default(true) | bool) }}"
 
+# The mass-storage class drivers blacklisted by usg_remediate wherever
+# usb_storage_enabled is false. `uas` matters: USB3 drives that speak USB
+# Attached SCSI bind it instead of usb-storage, and SSG's UBTU-24-300039 rule
+# only covers usb-storage -- so blacklisting that alone still lets a modern USB
+# SSD attach. NOTHING ELSE BELONGS IN THIS LIST. Dongles, serial/COM adapters,
+# HID and printers are meant to keep working; USBGuard is the layer that decides
+# whether an unknown device of any class is authorised (`it-usb enroll`).
+usb_storage_block_modules:
+  - usb-storage
+  - uas
+
 # Base-box default accounts to PURGE if present. Vagrant/Packer base images ship
 # a 'vagrant' user with a known password, NOPASSWD sudo (/etc/sudoers.d/vagrant),
 # and a public "insecure" SSH key -- a STIG finding the build does not create but

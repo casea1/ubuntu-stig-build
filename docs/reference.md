@@ -68,6 +68,8 @@ sudo augenrules --check                                       # is audit.rules o
 
 **14. A green playbook is not evidence.** ASP-2's compliance score barely moved (88.476 → 88.703) across a full remediation run — two whole categories of fix were being written correctly and still failing, because a stale file was poisoning rules that were otherwise satisfied and PAM values were being written into a file nothing read. Neither showed as an Ansible failure. **The re-audit is the evidence.**
 
+**16. Blacklisting `usb-storage` does not disable USB storage.** SSG's UBTU-24-300039 covers that one module, which drives the bulk-only transport. A USB3 device that speaks USB Attached SCSI binds **`uas`**, a separate module the rule never mentions — so the scan passes green while a modern USB SSD mounts normally. `usg_remediate` blacklists both wherever `usb_storage_enabled` is false. Conversely, neither module has anything to do with **non-storage** USB: dongles, serial/COM adapters (`ftdi_sio`, `cp210x`, `ch341`, `cdc_acm`), HID and printers are unaffected, and **USBGuard** is what blocks those until `it-usb enroll` authorises them. Verify with `lsmod | grep -E '^(usb_storage|uas)'` (empty is correct) — not with the scan result.
+
 **15. Pre-USG leftovers.** Two separate outages traced to files the current baseline neither writes nor removes, left by the old ansible-lockdown role (`/etc/audit/rules.d/stig.rules`, and `pam_faillock` lines in `common-auth` with `pam_unix`'s jump offset never recalculated). Assume there are others on any box built before the USG switch.
 
 ---
