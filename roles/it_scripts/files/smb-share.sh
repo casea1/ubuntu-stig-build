@@ -327,7 +327,9 @@ cmd_add() {
     what="//$server/$sharename"
     say ""
 
-    if ask_yn "Does this share need a username and password?" y; then
+    if [ "$guest" -eq 1 ]; then
+      ok "guest / anonymous (--guest) -- no credentials will be stored"
+    elif ask_yn "Does this share need a username and password?" y; then
       user=$(ask "Username to connect as" "" "" "")
       dom=$(ask_optional "Domain (blank for a workgroup / local account)")
       pw=$(ask_secret "Password")

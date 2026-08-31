@@ -37,6 +37,22 @@
     state: present
   when: (base_common_packages | default([])) | length > 0
 
+# --- Active Directory join prerequisites ------------------------------------
+# development / ai / baseline. NOT the EMI laptop, which stays standalone.
+#
+# Only the packages that do NOT touch the PAM stack. sssd-ad and sssd-tools
+# pull libpam-sss, whose postinst runs `pam-auth-update --package` and
+# regenerates /etc/pam.d/common-auth -- on a box that is not joined to
+# anything. `it-domain join` installs those at join time, behind a PAM backup
+# and a verification step. See ad_prep_packages in group_vars.
+- name: "Install Active Directory join prerequisites"
+  ansible.builtin.apt:
+    name: "{{ ad_prep_packages | default([]) }}"
+    state: present
+  when:
+    - ad_prep_enabled | default(false) | bool
+    - (ad_prep_packages | default([])) | length > 0
+
 # --- PowerShell (LTS) -- ALL profiles ---------------------------------------
 # Required by the PowerStrux auditing tool (relevant on every box, incl. the AI
 # servers). Pinned .deb from the official GitHub release (no third-party apt
