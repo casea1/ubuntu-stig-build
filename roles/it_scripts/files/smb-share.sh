@@ -189,6 +189,62 @@ $(systemctl status "$(unit_of "$mp")" --no-pager -l 2>/dev/null | tail -12)"
   return 1
 }
 
+# ---- prompt helpers ---------------------------------------------------------
+# Every one of these RE-ASKS on bad input rather than dying. A wizard that
+# throws you back to the shell for a typo is worse than the flags it replaces.
+# THE PROMPTS GO TO STDERR. The caller captures stdout with $(...), so a
+# prompt written to stdout ends up inside the answer -- which is exactly what
+# happened the first time this was written: every field came back containing
+# the text that asked for it.
+ask() {  # prompt, default, validator-fn (optional), hint-on-failure
+  local prompt="$1" def="${2:-}" check="${3:-}" hint="${4:-}" ans
+  while :; do
+    if [ -n "$def" ]; then printf '  %s [%s]: ' "$prompt" "$def" >&2
+    else printf '  %s: ' "$prompt" >&2; fi
+    read -r ans
+    [ -z "$ans" ] && ans="$def"
+    if [ -z "$ans" ]; then printf '    %s(required)%s\n' "$YEL" "$R" >&2; continue; fi
+    if [ -n "$check" ] && ! $check "$ans"; then
+      printf '    %s%s%s\n' "$YEL" "$hint" "$R" >&2; continue
+    fi
+    printf '%s' "$ans"; return 0
+  done
+}
+
+ask_optional() {  # prompt -- blank is a valid answer
+  local prompt="$1" ans
+  printf '  %s: ' "$prompt" >&2; read -r ans; printf '%s' "$ans"
+}
+
+ask_yn() {  # prompt, default(y|n) -> 0 yes 1 no
+  local prompt="$1" def="${2:-n}" ans hint
+  [ "$def" = y ] && hint="[Y/n]" || hint="[y/N]"
+  while :; do
+    printf '  %s %s ' "$prompt" "$hint"; read -r ans
+    ans="${ans:-$def}"
+    case "$ans" in [Yy]*) return 0 ;; [Nn]*) return 1 ;;
+      *) printf '    %sanswer y or n%s\n' "$YEL" "$R" ;; esac
+  done
+}
+
+ask_secret() {  # prompt -> masked, asked twice, re-asks until they match
+  local prompt="$1" p p2
+  while :; do
+    printf '  %s: ' "$prompt" >&2; stty -echo 2>/dev/null; read -r p; stty echo 2>/dev/null; echo >&2
+    if [ -z "$p" ]; then printf '    %s(required)%s\n' "$YEL" "$R" >&2; continue; fi
+    printf '  %s (again): ' "$prompt" >&2; stty -echo 2>/dev/null; read -r p2; stty echo 2>/dev/null; echo >&2
+    [ "$p" = "$p2" ] && { printf '%s' "$p"; return 0; }
+    printf '    %sthey do not match -- try again%s\n' "$YEL" "$R" >&2
+  done
+}
+
+v_name()   { printf '%s' "$1" | grep -qE '^[A-Za-z0-9][A-Za-z0-9._-]*$' && ! [ -e "$UNIT_DIR/$(unit_of "$(mp_of "$1")")" ]; }
+v_server() { printf '%s' "$1" | grep -qE '^[A-Za-z0-9][A-Za-z0-9._-]*$'; }
+v_share()  { printf '%s' "$1" | grep -qE '^[^/\\]+$'; }
+v_abspath(){ case "$1" in /*) return 0 ;; *) return 1 ;; esac; }
+v_vers()   { printf '%s' "$1" | grep -qE '^(1\.0|2\.0|2\.1|3\.0|3\.02|3\.1\.1)$'; }
+v_num()    { printf '%s' "$1" | grep -qE '^[0-9]+$'; }
+
 cmd_creds() {
   local name="${1:-}" cred u p p2 dom
   [ -n "$name" ] || die "usage: it-smb creds <name>"
@@ -227,12 +283,71 @@ cmd_add() {
     esac
   done
 
+  # ---- interactive: ask for one thing at a time ---------------------------
+  # The flags above exist for scripting. A share gets added by hand perhaps
+  # twice a year, so the prompts -- not the syntax -- are the real interface.
+  local server="" sharename="" wizard=0 pw=""
   if [ -z "$name" ] || [ -z "$what" ]; then
+    wizard=1
     head2 "Add an SMB share"
-    [ -n "$name" ] || { printf '  short name (no spaces, e.g. audit-logs): '; read -r name; }
-    [ -n "$what" ] || { printf '  share (//SERVER/SHARE): '; read -r what; }
-    printf '  SMB version [%s]: ' "$vers"; read -r a; vers="${a:-$vers}"
-    printf '  read-only? [y/N] '; read -r a; case "$a" in [Yy]*) ro=1 ;; esac
+    say "  ${DIM}Enter is the shown default. Ctrl-C to abort -- nothing is written"
+    say "  until you confirm at the end.${R}"
+    say ""
+
+    name=$(ask "Short name for this share" "" v_name \
+      "letters, digits, . _ - only, and not already in use")
+    say "    ${DIM}mounts at $(mp_of "$name")${R}"
+    say ""
+
+    server=$(ask "File server (hostname or IP)" "" v_server "hostname or IP, no slashes")
+    # Probe NOW, before they type a password -- finding out the server is
+    # unreachable after entering credentials wastes the operator's time.
+    if printf '%s' "$server" | grep -qE '^[0-9.]+$' || getent hosts "$server" >/dev/null 2>&1; then
+      if timeout 5 bash -c "cat < /dev/null > /dev/tcp/$server/445" 2>/dev/null; then
+        ok "$server is reachable on port 445"
+      else
+        warn "$server resolves but is NOT answering on port 445"
+        say "    ${DIM}Carry on if the server is simply down for now -- the automount"
+        say "    will pick it up when it returns.${R}"
+      fi
+    else
+      warn "$server does not resolve right now"
+      say "    ${DIM}Fine if DNS is not up yet; otherwise use an IP address.${R}"
+    fi
+    say ""
+
+    sharename=$(ask "Share name on that server" "" v_share "just the share name, e.g. audit\$ or Engineering")
+    what="//$server/$sharename"
+    say ""
+
+    user=$(ask "Username to connect as" "" "" "")
+    dom=$(ask_optional "Domain (blank for a workgroup / local account)")
+    pw=$(ask_secret "Password")
+    say ""
+
+    mp=$(ask "Mount point" "$(mp_of "$name")" v_abspath "must be an absolute path")
+    ask_yn "Mount read-only?" n && ro=1 || ro=0
+    vers=$(ask "SMB version" "$vers" v_vers "one of 1.0 2.0 2.1 3.0 3.02 3.1.1")
+
+    if ask_yn "Set advanced options (file owner, extra mount options)?" n; then
+      uid=$(ask "Owner uid for the mounted files" "0" v_num "a number")
+      gid=$(ask "Owner gid" "0" v_num "a number")
+      extra=$(ask_optional "Extra mount options (comma-separated, blank for none)")
+    fi
+
+    # ---- confirm before anything is written ------------------------------
+    head2 "Review"
+    printf '  %-16s %s\n' "name"        "$name"
+    printf '  %-16s %s\n' "share"       "$what"
+    printf '  %-16s %s\n' "mount point" "$mp"
+    printf '  %-16s %s%s\n' "user"      "${dom:+$dom\\}" "$user"
+    printf '  %-16s %s\n' "access"      "$([ "$ro" -eq 1 ] && echo read-only || echo read-write)"
+    printf '  %-16s %s\n' "SMB version" "$vers"
+    printf '  %-16s %s:%s\n' "files owned by" "$uid" "$gid"
+    [ -n "$extra" ] && printf '  %-16s %s\n' "extra options" "$extra"
+    printf '  %-16s %s\n' "credentials" "$(cred_of "$name")"
+    say ""
+    ask_yn "Write this?" y || { say "  ${DIM}Nothing written.${R}"; return 1; }
   fi
   [ -n "$name" ] || die "a name is required"
   printf '%s' "$name" | grep -qE '^[A-Za-z0-9][A-Za-z0-9._-]*$' \
@@ -241,7 +356,13 @@ cmd_add() {
   mp="${mp:-$(mp_of "$name")}"
 
   local cred; cred=$(cred_of "$name")
-  if [ ! -r "$cred" ]; then
+  if [ "$wizard" -eq 1 ]; then
+    install -d -m 0700 -o root -g root "$CRED_DIR"; umask 077
+    { printf 'username=%s\n' "$user"; printf 'password=%s\n' "$pw"
+      [ -n "$dom" ] && printf 'domain=%s\n' "$dom"; } > "$cred"
+    chmod 0600 "$cred"; chown root:root "$cred" 2>/dev/null || true
+    ok "credentials written 0600 root:root"
+  elif [ ! -r "$cred" ]; then
     if [ -n "$user" ]; then
       local p p2
       printf '  password for %s: ' "$user"; stty -echo 2>/dev/null; read -r p; stty echo 2>/dev/null; echo
@@ -302,7 +423,11 @@ EOF
     || warn "could not enable the automount unit; see: systemctl status $(amount_of "$mp")"
   logline "add $name -> $what at $mp (vers=$vers ro=$ro)"
   say ""
-  say "  ${DIM}Prove it: it-smb test $name${R}"
+  if [ "$wizard" -eq 1 ] && ask_yn "Test the mount now?" y; then
+    diagnose "$name"
+  else
+    say "  ${DIM}Prove it: it-smb test $name${R}"
+  fi
 }
 
 cmd_status() {
