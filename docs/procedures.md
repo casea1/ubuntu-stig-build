@@ -1018,6 +1018,45 @@ venv/wheel answers); snaps; and what apt alone does not finish, like a pending r
 
 Written for an air-gapped box, where there is no internet to search from.
 
+## 4.4d Get a new baseline onto an air-gapped box (`it-pull load`)
+
+`it-repo` carries **packages** in on media. This carries **the baseline itself**, so a
+fielded box can take a new `it-*` script or a STIG fix without ever reaching
+`git.asplab.com`.
+
+```bash
+# on a connected box, onto the same media as the apt mirror
+git clone --mirror https://git.asplab.com/ASPLAB/ubuntu-stig-build.git baseline.git
+
+# on the air-gapped box, with the media plugged in
+sudo it-pull load            # finds it, shows what is coming, asks, then adopts it
+sudo it-pull                 # normal from here on -- no network involved
+```
+
+`load` mirrors the clone to `/srv/baseline.git` and writes `REPO_URL=` into
+`/etc/stig-build/pull.conf`, which every later `it-pull` reads. Repeat the two commands
+whenever there is something new to carry; the mirror is replaced each time.
+
+| | |
+|---|---|
+| **It checks what it found** | a repository is only accepted if its `main` branch actually contains `local.yml` and `roles/it_scripts`. A directory named `ubuntu-stig-build.git` proves nothing, and adopting the wrong clone means running someone else's playbook as root |
+| **It shows what is coming** | the commits between what this box runs and what the media holds, before anything changes |
+| **It makes you type `YES`** | the next pull executes that repository as root. This is the only moment to look |
+| **Admin only** | deliberately **not** in the `dta` sudoers grant that covers `it-repo load` |
+| **Reversible** | delete the `REPO_URL` line from `/etc/stig-build/pull.conf` and the box goes back to the network |
+
+> **On EMI the admin cannot mount the media** (the polkit/udev carve-out restricts that to
+> `dta`), and `it-pull load` is not granted to the DTA — on purpose. Packages carried in on
+> media are one thing; the baseline is *executed as root* by the next pull, so whoever
+> chooses it chooses what runs on the box. The two-step is: **the DTA copies** `baseline.git`
+> off the media to somewhere on disk, then **the admin runs**
+> `sudo it-pull load /path/to/baseline.git`. If you decide that risk is equivalent to the
+> unsigned apt repo the DTA already loads, the grant can be widened — it is a policy call,
+> not a technical one.
+
+`sudo it-pull status` afterwards shows `repo : /srv/baseline.git`, which is how you tell a
+box is on carried media rather than the network.
+
 ## 4.5 Suggested cadence
 
 | Activity | Cadence |
