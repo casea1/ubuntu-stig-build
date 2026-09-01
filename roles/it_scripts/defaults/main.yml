@@ -60,6 +60,9 @@ it_scripts_common:
   - { file: clamav-sigs.sh,        link: it-clamav }
   - { file: go-classified.sh,      link: it-goclassified }
   - { file: adduser.sh,            link: it-adduser }
+  # Sourced by it-adduser AND it-passwd -- the policy check, the temporary-
+  # password generator and the prompt, in one place so they cannot drift.
+  - { file: pw-common.sh,          link: '' }
   - { file: reset-password.sh,     link: it-passwd }
 
 # EMI profiles only. The org's vulnerability-scan process (the Windows

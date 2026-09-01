@@ -626,13 +626,23 @@ It asks the type, and both the username suffix and the groups follow from it:
 | admin | `first_last_adm` | `sudo`, `sentry` |
 | audit | `first_last_aud` | `audit`, `sudo`, `sentry` |
 
-Then the name, then the password — set now or leave the account locked. A password set now forces a change at first login (`--no-expire` to skip).
+Then the name, then **how to set the password** — the same three-way question `it-passwd` asks:
 
-Non-interactive: `sudo it-adduser --type admin --first Jane --last Doe`. `--dry-run` shows what would happen.
+| | |
+|---|---|
+| **1) Set one now** | you type it, checked against this box's policy |
+| **2) Temporary password** | generated here and shown once. Read it to the user; nothing writes it to disk |
+| **3) Leave it locked** | no password at all; set one later with `it-passwd <user>` |
+
+Both password options force a change at first login, so neither you nor a generator ends up knowing what the user actually logs in with. `--no-expire` skips that for a typed password and is **ignored for a temporary one** — a temporary password nobody has to change is not temporary.
+
+Non-interactive: `sudo it-adduser --type admin --first Jane --last Doe --temp` (or `--lock`). Without one of those and with no terminal to ask on, it stops rather than guess. `--dry-run` shows what would happen.
 
 > **The build does not know about a hand-created account.** A rebuilt or re-imaged box will not have it. `it-adduser` prints the exact `local_users` line to paste into `group_vars/all.yml` — do that, or the account exists on one box only.
 
-Passwords are checked against this box's own `pwquality` policy before being set. `chpasswd` does not go through PAM, so without that check a weak password would slip onto a hardened box.
+Passwords are checked against this box's own `pwquality` policy before being set. `chpasswd` does not go through PAM, so without that check a weak password would slip onto a hardened box. **A generated password is run through the same check**, so it can never be one the box would have rejected — the check, the generator and the prompt live in one file (`pw-common.sh`) that both commands source, precisely so they cannot drift apart.
+
+Generated passwords are 20 characters with all four character classes, and deliberately contain no `0`/`O`/`1`/`l`/`I` or `:` — it gets read off one screen and typed on another, once, by someone who did not choose it, and a misread character is indistinguishable from "the reset did not work".
 
 ## 3.8 Reset a password / unlock an account
 
@@ -641,7 +651,10 @@ sudo it-passwd                    # pick from a list
 sudo it-passwd jane_doe_adm
 sudo it-passwd --list             # every account: state, faillock, expiry
 sudo it-passwd <user> --unlock-only
+sudo it-passwd <user> --temp      # generated password, no prompt
 ```
+
+It asks the same three-way question as `it-adduser`: **set one now**, **generate a temporary one**, or **keep the current password** and just clear what is blocking the login.
 
 It does all three things that independently block a login, because fixing one and not the others is the usual reason someone still cannot get in:
 
