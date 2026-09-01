@@ -75,6 +75,21 @@ copies the newest report into the auditor's home (0600 in a 0700 directory)
 and opens that. The same applies to anything else under `/opt` or `/srv` you
 try to open from the desktop.
 
+**19. Everything in `/etc/skel` is copied again for every account.** `useradd -m`
+duplicates the whole tree per user, so a large file seeded there is paid for on
+every account the build creates and every one an admin creates afterwards. VS
+Code extensions were seeded there for convenience; on ASP-2 that reached **3.0 GB
+across 27,395 files**, and `useradd -m` measured **65 seconds** — reported, twice,
+as `it-adduser` hanging. Nothing in the account-creation path was wrong. Keep
+`/etc/skel` to dotfiles: `sudo du -sh /etc/skel` should be kilobytes.
+
+**20. A new account has no AccountsService record, so GNOME shows the generic
+avatar.** `desktop_branding` sets `Icon=` in `/var/lib/AccountsService/users/<user>`
+for every user *that exists when it runs*, and seeds `/etc/skel/.face`. GNOME
+reads AccountsService, not `~/.face` — so an account created between pulls
+inherits the image file and still shows the default picture until the next pull
+happens to enumerate it. `it-adduser` writes the record itself now.
+
 **13. A passing benchmark is not a compliant box.** `usg fix` leaves `PermitRootLogin prohibit-password`, which satisfies the STIG rule (it only forbids a root *password* login) while still allowing root in **by SSH key** — which the org checklist forbids outright. Found on ASP-2 with a 96.41 % scan. Check what the rule actually asserts, not just its colour.
 
 **13. Audit rules on disk are not audit rules in the kernel, and they may not be in `rules.d`.** Two separate traps in one place. First, `usg fix` writes **`/etc/audit/audit.rules` directly**, not `rules.d/*.rules` — so an empty `rules.d` is normal on a USG box, and counting only `rules.d` reports "no rules" on a box with a full ruleset. Second, whatever is on disk still has to reach the kernel: the STIG sets auditd `-e 2` (immutable), after which new rules are refused until a reboot. Either way **every file-based OVAL still passes**, because those check files. ASP-2 ran with **1 rule in the kernel** against 8.5 KB in `audit.rules` and the 96.41 % scan said nothing. `it-checklist` item 6 counts whichever source holds rules and compares it against the kernel. Diagnose with:
