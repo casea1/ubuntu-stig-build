@@ -194,8 +194,8 @@ follows the output. Ctrl-C stops watching, not the run.
 | `sudo it-pull scripts` | the `it_scripts` role alone | shipping a script fix, fastest path |
 | `sudo it-pull full` | the above **plus** packages/images **plus** a fresh `usg audit` and SCAP scan | a package list changed, or you want evidence now |
 | `sudo it-pull ai` | light **plus** the Docker/compose stacks | deliberately updating an AI node's containers (§5.8) |
-| `sudo it-pull check` | `--check --diff` | previewing a change. Best-effort: tasks that read command output report errors in check mode |
-| `sudo it-pull status` | nothing | "is this box behind?" — compares the box's commit to `origin/main` without fetching |
+| `sudo it-pull check` | `--check --diff` | rarely. See the warning below — check mode can report the **opposite** of the truth |
+| `sudo it-pull status` | nothing that changes the box | "is this box behind, and what's coming?" — the commit comparison plus the **exact incoming commits and the files they touch** |
 | `sudo it-pull log` | nothing | the last run's output, or follow one in progress |
 
 **Neither `light` nor `full` touches Docker.** Both skip `ai-runtime` and `ai-gpu`, so an
@@ -209,6 +209,18 @@ in `scap_scan` — plus a checklist build, every time. Evidence now comes from a
 That is `usg_audit_on_pull` / `scap_scan_on_pull` in `group_vars/all.yml` (`build` by
 default, `always` restores the old behaviour), so a plain `ansible-pull` gets the same
 treatment; `it-pull full` passes `always`.
+
+> **`it-pull check` is not a reliable preview, and `status` is.** Ansible's check
+> mode does not run commands, so a task that *reads* state with a command gets no
+> answer — and the play can then conclude the opposite of the truth. On ASP-2 the
+> `pro status` probe was skipped, the play decided the box was not Ubuntu
+> Pro-attached, and `desktop_hardening`'s safety assert stopped the run with
+> "this box is NOT Pro-attached". The box was attached the whole time; nothing was
+> changed. The read-only probes that gate that decision are now marked
+> `check_mode: false` so they run for real, but the playbook is not check-clean
+> end to end and is not claimed to be. **For "what would this pull change", use
+> `sudo it-pull status`** — it lists the actual incoming commits and the files
+> they touch, which is the question you were asking.
 
 **Overrides.** `REPO_URL=... BRANCH=... sudo -E it-pull` for one run, or put `REPO_URL=` /
 `BRANCH=` in `/etc/stig-build/pull.conf` permanently — a box built from a mirror keeps

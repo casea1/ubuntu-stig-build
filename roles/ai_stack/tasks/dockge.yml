@@ -41,6 +41,7 @@
   ansible.builtin.command: docker ps -aq --filter "name=^dockge$"
   register: _dockge_ps
   changed_when: false
+  check_mode: false      # read-only probe: must run in --check too
 
 - name: "Dockge | Deploy Dockge ({{ dockge_image }})"
   # --restart=always so it survives reboot; named volume dockge_data is created

@@ -13,7 +13,7 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
 |---|---|
 | `local.yml` | the playbook `ansible-pull` runs |
 | `bootstrap.sh` | what an operator runs on a fresh box |
-| `it-pull` (`roles/it_scripts/files/pull.sh`) | what an operator runs on an EXISTING box. `it-pull` = light (no apt, no scan, no container touched), `full`, `scripts`, `ai`, `check`, `status`, `log` |
+| `it-pull` (`roles/it_scripts/files/pull.sh`) | what an operator runs on an EXISTING box. `it-pull` = light (no apt, no scan, no container touched), `full`, `scripts`, `ai`, `status` (incoming commits + files), `log`. `check` exists but Ansible check mode skips command probes and can report the OPPOSITE of the truth (it decided ASP-2 was not Pro-attached); `status` is the reliable preview |
 | `group_vars/all.yml` | nearly all configuration and profile gating |
 | `roles/` | one role per concern (`ai_compose`, `ai_stack`, `usg_harden`, `local_accounts`, …) |
 | `roles/ai_compose/files/stacks/<stack>/compose.yaml` | the per-service Docker stacks, deployed to `/opt/stacks/<stack>/` |

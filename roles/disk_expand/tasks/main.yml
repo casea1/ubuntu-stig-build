@@ -19,6 +19,7 @@
   ansible.builtin.command: "vgs --noheadings --nosuffix --units b -o vg_free {{ disk_root_vg }}"
   register: _disk_vg_free
   changed_when: false
+  check_mode: false      # read-only probe: must run in --check too
   failed_when: false
 
 - name: "DISK | Grow the root LV + filesystem to consume all free VG space"

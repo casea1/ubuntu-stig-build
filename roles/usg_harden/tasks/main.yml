@@ -43,6 +43,7 @@
   ansible.builtin.command: pro status --format json
   register: _pro_status_raw
   changed_when: false
+  check_mode: false      # read-only probe: must run in --check too
   failed_when: false
 
 - name: "USG | Determine current attach state"
@@ -71,6 +72,7 @@
   ansible.builtin.command: pro status --format json
   register: _pro_status_final
   changed_when: false
+  check_mode: false      # read-only probe: must run in --check too
   failed_when: false
 
 - name: "USG | Mark USG active based on the authoritative post-attach status"

@@ -10,8 +10,13 @@
 #   it-pull full         + packages/images + a fresh usg audit and SCAP scan
 #   it-pull scripts      the it_scripts role alone -- fastest way to ship a script
 #   it-pull ai           light + the Docker/compose stacks (ai nodes; see below)
-#   it-pull check        best-effort dry run: changes nothing
-#   it-pull status       where this box pulls from, what it runs, is it behind
+#   it-pull check        Ansible --check. Changes nothing, but see the warning it
+#                        prints: check mode cannot run a command, so a task that
+#                        READS state gets no answer and the play can conclude the
+#                        opposite of the truth. `it-pull status` is the reliable
+#                        answer to "what is coming".
+#   it-pull status       where this box pulls from, what it runs, and -- when it
+#                        is behind -- the exact commits and files a pull brings in
 #   it-pull log          follow / re-read the last run's output
 #
 # NEITHER `light` NOR `full` TOUCHES DOCKER. The ai-runtime and ai-gpu tags are
@@ -47,6 +52,14 @@ if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
 else B=""; DIM=""; G=""; Y=""; RD=""; R=""; fi
 
 die() { printf '%s\n' "$*" >&2; exit 1; }
+
+# Is a pull in flight? Deliberately NOT `systemctl is-active stig-pull`: the unit
+# is transient and --collect frees it the moment it stops, so every query after
+# that makes systemd log "Failed to open /run/systemd/transient/stig-pull.service"
+# into the journal. On a box whose journal is audit evidence, a status command
+# should not write errors into it. The process is the honest test anyway, and it
+# also catches an ansible-pull someone started by hand.
+pull_running() { pgrep -f '[a]nsible-pull' >/dev/null 2>&1; }
 
 # ---------------------------------------------------------------------------
 # Where does this box pull from?
@@ -144,20 +157,37 @@ do_status() {
     else
       printf '  remote    : %sbehind%s -- box %s, origin/%s %s   ->  run: it-pull\n' \
              "$Y" "$R" "$local_sha" "$BR" "$remote_sha"
+      # What is actually coming. THIS is the honest answer to "what would a pull
+      # change" -- Ansible check mode is not (see `it-pull check`). A fetch only
+      # moves refs; it never touches the checkout's working tree, so reading
+      # this cannot half-apply anything.
+      if GIT_TERMINAL_PROMPT=0 timeout 30 git -C "$CHECKOUT" fetch --quiet origin "$BR" 2>/dev/null; then
+        local n
+        n=$(git -C "$CHECKOUT" rev-list --count HEAD..FETCH_HEAD 2>/dev/null)
+        printf '\n  Incoming commits (%s):\n' "${n:-?}"
+        git -C "$CHECKOUT" log --oneline --no-decorate -15 HEAD..FETCH_HEAD 2>/dev/null | sed 's/^/    /'
+        [ "${n:-0}" -gt 15 ] 2>/dev/null && printf '    ... and %s more\n' "$((n-15))"
+        printf '\n  Files they touch:\n'
+        git -C "$CHECKOUT" diff --stat HEAD FETCH_HEAD 2>/dev/null | tail -12 | sed 's/^/    /'
+      fi
     fi
   fi
 
   printf '\n  %s\n' "$(last_line)"
-  systemctl is-active --quiet "$UNIT" 2>/dev/null \
+  pull_running \
     && printf '  %sA pull is running right now.%s  Follow it: it-pull log\n' "$Y" "$R"
 
   printf '\n  Evidence -- deliberately NOT part of a routine pull:\n'
-  printf '    weekly scan : oscap-scan.timer %s\n' "$(systemctl is-enabled oscap-scan.timer 2>/dev/null || echo 'NOT INSTALLED')"
+  # is-enabled prints "not-found" AND exits non-zero, so a `|| echo` fallback
+  # printed both. Capture it and normalise.
+  local timer; timer=$(systemctl is-enabled oscap-scan.timer 2>/dev/null || true)
+  case "${timer:-}" in ''|not-found) timer="NOT INSTALLED" ;; esac
+  printf '    weekly scan : oscap-scan.timer %s\n' "$timer"
   printf '    on demand   : sudo it-stig run\n'
 }
 
 do_log() {
-  if systemctl is-active --quiet "$UNIT" 2>/dev/null; then
+  if pull_running; then
     printf '%sFollowing the run in progress. Ctrl-C stops WATCHING, not the run.%s\n' "$DIM" "$R"
     journalctl -u "$UNIT" -f --no-pager -o cat
   else
@@ -193,14 +223,14 @@ galaxy_refresh() {
 }
 
 do_run() {
-  local mode="$1" args rc watcher
+  local mode="$1" args rc runner follower
   args="$(mode_args "$mode")"
 
   command -v ansible-pull >/dev/null 2>&1 || die \
 "ansible-pull is not installed -- this box was never bootstrapped, or ansible was removed.
   sudo apt-get install -y ansible git"
 
-  systemctl is-active --quiet "$UNIT" 2>/dev/null && {
+  pull_running && {
     echo "A pull is already running. Follow it with: it-pull log" >&2; exit 1; }
 
   mkdir -p "$STATE_DIR"; chmod 0750 "$STATE_DIR"
@@ -210,25 +240,38 @@ do_run() {
   printf '%s==> it-pull %s%s\n' "$B" "$mode" "$R"
   printf '    %s\n' "$(mode_desc "$mode")"
   printf '    %s  (%s)\n' "$REPO" "$BR"
-  [ "$mode" = check ] && printf '    %sCheck mode cannot run commands, so tasks that read command output\n    report errors. That is check mode, not a broken box.%s\n' "$DIM" "$R"
+  if [ "$mode" = check ]; then
+    printf '    %sAnsible check mode does not run commands, so a task that READS state
+' "$Y"
+    printf '    with a command gets no answer and the play can conclude the opposite of
+'
+    printf '    the truth -- then stop at a safety assert. Nothing is changed either way.
+'
+    printf '    For "what is coming", use: it-pull status%s\n' "$R"
+  fi
   echo
 
   local since; since=$(date '+%Y-%m-%d %H:%M:%S')
-  systemctl reset-failed "$UNIT" 2>/dev/null || true
-  # The exit code goes to a file because a transient unit is garbage-collected
-  # the moment it stops -- by the time we could ask systemd, there is nothing
-  # left to ask. `it-pull status` reads it back later.
-  systemd-run --unit="$UNIT" --collect \
+  # --wait, in the background, instead of polling `systemctl is-active` in a
+  # loop. --collect frees the transient unit the instant it stops, and every
+  # query after that makes systemd log "Failed to open
+  # /run/systemd/transient/stig-pull.service" -- six of them, in the journal
+  # that is this box's audit evidence. --wait blocks until the unit finishes
+  # with no polling at all, so there is nothing to log.
+  #
+  # The exit code still goes to a file: `it-pull status` reads it back on a
+  # later invocation, when the unit is long gone.
+  systemd-run --unit="$UNIT" --collect --wait \
     /bin/sh -c "ansible-pull -U '$REPO' -C '$BR' -i localhost, local.yml $args; \
-                echo \$? > '$STATE_DIR/last.rc'" >/dev/null \
-    || die "could not start the $UNIT unit -- see: journalctl -u $UNIT"
+                rc=\$?; echo \$rc > '$STATE_DIR/last.rc'; exit \$rc" >/dev/null 2>&1 &
+  runner=$!
 
-  # journalctl -f never exits on its own; a watcher kills it once the unit stops.
-  ( while systemctl is-active --quiet "$UNIT"; do sleep 2; done
-    sleep 2; pkill -P $$ -x journalctl 2>/dev/null ) &
-  watcher=$!
-  journalctl -u "$UNIT" -f --no-pager -o cat --since "$since" 2>/dev/null || true
-  kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null
+  # journalctl -f never exits on its own; it is killed once the runner returns.
+  journalctl -u "$UNIT" -f --no-pager -o cat --since "$since" 2>/dev/null &
+  follower=$!
+  wait "$runner"
+  sleep 2                       # let the follower flush the closing lines
+  kill "$follower" 2>/dev/null; wait "$follower" 2>/dev/null
 
   galaxy_refresh
   rc=$(cat "$STATE_DIR/last.rc" 2>/dev/null || echo "")
@@ -240,6 +283,9 @@ do_run() {
   esac
   [ "$mode" = light ] && [ "$rc" = 0 ] && \
     printf '%s        Packages and evidence were skipped by design -- `it-pull full` for those.%s\n' "$DIM" "$R"
+  [ "$mode" = check ] && [ "$rc" != 0 ] && \
+    printf '%s        A check-mode failure is not a box failure. Read the failing task: a
+        probe that could not run is the usual cause, not a real fault.%s\n' "$DIM" "$R"
   return "${rc:-1}"
 }
 
@@ -251,6 +297,6 @@ case "${1:-light}" in
   check|dry|dry-run) do_run check ;;
   status)            do_status ;;
   log|logs)          do_log ;;
-  help|-h|--help)    sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//' ;;
+  help|-h|--help)    sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "unknown: $1  (try: it-pull help)" >&2; exit 2 ;;
 esac

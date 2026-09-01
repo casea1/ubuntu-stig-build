@@ -91,6 +91,7 @@
       ansible.builtin.command: mokutil --sb-state
       register: tpm_sb_state
       changed_when: false
+      check_mode: false      # read-only probe: must run in --check too
       failed_when: false
 
     - name: "TPM | WARN if Secure Boot is OFF (TPM-only unlock then offers little protection)"
@@ -108,6 +109,7 @@
         executable: /bin/bash
       register: tpm_luks_detect
       changed_when: false
+      check_mode: false      # read-only probe: must run in --check too
       when: (luks_device | default('')) | length == 0
 
     - name: "TPM | Resolve the LUKS device path"
@@ -128,6 +130,7 @@
       ansible.builtin.command: "clevis luks list -d {{ tpm_luks_dev | trim }}"
       register: tpm_clevis_list
       changed_when: false
+      check_mode: false      # read-only probe: must run in --check too
       failed_when: false
 
     - name: "TPM | Bind a LUKS keyslot to the TPM2 (PCR {{ tpm_luks_pcrs }}); keeps passphrase as recovery"

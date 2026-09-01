@@ -18,6 +18,7 @@
   ansible.builtin.command: nvidia-smi
   register: _nvidia_smi
   changed_when: false
+  check_mode: false      # read-only probe: must run in --check too
   failed_when: false
 
 # Optional: add NVIDIA's CUDA apt repo so a very new driver branch (e.g. 595)
@@ -87,6 +88,7 @@
   ansible.builtin.command: nvidia-smi --query-gpu=driver_version --format=csv,noheader
   register: _nv_driver_ver
   changed_when: false
+  check_mode: false      # read-only probe: must run in --check too
   failed_when: false
 
 - name: "GPU | Enforce the NVIDIA driver floor (>= {{ nvidia_driver_min_version }})"
@@ -160,6 +162,7 @@
   ansible.builtin.command: nvidia-ctk --version
   register: _nvctk_ver
   changed_when: false
+  check_mode: false      # read-only probe: must run in --check too
   failed_when: false
 
 - name: "GPU | Enforce the nvidia-container-toolkit floor (>= {{ nvidia_container_toolkit_min_version }})"
@@ -179,6 +182,7 @@
   ansible.builtin.command: grep -q nvidia /etc/docker/daemon.json
   register: _nv_runtime
   changed_when: false
+  check_mode: false      # read-only probe: must run in --check too
   failed_when: false
 
 - name: "GPU | Configure Docker to use the nvidia runtime"
