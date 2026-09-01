@@ -165,9 +165,15 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
 - **Offline apt is half-solved.** The main archive is covered: `offline_repo` +
   `it-offline-repo` carry a repo tree in on media and point apt at
   `/srv/repo` over `file://` (standalone/EMI only -- the dev/ai fleet uses the
-  ADM-Toolkit's HTTP repo server). Two things remain: the carried repo is
-  **unsigned** (`Trusted: yes`; set `offline_repo_signed_by` if the builder ever
-  signs it), and **Ubuntu Pro / ESM packages are still not reachable** offline.
+  ADM-Toolkit's HTTP repo server). `it-offline-repo load` auto-detects the media,
+  mirrors only the box's own release (the ADM media carries jammy AND noble),
+  copies packages additively on name+size and the `dists/` indexes last with
+  `--checksum --delete`, and both it and the role now list every pocket the tree
+  carries -- `noble-security` is a separate suite, and listing only `noble` meant
+  a box could hold every security `.deb` and still report "0 to upgrade". Two
+  things remain: the carried repo is **unsigned** (`Trusted: yes`; set
+  `offline_repo_signed_by` if the builder ever signs it), and **Ubuntu Pro / ESM
+  packages are still not reachable** offline.
 
 ## Docs
 

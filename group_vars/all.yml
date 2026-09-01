@@ -167,9 +167,21 @@ offline_repo_dir: /srv/repo
 # Layout inside offline_repo_dir, matching the tree the ADM-Toolkit mirrors
 # (`ubuntu/<codename>/dists/...` + `pool/...`). Change only if the repo the
 # `linux-software` builder produces changes shape.
+# The release codename. `it-offline-repo` defaults to the box's OWN
+# /etc/os-release rather than this value -- mirroring the wrong release is the
+# failure that feature exists to prevent, and a stale entry here after a release
+# upgrade would cause exactly that. This still drives the apt source file, so
+# keep the two in step.
 offline_repo_suite: noble                                   # Ubuntu 24.04
 offline_repo_subdir: "ubuntu/{{ offline_repo_suite }}"
 offline_repo_components: main
+
+# The suites written into the apt source. NOT set here: the role discovers what
+# the loaded tree actually holds (noble, noble-updates, noble-security are three
+# separate suites) and lists them all, falling back to offline_repo_suite alone.
+# Listing only the bare codename meant a box could hold every security .deb on
+# disk and still report "0 to upgrade".
+# offline_repo_suites_present: [noble, noble-security, noble-updates]
 
 # The carried repo is unsigned, so apt is told to trust it. The trust boundary
 # is therefore the media it arrived on and the root-owned directory above --

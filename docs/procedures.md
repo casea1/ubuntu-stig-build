@@ -609,11 +609,27 @@ sudo it-clamav test               # must PASS
 The box is air-gapped with no ADM PC to serve packages, so apt reads a repo tree carried in on media.
 
 ```bash
-sudo it-offline-repo load /media/$USER/SSD/repo   # copy the tree to /srv/repo
-sudo it-offline-repo enable                       # park the online sources, switch apt
-sudo it-offline-repo                              # status
-sudo apt upgrade                                  # patch from the carried repo
+sudo it-offline-repo scan     # what is on the media, and what will be skipped
+sudo it-offline-repo load     # mirror it to /srv/repo -- finds the media itself
+sudo it-offline-repo enable   # park the online sources, switch apt
+sudo it-offline-repo          # status
+sudo apt upgrade              # patch from the carried repo
 ```
+
+**`load` finds the media and mirrors only what this box needs.** It searches the
+automount paths and anything the kernel reports as removable/USB for a `dists/<suite>/Release`
+— by structure, not by a folder called "repo" — so nothing has to be typed. Pass a path
+(`sudo it-offline-repo load /media/$USER/SSD/repo`) when you want a specific one.
+
+| | |
+|---|---|
+| **Only this release** | The codename comes from the box's own `/etc/os-release`. The ADM media carries 22.04 and 24.04 side by side; a `noble` box mirrors `ubuntu/noble` and prints one line per tree it skipped. `--suite <name>` overrides |
+| **All of the release's pockets** | `noble`, `noble-updates` **and `noble-security`** — a separate suite each, and apt reads only what the source file lists. `enable` and the `offline_repo` role now both write every suite the tree actually carries. `status` warns when no `-security` pocket is present, because a repo without one cannot deliver a security update no matter how many `.deb` it holds |
+| **Only what changed** | Packages transfer additively on name+size — a `.deb` filename carries its version, so an unchanged one is never re-read off the USB bus. Re-loading a mostly-unchanged repo moves the handful of new files and nothing else |
+| **Indexes last, and exactly** | `dists/` copies after the packages, with `--checksum --delete`. Interrupt the transfer and you are left with an index that under-promises, not one pointing at packages that never arrived |
+| **Nothing is deleted** | unless you pass `--prune`. A withdrawn `.deb` left on disk is unreachable anyway once the index stops listing it |
+
+`--dry-run` reports the transfer and copies nothing.
 
 `enable` writes `offline_repo_enabled: true` into `/opt/it/site.yml` so the switch survives the next `ansible-pull`. Without that, the next pull re-adds the Microsoft and NodeSource repos, which are unreachable air-gapped and make every `apt-get update` stall on a timeout.
 

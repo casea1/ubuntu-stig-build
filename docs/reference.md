@@ -121,7 +121,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `it-offload` | `status`, `setup`, `creds`, `containers on\|off`, `push on\|off`, `test`, `log [N]`, `apply`. Configures the weekly audit/log offload — what is collected, the remote share, the credentials. Writes to `/opt/it/site.yml` so it survives `ansible-pull`; re-running is idempotent |
 | `it-clamav` | `check`, `list`, `install`, **`scan PATH...`**, `test`, `sync`, `rollback`, `revert`, `image-save`, `image-load`. `scan` proves the engine detects EICAR **before** trusting a verdict and refuses to scan if it does not — a CLEAN from an unverified engine is worse than no scan. Reports unreadable paths as PARTIAL rather than folding them into "0 infected". Records every run in `/var/log/clamav-scan.log` |
 | `it-goclassified` | Pre-classification gate. `--report` for machine checks only |
-| `it-offline-repo` | `load` / `enable` / `disable` / `verify` — run apt off a local repo |
+| `it-offline-repo` | `scan` / `load` / `enable` / `disable` / `verify` — run apt off a local repo. `scan` finds repo trees on attached media; `load` (no path needed) mirrors **only this box's release** — all of its pockets including `-security` — incrementally, packages first then indexes. `--prune`, `--dry-run`, `--suite <name>` |
 | `it-adduser` | Create a local account. Asks the type (standard/dta/admin/audit) and derives both the username suffix and the group set from it |
 | `it-passwd` | Reset a password, unlock the account, and clear its faillock counter. `--list` shows every account's state and expiry; `--unlock-only` skips the password |
 | `it-set-classification` | Set the banner level |

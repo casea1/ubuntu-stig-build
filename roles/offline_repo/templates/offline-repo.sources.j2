@@ -1,9 +1,9 @@
 # Managed by ansible (offline_repo). Hand edits are lost on the next pull.
 # Repo tree lives at {{ offline_repo_dir }}/{{ offline_repo_subdir }} and is
-# loaded/refreshed with `sudo it-offline-repo load <path>`.
+# loaded/refreshed with `sudo it-offline-repo load` (auto-detects the media).
 Types: deb
 URIs: file://{{ offline_repo_dir }}/{{ offline_repo_subdir }}
-Suites: {{ offline_repo_suite }}
+Suites: {{ (offline_repo_suites_present | default([]) or [offline_repo_suite]) | join(' ') }}
 Components: {{ offline_repo_components }}
 {% if offline_repo_signed_by %}
 Signed-By: {{ offline_repo_signed_by }}
