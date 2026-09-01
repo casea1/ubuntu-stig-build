@@ -59,6 +59,7 @@ it_scripts_common:
   - { file: stig-run.sh,           link: it-stig }
   - { file: clamav-sigs.sh,        link: it-clamav }
   - { file: go-classified.sh,      link: it-goclassified }
+  - { file: users.sh,              link: it-users }
   - { file: adduser.sh,            link: it-adduser }
   # Sourced by it-adduser AND it-passwd -- the policy check, the temporary-
   # password generator and the prompt, in one place so they cannot drift.
