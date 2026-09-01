@@ -13,6 +13,7 @@
 #   run-powerstrux                    run the audit now (the default)
 #   run-powerstrux --quiet            no progress output; used by the schedule
 #   run-powerstrux --where            print script/config/log paths and exit
+#   run-powerstrux open               copy the newest report into your home and open it
 #   run-powerstrux status             schedule state, last run, next run
 #   run-powerstrux schedule           show the current schedule
 #   run-powerstrux schedule "<spec>"  change it, e.g. "Wed *-*-* 03:00:00"
@@ -21,6 +22,14 @@
 # A schedule change is written to BOTH the live timer and /opt/it/site.yml, so
 # it survives the next ansible-pull. Change only the timer and the pull puts it
 # back; that is the trap this avoids.
+#
+# WHY `open` COPIES THE REPORT INSTEAD OF JUST LAUNCHING A BROWSER AT IT:
+# Firefox on 24.04 is a SNAP. A snap runs in its own mount namespace that
+# contains the user's home and (if connected) removable media -- and does NOT
+# contain /opt at all. Pointed at file:///opt/_AuditFiles/<report>.html it
+# reports "File not found" for a file that is right there and readable. No
+# amount of chmod fixes it; the path simply does not exist inside the sandbox.
+# So the report is copied into the auditor's home, which the snap CAN see.
 set -uo pipefail
 
 PS1_SCRIPT="${POWERSTRUX_SCRIPT:-/opt/microsoft/powershell/7/Modules/ReportHTML/Initiate-PowerstruxLA.ps1}"
@@ -31,6 +40,68 @@ KEEP="${POWERSTRUX_KEEP:-26}"
 SITE_YML="${SITE_YML:-/opt/it/site.yml}"
 TIMER=/etc/systemd/system/powerstrux-audit.timer
 CRON=/etc/cron.d/powerstrux-audit
+
+# ---- report helpers --------------------------------------------------------
+
+# Newest HTML report under the audit dir. -printf/sort beats `ls -t` here: a
+# report name with a space would break the glob, and this is the one path an
+# auditor uses when something has already gone wrong.
+report_newest() {
+  find "$AUDIT_DIR" -maxdepth 2 -type f \( -iname '*.html' -o -iname '*.htm' \) \
+       -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-
+}
+
+# Who is the human here? Under sudo that is SUDO_USER, not root -- copying the
+# report into /root would put it exactly where the auditor cannot reach it.
+target_user() { printf '%s' "${SUDO_USER:-$(id -un)}"; }
+target_home() { getent passwd "$(target_user)" | cut -d: -f6; }
+
+# Copy one report into the auditor's home so a snap-confined browser can open
+# it. 0600 in a 0700 directory: the report inventories the system and its
+# handling does not relax because it moved.
+stage_report() {   # $1 = report path -> prints the staged path
+  local src="$1" u h dest out
+  u="$(target_user)"; h="$(target_home)"
+  [ -n "$h" ] && [ -d "$h" ] || { echo "no home directory for $u" >&2; return 1; }
+  dest="$h/PowerStrux-Reports"
+  out="$dest/$(basename "$src")"
+  if [ "$(id -u)" -eq 0 ]; then
+    install -d -m 0700 -o "$u" -g "$u" "$dest"  || return 1
+    install -m 0600 -o "$u" -g "$u" "$src" "$out" || return 1
+  else
+    mkdir -p "$dest" && chmod 0700 "$dest" || return 1
+    cp -f "$src" "$out" && chmod 0600 "$out"    || return 1
+  fi
+  printf '%s\n' "$out"
+}
+
+cmd_open() {
+  local src staged
+  src="$(report_newest)"
+  if [ -z "$src" ]; then
+    echo "No report found under $AUDIT_DIR." >&2
+    echo "Run one first:  run-powerstrux" >&2
+    return 1
+  fi
+  if [ ! -r "$src" ]; then
+    echo "Cannot read $src as $(id -un)." >&2
+    echo "$AUDIT_DIR is root:audit 2770 -- you need to be in the 'audit' group:" >&2
+    echo "  id -nG   (should list 'audit')" >&2
+    return 1
+  fi
+  staged="$(stage_report "$src")" || return 1
+  echo "Report : $src"
+  echo "Copy   : $staged"
+  echo
+  echo "The copy is what opens: Firefox is a snap and cannot see /opt at all,"
+  echo "so opening the original reports \"File not found\" however readable it is."
+  if command -v xdg-open >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+    xdg-open "$staged" >/dev/null 2>&1 &
+  else
+    echo "No graphical session -- open it from the desktop, or read it with:"
+    echo "  w3m -dump \"$staged\"   (or copy it off the box)"
+  fi
+}
 
 # ---- schedule helpers ------------------------------------------------------
 current_spec() {
@@ -108,6 +179,7 @@ set_schedule() {
 QUIET=0
 # Subcommands. `run` stays the DEFAULT so the desktop icon keeps working.
 case "${1:-}" in
+  open|report) cmd_open; exit $? ;;
   status)   LOG_DIR="$AUDIT_DIR/logs"; schedule_status; exit 0 ;;
   schedule)
     LOG_DIR="$AUDIT_DIR/logs"
@@ -186,6 +258,19 @@ if [ "$rc" -eq 0 ]; then
             \( -iname '*PowerStrux*.htm*' -o -iname '*SystemReport*.htm*' \) \
             2>/dev/null | head -5)
   [ -n "$found" ] && { say; say "Report(s) written just now:"; printf '  %s\n' $found; }
+
+  # Put a copy where the auditor's browser can actually open it. Firefox is a
+  # snap and its sandbox contains no /opt, so the original is unopenable from
+  # the desktop no matter what its permissions say.
+  newest="$(report_newest)"
+  if [ -n "$newest" ] && [ "$(target_user)" != root ]; then
+    if staged="$(stage_report "$newest")"; then
+      say
+      say "Open this copy (the original is under /opt, which the browser cannot see):"
+      say "  $staged"
+      say "Or any time:  run-powerstrux open"
+    fi
+  fi
 else
   echo "AUDIT FAILED (exit $rc after ${elapsed}s). See $LOG" >&2
 fi

@@ -64,6 +64,17 @@ not. Any script a non-admin group is meant to run therefore goes in
 (`it-repo` for the `dta` group). `dta-log` solves the same problem the other way,
 by living in `/opt/dta` (2750 root:dta) with a link in `/usr/local/bin`.
 
+**18. A snap browser cannot open a file in `/opt`, and says "File not found".**
+Firefox on 24.04 is a **snap**. It runs in its own mount namespace containing
+the user's home and, if the interface is connected, removable media — and no
+`/opt` at all. Point it at `file:///opt/_AuditFiles/<report>.html` and it
+reports *File not found* for a file that is right there and readable, which
+sends you hunting a permissions problem that does not exist. `chmod` cannot
+fix it; the path does not exist inside the sandbox. `run-powerstrux open`
+copies the newest report into the auditor's home (0600 in a 0700 directory)
+and opens that. The same applies to anything else under `/opt` or `/srv` you
+try to open from the desktop.
+
 **13. A passing benchmark is not a compliant box.** `usg fix` leaves `PermitRootLogin prohibit-password`, which satisfies the STIG rule (it only forbids a root *password* login) while still allowing root in **by SSH key** — which the org checklist forbids outright. Found on ASP-2 with a 96.41 % scan. Check what the rule actually asserts, not just its colour.
 
 **13. Audit rules on disk are not audit rules in the kernel, and they may not be in `rules.d`.** Two separate traps in one place. First, `usg fix` writes **`/etc/audit/audit.rules` directly**, not `rules.d/*.rules` — so an empty `rules.d` is normal on a USG box, and counting only `rules.d` reports "no rules" on a box with a full ruleset. Second, whatever is on disk still has to reach the kernel: the STIG sets auditd `-e 2` (immutable), after which new rules are refused until a reboot. Either way **every file-based OVAL still passes**, because those check files. ASP-2 ran with **1 rule in the kernel** against 8.5 KB in `audit.rules` and the 96.41 % scan said nothing. `it-checklist` item 6 counts whichever source holds rules and compares it against the kernel. Diagnose with:
@@ -126,6 +137,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `it-usb` | USBGuard: `status`, `list`, `blocked`, `enroll`, `allow`, `trust` |
 | `it-checklist` | The org checklist, one line per item. `--fail-only`, `--out FILE`, and **`--fix`** — prints how to close every FAIL and what each MANUAL item needs from a human. Prints steps, changes nothing |
 | `it-oscap` | Run an OpenSCAP DISA-STIG scan now |
+| `it-powerstrux` | Run the PowerStrux audit. `open` copies the newest report to `~/PowerStrux-Reports/` and opens it — **necessary**, because Firefox is a snap and cannot see `/opt` (trap 18). Also `status`, `schedule "<spec>"`, `enable`/`disable`; a schedule change is persisted to `site.yml` |
 | `it-ckl` | Build the DISA `.cklb`/`.ckl` from the scan + `answers.yml` |
 | `it-stig` | `status` / `run` / `scan` / `checklist` / `archive` — wraps the two above |
 | `it-domain` | `status`, `preflight`, `stage`, `join`, `test`, `leave`, `pam-restore`. Joins a box to AD. **`preflight` changes nothing** and checks the things that actually make joins fail: SRV records, clock skew, ports 88/389/445/464/3268, PAM health. `join` backs up the PAM stack first — `realm join` regenerates it |

@@ -424,6 +424,34 @@ Every run appends to `/var/log/clamav-scan.log` (timestamp, who, paths, verdict)
 
 **For a transfer that needs a signed record** — who moved what, when, with per-file hashes — use `dta-log` instead. It scans *and* writes the transfer record in one step. `it-clamav scan` is the quick check; `dta-log` is the evidence.
 
+## 3.2c Run the PowerStrux audit and read the report
+
+```bash
+sudo it-powerstrux              # run the audit (a few minutes)
+it-powerstrux open              # open the newest report
+it-powerstrux status            # schedule, last run, next run
+```
+
+Or from the app grid: **PowerStrux Audit** to run one, **PowerStrux Report (open
+latest)** to read it. It also runs itself on a schedule (Wednesday 03:00 by
+default, `it-powerstrux schedule "<spec>"` to change — the change is written to
+`/opt/it/site.yml` as well as the timer, so a pull does not revert it).
+
+> **The report will not open from `/opt/_AuditFiles` by double-clicking it, and
+> that is not a permissions problem.** Firefox on 24.04 is a **snap**: it runs in
+> its own mount namespace that contains your home directory and nothing under
+> `/opt`. Pointed at `file:///opt/_AuditFiles/<report>.html` it says *File not
+> found* about a file that is right there and readable to you. No `chmod` helps —
+> the path does not exist inside the sandbox.
+>
+> `it-powerstrux open` copies the newest report to `~/PowerStrux-Reports/` (0600
+> in a 0700 directory) and opens the copy. A finished audit run stages a copy for
+> you automatically and prints the path. **The copy carries the same handling as
+> the original** — it inventories the system.
+
+Reading it needs membership of the `audit` group (`/opt/_AuditFiles` is
+`2770 root:audit`); `id -nG` should list it.
+
 ## 3.3 Run a vulnerability scan (EMI)
 
 ```bash
