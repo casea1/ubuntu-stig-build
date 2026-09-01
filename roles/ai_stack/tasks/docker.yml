@@ -62,6 +62,7 @@
   ansible.builtin.command: docker --version
   register: _docker_ver
   changed_when: false
+  check_mode: false      # read-only probe: must run in --check too
 
 - name: "DOCKER | Enforce the docker_ce_min_version ({{ docker_ce_min_version }}) floor"
   ansible.builtin.assert:

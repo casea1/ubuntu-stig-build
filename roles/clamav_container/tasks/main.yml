@@ -114,6 +114,7 @@
           ansible.builtin.command: "docker image inspect {{ clamav_container_image }}"
           register: _cc_have
           changed_when: false
+          check_mode: false      # read-only probe: must run in --check too
           failed_when: false
 
         - name: "CLAMAV-CTR | Pull the image (no-op air-gapped)"

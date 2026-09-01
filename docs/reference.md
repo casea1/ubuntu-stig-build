@@ -105,7 +105,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 
 | Command | Does |
 |---|---|
-| `it-pull` | Re-run the baseline. `it-pull` (light — config + scripts, no apt, no scan, **no container touched**), `full` (+ packages and a fresh audit/scan), `scripts` (that role alone), `ai` (opts into the compose stacks), `check`, `status` (is this box behind origin?), `log`. Reads the repo/branch off the box's own `ansible-pull` checkout; override in `/etc/stig-build/pull.conf` |
+| `it-pull` | Re-run the baseline. `it-pull` (light — config + scripts, no apt, no scan, **no container touched**), `full` (+ packages and a fresh audit/scan), `scripts` (that role alone), `ai` (opts into the compose stacks), `check` (Ansible `--check`; unreliable — check mode can report the opposite of the truth, see procedures §1.10), `status` (behind origin? plus the incoming commits and files), `log`. Reads the repo/branch off the box's own `ansible-pull` checkout; override in `/etc/stig-build/pull.conf` |
 | `it-status` | Everything at a glance |
 | `it-host` | OS, kernel, FIPS, uptime, disks |
 | `it-luks` | Encryption state + TPM binding |

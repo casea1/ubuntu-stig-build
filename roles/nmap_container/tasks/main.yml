@@ -109,6 +109,7 @@
       ansible.builtin.command: docker image inspect {{ nmap_container_image }}
       register: _nc_have_image
       changed_when: false
+      check_mode: false      # read-only probe: must run in --check too
       failed_when: false
 
     # Needs internet. On an air-gapped box it will fail; the image has to be
