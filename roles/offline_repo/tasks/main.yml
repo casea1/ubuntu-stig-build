@@ -84,6 +84,36 @@
           register: _or_park
           changed_when: "'parked=0' not in _or_park.stdout"
 
+        # A mirror carries noble, noble-updates and noble-security as SEPARATE
+        # suites, and apt reads only what the source file lists. Hardcoding the
+        # bare codename here meant a box could hold every security .deb on disk
+        # and still report "0 to upgrade". Discover what the tree actually has
+        # -- and keep the same order it-offline-repo writes, so a pull does not
+        # churn the file.
+        - name: "OFFLINE-REPO | Which suites does the loaded tree carry?"
+          ansible.builtin.find:
+            paths: "{{ offline_repo_dir }}/{{ offline_repo_subdir }}/dists"
+            file_type: directory
+            recurse: false
+          register: _or_suites
+
+        - name: "OFFLINE-REPO | Keep only suites for this release, with a Release file"
+          ansible.builtin.stat:
+            path: "{{ item.path }}/Release"
+          register: _or_suite_release
+          loop: "{{ _or_suites.files | default([]) }}"
+          loop_control:
+            label: "{{ item.path | basename }}"
+
+        - name: "OFFLINE-REPO | The suite list apt will be given"
+          ansible.builtin.set_fact:
+            offline_repo_suites_present: >-
+              {{ _or_suite_release.results
+                 | selectattr('stat.exists')
+                 | map(attribute='item.path') | map('basename')
+                 | select('match', '^' ~ offline_repo_suite ~ '($|-)')
+                 | sort | list }}
+
         - name: "OFFLINE-REPO | Write the local source"
           ansible.builtin.template:
             src: offline-repo.sources.j2
