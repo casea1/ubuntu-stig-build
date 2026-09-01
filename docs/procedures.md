@@ -611,6 +611,27 @@ Offline SSD duplication, by hand, **logged on paper**. Nothing on the box record
 
 Development / AI / baseline boxes need nothing here — nothing primary is stored locally.
 
+## 3.6b Review the accounts
+
+```bash
+sudo it-users                       # the table
+sudo it-users --csv --out /opt/ia/accounts-$(hostname).csv
+```
+
+One row per account: type, state, **days until the password expires**, last login,
+groups. Read-only — it changes nothing, so it is safe to hand to an assessor mid-review.
+
+Password expiry is computed from `/etc/shadow` (`lastchg + max - today`) rather than
+parsed back out of `chage -l`, whose dates are localised. `CHANGE NOW` means the forced
+change after a reset; `EXPIRED 10d ago` means they cannot log in until they set a new one.
+
+> **"never" under LAST LOGIN does not prove they never logged in.** It comes from
+> `/var/log/lastlog` (written by `pam_lastlog`, which is deprecated and not in the 24.04
+> stack) and from `wtmp`, which rotates. Treat it as "no record", not as evidence.
+
+`it-passwd --list` is the shorter view with the faillock counter; `it-users` is the one
+with expiry and groups.
+
 ## 3.7 Create a user account
 
 ```bash
