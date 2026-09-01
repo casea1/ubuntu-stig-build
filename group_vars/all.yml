@@ -216,6 +216,9 @@ offline_repo_backup_dir: "{{ it_dir | default('/opt/it') }}/apt-sources-backup"
 #   net-tools  : ifconfig / route / netstat for network admin
 #   unzip      : extract .zip archives (installers, exported bundles)
 base_common_packages:
+  - rsync                      # it-repo load mirrors the media with it. Nothing
+                               # else pulled it in, and "install it from the
+                               # media first" is circular on an air-gapped box.
   - cifs-utils
   - smbclient
   - net-tools

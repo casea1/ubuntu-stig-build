@@ -17,6 +17,8 @@
 #   it-adduser                        interactive (the normal way)
 #   it-adduser --type admin --first Jane --last Doe
 #   it-adduser ... --temp             generate a temporary password, no prompt
+#   it-adduser ... --vscode           copy the VS Code extension set in (slow, GBs)
+#   it-adduser ... --no-vscode        do not offer it
 #   it-adduser ... --lock             create locked, set the password later
 #   it-adduser ... --no-expire        do not force a password change at first login
 #   it-adduser --dry-run              show what would happen, change nothing
@@ -24,7 +26,7 @@ set -uo pipefail
 
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
-TYPE=""; FIRST=""; LAST=""; LOCKED=0; FORCE_EXPIRE=1; DRY=0; TEMP=0
+TYPE=""; FIRST=""; LAST=""; LOCKED=0; FORCE_EXPIRE=1; DRY=0; TEMP=0; VSCODE=ask
 PW=""; PW_MODE=""
 
 if [ -t 1 ]; then
@@ -48,6 +50,12 @@ SELF_DIR="$(dirname "$(readlink -f "$0")")"
 # shellcheck source=pw-common.sh
 . "$SELF_DIR/pw-common.sh" 2>/dev/null || die "missing $SELF_DIR/pw-common.sh -- re-run the build (it-pull scripts)"
 
+# Written by it_scripts on every pull; empty on a profile that has no such thing.
+PROFILE_FILE=/etc/stig-build/profile
+boxkey() { sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$PROFILE_FILE" 2>/dev/null | tail -1; }
+AVATAR="$(boxkey account_avatar)"
+VSCODE_SRC="$(boxkey vscode_extensions_src)"
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --type)  TYPE="${2:?--type needs a value}"; shift 2 ;;
@@ -55,6 +63,8 @@ while [ $# -gt 0 ]; do
     --last)  LAST="${2:?--last needs a value}"; shift 2 ;;
     --lock)  LOCKED=1; shift ;;
     --temp)  TEMP=1; shift ;;
+    --vscode)    VSCODE=yes; shift ;;
+    --no-vscode) VSCODE=no; shift ;;
     --no-expire) FORCE_EXPIRE=0; shift ;;
     --dry-run) DRY=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -192,6 +202,60 @@ else
   ok "password set"
   if [ "$FORCE_EXPIRE" -eq 1 ]; then
     chage -d 0 "$USERNAME" && ok "must be changed at first login"
+  fi
+fi
+
+# ---- account picture ----------------------------------------------------------
+# useradd -m already gave them /etc/skel/.face, but GNOME does not read that:
+# it asks AccountsService, and an account created between pulls has no
+# AccountsService record at all. That is why a new user shows the generic
+# avatar until the next ansible-pull runs desktop_branding over every user.
+# Writing it here means the logo is there at first login.
+if [ -n "$AVATAR" ] && [ -f "$AVATAR" ]; then
+  install -d -m 0755 /var/lib/AccountsService/users
+  as_file="/var/lib/AccountsService/users/$USERNAME"
+  if [ -f "$as_file" ] && grep -q '^Icon=' "$as_file"; then
+    sed -i "s|^Icon=.*|Icon=$AVATAR|" "$as_file"
+  elif [ -f "$as_file" ]; then
+    printf 'Icon=%s\n' "$AVATAR" >> "$as_file"
+  else
+    printf '[User]\nIcon=%s\n' "$AVATAR" > "$as_file"
+  fi
+  chmod 0644 "$as_file"
+  ok "account picture set (AccountsService -> $AVATAR)"
+elif [ -n "$AVATAR" ]; then
+  warn "no avatar image at $AVATAR -- the generic picture will be used"
+fi
+
+# ---- VS Code extensions --------------------------------------------------------
+# NOT inherited from /etc/skel any more: the set is measured in GB and useradd -m
+# copies /etc/skel in full, which made creating one account take over a minute
+# and gave every account its own copy. Offered here instead, with the size shown,
+# so whoever waits for it knows what they are waiting for.
+if [ -n "$VSCODE_SRC" ] && [ -d "$VSCODE_SRC" ] && [ "$VSCODE" != no ]; then
+  vs_size=$(du -sh "$VSCODE_SRC" 2>/dev/null | cut -f1)
+  do_vs=0
+  if [ "$VSCODE" = yes ]; then
+    do_vs=1
+  elif [ -t 0 ]; then
+    head2 "VS Code extensions"
+    say "  A shared set is installed on this box: ${vs_size:-unknown} in $VSCODE_SRC"
+    say "  ${DIM}Copying it takes about as long as it sounds, and uses that much disk again."
+    say "  Skip it unless this user needs the full set -- they can install what they"
+    say "  actually use with: code --install-extension <id>${R}"
+    read -r -p "  Copy them into $USERNAME's home? [y/N] " a || a=n
+    case "${a,,}" in y|yes) do_vs=1 ;; esac
+  fi
+  if [ "$do_vs" -eq 1 ]; then
+    say "  copying ${vs_size:-} ..."
+    install -d -m 0700 -o "$USERNAME" -g "$USERNAME" "/home/$USERNAME/.vscode/extensions"
+    if cp -a "$VSCODE_SRC/." "/home/$USERNAME/.vscode/extensions/" 2>/dev/null; then
+      chown -R "$USERNAME:$USERNAME" "/home/$USERNAME/.vscode"
+      chmod 0700 "/home/$USERNAME/.vscode" "/home/$USERNAME/.vscode/extensions"
+      ok "VS Code extensions copied"
+    else
+      warn "the copy failed -- $USERNAME can install extensions themselves"
+    fi
   fi
 fi
 

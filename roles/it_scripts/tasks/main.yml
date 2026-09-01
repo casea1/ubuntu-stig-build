@@ -67,6 +67,9 @@
       baseline_revision={{ (_it_rev.stdout | default('') | trim) or 'unknown' }}
       baseline_repo={{ (_it_origin.results[0].stdout | default('') | trim) or 'unknown' }}
       baseline_branch={{ (_it_origin.results[1].stdout | default('') | trim) or 'main' }}
+      account_avatar={{ branding_avatar_dest | default('') }}
+      vscode_extensions_src={{ ('/home/' ~ dev_tools_user ~ '/.vscode/extensions')
+                               if (is_development | default(false) or is_emi | default(false)) else '' }}
 
 - name: "IT-SCRIPTS | Ensure the scripts dir exists ({{ it_scripts_dir }})"
   ansible.builtin.file:

@@ -37,15 +37,41 @@
     state: directory
     mode: "0755"
   loop:
-    - /etc/skel/.vscode
     - /etc/skel/.config/Code/User
 
-- name: Seed installed extensions into /etc/skel for future accounts
-  ansible.builtin.copy:
-    src: "/home/{{ dev_tools_user }}/.vscode/extensions/"
-    dest: /etc/skel/.vscode/extensions/
-    remote_src: true
-    mode: preserve
+# EXTENSIONS ARE NOT SEEDED INTO /etc/skel, deliberately.
+#
+# `useradd -m` copies the whole of /etc/skel for every account it creates. On
+# ASP-2 the seeded extension set measured 3.0 GB across 27,395 files, so a
+# single `it-adduser` took 65 seconds and every account carried its own 3 GB
+# copy -- including the standing accounts the build itself creates, several
+# times per box. The settings.json below is a few hundred bytes and stays.
+#
+# The set is still available: it_scripts records where it lives and `it-adduser`
+# offers to copy it into a new account that actually wants it, showing the size
+# first. Set dev_tools_vscode_skel_seed: true to go back to the old behaviour
+# and its cost.
+- name: "Remove the extension set from /etc/skel (it makes every useradd copy GBs)"
+  ansible.builtin.file:
+    path: /etc/skel/.vscode
+    state: absent
+  when: not (dev_tools_vscode_skel_seed | default(false) | bool)
+
+- name: "Seed installed extensions into /etc/skel (opt-in; slows every useradd)"
+  when: dev_tools_vscode_skel_seed | default(false) | bool
+  block:
+    - name: Ensure the /etc/skel extensions dir exists
+      ansible.builtin.file:
+        path: /etc/skel/.vscode/extensions
+        state: directory
+        mode: "0755"
+
+    - name: Seed installed extensions into /etc/skel for future accounts
+      ansible.builtin.copy:
+        src: "/home/{{ dev_tools_user }}/.vscode/extensions/"
+        dest: /etc/skel/.vscode/extensions/
+        remote_src: true
+        mode: preserve
 
 - name: Seed the default interpreter setting into /etc/skel
   ansible.builtin.copy:

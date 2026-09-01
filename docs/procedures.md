@@ -638,6 +638,15 @@ Both password options force a change at first login, so neither you nor a genera
 
 Non-interactive: `sudo it-adduser --type admin --first Jane --last Doe --temp` (or `--lock`). Without one of those and with no terminal to ask on, it stops rather than guess. `--dry-run` shows what would happen.
 
+After the account exists it also sets the **account picture** (the GE emblem) by
+writing `Icon=` into `/var/lib/AccountsService/users/<user>` — GNOME reads
+AccountsService, not `~/.face`, so without this a new account shows the generic
+avatar until the next pull happens to enumerate it — and, on a box with the VS
+Code set installed, **offers** to copy it in, showing the size first. It is not
+inherited automatically any more: the set is measured in GB and `useradd -m`
+copies `/etc/skel` in full for every account. `--vscode` / `--no-vscode` decide
+it without asking.
+
 > **The build does not know about a hand-created account.** A rebuilt or re-imaged box will not have it. `it-adduser` prints the exact `local_users` line to paste into `group_vars/all.yml` — do that, or the account exists on one box only.
 
 Passwords are checked against this box's own `pwquality` policy before being set. `chpasswd` does not go through PAM, so without that check a weak password would slip onto a hardened box. **A generated password is run through the same check**, so it can never be one the box would have rejected — the check, the generator and the prompt live in one file (`pw-common.sh`) that both commands source, precisely so they cannot drift apart.

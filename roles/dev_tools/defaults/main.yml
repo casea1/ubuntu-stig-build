@@ -21,6 +21,13 @@ dev_toolchain_packages:
   - "{{ dotnet_sdk_package }}"
   - docker.io
 
+# Copy the whole VS Code extension set into /etc/skel, so every account created
+# afterwards inherits it. OFF: `useradd -m` copies /etc/skel in full, and the
+# set measured 3.0 GB / 27,395 files on ASP-2 -- 65 seconds and 3 GB per
+# account, the build's own accounts included. `it-adduser` offers the copy per
+# account instead.
+dev_tools_vscode_skel_seed: false
+
 vscode_extensions:
   - ms-dotnettools.vscode-dotnet-runtime    # .NET Install Tool
   - AdaCore.ada                             # Ada & SPARK
