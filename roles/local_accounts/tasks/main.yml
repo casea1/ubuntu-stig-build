@@ -209,6 +209,56 @@
   when: local_usb_transfer_enabled | default(true) | bool
 
 # ---------------------------------------------------------------------------
+# 4c) THE DTA MIRRORS THE OFFLINE REPO.
+#
+# Sections 4 and 4a are the reason this exists: mounting removable media is
+# restricted to %{{ usb_access_group }}, so the ADMIN account cannot read the
+# carried SSD at all. But refreshing /srv/repo needs root. Without a grant the
+# only way through is the DTA copying the whole repo to local disk for an admin
+# to mirror from -- two copies of a multi-GB tree to move one release's worth of
+# new .deb, which defeats the point of an incremental mirror.
+#
+# The grant is four exact argv forms and no wildcard. `load` takes no path and
+# no --suite here, so a DTA cannot aim the mirror at an arbitrary source or make
+# it write outside the repo directory (the script also rejects a suite name that
+# is not a plain codename). `enable` and `disable` are NOT granted: switching
+# apt's sources is an admin decision, made once.
+#
+# Deliberately NOT NOPASSWD. The STIG requires sudo to authenticate, and this is
+# a privileged action that belongs in /var/log/sudo.log with a name against it.
+# ---------------------------------------------------------------------------
+- name: "ACCOUNTS | Let the {{ usb_access_group }} group refresh the offline repo (it-offline-repo)"
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/60-{{ usb_access_group }}-offline-repo
+    owner: root
+    group: root
+    mode: "0440"
+    content: |
+      ## Managed by ansible (local_accounts) -- do not edit by hand.
+      ## The admin account cannot mount removable media (see the polkit + udev
+      ## rules above), so the DTA is the only account that can reach the repo on
+      ## the carried SSD. These forms refresh {{ offline_repo_dir | default('/srv/repo') }} and nothing
+      ## else -- no path argument, no --suite, no enable/disable.
+      %{{ usb_access_group }} ALL=(root) /usr/local/sbin/it-offline-repo scan, \
+                      /usr/local/sbin/it-offline-repo status, \
+                      /usr/local/sbin/it-offline-repo load, \
+                      /usr/local/sbin/it-offline-repo load --yes, \
+                      /usr/local/sbin/it-offline-repo load --dry-run
+    validate: "visudo -cf %s"      # a malformed drop-in costs EVERYONE sudo
+  when:
+    - local_usb_transfer_enabled | default(true) | bool
+    - offline_repo_dta_load_enabled | default(true) | bool
+
+# Ansible only ever creates, so a box that had the grant and should not (the
+# toggle turned off, or a rebuild as emi-unclass) has to be cleaned up here.
+- name: "ACCOUNTS | Remove the {{ usb_access_group }} offline-repo sudo grant when it is not wanted"
+  ansible.builtin.file:
+    path: /etc/sudoers.d/60-{{ usb_access_group }}-offline-repo
+    state: absent
+  when: not (local_usb_transfer_enabled | default(true) | bool
+             and offline_repo_dta_load_enabled | default(true) | bool)
+
+# ---------------------------------------------------------------------------
 # 4b) EMI-UNCLASS CLEANUP -- the unclassified EMI box wants open USB and no dta
 #     carve-out. On a FRESH build the tasks above are simply skipped (no group /
 #     accounts / rules created). This block ALSO actively REMOVES them so a box
@@ -255,6 +305,7 @@
       loop:
         - "/etc/polkit-1/rules.d/49-{{ usb_access_group | default('dta') }}-usb.rules"
         - "/etc/udev/rules.d/99-{{ usb_access_group | default('dta') }}-usb.rules"
+        - "/etc/sudoers.d/60-{{ usb_access_group | default('dta') }}-offline-repo"
       notify: reload udev
 
 # ---------------------------------------------------------------------------

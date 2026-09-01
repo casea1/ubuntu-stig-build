@@ -190,6 +190,19 @@ offline_repo_components: main
 # verified source. Track the unsigned state as a POA&M item until then.
 offline_repo_signed_by: ""     # e.g. /etc/apt/keyrings/offline-repo.asc
 
+# Let the dta group run `it-offline-repo load` under sudo.
+#
+# On the EMI laptop this is not a convenience, it is the only workable order of
+# operations: mounting removable media is restricted to %dta (polkit + udev in
+# local_accounts), so the ADMIN account cannot read the carried SSD -- while
+# writing /srv/repo needs root. Without the grant the DTA has to copy a
+# multi-GB tree to local disk just so an admin can mirror from it.
+#
+# The grant is four exact argv forms with no wildcard: scan, status, load,
+# load --yes, load --dry-run. No path argument and no --suite, so the mirror
+# cannot be aimed elsewhere; enable/disable stay admin-only. Not NOPASSWD.
+offline_repo_dta_load_enabled: true
+
 # Where the online sources are parked when the switch is thrown, so `disable`
 # can put them back verbatim on a box that goes back online for a rebuild.
 offline_repo_backup_dir: "{{ it_dir | default('/opt/it') }}/apt-sources-backup"

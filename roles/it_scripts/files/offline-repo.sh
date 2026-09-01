@@ -135,9 +135,23 @@ suites_in() {   # $1 = suite tree (…/ubuntu/<codename>)
   # different orders and rewrite the source file on alternate runs.
   { for d in "$1"/dists/*/; do
       [ -f "$d/Release" ] || continue
+      valid_suite "$(basename "$d")" || continue
       printf '%s\n' "$(basename "$d")"
     done
   } | LC_ALL=C sort
+}
+
+# A suite name is pasted straight into a filesystem path, and it comes from two
+# places that are not fully trusted: --suite on the command line, and the
+# directory names ON THE MEDIA. A name containing a slash or ".." walks out of
+# the repo directory -- `--suite ../../../etc` would aim the mirror at /etc --
+# which matters more now that the dta group can sudo this command. Debian suite
+# names are lowercase alphanumerics plus . + _ - ; refuse anything else.
+valid_suite() {
+  case "$1" in
+    ''|*/*|*..*) return 1 ;;
+  esac
+  [[ "$1" =~ ^[a-z0-9][a-z0-9.+_-]*$ ]]
 }
 
 # Does this dists/ entry belong to the release this box runs? `noble` and
@@ -393,7 +407,7 @@ cmd_load() {
   while read -r t; do
     [ -n "$t" ] || continue
     name=$(basename "$t")
-    if suite_matches "$name"; then
+    if suite_matches "$name" && valid_suite "$name"; then
       keep="$keep$t
 "
     else
@@ -622,6 +636,7 @@ if [ -n "$SUITE_OVERRIDE" ]; then
   TREE="$REPO_DIR/ubuntu/$SUITE"
   RELEASE="$TREE/dists/$SUITE/Release"
 fi
+valid_suite "$SUITE" || die "not a usable release codename: '$SUITE'"
 
 case "${1:-status}" in
   status|check|"") cmd_status ;;
