@@ -21,6 +21,19 @@ it_scripts_emi_enabled: "{{ is_emi | default(false) | bool }}"
 it_scripts_retired_links:
   - it-offline-repo        # renamed to it-repo, 2026-09-01
 
+# Scripts a NON-ADMIN group is granted sudo on. These are installed as REAL
+# FILES in /usr/local/sbin, not symlinked into /opt/it/scripts like everything
+# else, because /opt/it is 2770 root:sudo: a dta cannot traverse it, so stat()
+# on the symlink's target fails with EACCES, bash skips the PATH entry, and the
+# shell reports "command not found" -- for a command that is installed and that
+# the user is explicitly allowed to run. Reproduced on 24.04; the same script
+# placed directly in /usr/local/sbin runs and self-elevates correctly.
+#
+# The sudoers grant in local_accounts names /usr/local/sbin/<link>, so the path
+# must stay there. Nothing secret lives in these scripts.
+it_scripts_public:
+  - { file: offline-repo.sh,       link: it-repo }
+
 # Placed on every profile.
 it_scripts_common:
   # First on purpose: it-help is how someone who has never seen this box finds
@@ -46,7 +59,6 @@ it_scripts_common:
   - { file: stig-run.sh,           link: it-stig }
   - { file: clamav-sigs.sh,        link: it-clamav }
   - { file: go-classified.sh,      link: it-goclassified }
-  - { file: offline-repo.sh,       link: it-repo }
   - { file: adduser.sh,            link: it-adduser }
   - { file: reset-password.sh,     link: it-passwd }
 

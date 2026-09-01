@@ -737,10 +737,12 @@ sources is an admin decision, made once when the box is first taken offline.
 It is deliberately not `NOPASSWD` — the STIG requires sudo to authenticate, and
 the run lands in `/var/log/sudo.log` with a name against it.
 
-The `sudo` is not optional for a DTA: `/opt/it` is `2770 root:sudo`, so a DTA
-cannot even read the script and `it-repo load` on its own fails with
-*Permission denied* before it gets anywhere. `sudo` runs the lookup as root and
-works.
+`it-repo` is installed as a **real file in `/usr/local/sbin`**, not symlinked into
+`/opt/it/scripts` like the other `it-*` commands. `/opt/it` is `2770 root:sudo`, so a
+DTA cannot traverse it — `stat()` on the symlink's target fails, bash skips the PATH
+entry, and the shell says **`command not found`** for a command that is installed and
+that the DTA is explicitly allowed to run. Confusing, and it cost a round trip. Running
+it bare now works: the script self-elevates and sudo prompts for the DTA's password.
 
 Steady state on a fielded box is therefore: **DTA** plugs in the SSD and runs
 `sudo it-repo load`; **admin** runs `sudo apt upgrade`. Neither needs
