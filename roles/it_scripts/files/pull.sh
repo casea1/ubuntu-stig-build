@@ -36,7 +36,9 @@
 # /etc/stig-build/profile and passed back to ansible-pull -- nothing else
 # persists it, and without it group_vars would default an EMI laptop to the
 # development profile and rebuild it as one. Override for one run with
-#   REPO_URL=... BRANCH=... PROFILE=... it-pull
+#   sudo it-pull --profile emi          (also: sudo REPO_URL=... BRANCH=... it-pull)
+# and --profile PERSISTS it into /opt/it/site.yml, so a hand-typed ansible-pull
+# builds the box the same way. Changing it asks you to type the name back.
 # or put REPO_URL / BRANCH in /etc/stig-build/pull.conf (plain KEY=value).
 set -uo pipefail
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
@@ -106,8 +108,20 @@ BR="$(resolve_branch)"
 # camera/mic lockdown. it_scripts records the profile it was built with in
 # /etc/stig-build/profile on every run, so pass that back. If it cannot be
 # determined, REFUSE rather than let the default reprofile the box.
-PROFILE_NAME="${PROFILE:-}"
-[ -n "$PROFILE_NAME" ] || PROFILE_NAME="$(getkey deployment_profile "$PROFILE_FILE")"
+SITE_YML="${SITE_YML:-/opt/it/site.yml}"
+
+# site.yml is the AUTHORITY, and that is the point. Reading the profile back
+# from /etc/stig-build/profile alone only carries forward whatever the last run
+# happened to record -- if a run got it wrong once, every later run inherits the
+# mistake. site.yml is loaded by local.yml's pre_tasks above group_vars, so a
+# profile written there is applied by ANY path: it-pull, a hand-typed
+# ansible-pull, the stig-build timer. That is what makes the setting stick.
+site_profile() { sed -nE 's/^deployment_profile[[:space:]]*:[[:space:]]*//p' "$SITE_YML" 2>/dev/null \
+                 | tail -1 | tr -d "\"' " ; }
+
+PROFILE_ARG=""                       # --profile, parsed below with the others
+SITE_PROFILE="$(site_profile)"
+RECORDED_PROFILE="$(getkey deployment_profile "$PROFILE_FILE")"
 
 # ---------------------------------------------------------------------------
 # The modes. This is the whole point of the script: the skip-tags and -e
@@ -152,7 +166,19 @@ do_status() {
   printf '  repo      : %s\n' "$REPO"
   printf '  branch    : %s\n' "$BR"
   printf '  checkout  : %s\n' "${CHECKOUT:-none yet -- the first it-pull clones it}"
-  printf '  profile   : %s\n' "$(getkey_or deployment_profile "$PROFILE_FILE" unknown)"
+  printf '  profile   : %s\n' "${PROFILE_NAME:-unknown}"
+  if [ -n "$SITE_PROFILE" ]; then
+    printf '              persisted in %s\n' "$SITE_YML"
+  else
+    printf '              %sNOT persisted%s -- only %s records it, so a hand-typed\n' "$Y" "$R" "$PROFILE_FILE"
+    printf '              ansible-pull with no -e would rebuild this box as `development`.\n'
+    printf '              Fix once: sudo it-pull --profile %s\n' "${PROFILE_NAME:-<name>}"
+  fi
+  if [ -n "$SITE_PROFILE" ] && [ -n "$RECORDED_PROFILE" ] && [ "$SITE_PROFILE" != "$RECORDED_PROFILE" ]; then
+    printf '              %sMISMATCH%s -- site.yml says %s, the last run built %s.\n' \
+           "$RD" "$R" "$SITE_PROFILE" "$RECORDED_PROFILE"
+    printf '              The next pull will build %s.\n' "$SITE_PROFILE"
+  fi
   printf '  running   : %s\n' "$(getkey_or baseline_revision "$PROFILE_FILE" unknown)"
 
   if [ -n "$CHECKOUT" ]; then
@@ -216,6 +242,24 @@ do_log() {
 # leaves the box half-configured. Detached means closing the terminal -- or
 # losing the RDP session the pull just bounced -- cannot break the run.
 # ---------------------------------------------------------------------------
+persist_profile() {   # $1 = profile name -> written into site.yml, idempotently
+  local want="$1"
+  install -d -m 2770 -o root -g "$(stat -c %G /opt/it 2>/dev/null || echo sudo)" \
+    "$(dirname "$SITE_YML")" 2>/dev/null || true
+  touch "$SITE_YML" 2>/dev/null || { warn_no_site; return 0; }
+  if grep -qE '^deployment_profile[[:space:]]*:' "$SITE_YML" 2>/dev/null; then
+    sed -i -E "s|^deployment_profile[[:space:]]*:.*|deployment_profile: $want|" "$SITE_YML"
+  else
+    printf '\n# Written by it-pull. Which profile this box is. local.yml loads this\n# above group_vars, so ANY ansible-pull builds it the same way.\ndeployment_profile: %s\n' \
+      "$want" >> "$SITE_YML"
+  fi
+  printf '    profile persisted to %s\n' "$SITE_YML"
+}
+warn_no_site() {
+  printf '%s    could not write %s -- the profile is passed for THIS run only%s\n' \
+    "$Y" "$SITE_YML" "$R"
+}
+
 galaxy_refresh() {
   # requirements.yml almost never changes, but when it does, ansible-pull will
   # not install the new collection for you -- the play just fails on a missing
@@ -242,6 +286,25 @@ do_run() {
   command -v ansible-pull >/dev/null 2>&1 || die \
 "ansible-pull is not installed -- this box was never bootstrapped, or ansible was removed.
   sudo apt-get install -y ansible git"
+
+  # Make the profile STICK. Written into site.yml, which local.yml loads above
+  # group_vars, so a hand-typed `ansible-pull` with no -e builds this box the
+  # same way it-pull does. Without this, the profile is only as good as the
+  # flag on whichever command someone happened to type -- which is how ASP-2
+  # came to be building as `development`.
+  if [ -n "$PROFILE_NAME" ] && [ "$PROFILE_NAME" != "$SITE_PROFILE" ]; then
+    if [ -n "$SITE_PROFILE" ]; then
+      printf '%sPROFILE CHANGE%s  %s  ->  %s\n' "$Y" "$R" "$SITE_PROFILE" "$PROFILE_NAME"
+      echo   "  This REBUILDS the box under a different profile. Going to or from emi"
+      echo   "  changes USB storage, the dta carve-out, the camera/mic lockdown, the"
+      echo   "  firewall service set and the installed application set."
+      [ -t 0 ] || die "a profile change needs confirmation and there is no terminal -- run it interactively"
+      printf '  Type the new profile name to confirm: '
+      read -r _confirm
+      [ "$_confirm" = "$PROFILE_NAME" ] || die "not confirmed -- nothing was run"
+    fi
+    persist_profile "$PROFILE_NAME"
+  fi
 
   [ -n "$PROFILE_NAME" ] || die \
 "Cannot tell which profile this box was built as, so refusing to run.
@@ -315,6 +378,33 @@ Pass it explicitly this once:   sudo PROFILE=emi it-pull
   return "${rc:-1}"
 }
 
+# --profile has to be an ARGUMENT, not an environment variable: the script
+# self-elevates with `sudo -- "$0" "$@"`, and sudo's env_reset drops PROFILE=
+# on the way through, so `PROFILE=emi it-pull` would silently do nothing.
+# (`sudo PROFILE=emi it-pull` does work, and is still honoured.)
+ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --profile) PROFILE_ARG="${2:-}"; shift ;;
+    *) ARGS+=("$1") ;;
+  esac
+  shift
+done
+set -- "${ARGS[@]:-}"
+
+# Precedence: --profile, then PROFILE= in the environment, then site.yml (the
+# persisted setting), then whatever the last run recorded.
+PROFILE_NAME="$PROFILE_ARG"
+[ -n "$PROFILE_NAME" ] || PROFILE_NAME="${PROFILE:-}"
+[ -n "$PROFILE_NAME" ] || PROFILE_NAME="$SITE_PROFILE"
+[ -n "$PROFILE_NAME" ] || PROFILE_NAME="$RECORDED_PROFILE"
+
+case "${PROFILE_NAME:-none}" in
+  none|development|ai|baseline|emi|emi-unclass|desktop|server) : ;;
+  *) die "not a deployment profile: '$PROFILE_NAME'
+Valid: development | ai | baseline | emi | emi-unclass" ;;
+esac
+
 case "${1:-light}" in
   ""|light|quick)    do_run light ;;
   full)              do_run full ;;
@@ -323,6 +413,6 @@ case "${1:-light}" in
   check|dry|dry-run) do_run check ;;
   status)            do_status ;;
   log|logs)          do_log ;;
-  help|-h|--help)    sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//' ;;
+  help|-h|--help)    sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "unknown: $1  (try: it-pull help)" >&2; exit 2 ;;
 esac

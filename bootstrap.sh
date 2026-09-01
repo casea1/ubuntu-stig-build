@@ -136,6 +136,23 @@ if [[ -n "${LUKS_DEV}" && ! -s "${LUKS_PASS_FILE}" && -r /dev/tty ]] \
   unset LUKS_PASS
 fi
 
+# PERSIST THE PROFILE before the first run. Nothing else does: ansible-pull is
+# given -e deployment_profile=<x> below, and group_vars defaults to
+# `development` -- so ANY later ansible-pull without that -e rebuilds the box
+# under the wrong profile. On an EMI laptop that silently turns off USB storage,
+# the dta carve-out and the camera/mic lockdown, and it is not obvious from the
+# outside that it happened. local.yml loads /opt/it/site.yml above group_vars,
+# so a value written here is what every later run uses, typed flag or not.
+install -d -m 0755 /opt/it
+touch /opt/it/site.yml
+if grep -qE '^deployment_profile[[:space:]]*:' /opt/it/site.yml; then
+  sed -i -E "s|^deployment_profile[[:space:]]*:.*|deployment_profile: ${PROFILE}|" /opt/it/site.yml
+else
+  printf '\n# Written by bootstrap.sh. Which profile this box is. local.yml loads this\n# above group_vars, so ANY ansible-pull builds it the same way.\ndeployment_profile: %s\n' \
+    "${PROFILE}" >> /opt/it/site.yml
+fi
+echo "[*] Profile '${PROFILE}' persisted to /opt/it/site.yml."
+
 echo "[*] Installing Ansible + git + curl..."
 apt-get update
 apt-get install -y ansible git curl ca-certificates

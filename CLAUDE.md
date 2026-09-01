@@ -45,6 +45,13 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   `usg_remediate` will re-audit. Role tags `packages` and `scripts` exist
   alongside `ai-runtime`/`ai-gpu`; `it-pull` is the only place the skip-tag
   strings are written down.
+- **The deployment profile is persisted in `/opt/it/site.yml`**, loaded above
+  `group_vars` by `local.yml`'s pre_tasks. It has to be: `group_vars` defaults
+  to `development`, so any `ansible-pull` without `-e deployment_profile=` used
+  to rebuild an EMI laptop as a development box -- silently turning off USB
+  storage, the dta carve-out and the camera/mic lockdown. ASP-2 was found that
+  way. `bootstrap.sh` writes it; `it-pull --profile <name>` sets and persists
+  it, and refuses to run when it cannot determine one.
 - **Verify before asserting.** Several bugs here came from plausible-sounding
   assumptions. Check the actual file, the actual package, the actual box.
 - **Profile gating** is computed in `group_vars` (`is_ai`, `is_emi`,

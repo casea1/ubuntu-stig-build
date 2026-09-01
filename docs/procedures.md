@@ -222,13 +222,48 @@ treatment; `it-pull full` passes `always`.
 > `sudo it-pull status`** — it lists the actual incoming commits and the files
 > they touch, which is the question you were asking.
 
-**The deployment profile is preserved, and `it-pull` refuses to guess.** Nothing on a
-box persists `deployment_profile`: `bootstrap.sh` passes it as `-e` and `group_vars`
-defaults to `development`, so **any `ansible-pull` run without that `-e` rebuilds an EMI
-laptop as a development workstation** — turning off USB storage, the `dta` carve-out and
-the camera/mic lockdown. `it-pull` reads the profile back from `/etc/stig-build/profile`
-(written by `it_scripts` on every run) and passes it. If it cannot determine one it stops
-rather than proceed on the default; pass it once with `sudo PROFILE=emi it-pull`.
+### The deployment profile, and why it has to be persisted
+
+`group_vars` defaults `deployment_profile` to `development`. `bootstrap.sh` overrides it
+with `-e` for the build and — before 2026-09-01 — **nothing carried it forward**. So *any*
+later `ansible-pull` without that `-e` rebuilt an EMI laptop as a development workstation:
+USB storage off, the `dta` carve-out gone, the camera/mic lockdown gone. Nothing announces
+it. ASP-2 was found in exactly that state, a USB DVD reader that would not appear being the
+first visible symptom.
+
+The profile now lives in **`/opt/it/site.yml`**, which `local.yml` loads above `group_vars`,
+so every path builds the box the same way — `it-pull`, a hand-typed `ansible-pull`, the
+`stig-build` timer. `bootstrap.sh` writes it at build time.
+
+```bash
+sudo it-pull --profile emi      # set it and pull; persists to /opt/it/site.yml
+sudo it-pull status             # shows the profile and whether it is persisted
+```
+
+| | |
+|---|---|
+| Precedence | `--profile` → `PROFILE=` in the environment → `/opt/it/site.yml` → what the last run recorded |
+| Changing it | prints what changes and makes you **type the new profile name back**. Going to or from `emi` changes USB storage, the `dta` carve-out, the camera/mic lockdown, the firewall service set and the installed application set — treat it as a rebuild and use `it-pull full` |
+| Cannot determine one | `it-pull` **refuses to run** rather than proceed on the default |
+
+> **`--profile`, not `PROFILE=`.** The script self-elevates with `sudo -- "$0" "$@"`, and
+> sudo's `env_reset` drops the variable on the way through — so `PROFILE=emi it-pull`
+> silently does nothing. `sudo PROFILE=emi it-pull` does work and is still honoured, but the
+> flag is the form that cannot be got wrong.
+
+**Recovering a box that was already reprofiled by accident.** Its on-disk `it-pull` is the
+old one, so it cannot fix itself. Run the long form once — it applies the right profile
+*and* installs the current scripts:
+
+```bash
+sudo sh -c 'printf "\ndeployment_profile: emi\n" >> /opt/it/site.yml'
+sudo systemd-run --unit=stig-reprofile --collect --wait \
+  ansible-pull -U https://git.asplab.com/ASPLAB/ubuntu-stig-build.git -C main \
+  -i localhost, local.yml -e deployment_profile=emi
+```
+
+No `--skip-tags`: a profile change is a rebuild, and the application set differs. Watch it
+with `sudo journalctl -u stig-reprofile -f`, and reboot afterwards.
 
 **Overrides.** `REPO_URL=... BRANCH=... sudo -E it-pull` for one run, or put `REPO_URL=` /
 `BRANCH=` in `/etc/stig-build/pull.conf` permanently — a box built from a mirror keeps
