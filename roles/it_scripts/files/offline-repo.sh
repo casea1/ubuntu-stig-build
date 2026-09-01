@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# it-offline-repo -- run apt off a hand-carried local repo on a standalone box.
+# it-repo -- run apt off a hand-carried local repo on a standalone box.
 #
 # For the EMI laptop, which is air-gapped after imaging and has no ADM PC to
 # serve packages over HTTP. The same repo tree the ADM-Toolkit mirrors is copied
 # onto this box and apt reads it over file://.
 #
 # Usage:
-#   it-offline-repo                 what apt is pointed at, and is the tree sane
-#   it-offline-repo status          ...the same thing
-#   it-offline-repo scan            find repo trees on attached media, mirror nothing
-#   it-offline-repo load [PATH]     mirror from media. With no PATH it AUTO-DETECTS.
-#   it-offline-repo enable          park the online sources, switch apt over
-#   it-offline-repo disable         put the online sources back
-#   it-offline-repo verify          apt-get update + prove a package resolves
+#   it-repo                 what apt is pointed at, and is the tree sane
+#   it-repo status          ...the same thing
+#   it-repo scan            find repo trees on attached media, mirror nothing
+#   it-repo load [PATH]     mirror from media. With no PATH it AUTO-DETECTS.
+#   it-repo enable          park the online sources, switch apt over
+#   it-repo disable         put the online sources back
+#   it-repo verify          apt-get update + prove a package resolves
 #   --dry-run                       (load) show what would change, copy nothing
 #   --yes                           skip the confirmation prompts
 #   --prune                         (load) also DELETE packages the media no longer has
@@ -227,7 +227,7 @@ cmd_scan() {
     bad "no $SUITE repo tree found on attached media"
     return 1
   fi
-  ok "$found matching tree(s). Mirror with: it-offline-repo load"
+  ok "$found matching tree(s). Mirror with: it-repo load"
   return 0
 }
 
@@ -256,7 +256,7 @@ cmd_status() {
     esac
   elif [ -d "$REPO_DIR" ]; then
     bad "directory exists but there is no $RELEASE"
-    say "  ${DIM}Load a repo tree: it-offline-repo load /media/<user>/<SSD>/repo${R}"
+    say "  ${DIM}Load a repo tree: it-repo load /media/<user>/<SSD>/repo${R}"
   else
     warn "not loaded (no $REPO_DIR)"
   fi
@@ -284,7 +284,7 @@ cmd_status() {
     ok "offline_repo_enabled: true in $SITE_YML -- survives the next pull"
   elif switched; then
     warn "apt is switched but $SITE_YML does not set offline_repo_enabled: true."
-    warn "The next ansible-pull will revert it. Run: it-offline-repo enable"
+    warn "The next ansible-pull will revert it. Run: it-repo enable"
   else
     say "  not set (default false)"
   fi
@@ -398,7 +398,7 @@ cmd_load() {
 "
     done <<< "$(media_mounts)"
     trees=$(printf '%s' "$trees" | sed '/^$/d')
-    [ -n "$trees" ] || die "no repo tree found on attached media. Plug the SSD in, then: it-offline-repo scan"
+    [ -n "$trees" ] || die "no repo tree found on attached media. Plug the SSD in, then: it-repo scan"
   fi
 
   # Keep only this box's release. Everything else is REPORTED, not silently
@@ -469,9 +469,9 @@ cmd_load() {
   ok "$(pkg_count "$TREE") .deb at $TREE"
   say "  suites     $(suites_in "$TREE" | tr '\n' ' ')"
   if switched; then
-    say "  ${DIM}apt is already on the local repo -- refresh it: it-offline-repo verify${R}"
+    say "  ${DIM}apt is already on the local repo -- refresh it: it-repo verify${R}"
   else
-    say "  ${DIM}Now switch apt over: it-offline-repo enable${R}"
+    say "  ${DIM}Now switch apt over: it-repo enable${R}"
   fi
 }
 
@@ -484,13 +484,13 @@ persist_setting() {  # true|false
   if grep -qE '^offline_repo_enabled[[:space:]]*:' "$SITE_YML"; then
     sed -i -E "s|^offline_repo_enabled[[:space:]]*:.*|offline_repo_enabled: $want|" "$SITE_YML"
   else
-    printf '\n# Set by it-offline-repo -- keeps the switch across ansible-pull runs.\noffline_repo_enabled: %s\n' \
+    printf '\n# Set by it-repo -- keeps the switch across ansible-pull runs.\noffline_repo_enabled: %s\n' \
       "$want" >> "$SITE_YML"
   fi
 }
 
 cmd_enable() {
-  tree_ok "$REPO_DIR" || die "no repo loaded at $REPO_DIR. Run: it-offline-repo load <path>"
+  tree_ok "$REPO_DIR" || die "no repo loaded at $REPO_DIR. Run: it-repo load <path>"
 
   if switched; then
     ok "apt is already on the local repo"
@@ -516,7 +516,7 @@ cmd_enable() {
     suites="${suites% }"
     [ -n "$suites" ] || suites="$SUITE"
     cat > "$SOURCE_FILE" <<EOF
-# Written by it-offline-repo. The offline_repo role rewrites this on each pull.
+# Written by it-repo. The offline_repo role rewrites this on each pull.
 Types: deb
 URIs: file://$TREE
 Suites: $suites
@@ -574,7 +574,7 @@ cmd_verify() {
   printf '%s\n' "$out" | tail -8 | sed 's/^/    /'
   if [ "$rc" -ne 0 ]; then
     bad "apt-get update FAILED (rc=$rc)"
-    say "  ${DIM}Revert with: it-offline-repo disable${R}"
+    say "  ${DIM}Revert with: it-repo disable${R}"
     return 1
   fi
   # `update` exits 0 even when a source 404s, so look for the warning too.

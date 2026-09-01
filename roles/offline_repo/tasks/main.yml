@@ -3,7 +3,7 @@
 # offline_repo -- point apt at a hand-carried local repo on a standalone box.
 #
 # Built for the EMI laptop, which is air-gapped after imaging with no ADM PC to
-# serve packages over HTTP. The repo tree is copied onto the box (it-offline-repo
+# serve packages over HTTP. The repo tree is copied onto the box (it-repo
 # load) and apt reads it over file://.
 #
 # Both directions are implemented. The role only ever CREATES if you let it, so
@@ -42,8 +42,8 @@
           offline_repo_enabled is true but there is no Release file at
           {{ offline_repo_dir }}/{{ offline_repo_subdir }}/dists/{{ offline_repo_suite }}/Release,
           so the online sources were NOT touched. Load the repo first:
-          `sudo it-offline-repo load /media/<user>/<SSD>/repo`, then re-run the
-          pull (or `sudo it-offline-repo enable`).
+          `sudo it-repo load /media/<user>/<SSD>/repo`, then re-run the
+          pull (or `sudo it-repo enable`).
       when: not _or_release.stat.exists
 
     - name: "OFFLINE-REPO | Switch apt over"
@@ -88,7 +88,7 @@
         # suites, and apt reads only what the source file lists. Hardcoding the
         # bare codename here meant a box could hold every security .deb on disk
         # and still report "0 to upgrade". Discover what the tree actually has
-        # -- and keep the same order it-offline-repo writes, so a pull does not
+        # -- and keep the same order it-repo writes, so a pull does not
         # churn the file.
         - name: "OFFLINE-REPO | Which suites does the loaded tree carry?"
           ansible.builtin.find:
@@ -139,8 +139,8 @@
               SWITCHED, BUT `apt-get update` FAILED against
               {{ offline_repo_dir }}/{{ offline_repo_subdir }}. The rest of this play
               will not be able to install anything. Check the tree with
-              `sudo it-offline-repo status`, or revert with
-              `sudo it-offline-repo disable`.
+              `sudo it-repo status`, or revert with
+              `sudo it-repo disable`.
               {% else %}
               apt now reads {{ offline_repo_dir }}/{{ offline_repo_subdir }} ({{ offline_repo_suite }}
               {{ offline_repo_components }}). Online sources parked in

@@ -287,7 +287,7 @@
     # PATCHING AFTER the box is air-gapped, so it must not be in the way while
     # the box is being built.
     #
-    # Self-skips unless offline_repo_enabled (default false). `it-offline-repo
+    # Self-skips unless offline_repo_enabled (default false). `it-repo
     # enable` writes it into /opt/it/site.yml after deployment.
     # -------------------------------------------------------------------------
     - role: offline_repo            # post-deployment: park the online apt sources, read /srv/repo over file://

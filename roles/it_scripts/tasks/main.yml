@@ -125,6 +125,12 @@
             + (it_scripts_emi | map(attribute='link') | map('regex_replace', '^', '/usr/local/sbin/') | list) }}"
   when: not (it_scripts_emi_enabled | bool)
 
+- name: "IT-SCRIPTS | Remove command names this repo has retired"
+  ansible.builtin.file:
+    path: "/usr/local/sbin/{{ item }}"
+    state: absent
+  loop: "{{ it_scripts_retired_links | default([]) }}"
+
 - name: "IT-SCRIPTS | Where the scripts are"
   ansible.builtin.debug:
     msg: >-
