@@ -13,6 +13,8 @@
 #   it-repo enable          park the online sources, switch apt over
 #   it-repo disable         put the online sources back
 #   it-repo verify          apt-get update + prove a package resolves
+#   it-repo howto [topic]   package-management cheat sheet: apt, dpkg, pip, the
+#                           local repo. Prints commands, runs none.
 #   --dry-run                       (load) show what would change, copy nothing
 #   --yes                           skip the confirmation prompts
 #   --prune                         (load) also DELETE packages the media no longer has
@@ -613,6 +615,134 @@ cmd_verify() {
   printf '\n'
 }
 
+# ---- howto (package-management reference) ------------------------------------
+#
+# A cheat sheet, not a wrapper: it PRINTS commands and never runs one. Written
+# for whoever is at the box with no internet to search from -- which on an
+# air-gapped EMI laptop is everyone. Sections are marked `## <key>` so
+# `it-repo howto apt` shows one and `it-repo howto | grep -i remove` still works.
+
+howto_text() {
+cat <<'HOWTO'
+## apt -- everyday
+sudo apt update                     refresh the package lists. Do this first, always.
+sudo apt upgrade                    install available updates. Never removes a package.
+sudo apt full-upgrade               same, but MAY remove one if that is the only way to upgrade.
+sudo apt install <pkg>              install it and whatever it depends on
+sudo apt install --only-upgrade <pkg>   upgrade just that one
+apt list --upgradable               what an upgrade would do, before doing it
+sudo apt autoremove                 delete dependencies nothing needs any more
+sudo apt clean                      empty the downloaded-.deb cache (/var/cache/apt/archives)
+
+## find -- what exists, what is installed, where it came from
+apt search <text>                   search names and descriptions
+apt show <pkg>                      version, size, dependencies, description
+apt policy <pkg>                    installed vs available, AND WHICH REPO it comes from
+apt list --installed | grep <text>  installed packages matching text
+dpkg -l | grep <text>               the same from dpkg, which also shows broken states
+dpkg -L <pkg>                       every file that package installed
+dpkg -S /path/to/file               which package owns a file
+apt-cache depends <pkg>             what it needs
+apt-cache rdepends <pkg>            what needs IT. Check this before removing anything.
+
+## fix -- when apt is unhappy
+sudo apt --fix-broken install       resolve half-installed or missing dependencies. Try this first.
+sudo dpkg --configure -a            finish packages that unpacked but never configured
+sudo apt update --fix-missing       retry after a failed download
+sudo dpkg --audit                   list packages in a broken state
+"Could not get lock /var/lib/dpkg/lock" -- another apt is already running.
+   ps aux | grep -E 'apt|dpkg|unattended'   then WAIT. Never delete the lock file.
+"The following packages have been kept back" -- the upgrade needs to add or remove
+   something, and `upgrade` is not allowed to. That is what `full-upgrade` is for.
+
+## remove -- taking software off
+sudo apt remove <pkg>               remove the program, KEEP its config in /etc
+sudo apt purge <pkg>                remove the program AND its config
+sudo apt autopurge <pkg>            purge it and the dependencies nothing else needs
+apt-cache rdepends <pkg>            LOOK FIRST. Removing something others depend on takes them too.
+
+## hold -- keep a version where it is
+sudo apt-mark hold <pkg>            never upgrade this package
+sudo apt-mark unhold <pkg>          release it
+apt-mark showhold                   what is currently held
+apt-mark showmanual                 what was installed deliberately, vs pulled in as a dependency
+
+## deb -- one file, by hand
+sudo apt install ./thing.deb        BEST: installs it and resolves its dependencies from the repo
+sudo dpkg -i thing.deb              installs ONLY that file. Dependencies become your problem:
+                                       sudo apt --fix-broken install
+apt-get download <pkg>              fetch the .deb, install nothing
+sudo apt-get install --download-only <pkg>   fetch it AND its dependencies -> /var/cache/apt/archives
+dpkg-deb -c thing.deb               list what is inside, without installing
+dpkg-deb -I thing.deb               its version and dependencies
+
+## offline -- this box's local repo
+sudo it-repo status                 is a repo loaded, which suites, is apt pointed at it
+sudo it-repo scan                   what repo trees are on the attached media
+sudo it-repo load                   mirror the media into /srv/repo (DTAs may run this)
+sudo it-repo enable                 park the online sources, point apt at /srv/repo (admin)
+sudo it-repo disable                put the online sources back (admin)
+sudo it-repo verify                 apt-get update, and prove a package really resolves
+After any load:   sudo apt update   then   sudo apt upgrade
+apt policy <pkg>                    confirm it comes from file:///srv/repo, not the internet
+"0 to upgrade" when you expected some? Check the -security suite is actually there:
+   sudo it-repo status
+
+## python -- pip on Ubuntu 24.04
+24.04 refuses to pip-install into the system Python:
+   "error: externally-managed-environment"
+That is correct, not a fault -- dpkg owns those files. Use an environment instead.
+eng                                 activate the shared /opt/eng-venv (a shell alias; dev + EMI)
+python3 -m venv ~/venv              make your own
+source ~/venv/bin/activate          enter it -- the prompt shows its name. `deactivate` leaves.
+pip install <pkg>                   safe now: it lands in the venv, not in the OS
+sudo apt install python3-<pkg>      the packaged version, when one exists. Preferred offline.
+NEVER  sudo pip install --break-system-packages ...
+   It overwrites dpkg-managed files and breaks apt later, on a box you cannot casually rebuild.
+Offline: on a connected box   pip download -d wheels <pkg>
+         carry the wheels/ folder, then
+         pip install --no-index --find-links wheels <pkg>
+
+## snap -- the snap store, which apt does not manage
+snap list                           installed snaps and their versions
+sudo snap refresh                   update them. Needs the internet -- there is no local mirror.
+snap changes                        recent snap activity
+Air-gapped boxes never update snaps. Firefox and the GNOME platform are snaps.
+
+## after -- what apt alone does not finish
+ls /var/run/reboot-required         if it exists, a reboot is pending (kernel, libc, systemd)
+cat /var/run/reboot-required.pkgs   which packages asked for it
+uname -r                            the kernel you are RUNNING, which is not the newest installed
+pro status                          Ubuntu Pro / ESM entitlement
+sudo it-checklist                   the org checklist -- run it after anything significant
+HOWTO
+}
+
+cmd_howto() {
+  local want="${1:-}" topics
+  # The key is the first word after "## ". Do NOT require a space and a subtitle
+  # after it: a section headed just "## remove" then vanishes from the topic
+  # list and `howto remove` answers "no such topic".
+  topics=$(howto_text | sed -n 's/^## \([a-z]*\).*/\1/p' | tr '\n' ' ')
+
+  if [ -n "$want" ]; then
+    case " $topics " in
+      *" $want "*) ;;
+      *) die "no such topic: $want
+Topics: $topics" ;;
+    esac
+    howto_text | awk -v t="$want" '/^## / { show = ($2 == t) } show { print }'
+  else
+    howto_text
+  fi | awk -v b="$B" -v r="$R" '
+    /^## / { sub(/^## /, ""); printf "\n%s%s%s\n", b, $0, r; next }
+    { print }'
+
+  [ -n "$want" ] || printf '\n%sOne section at a time: it-repo howto <%s>%s\n' \
+    "$DIM" "$(printf '%s' "$topics" | sed 's/ $//; s/ /|/g')" "$R"
+  echo
+}
+
 # ---- dispatch ---------------------------------------------------------------
 
 ARGS=()
@@ -645,5 +775,6 @@ case "${1:-status}" in
   enable)          cmd_enable ;;
   disable)         cmd_disable ;;
   verify)          cmd_verify ;;
+  howto|cheat|ref) shift; cmd_howto "${1:-}" ;;
   *)               usage; exit 1 ;;
 esac
