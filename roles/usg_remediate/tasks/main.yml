@@ -1228,6 +1228,40 @@
     path: /etc/modprobe.d/zz-stig-usb-storage.conf
     state: absent
   when: usb_storage_enabled | default(true) | bool
+  register: _usb_unblacklist
+
+# Loading them HERE, not in desktop_hardening, is deliberate. That role runs
+# EARLIER in the play, so its modprobe would fire while the blacklist file above
+# still existed -- `install usb-storage /bin/false` makes modprobe exit 0 having
+# loaded nothing, and the drive would stay dead until the next pull or a replug.
+# Removing the file and loading the modules in the same place is the only order
+# that works on the run that flips the box back.
+- name: "REMED | Load the mass-storage drivers now (no reboot needed)"
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ usb_storage_block_modules }}"
+  loop_control:
+    label: "{{ item }}"
+  failed_when: false          # uas is absent on some kernels; usb-storage is not
+  when:
+    - usb_storage_enabled | default(true) | bool
+    - _usb_unblacklist is changed
+
+# A device attached WHILE the drivers were blacklisted was probed once, found no
+# driver, and is not re-probed just because one appeared. Say so rather than
+# leaving someone staring at a DVD drive that is now perfectly capable of working.
+- name: "REMED | Re-plug anything that was attached while storage was blocked"
+  ansible.builtin.debug:
+    msg: >-
+      USB mass storage was blacklisted on this box and is now allowed
+      ({{ usb_storage_block_modules | join(', ') }} loaded). Anything plugged in
+      before this run -- a USB DVD reader, a stick -- was probed with no driver
+      available and will NOT reappear on its own. Unplug and re-plug it.
+      USBGuard still gates every device: `sudo it-usb status`, `sudo it-usb enroll`.
+  when:
+    - usb_storage_enabled | default(true) | bool
+    - _usb_unblacklist is changed
 
 - name: "REMED | Disable + mask CUPS printing services (all profiles)"
   ansible.builtin.systemd:

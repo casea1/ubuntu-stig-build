@@ -104,6 +104,29 @@ case "${1:-help}" in
     printf 'policy rules    : %s\n' "$(grep -cvE '^\s*(#|$)' "$RULES" 2>/dev/null || echo 0)"
     printf 'devices present : %s\n' "$(usbguard list-devices 2>/dev/null | wc -l)"
     printf 'currently blocked: %s\n' "$(usbguard list-devices -b 2>/dev/null | wc -l)"
+
+    # The question `it-usb blocked` cannot answer. A device USBGuard AUTHORISED
+    # still does nothing if no driver can claim it: a USB stick or DVD reader
+    # needs usb-storage (and uas on USB3), and where usb_storage_enabled is
+    # false both are blacklisted. The device then enumerates, is authorised,
+    # and never appears anywhere -- absent from `blocked` precisely BECAUSE
+    # USBGuard allowed it. That cost an afternoon once; it is one line now.
+    echo
+    bl=$(grep -rlE '^[[:space:]]*(blacklist|install)[[:space:]]+(usb[-_]storage|uas)([[:space:]]|$)' \
+         /etc/modprobe.d/ 2>/dev/null | tr '\n' ' ')
+    mods=$(lsmod 2>/dev/null)
+    loaded() { case "$mods" in *"$1"*) echo loaded ;; *) echo "not loaded" ;; esac; }
+    if [ -n "$bl" ]; then
+      printf 'usb mass storage: BLACKLISTED by %s\n' "$bl"
+      echo   '                  No USB drive, and no USB DVD/CD reader, can appear on'
+      echo   '                  this box however it is authorised. That is intended where'
+      echo   '                  usb_storage_enabled is false. To use optical or removable'
+      echo   '                  media here, set usb_storage_enabled: true in the box'"'"'s'
+      echo   '                  /opt/it/site.yml and pull -- USBGuard still gates every device.'
+    else
+      printf 'usb mass storage: allowed (usb-storage %s, uas %s)\n' "$(loaded usb_storage)" "$(loaded uas)"
+    fi
+    printf 'optical devices : %s\n' "$(ls -d /dev/sr* 2>/dev/null | tr '\n' ' ' || true)"
     ;;
   list)
     # --raw gives usbguard's own output, for scripting or when the renderer is
