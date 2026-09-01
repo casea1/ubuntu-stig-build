@@ -5,18 +5,24 @@
 # still cannot log in after a "password reset": the account is separately LOCKED,
 # or faillock is still counting three bad attempts against them.
 #
+# Interactively it ASKS how to set the password: type one now, generate a
+# temporary one, or keep the current one and just unlock. Either password must
+# be changed at next login. --temp / --unlock-only skip the question.
+#
 # Usage:
 #   it-passwd                     pick from a list
 #   it-passwd <account>
 #   it-passwd --list              accounts, lock state, expiry -- change nothing
 #   it-passwd <account> --expire  ...and force a change at next login (default)
 #   it-passwd <account> --no-expire
+#   it-passwd <account> --temp    generate a temporary password, no prompt
 #   it-passwd <account> --unlock-only    clear the lock + faillock, keep the password
 set -uo pipefail
 
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
-ACCOUNT=""; FORCE_EXPIRE=1; LIST=0; UNLOCK_ONLY=0
+ACCOUNT=""; FORCE_EXPIRE=1; LIST=0; UNLOCK_ONLY=0; TEMP=0
+PW=""; PW_MODE=""
 
 if [ -t 1 ]; then
   B=$'\e[1m'; DIM=$'\e[2m'; R=$'\e[0m'
@@ -32,12 +38,20 @@ bad()  { printf '  %s%s%s\n' "$RED" "$*" "$R"; }
 die()  { printf '%s%s%s\n' "$RED" "$*" "$R" >&2; exit 1; }
 usage(){ awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"; }
 
+# Shared with it-adduser: the policy check, the generator and the prompt live in
+# one file so a generated password is validated against the same rule a typed
+# one is.
+SELF_DIR="$(dirname "$(readlink -f "$0")")"
+# shellcheck source=pw-common.sh
+. "$SELF_DIR/pw-common.sh" 2>/dev/null || die "missing $SELF_DIR/pw-common.sh -- re-run the build (it-pull scripts)"
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --list)        LIST=1; shift ;;
     --expire)      FORCE_EXPIRE=1; shift ;;
     --no-expire)   FORCE_EXPIRE=0; shift ;;
     --unlock-only) UNLOCK_ONLY=1; shift ;;
+    --temp)        TEMP=1; shift ;;
     -h|--help)     usage; exit 0 ;;
     -*)            die "unknown option: $1 (try --help)" ;;
     *)             ACCOUNT="$1"; shift ;;
@@ -92,47 +106,35 @@ printf '  %-14s %s\n' "groups"    "$(id -nG "$ACCOUNT" | tr ' ' ',')"
 chage -l "$ACCOUNT" 2>/dev/null | sed 's/^/  /'
 
 # ---- password ---------------------------------------------------------------
-# chpasswd bypasses pam_pwquality, so check against the box's own policy rather
-# than letting a weak password through a "STIG-hardened" machine.
-check_policy() {
-  local pw="$1" rc=0 msg=""
-  if command -v pwscore >/dev/null 2>&1; then
-    msg=$(printf '%s' "$pw" | pwscore 2>&1) || rc=1
-    [ "$rc" -ne 0 ] && { printf '%s' "$msg"; return 1; }
-    return 0
-  fi
-  local conf=/etc/security/pwquality.conf minlen=15
-  [ -r "$conf" ] && minlen=$(awk -F= '/^[[:space:]]*minlen/{gsub(/ /,"",$2); print $2}' "$conf" | tail -1)
-  minlen=${minlen:-15}
-  [ "${#pw}" -ge "$minlen" ] || { printf 'shorter than minlen=%s' "$minlen"; return 1; }
-  local want cls
-  for cls in d:'[0-9]' u:'[A-Z]' l:'[a-z]' o:'[^a-zA-Z0-9]'; do
-    want=$(awk -F= "/^[[:space:]]*${cls%%:*}credit/{gsub(/ /,\"\",\$2); print \$2}" "$conf" 2>/dev/null | tail -1)
-    if [ -n "$want" ] && [ "$want" -lt 0 ] 2>/dev/null; then
-      printf '%s' "$pw" | grep -q "${cls#*:}" \
-        || { printf 'missing a required character class (%scredit=%s)' "${cls%%:*}" "$want"; return 1; }
-    fi
-  done
-  return 0
-}
+# Three ways: type one, generate a temporary one, or keep the current password
+# and only clear what is blocking the login. Whichever is chosen, the unlock and
+# faillock reset below still run -- doing only part of that is the usual reason
+# someone still cannot log in after a "password reset".
+if [ "$UNLOCK_ONLY" -eq 1 ]; then
+  PW_MODE=skip
+elif [ "$TEMP" -eq 1 ]; then
+  PW="$(gen_password)" || die "could not generate a password this box's policy accepts"
+  PW_MODE=temp
+  printf '\n  %sTEMPORARY PASSWORD for %s%s\n\n' "$B" "$ACCOUNT" "$R"
+  printf '      %s%s%s\n\n' "$B" "$PW" "$R"
+elif [ -t 0 ]; then
+  pw_choose "$ACCOUNT" "Keep the current one" "change no password; just unlock and clear faillock" \
+    || die "aborted"
+  [ "$PW_MODE" = skip ] && UNLOCK_ONLY=1
+else
+  die "no terminal to ask on -- pass --temp or --unlock-only"
+fi
 
-if [ "$UNLOCK_ONLY" -eq 0 ]; then
-  head2 "New password for $ACCOUNT"
-  command -v pwscore >/dev/null 2>&1 \
-    || say "  ${DIM}(libpwquality-tools not installed -- checking minlen and character classes only)${R}"
-  while :; do
-    read -rs -p "  New password: " PW; printf '\n'
-    read -rs -p "  Again:        " PW2; printf '\n'
-    [ "$PW" = "$PW2" ] || { bad "they do not match"; continue; }
-    [ -n "$PW" ]       || { bad "empty passwords are not allowed"; continue; }
-    if ! reason=$(check_policy "$PW"); then
-      bad "rejected by this box's password policy: $reason"; continue
-    fi
-    break
-  done
+if [ "$PW_MODE" = temp ] && [ "$FORCE_EXPIRE" -eq 0 ]; then
+  warn "--no-expire ignored for a temporary password: it must be changed at next login"
+  FORCE_EXPIRE=1
+fi
+
+if [ "$PW_MODE" != skip ]; then
   printf '%s:%s' "$ACCOUNT" "$PW" | chpasswd || die "chpasswd failed"
-  unset PW PW2
+  unset PW
   ok "password set"
+  [ "$PW_MODE" = temp ] && ok "temporary -- shown above, stored nowhere"
 fi
 
 # ---- unlock ------------------------------------------------------------------

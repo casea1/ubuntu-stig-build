@@ -9,9 +9,14 @@
 #   admin      first_last_adm    sudo, sentry
 #   audit      first_last_aud    audit, sudo, sentry
 #
+# Interactively it ASKS how to set the password: type one now, generate a
+# temporary one, or leave the account locked. Either password must be changed
+# at first login. --temp / --lock skip the question for scripted use.
+#
 # Usage:
 #   it-adduser                        interactive (the normal way)
 #   it-adduser --type admin --first Jane --last Doe
+#   it-adduser ... --temp             generate a temporary password, no prompt
 #   it-adduser ... --lock             create locked, set the password later
 #   it-adduser ... --no-expire        do not force a password change at first login
 #   it-adduser --dry-run              show what would happen, change nothing
@@ -19,7 +24,8 @@ set -uo pipefail
 
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
-TYPE=""; FIRST=""; LAST=""; LOCKED=0; FORCE_EXPIRE=1; DRY=0
+TYPE=""; FIRST=""; LAST=""; LOCKED=0; FORCE_EXPIRE=1; DRY=0; TEMP=0
+PW=""; PW_MODE=""
 
 if [ -t 1 ]; then
   B=$'\e[1m'; DIM=$'\e[2m'; R=$'\e[0m'
@@ -35,12 +41,20 @@ bad()  { printf '  %s%s%s\n' "$RED" "$*" "$R"; }
 die()  { printf '%s%s%s\n' "$RED" "$*" "$R" >&2; exit 1; }
 usage(){ awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"; }
 
+# Password policy checking, the generator and the prompt are shared with
+# it-passwd so the two cannot drift -- a generated password is validated
+# against the same check a typed one gets.
+SELF_DIR="$(dirname "$(readlink -f "$0")")"
+# shellcheck source=pw-common.sh
+. "$SELF_DIR/pw-common.sh" 2>/dev/null || die "missing $SELF_DIR/pw-common.sh -- re-run the build (it-pull scripts)"
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --type)  TYPE="${2:?--type needs a value}"; shift 2 ;;
     --first) FIRST="${2:?--first needs a value}"; shift 2 ;;
     --last)  LAST="${2:?--last needs a value}"; shift 2 ;;
     --lock)  LOCKED=1; shift ;;
+    --temp)  TEMP=1; shift ;;
     --no-expire) FORCE_EXPIRE=0; shift ;;
     --dry-run) DRY=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -116,7 +130,11 @@ printf '  %-12s %s\n' "type"      "$TYPE"
 printf '  %-12s %s\n' "groups"    "${GROUPS_CSV:-none}"
 printf '  %-12s %s\n' "home"      "/home/$USERNAME"
 printf '  %-12s %s\n' "shell"     "/bin/bash"
-printf '  %-12s %s\n' "password"  "$([ "$LOCKED" -eq 1 ] && echo 'locked (set later)' || echo 'set now')"
+if   [ "$LOCKED" -eq 1 ]; then pw_plan='locked (set one later with it-passwd)'
+elif [ "$TEMP"   -eq 1 ]; then pw_plan='temporary, generated and shown once'
+else                          pw_plan='you will be asked, after you confirm'
+fi
+printf '  %-12s %s\n' "password"  "$pw_plan"
 [ "$LOCKED" -eq 0 ] && [ "$FORCE_EXPIRE" -eq 1 ] && \
   printf '  %-12s %s\n' "" "must be changed at first login"
 
@@ -125,48 +143,29 @@ read -r -p $'\nCreate it? [y/N] ' a || exit 1
 case "${a,,}" in y|yes) ;; *) die "aborted" ;; esac
 
 # ---- password ----------------------------------------------------------------
-# chpasswd does NOT go through pam_pwquality, so a password set that way skips
-# the box's own complexity policy entirely. Check it here instead of pretending
-# the policy applied.
-PW=""
-check_policy() {
-  local pw="$1" rc=0 msg=""
-  if command -v pwscore >/dev/null 2>&1; then
-    msg=$(printf '%s' "$pw" | pwscore 2>&1) || rc=1
-    [ "$rc" -ne 0 ] && { printf '%s' "$msg"; return 1; }
-    return 0
-  fi
-  # No libpwquality-tools: check what pwquality.conf actually asks for.
-  local conf=/etc/security/pwquality.conf minlen=15
-  [ -r "$conf" ] && minlen=$(awk -F= '/^[[:space:]]*minlen/{gsub(/ /,"",$2); print $2}' "$conf" | tail -1)
-  minlen=${minlen:-15}
-  [ "${#pw}" -ge "$minlen" ] || { printf 'shorter than minlen=%s' "$minlen"; return 1; }
-  local want cls
-  for cls in d:'[0-9]' u:'[A-Z]' l:'[a-z]' o:'[^a-zA-Z0-9]'; do
-    want=$(awk -F= "/^[[:space:]]*${cls%%:*}credit/{gsub(/ /,\"\",\$2); print \$2}" "$conf" 2>/dev/null | tail -1)
-    # A NEGATIVE credit is a minimum count of that class.
-    if [ -n "$want" ] && [ "$want" -lt 0 ] 2>/dev/null; then
-      printf '%s' "$pw" | grep -q "${cls#*:}" || { printf 'missing a required character class (%scredit=%s)' "${cls%%:*}" "$want"; return 1; }
-    fi
-  done
-  return 0
-}
+# Three ways, and the account ends up in a defensible state whichever is taken:
+# a typed password, a generated temporary one, or locked. The first two are
+# expired immediately, so neither the admin nor a generator ends up knowing the
+# password the user actually logs in with.
+if [ "$LOCKED" -eq 1 ]; then
+  PW_MODE=skip
+elif [ "$TEMP" -eq 1 ]; then
+  PW="$(gen_password)" || die "could not generate a password this box's policy accepts"
+  PW_MODE=temp
+  printf '\n  %sTEMPORARY PASSWORD for %s%s\n\n' "$B" "$USERNAME" "$R"
+  printf '      %s%s%s\n\n' "$B" "$PW" "$R"
+elif [ -t 0 ]; then
+  pw_choose "$USERNAME" "Leave it locked" "no password now; set one later with it-passwd $USERNAME" \
+    || die "aborted"
+  [ "$PW_MODE" = skip ] && LOCKED=1
+else
+  die "no terminal to ask on -- pass --temp or --lock"
+fi
 
-if [ "$LOCKED" -eq 0 ]; then
-  head2 "Password for $USERNAME"
-  command -v pwscore >/dev/null 2>&1 \
-    || say "  ${DIM}(libpwquality-tools not installed -- checking minlen and character classes only)${R}"
-  while :; do
-    read -rs -p "  New password: " PW; printf '\n'
-    read -rs -p "  Again:        " PW2; printf '\n'
-    [ "$PW" = "$PW2" ] || { bad "they do not match"; continue; }
-    [ -n "$PW" ] || { bad "empty passwords are not allowed"; continue; }
-    if ! reason=$(check_policy "$PW"); then
-      bad "rejected by this box's password policy: $reason"
-      continue
-    fi
-    break
-  done
+# A temporary password nobody has to change is not temporary.
+if [ "$PW_MODE" = temp ] && [ "$FORCE_EXPIRE" -eq 0 ]; then
+  warn "--no-expire ignored for a temporary password: it must be changed at first login"
+  FORCE_EXPIRE=1
 fi
 
 # ---- create ------------------------------------------------------------------
@@ -180,7 +179,8 @@ if [ "$LOCKED" -eq 1 ]; then
   ok "password LOCKED -- set one with: it-passwd $USERNAME"
 else
   printf '%s:%s' "$USERNAME" "$PW" | chpasswd || die "chpasswd failed"
-  unset PW PW2
+  [ "$PW_MODE" = temp ] && ok "temporary password set (shown above -- it is not stored anywhere)"
+  unset PW
   usermod -U "$USERNAME" 2>/dev/null || true
   ok "password set"
   if [ "$FORCE_EXPIRE" -eq 1 ]; then
