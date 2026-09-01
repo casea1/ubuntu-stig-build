@@ -931,6 +931,22 @@ Never in the repo. `it-offload creds` prompts twice with the input masked and wr
 
 > `usg_audit_offload_command` **replaces the whole job**, staging included. It predates the above and is kept for a site already pushing to a SIEM its own way.
 
+## 4.4c Forgot the apt command? `it-repo howto`
+
+```bash
+it-repo howto              # every section
+it-repo howto fix          # just one: apt|find|fix|remove|hold|deb|offline|python|snap|after
+it-repo howto | grep -i purge
+```
+
+A reference, not a wrapper — it prints commands and runs none, so it is safe to hand to
+anyone and needs no sudo. Sections: everyday `apt`; finding what is installed and **which
+repo it came from**; fixing a half-installed system; removing; holding a version; single
+`.deb` files; this box's local repo; **pip on 24.04** (why `pip install` refuses, and the
+venv/wheel answers); snaps; and what apt alone does not finish, like a pending reboot.
+
+Written for an air-gapped box, where there is no internet to search from.
+
 ## 4.5 Suggested cadence
 
 | Activity | Cadence |
