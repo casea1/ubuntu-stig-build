@@ -621,17 +621,17 @@ sudo it-clamav test               # must PASS
 The box is air-gapped with no ADM PC to serve packages, so apt reads a repo tree carried in on media.
 
 ```bash
-sudo it-offline-repo scan     # what is on the media, and what will be skipped
-sudo it-offline-repo load     # mirror it to /srv/repo -- finds the media itself
-sudo it-offline-repo enable   # park the online sources, switch apt
-sudo it-offline-repo          # status
+sudo it-repo scan     # what is on the media, and what will be skipped
+sudo it-repo load     # mirror it to /srv/repo -- finds the media itself
+sudo it-repo enable   # park the online sources, switch apt
+sudo it-repo          # status
 sudo apt upgrade              # patch from the carried repo
 ```
 
 **`load` finds the media and mirrors only what this box needs.** It searches the
 automount paths and anything the kernel reports as removable/USB for a `dists/<suite>/Release`
 — by structure, not by a folder called "repo" — so nothing has to be typed. Pass a path
-(`sudo it-offline-repo load /media/$USER/SSD/repo`) when you want a specific one.
+(`sudo it-repo load /media/$USER/SSD/repo`) when you want a specific one.
 
 | | |
 |---|---|
@@ -652,8 +652,8 @@ exactly this and nothing else:
 
 ```bash
 # as the DTA, with the SSD plugged in and mounted by their desktop session
-sudo it-offline-repo scan     # confirm the media was found
-sudo it-offline-repo load     # mirror it. Asks for the DTA's password.
+sudo it-repo scan     # confirm the media was found
+sudo it-repo load     # mirror it. Asks for the DTA's password.
 ```
 
 Four exact argv forms are granted — `scan`, `status`, `load`, `load --yes`,
@@ -665,12 +665,12 @@ It is deliberately not `NOPASSWD` — the STIG requires sudo to authenticate, an
 the run lands in `/var/log/sudo.log` with a name against it.
 
 The `sudo` is not optional for a DTA: `/opt/it` is `2770 root:sudo`, so a DTA
-cannot even read the script and `it-offline-repo load` on its own fails with
+cannot even read the script and `it-repo load` on its own fails with
 *Permission denied* before it gets anywhere. `sudo` runs the lookup as root and
 works.
 
 Steady state on a fielded box is therefore: **DTA** plugs in the SSD and runs
-`sudo it-offline-repo load`; **admin** runs `sudo apt upgrade`. Neither needs
+`sudo it-repo load`; **admin** runs `sudo apt upgrade`. Neither needs
 what the other has. Turn the grant off with `offline_repo_dta_load_enabled: false`.
 
 `enable` writes `offline_repo_enabled: true` into `/opt/it/site.yml` so the switch survives the next `ansible-pull`. Without that, the next pull re-adds the Microsoft and NodeSource repos, which are unreachable air-gapped and make every `apt-get update` stall on a timeout.
@@ -678,7 +678,7 @@ what the other has. Turn the grant off with `offline_repo_dta_load_enabled: fals
 To go back online for a rebuild:
 
 ```bash
-sudo it-offline-repo disable      # restores the parked sources verbatim
+sudo it-repo disable      # restores the parked sources verbatim
 ```
 
 The carried repo is **unsigned**, so apt is told to trust it. The trust boundary is the media it arrived on and the root-owned `/srv/repo`, not a signature check.

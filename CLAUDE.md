@@ -163,9 +163,9 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
      it and points sudo at it.
   `it-checklist` item 6 checks for both faults read-only and names them.
 - **Offline apt is half-solved.** The main archive is covered: `offline_repo` +
-  `it-offline-repo` carry a repo tree in on media and point apt at
+  `it-repo` carry a repo tree in on media and point apt at
   `/srv/repo` over `file://` (standalone/EMI only -- the dev/ai fleet uses the
-  ADM-Toolkit's HTTP repo server). `it-offline-repo load` auto-detects the media,
+  ADM-Toolkit's HTTP repo server). `it-repo load` auto-detects the media,
   mirrors only the box's own release (the ADM media carries jammy AND noble),
   copies packages additively on name+size and the `dists/` indexes last with
   `--checksum --delete`, and both it and the role now list every pocket the tree

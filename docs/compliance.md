@@ -195,11 +195,11 @@ documented exception, written by `local_accounts` to
 `/etc/sudoers.d/60-dta-offline-repo`:
 
 ```
-%dta ALL=(root) /usr/local/sbin/it-offline-repo scan, \
-                /usr/local/sbin/it-offline-repo status, \
-                /usr/local/sbin/it-offline-repo load, \
-                /usr/local/sbin/it-offline-repo load --yes, \
-                /usr/local/sbin/it-offline-repo load --dry-run
+%dta ALL=(root) /usr/local/sbin/it-repo scan, \
+                /usr/local/sbin/it-repo status, \
+                /usr/local/sbin/it-repo load, \
+                /usr/local/sbin/it-repo load --yes, \
+                /usr/local/sbin/it-repo load --dry-run
 ```
 
 **Why it has to exist.** The two controls meet head-on: mounting removable media

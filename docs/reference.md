@@ -121,7 +121,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `it-offload` | `status`, `setup`, `creds`, `containers on\|off`, `push on\|off`, `test`, `log [N]`, `apply`. Configures the weekly audit/log offload — what is collected, the remote share, the credentials. Writes to `/opt/it/site.yml` so it survives `ansible-pull`; re-running is idempotent |
 | `it-clamav` | `check`, `list`, `install`, **`scan PATH...`**, `test`, `sync`, `rollback`, `revert`, `image-save`, `image-load`. `scan` proves the engine detects EICAR **before** trusting a verdict and refuses to scan if it does not — a CLEAN from an unverified engine is worse than no scan. Reports unreadable paths as PARTIAL rather than folding them into "0 infected". Records every run in `/var/log/clamav-scan.log` |
 | `it-goclassified` | Pre-classification gate. `--report` for machine checks only |
-| `it-offline-repo` | `scan` / `load` / `enable` / `disable` / `verify` — run apt off a local repo. `scan` finds repo trees on attached media; `load` (no path needed) mirrors **only this box's release** — all of its pockets including `-security` — incrementally, packages first then indexes. `--prune`, `--dry-run`, `--suite <name>` |
+| `it-repo` *(was `it-offline-repo` until 2026-09-01; the old symlink is removed on the next pull)* | `scan` / `load` / `enable` / `disable` / `verify` — run apt off a local repo. `scan` finds repo trees on attached media; `load` (no path needed) mirrors **only this box's release** — all of its pockets including `-security` — incrementally, packages first then indexes. `--prune`, `--dry-run`, `--suite <name>` |
 | `it-adduser` | Create a local account. Asks the type (standard/dta/admin/audit) and derives both the username suffix and the group set from it |
 | `it-passwd` | Reset a password, unlock the account, and clear its faillock counter. `--list` shows every account's state and expiry; `--unlock-only` skips the password |
 | `it-set-classification` | Set the banner level |
@@ -165,7 +165,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `/opt/it/scripts/` | The `it-*` scripts |
 | `/opt/it/site.yml` | **Per-node overrides. Beats `group_vars`.** Never in git |
 | `/opt/it/clamavsigs/` | Drop ClamAV signature archives here |
-| `/opt/it/apt-sources-backup/` | Online apt sources parked by `it-offline-repo enable` |
+| `/opt/it/apt-sources-backup/` | Online apt sources parked by `it-repo enable` |
 | `/opt/dta/incoming,outgoing,logs/` | Data-transfer staging and records (EMI) |
 | `/opt/stacks/<stack>/` | AI compose stacks — Dockge watches this dir |
 | `/srv/repo/` | The carried offline apt repo. `root:root 0755` |
@@ -204,8 +204,8 @@ The ones worth knowing:
 | `usg_disable_smartcard_rules` | 3 rules | De-selected in the USG tailoring. Rules **absent from USG's own bundled content** get an explicit `<select selected="false">` added, so a scan against the newer `ssg_content_version` de-scopes them too |
 | `grub_password_pbkdf2` | `CHANGEME` | The role skips until a real hash is vaulted |
 | `tpm_luks_enabled` | true except `emi-unclass` | Binds LUKS to PCR 7 |
-| `offline_repo_enabled` | false | Switch apt to `/srv/repo`. Set by `it-offline-repo enable` |
-| `offline_repo_dta_load_enabled` | true | Sudo grant letting the `dta` group run `it-offline-repo scan/status/load` (four exact argv forms, no wildcard, not NOPASSWD). On EMI the admin cannot mount removable media and the DTA cannot write `/srv/repo`, so without it the tree has to be copied to local disk first. Written by `local_accounts`, removed when the toggle or `local_usb_transfer_enabled` is false |
+| `offline_repo_enabled` | false | Switch apt to `/srv/repo`. Set by `it-repo enable` |
+| `offline_repo_dta_load_enabled` | true | Sudo grant letting the `dta` group run `it-repo scan/status/load` (four exact argv forms, no wildcard, not NOPASSWD). On EMI the admin cannot mount removable media and the DTA cannot write `/srv/repo`, so without it the tree has to be copied to local disk first. Written by `local_accounts`, removed when the toggle or `local_usb_transfer_enabled` is false |
 | `base_packages_full_upgrade` | false | `apt full-upgrade` early in the build |
 | `scap_stig_manual_xccdf` | `U_CAN_…_V1R6_Manual-xccdf.xml` | DISA's manual STIG, shipped in `roles/scap_scan/files/`. Update on a new STIG release |
 | `usg_audit_on_pull` | `build` | When `usg audit` runs during a pull. `build` = only on a box with no report yet; `always` = every pull (pre-2026-08 behaviour, what `it-pull full` passes); `never` = timer only. The `usg_harden`-stage audit is now skipped whenever `usg_remediate` will re-audit — one evaluation, not two |

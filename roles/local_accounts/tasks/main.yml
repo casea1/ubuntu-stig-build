@@ -227,7 +227,7 @@
 # Deliberately NOT NOPASSWD. The STIG requires sudo to authenticate, and this is
 # a privileged action that belongs in /var/log/sudo.log with a name against it.
 # ---------------------------------------------------------------------------
-- name: "ACCOUNTS | Let the {{ usb_access_group }} group refresh the offline repo (it-offline-repo)"
+- name: "ACCOUNTS | Let the {{ usb_access_group }} group refresh the offline repo (it-repo)"
   ansible.builtin.copy:
     dest: /etc/sudoers.d/60-{{ usb_access_group }}-offline-repo
     owner: root
@@ -239,11 +239,11 @@
       ## rules above), so the DTA is the only account that can reach the repo on
       ## the carried SSD. These forms refresh {{ offline_repo_dir | default('/srv/repo') }} and nothing
       ## else -- no path argument, no --suite, no enable/disable.
-      %{{ usb_access_group }} ALL=(root) /usr/local/sbin/it-offline-repo scan, \
-                      /usr/local/sbin/it-offline-repo status, \
-                      /usr/local/sbin/it-offline-repo load, \
-                      /usr/local/sbin/it-offline-repo load --yes, \
-                      /usr/local/sbin/it-offline-repo load --dry-run
+      %{{ usb_access_group }} ALL=(root) /usr/local/sbin/it-repo scan, \
+                      /usr/local/sbin/it-repo status, \
+                      /usr/local/sbin/it-repo load, \
+                      /usr/local/sbin/it-repo load --yes, \
+                      /usr/local/sbin/it-repo load --dry-run
     validate: "visudo -cf %s"      # a malformed drop-in costs EVERYONE sudo
   when:
     - local_usb_transfer_enabled | default(true) | bool

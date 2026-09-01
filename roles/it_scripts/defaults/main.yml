@@ -14,6 +14,13 @@ it_scripts_ai_enabled: "{{ is_ai | default(false) | bool }}"
 # classified-capable and unclassified variants) and REMOVED everywhere else.
 it_scripts_emi_enabled: "{{ is_emi | default(false) | bool }}"
 
+# Command names this repo USED to install. Ansible only ever creates, so a box
+# that received one keeps it forever unless it is named here: a stale symlink is
+# a second, unmaintained way to run the same tool, and it is not covered by the
+# sudoers grants, which name the current path.
+it_scripts_retired_links:
+  - it-offline-repo        # renamed to it-repo, 2026-09-01
+
 # Placed on every profile.
 it_scripts_common:
   # First on purpose: it-help is how someone who has never seen this box finds
@@ -39,7 +46,7 @@ it_scripts_common:
   - { file: stig-run.sh,           link: it-stig }
   - { file: clamav-sigs.sh,        link: it-clamav }
   - { file: go-classified.sh,      link: it-goclassified }
-  - { file: offline-repo.sh,       link: it-offline-repo }
+  - { file: offline-repo.sh,       link: it-repo }
   - { file: adduser.sh,            link: it-adduser }
   - { file: reset-password.sh,     link: it-passwd }
 

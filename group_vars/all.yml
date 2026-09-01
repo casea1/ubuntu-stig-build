@@ -143,11 +143,11 @@ base_packages_full_upgrade: false
 # for patching and new packages from then on, not for the build.
 #
 # TURNING IT ON IS A TWO-STEP, and the order matters:
-#   1. `sudo it-offline-repo load /media/<user>/<SSD>/repo`  -- copy the tree in
-#   2. `sudo it-offline-repo enable`                          -- switch apt over
+#   1. `sudo it-repo load /media/<user>/<SSD>/repo`  -- copy the tree in
+#   2. `sudo it-repo enable`                          -- switch apt over
 # Step 2 writes `offline_repo_enabled: true` into /opt/it/site.yml, so the
 # switch SURVIVES the next ansible-pull. Setting it here (or in site.yml by
-# hand) does the same thing on the next pull. `it-offline-repo disable` reverts.
+# hand) does the same thing on the next pull. `it-repo disable` reverts.
 #
 # While enabled, the third-party apt repos this baseline would otherwise add
 # (Microsoft/VS Code, NodeSource, Docker) are skipped -- they are unreachable
@@ -167,7 +167,7 @@ offline_repo_dir: /srv/repo
 # Layout inside offline_repo_dir, matching the tree the ADM-Toolkit mirrors
 # (`ubuntu/<codename>/dists/...` + `pool/...`). Change only if the repo the
 # `linux-software` builder produces changes shape.
-# The release codename. `it-offline-repo` defaults to the box's OWN
+# The release codename. `it-repo` defaults to the box's OWN
 # /etc/os-release rather than this value -- mirroring the wrong release is the
 # failure that feature exists to prevent, and a stale entry here after a release
 # upgrade would cause exactly that. This still drives the apt source file, so
@@ -190,7 +190,7 @@ offline_repo_components: main
 # verified source. Track the unsigned state as a POA&M item until then.
 offline_repo_signed_by: ""     # e.g. /etc/apt/keyrings/offline-repo.asc
 
-# Let the dta group run `it-offline-repo load` under sudo.
+# Let the dta group run `it-repo load` under sudo.
 #
 # On the EMI laptop this is not a convenience, it is the only workable order of
 # operations: mounting removable media is restricted to %dta (polkit + udev in
