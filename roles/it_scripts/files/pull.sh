@@ -18,6 +18,9 @@
 #   it-pull status       where this box pulls from, what it runs, and -- when it
 #                        is behind -- the exact commits and files a pull brings in
 #   it-pull log          follow / re-read the last run's output
+#   it-pull load [PATH]  AIR-GAPPED: adopt a baseline repo carried in on media.
+#                        Mirrors it to /srv/baseline.git and points this box at
+#                        it, so `it-pull` works with no network. Auto-detects.
 #
 # NEITHER `light` NOR `full` TOUCHES DOCKER. The ai-runtime and ai-gpu tags are
 # skipped by both, so an AI node can take STIG, audit and script updates with
@@ -405,14 +408,192 @@ case "${PROFILE_NAME:-none}" in
 Valid: development | ai | baseline | emi | emi-unclass" ;;
 esac
 
+# ---------------------------------------------------------------------------
+# it-pull load -- the offline half.
+#
+# `it-repo` carries PACKAGES in on media; this carries the BASELINE ITSELF, so
+# an air-gapped box can take a new it-* script or a STIG fix without ever
+# reaching git.asplab.com. ansible-pull accepts a local path as a git URL, and
+# REPO_URL in pull.conf already overrides where this script pulls from -- load
+# is the safe, checked way to set it rather than editing that file by hand.
+#
+# ADMIN ONLY, deliberately, and NOT added to the dta sudoers grant that covers
+# `it-repo load`. Packages carried on media are one thing; the baseline is
+# executed as root by the next pull, so whoever chooses it chooses what runs on
+# the box. On EMI, where the admin cannot mount the media, the two-step is:
+# the DTA copies the clone somewhere on disk, the admin loads it from there.
+# ---------------------------------------------------------------------------
+BASELINE_MIRROR="${BASELINE_MIRROR:-/srv/baseline.git}"
+
+# Same shape as it-repo's scan. Deliberately a second copy rather than a shared
+# file: that script is dta-facing and lives in /usr/local/sbin, this one is
+# admin-only under /opt/it, and neither has to agree with the other to be right.
+media_mounts() {
+  local mp
+  { for mp in /media/*/* /media/* /run/media/*/* /mnt/* /mnt; do
+      [ -d "$mp" ] && mountpoint -q "$mp" 2>/dev/null && printf '%s\n' "$mp"
+    done
+    lsblk -rno MOUNTPOINT,RM,TRAN 2>/dev/null \
+      | awk '$1 != "" && $1 != "/" && ($2 == "1" || $3 == "usb") {print $1}'
+  } | sort -u
+}
+
+# Is this a clone of THIS baseline? Checked by content, not by name: a directory
+# called ubuntu-stig-build.git proves nothing, and adopting the wrong repo means
+# running someone else's playbook as root on the next pull.
+is_baseline_repo() {   # $1 = candidate git dir
+  git -C "$1" rev-parse --git-dir >/dev/null 2>&1 || return 1
+  git -C "$1" cat-file -e "refs/heads/$BR:local.yml" 2>/dev/null || return 1
+  git -C "$1" cat-file -e "refs/heads/$BR:roles/it_scripts" 2>/dev/null || return 1
+  return 0
+}
+
+find_baselines() {   # $1 = where to look -> candidate git dirs
+  { find "$1" -maxdepth 5 -type d \( -name '*.git' -o -name '.git' \) -not -path '*/.*/*' 2>/dev/null
+    find "$1" -maxdepth 4 -type d -name 'ubuntu-stig-build*' 2>/dev/null
+  } | while read -r d; do
+        [ "$(basename "$d")" = .git ] && d=$(dirname "$d")
+        is_baseline_repo "$d" && printf '%s\n' "$d"
+      done | sort -u
+}
+
+describe_repo() {   # $1 = git dir -> one line about its head
+  git -C "$1" log -1 --format='%h  %ad  %s' --date=short "$BR" 2>/dev/null | cut -c1-90
+}
+
+cmd_load() {
+  local src="${1:-}" cands mp n=0 pick
+
+  command -v git >/dev/null 2>&1 || die "git is not installed"
+
+  if [ -n "$src" ]; then
+    [ -d "$src" ] || die "no such directory: $src"
+    is_baseline_repo "$src" || die \
+"that is not a clone of this baseline: $src
+It must be a git repository whose $BR branch contains local.yml and roles/it_scripts.
+Make one on a connected box with:
+  git clone --mirror $DEFAULT_REPO baseline.git"
+    cands="$src"
+  else
+    head2_load "Looking for a baseline repo on attached media"
+    cands=""
+    while read -r mp; do
+      [ -n "$mp" ] || continue
+      cands="$cands$(find_baselines "$mp")
+"
+    done <<< "$(media_mounts)"
+    cands=$(printf '%s' "$cands" | sed '/^$/d')
+    [ -n "$cands" ] || die \
+"no baseline repo found on attached media.
+
+On a connected box:   git clone --mirror $DEFAULT_REPO baseline.git
+Copy baseline.git onto the media, plug it in, and run this again.
+Or point at one directly:  sudo it-pull load /path/to/baseline.git"
+  fi
+
+  n=$(printf '%s\n' "$cands" | wc -l)
+  pick=$(printf '%s\n' "$cands" | head -1)
+  if [ "$n" -gt 1 ]; then
+    printf '  %sMore than one candidate found; using the first:%s\n' "$Y" "$R"
+    printf '%s\n' "$cands" | sed 's/^/      /'
+    printf '\n'
+  fi
+
+  head2_load "Plan"
+  printf '  from      : %s\n' "$pick"
+  printf '  its head  : %s\n' "$(describe_repo "$pick")"
+  printf '  into      : %s\n' "$BASELINE_MIRROR"
+  printf '  this box  : %s (%s)\n' "${RECORDED_PROFILE:-unknown profile}" \
+         "$(getkey_or baseline_revision "$PROFILE_FILE" 'no recorded revision')"
+  printf '  after this, `it-pull` reads %s instead of\n              %s\n' \
+         "$BASELINE_MIRROR" "$REPO"
+
+  # What is actually being adopted. On an air-gapped box this is the only
+  # chance to look before the playbook runs as root.
+  if [ -n "$CHECKOUT" ]; then
+    local here
+    here=$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null)
+    if [ -n "$here" ] && git -C "$pick" cat-file -e "$here" 2>/dev/null; then
+      printf '\n  %sIncoming commits:%s\n' "$B" "$R"
+      git -C "$pick" log --oneline --no-decorate -20 "$here..$BR" 2>/dev/null | sed 's/^/      /'
+      local ahead; ahead=$(git -C "$pick" rev-list --count "$here..$BR" 2>/dev/null)
+      [ "${ahead:-0}" -gt 20 ] 2>/dev/null && printf '      ... and %s more\n' "$((ahead - 20))"
+      [ "${ahead:-0}" = 0 ] && printf '      %s(none -- the media is at the same commit this box runs)%s\n' "$DIM" "$R"
+    else
+      printf '\n  %sThis box'"'"'s current commit is not in that repo, so the change cannot be\n' "$Y"
+      printf '  summarised. Check you are adopting the right clone.%s\n' "$R"
+    fi
+  fi
+
+  if [ -t 0 ]; then
+    printf '\n  The next pull runs this repository as root. Type YES to adopt it: '
+    local a; read -r a
+    [ "$a" = YES ] || die "not confirmed -- nothing was changed"
+  else
+    die "no terminal to confirm on -- run it interactively"
+  fi
+
+  head2_load "Mirroring"
+  local tmp="${BASELINE_MIRROR}.new.$$"
+  rm -rf "$tmp"
+  # A fresh mirror rather than a fetch into the old one: it is a small repo, and
+  # a clean clone cannot inherit a stale ref or a remote pointing at media that
+  # is no longer attached.
+  if git clone --quiet --mirror "$pick" "$tmp"; then
+    rm -rf "${BASELINE_MIRROR}.old"
+    [ -d "$BASELINE_MIRROR" ] && mv "$BASELINE_MIRROR" "${BASELINE_MIRROR}.old"
+    mv "$tmp" "$BASELINE_MIRROR"
+    rm -rf "${BASELINE_MIRROR}.old"
+    chown -R root:root "$BASELINE_MIRROR"
+    chmod -R go-w "$BASELINE_MIRROR"
+    # A mirror inherits the source's HEAD, which on a repo created before the
+    # master->main rename points at a branch that is not there. ansible-pull
+    # asks for a named branch and does not care, but a human running
+    # `git clone /srv/baseline.git` to look at what was adopted gets an empty
+    # checkout and a confusing warning. Point it at the branch we pull.
+    git -C "$BASELINE_MIRROR" show-ref --verify --quiet "refs/heads/$BR" \
+      && git -C "$BASELINE_MIRROR" symbolic-ref HEAD "refs/heads/$BR"
+    printf '  %sOK%s   %s  (%s)\n' "$G" "$R" "$BASELINE_MIRROR" "$(describe_repo "$BASELINE_MIRROR")"
+  else
+    rm -rf "$tmp"
+    die "git clone --mirror failed -- is $pick readable and a real repository?"
+  fi
+
+  # Persist it the same way --profile is persisted: in a file every later run
+  # reads, so nobody has to remember a flag.
+  install -d -m 0700 "$(dirname "$CONF_FILE")"
+  touch "$CONF_FILE"; chmod 0600 "$CONF_FILE"
+  if grep -qE '^[[:space:]]*REPO_URL[[:space:]]*=' "$CONF_FILE"; then
+    sed -i -E "s|^[[:space:]]*REPO_URL[[:space:]]*=.*|REPO_URL=$BASELINE_MIRROR|" "$CONF_FILE"
+  else
+    printf '# Written by `it-pull load`. This box pulls from carried media, not the network.\nREPO_URL=%s\n' \
+      "$BASELINE_MIRROR" >> "$CONF_FILE"
+  fi
+  printf '  %sOK%s   %s now says REPO_URL=%s\n' "$G" "$R" "$CONF_FILE" "$BASELINE_MIRROR"
+
+  # The existing checkout still points at the old origin. ansible-pull would
+  # usually fix that itself; doing it here means `it-pull status` is right
+  # immediately rather than after the next run.
+  if [ -n "$CHECKOUT" ]; then
+    git -C "$CHECKOUT" remote set-url origin "$BASELINE_MIRROR" 2>/dev/null \
+      && printf '  %sOK%s   existing checkout repointed\n' "$G" "$R"
+  fi
+
+  printf '\n  Now run:  sudo it-pull        (or `full`, for packages and a scan)\n'
+  printf '  To go back to the network:  remove REPO_URL from %s\n\n' "$CONF_FILE"
+}
+
+head2_load() { printf '\n%s%s%s\n' "$B" "$*" "$R"; }
+
 case "${1:-light}" in
   ""|light|quick)    do_run light ;;
   full)              do_run full ;;
   scripts)           do_run scripts ;;
   ai)                do_run ai ;;
   check|dry|dry-run) do_run check ;;
+  load|adopt)        shift; cmd_load "${1:-}" ;;
   status)            do_status ;;
   log|logs)          do_log ;;
-  help|-h|--help)    sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//' ;;
+  help|-h|--help)    sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "unknown: $1  (try: it-pull help)" >&2; exit 2 ;;
 esac
