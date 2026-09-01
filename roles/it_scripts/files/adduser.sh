@@ -169,7 +169,14 @@ if [ "$PW_MODE" = temp ] && [ "$FORCE_EXPIRE" -eq 0 ]; then
 fi
 
 # ---- create ------------------------------------------------------------------
+# Say it takes a moment, because it does: `useradd -m` copies /etc/skel and
+# chpasswd hashes with yescrypt, which is deliberately slow and slower again on
+# a FIPS kernel. Several seconds of silence after "Creating" reads as a hang,
+# and the wrong reaction to that is Ctrl-C BETWEEN the two -- which leaves a
+# real account with no password rather than no account at all.
 head2 "Creating"
+say "  ${DIM}This takes a few seconds (home directory, then password hashing).${R}"
+say "  ${DIM}Let it finish -- interrupting now can leave the account half-made.${R}"
 useradd -m -s /bin/bash ${GROUPS_CSV:+-G "$GROUPS_CSV"} "$USERNAME" \
   || die "useradd failed"
 ok "account created"
