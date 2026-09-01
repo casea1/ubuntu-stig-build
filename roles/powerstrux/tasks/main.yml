@@ -62,6 +62,19 @@
       when: powerstrux_desktop_entry | default(true) | bool
       register: _ps_desktop
 
+    # A second entry for the half an auditor actually repeats: reading the
+    # report. It opens a COPY in the user's home, because a snap-confined
+    # browser cannot see /opt at all -- see run-powerstrux.sh.
+    - name: "POWERSTRUX | Desktop launcher for viewing the newest report"
+      ansible.builtin.copy:
+        src: powerstrux-report.desktop
+        dest: /usr/share/applications/powerstrux-report.desktop
+        owner: root
+        group: root
+        mode: "0644"
+      when: powerstrux_desktop_entry | default(true) | bool
+      register: _ps_desktop_view
+
     # GNOME reads the desktop DATABASE, not the directory. Without this the
     # launcher can stay out of the app grid until the next reboot -- which is
     # exactly what happened when this role first shipped.
@@ -69,7 +82,7 @@
       ansible.builtin.command: update-desktop-database /usr/share/applications
       changed_when: false
       failed_when: false
-      when: _ps_desktop is changed
+      when: _ps_desktop is changed or _ps_desktop_view is changed
 
     # ---- schedule ---------------------------------------------------------
     - name: "POWERSTRUX | Scheduled audit ({{ powerstrux_schedule_method }})"

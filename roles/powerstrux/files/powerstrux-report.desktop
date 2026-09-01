@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=PowerStrux Report (open latest)
+GenericName=System Audit Report
+Comment=Copy the newest PowerStrux report into your home folder and open it
+# Terminal=true so the auditor sees WHY a copy is opened rather than the
+# original: Firefox is a snap and its sandbox contains no /opt, so the report
+# in /opt/_AuditFiles is unopenable from the desktop however readable it is.
+# A silent launch that half-worked would send someone hunting for a
+# permissions problem that is not there.
+Terminal=true
+Exec=/opt/_AuditFiles/run-powerstrux.sh open
+Icon=text-html
+Categories=System;Security;
+Keywords=audit;powerstrux;report;compliance;view;
