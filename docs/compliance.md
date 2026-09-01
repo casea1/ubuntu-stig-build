@@ -188,6 +188,38 @@ The `managed_dirs` role creates both on every box:
 - `/opt/ia` doubles as the USG report drop.
 - Change the owning group with `ia_it_group`, or set `managed_dirs_enabled: false` to skip.
 
+### The one sudo grant outside the admin group (EMI)
+
+Everything privileged on these boxes goes through the `sudo` group, with one
+documented exception, written by `local_accounts` to
+`/etc/sudoers.d/60-dta-offline-repo`:
+
+```
+%dta ALL=(root) /usr/local/sbin/it-offline-repo scan, \
+                /usr/local/sbin/it-offline-repo status, \
+                /usr/local/sbin/it-offline-repo load, \
+                /usr/local/sbin/it-offline-repo load --yes, \
+                /usr/local/sbin/it-offline-repo load --dry-run
+```
+
+**Why it has to exist.** The two controls meet head-on: mounting removable media
+is restricted to the `dta` group (polkit + udev), so the admin account cannot
+read the carried patch media at all; writing `/srv/repo` needs root, which a DTA
+does not have. Without the grant, patching a fielded box means a DTA copying a
+multi-GB repo tree to local disk purely so an admin can copy it again.
+
+**Why it is narrow.** Five exact argv forms, **no wildcard**. `load` here takes
+no path and no `--suite`, so the mirror cannot be aimed at another source or made
+to write outside the repo directory — and the script independently rejects any
+suite name that is not a plain codename. `enable` and `disable` are not granted:
+switching apt's sources stays an admin decision. It is **not** `NOPASSWD`, so the
+DTA authenticates and the run is attributable in `/var/log/sudo.log`.
+
+**Scope.** EMI-classified only — it is written only where `local_usb_transfer_enabled`
+is true, and actively removed elsewhere (including on a rebuild as `emi-unclass`).
+Turn it off with `offline_repo_dta_load_enabled: false`, at the cost of the
+two-copy workflow above.
+
 ---
 
 ## The org Linux checklist

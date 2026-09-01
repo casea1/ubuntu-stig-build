@@ -631,6 +631,36 @@ automount paths and anything the kernel reports as removable/USB for a `dists/<s
 
 `--dry-run` reports the transfer and copies nothing.
 
+### Who runs it — the DTA, not the admin
+
+On the EMI laptop the admin account **cannot mount the SSD**: mounting removable
+media is restricted to the `dta` group by the polkit and udev rules in
+`local_accounts`. Writing `/srv/repo` needs root. So the DTA has a sudo grant for
+exactly this and nothing else:
+
+```bash
+# as the DTA, with the SSD plugged in and mounted by their desktop session
+sudo it-offline-repo scan     # confirm the media was found
+sudo it-offline-repo load     # mirror it. Asks for the DTA's password.
+```
+
+Four exact argv forms are granted — `scan`, `status`, `load`, `load --yes`,
+`load --dry-run` — with **no wildcard**, so there is no path argument and no
+`--suite`: a DTA cannot aim the mirror at another source or make it write outside
+the repo directory. `enable` and `disable` are **not** granted; switching apt's
+sources is an admin decision, made once when the box is first taken offline.
+It is deliberately not `NOPASSWD` — the STIG requires sudo to authenticate, and
+the run lands in `/var/log/sudo.log` with a name against it.
+
+The `sudo` is not optional for a DTA: `/opt/it` is `2770 root:sudo`, so a DTA
+cannot even read the script and `it-offline-repo load` on its own fails with
+*Permission denied* before it gets anywhere. `sudo` runs the lookup as root and
+works.
+
+Steady state on a fielded box is therefore: **DTA** plugs in the SSD and runs
+`sudo it-offline-repo load`; **admin** runs `sudo apt upgrade`. Neither needs
+what the other has. Turn the grant off with `offline_repo_dta_load_enabled: false`.
+
 `enable` writes `offline_repo_enabled: true` into `/opt/it/site.yml` so the switch survives the next `ansible-pull`. Without that, the next pull re-adds the Microsoft and NodeSource repos, which are unreachable air-gapped and make every `apt-get update` stall on a timeout.
 
 To go back online for a rebuild:
