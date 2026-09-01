@@ -32,9 +32,12 @@
 #                 a plain ansible-pull gets the same treatment; `full` overrides.)
 #
 # The repo and branch are read off the ansible-pull checkout, so a box built
-# from a mirror keeps using that mirror. Override for one run with
-#   REPO_URL=... BRANCH=... it-pull
-# or permanently in /etc/stig-build/pull.conf (plain KEY=value).
+# from a mirror keeps using that mirror. The DEPLOYMENT PROFILE is read from
+# /etc/stig-build/profile and passed back to ansible-pull -- nothing else
+# persists it, and without it group_vars would default an EMI laptop to the
+# development profile and rebuild it as one. Override for one run with
+#   REPO_URL=... BRANCH=... PROFILE=... it-pull
+# or put REPO_URL / BRANCH in /etc/stig-build/pull.conf (plain KEY=value).
 set -uo pipefail
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
@@ -95,6 +98,16 @@ resolve_branch() {
 }
 REPO="$(resolve_repo)"
 BR="$(resolve_branch)"
+
+# WHICH PROFILE IS THIS BOX? bootstrap.sh passes -e deployment_profile=<x> and
+# nothing persists it: group_vars defaults to `development`, so an ansible-pull
+# run WITHOUT that -e silently rebuilds an EMI laptop as a development
+# workstation -- which turns off usb_storage_enabled, the dta carve-out and the
+# camera/mic lockdown. it_scripts records the profile it was built with in
+# /etc/stig-build/profile on every run, so pass that back. If it cannot be
+# determined, REFUSE rather than let the default reprofile the box.
+PROFILE_NAME="${PROFILE:-}"
+[ -n "$PROFILE_NAME" ] || PROFILE_NAME="$(getkey deployment_profile "$PROFILE_FILE")"
 
 # ---------------------------------------------------------------------------
 # The modes. This is the whole point of the script: the skip-tags and -e
@@ -230,6 +243,17 @@ do_run() {
 "ansible-pull is not installed -- this box was never bootstrapped, or ansible was removed.
   sudo apt-get install -y ansible git"
 
+  [ -n "$PROFILE_NAME" ] || die \
+"Cannot tell which profile this box was built as, so refusing to run.
+
+/etc/stig-build/profile has no deployment_profile line. Without it ansible-pull
+falls back to group_vars' default (development) and REBUILDS this box under the
+wrong profile -- on an EMI laptop that turns off USB storage, the dta carve-out
+and the camera/mic lockdown.
+
+Pass it explicitly this once:   sudo PROFILE=emi it-pull
+(development | ai | baseline | emi | emi-unclass)"
+
   pull_running && {
     echo "A pull is already running. Follow it with: it-pull log" >&2; exit 1; }
 
@@ -240,6 +264,7 @@ do_run() {
   printf '%s==> it-pull %s%s\n' "$B" "$mode" "$R"
   printf '    %s\n' "$(mode_desc "$mode")"
   printf '    %s  (%s)\n' "$REPO" "$BR"
+  printf '    profile: %s\n' "$PROFILE_NAME"
   if [ "$mode" = check ]; then
     printf '    %sAnsible check mode does not run commands, so a task that READS state
 ' "$Y"
@@ -262,7 +287,8 @@ do_run() {
   # The exit code still goes to a file: `it-pull status` reads it back on a
   # later invocation, when the unit is long gone.
   systemd-run --unit="$UNIT" --collect --wait \
-    /bin/sh -c "ansible-pull -U '$REPO' -C '$BR' -i localhost, local.yml $args; \
+    /bin/sh -c "ansible-pull -U '$REPO' -C '$BR' -i localhost, local.yml \
+                  -e deployment_profile='$PROFILE_NAME' $args; \
                 rc=\$?; echo \$rc > '$STATE_DIR/last.rc'; exit \$rc" >/dev/null 2>&1 &
   runner=$!
 
@@ -297,6 +323,6 @@ case "${1:-light}" in
   check|dry|dry-run) do_run check ;;
   status)            do_status ;;
   log|logs)          do_log ;;
-  help|-h|--help)    sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//' ;;
+  help|-h|--help)    sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "unknown: $1  (try: it-pull help)" >&2; exit 2 ;;
 esac

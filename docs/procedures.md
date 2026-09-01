@@ -222,6 +222,14 @@ treatment; `it-pull full` passes `always`.
 > `sudo it-pull status`** — it lists the actual incoming commits and the files
 > they touch, which is the question you were asking.
 
+**The deployment profile is preserved, and `it-pull` refuses to guess.** Nothing on a
+box persists `deployment_profile`: `bootstrap.sh` passes it as `-e` and `group_vars`
+defaults to `development`, so **any `ansible-pull` run without that `-e` rebuilds an EMI
+laptop as a development workstation** — turning off USB storage, the `dta` carve-out and
+the camera/mic lockdown. `it-pull` reads the profile back from `/etc/stig-build/profile`
+(written by `it_scripts` on every run) and passes it. If it cannot determine one it stops
+rather than proceed on the default; pass it once with `sudo PROFILE=emi it-pull`.
+
 **Overrides.** `REPO_URL=... BRANCH=... sudo -E it-pull` for one run, or put `REPO_URL=` /
 `BRANCH=` in `/etc/stig-build/pull.conf` permanently — a box built from a mirror keeps
 using that mirror.
@@ -499,6 +507,36 @@ for each licence dongle, USB-serial cable and KVM the first time it is plugged i
 
 A device that is refused shows up in `sudo it-usb blocked` — that, not a broken
 cable, is the usual reason a new dongle "does nothing".
+
+### "USBGuard allowed it and it still isn't there"
+
+`blocked` cannot answer this one. A device USBGuard **authorised** still does
+nothing if no driver can claim it — and a USB stick *or a USB DVD/CD reader*
+needs `usb-storage` (plus `uas` on USB3), which is blacklisted wherever
+`usb_storage_enabled` is false. The device enumerates, `dmesg` says `authorized
+to connect`, `lsusb` lists it, and no `/dev/sr0` or `/dev/sd*` ever appears —
+absent from `blocked` precisely *because* USBGuard allowed it.
+
+`sudo it-usb status` now reports this directly:
+
+```
+usb mass storage: BLACKLISTED by /etc/modprobe.d/zz-stig-usb-storage.conf
+optical devices : 
+```
+
+**Optical media on the EMI laptop.** EMI-classified already has
+`usb_storage_enabled: true`, so the blacklist is removed there and a USB DVD
+reader works — **with USBGuard still gating every device**, so the drive is
+enrolled once like any other peripheral. If a box has the blacklist and should
+not, the usual cause is that it was pulled under the wrong profile (see §1.10);
+fix the profile and pull. `usg_remediate` removes the file, loads the drivers in
+the same run, and tells you to re-plug: a device attached while the drivers were
+blacklisted was probed once, found nothing, and is not re-probed on its own.
+
+To allow removable media on a profile that normally blocks it, set
+`usb_storage_enabled: true` in that box's `/opt/it/site.yml` and pull. USBGuard
+remains the gate; UBTU-24-300039 opens on that box and the adjudication text
+renders into the checklist automatically.
 
 ## 3.6 Back up an EMI box
 
