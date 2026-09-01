@@ -89,6 +89,31 @@
   loop_control:
     label: "{{ item.file }}"
 
+# Public scripts: a real file in /usr/local/sbin, world-readable so a non-admin
+# who has been granted sudo on it can actually reach it. See it_scripts_public.
+- name: "IT-SCRIPTS | Install the scripts a non-admin group may run"
+  ansible.builtin.copy:
+    src: "{{ item.file }}"
+    dest: "/usr/local/sbin/{{ item.link }}"
+    owner: root
+    group: root
+    mode: "0755"
+    follow: false          # dest may be the old symlink into /opt/it -- replace it
+  loop: "{{ it_scripts_public | default([]) }}"
+  loop_control:
+    label: "{{ item.link }}"
+
+# The same script used to be installed into /opt/it/scripts and symlinked. Leave
+# no second, stale copy behind: it would be the one `it-help` describes and the
+# one a future edit forgets.
+- name: "IT-SCRIPTS | Drop the old /opt/it copy of a now-public script"
+  ansible.builtin.file:
+    path: "{{ it_scripts_dir }}/{{ item.file }}"
+    state: absent
+  loop: "{{ it_scripts_public | default([]) }}"
+  loop_control:
+    label: "{{ item.file }}"
+
 # An entry with an empty `link` is a HELPER invoked by another script, not a
 # command of its own -- it gets installed into the scripts dir but no symlink.
 - name: "IT-SCRIPTS | Expose short it-* commands in /usr/local/sbin"
