@@ -1,0 +1,46 @@
+# /etc/stig-build/powerstrux-offload.conf
+# Rendered by the powerstrux role from group_vars / /opt/it/site.yml.
+#
+# `it-powerstrux offload ...` writes BOTH this file and site.yml, so a change
+# takes effect at once AND survives the next ansible-pull. Editing this file by
+# hand works until the next pull, which puts it back -- change site.yml too, or
+# use the commands.
+#
+# Read as data, never sourced: no quoting, no shell, one KEY=value per line.
+
+ENABLED={{ powerstrux_offload_enabled | default(true) | bool | lower }}
+
+# Where the reports are, and how far back "this week" reaches. 8 days rather
+# than 7 so a run that slipped a day (Persistent=true catching up after the box
+# was off) is still picked up by the next offload.
+REPORT_DIR={{ powerstrux_audit_dir }}
+PS_SCRIPT={{ powerstrux_script }}
+WINDOW_DAYS={{ powerstrux_offload_window_days | default(8) }}
+
+# Local staging. Always written, even when the push succeeds -- an unreachable
+# share must never be the reason a week's evidence went missing.
+DIR={{ powerstrux_offload_dir | default('/opt/ia/powerstrux-offload') }}
+KEEP={{ powerstrux_offload_keep | default(26) }}
+
+# Extras. The auditd archive is OFF by default: /etc/cron.weekly/audit-offload
+# owns the AU-4 artifact and pushes it separately. Turn this on if the site
+# wants one folder per week holding everything.
+INCLUDE_AUDIT={{ powerstrux_offload_include_audit | default(false) | bool | lower }}
+AUDIT_SOURCE_DIR={{ usg_audit_offload_dir | default('/opt/ia/audit-offload') }}
+INCLUDE_CONTAINERS={{ powerstrux_offload_containers | default(false) | bool | lower }}
+CONTAINER_NAMES={{ powerstrux_offload_container_names | default([]) | join(' ') }}
+{%- for p in powerstrux_offload_extra | default([]) %}
+EXTRA={{ p }}
+{%- endfor %}
+
+# The Windows file share. The password is NOT here -- it is in SMB_CRED, 0600
+# root:root, written by `it-powerstrux offload creds` and never by Ansible.
+#   SMB_AUTH=domain     domain= is the AD domain; the box need not be joined
+#   SMB_AUTH=workgroup  domain= is the FILE SERVER's own name (local account)
+#   SMB_AUTH=guest      no credentials file at all
+SMB_ENABLED={{ powerstrux_offload_smb_enabled | default(false) | bool | lower }}
+SMB_SHARE={{ powerstrux_offload_smb_share | default('') }}
+SMB_SUBDIR={{ powerstrux_offload_smb_subdir | default(ansible_hostname | default('unknown')) }}
+SMB_CRED={{ powerstrux_offload_smb_credentials | default('/etc/stig-build/powerstrux-offload.cred') }}
+SMB_AUTH={{ powerstrux_offload_smb_auth | default('domain') }}
+SMB_OPTS={{ powerstrux_offload_smb_options | default('vers=3.1.1,sec=ntlmssp,uid=0,gid=0,file_mode=0640,dir_mode=0750') }}

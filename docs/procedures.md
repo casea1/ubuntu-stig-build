@@ -452,6 +452,135 @@ default, `it-powerstrux schedule "<spec>"` to change — the change is written t
 Reading it needs membership of the `audit` group (`/opt/_AuditFiles` is
 `2770 root:audit`); `id -nG` should list it.
 
+## 3.2d Send the report off the box (`it-powerstrux offload`)
+
+The audit is only half the job — until the report leaves the box, a reimage
+loses the evidence. `it-powerstrux offload` collects **the week's report, the
+run logs behind it, and the config that produced it** into one dated folder and
+copies that folder to a Windows file share.
+
+```bash
+sudo it-powerstrux offload            # what is collected, where it goes, last run
+sudo it-powerstrux offload setup      # share, folder, account -- the whole thing
+sudo it-powerstrux offload test       # prove the share works, do not wait a week
+sudo it-powerstrux offload run        # build and push this week's folder NOW
+```
+
+`setup` writes **both** `/etc/stig-build/powerstrux-offload.conf` (which takes
+effect immediately) **and** `/opt/it/site.yml` (so the next `ansible-pull` keeps
+it). Every other command does the same. Editing the conf by hand works until the
+next pull puts it back — that is the trap this avoids.
+
+### The week folder
+
+One folder per ISO week, `<YYYY>-W<nn>`, the same name locally and on the share:
+
+```
+//fileserver/audit$/dev-13/2026-W36/
+    MANIFEST.txt              what is in here, with sha256 for every file
+    powerstrux/               the report(s) this week produced
+    powerstrux/logs/          the run logs behind them
+    powerstrux/PowerStruxLAConfig.txt
+    audit/                    the auditd archive   (off by default)
+    containers/               `docker logs` per container (off by default)
+    logs/                     anything else you added with `extra add`
+```
+
+`MANIFEST.txt` names the host, the profile, the baseline commit the box is
+running and a sha256 for each file — an assessor opening the folder a year later
+can tell which box and which build it came from.
+
+The window is **8 days, not 7**: a run that slipped a day (the timer is
+`Persistent=true` and catches up after the box was powered off) is still picked
+up by the next offload. If a week produced no report the folder is still built,
+the manifest says so, and the run prints a warning.
+
+**The local copy is always kept**, in `/opt/ia/powerstrux-offload/<week>/`, even
+when the push succeeds. A share that is unreachable, full or misconfigured must
+never be why a week's evidence went missing. The newest 26 weeks are held and
+then pruned. On an air-gapped box leave the share off — the folder is what the
+DTA carries out on media.
+
+### The account on the Windows side
+
+`it-powerstrux offload creds` asks which kind of account this is, because
+`mount.cifs` wants a different thing in each case:
+
+| Choice | What is written | When |
+|---|---|---|
+| **1 Domain account** | `domain=CORP` | an AD service account. **This box does not have to be joined** to the domain |
+| **2 Local account on the file server** | `domain=<the server's own name>` | a workgroup / standalone file server. `WORKGROUP` works on some servers and silently fails on others, so this defaults to the share's host |
+| **3 Guest** | no credentials file | rarely works — SMB2+ refuses guest by default |
+
+The account needs **Share = Change** and **NTFS = Modify** on the target folder.
+Read-only is the most common misconfiguration and it fails at the `mkdir` of the
+week folder, which `it-powerstrux offload test` reports in those words.
+
+The password goes to `/etc/stig-build/powerstrux-offload.cred`, `0600 root:root`
+— never to `site.yml`, never to the repo. It is not passed on a command line
+either: `mount.cifs` gets `credentials=<path>`, so the secret never appears in
+`ps`. Choosing guest **moves an existing credentials file aside** rather than
+deleting it.
+
+> **The share is not mounted between runs.** There is no `fstab` line and no
+> automount unit: the job mounts it on `/run/powerstrux-offload.mnt`, copies,
+> and unmounts — in every path, including failure. For the full write-up of the
+> credential handling, the transport, and how to force SMB3 encryption, see
+> [compliance.md → Getting evidence off the box](compliance.md#getting-evidence-off-the-box-how-the-smb-offloads-actually-work).
+
+### Adding other logs
+
+```bash
+sudo it-powerstrux offload extra add /var/log/clamav-scan.log
+sudo it-powerstrux offload extra add '/opt/_AuditFiles/*.csv'   # a glob, quoted
+sudo it-powerstrux offload extra remove /var/log/clamav-scan.log
+sudo it-powerstrux offload extra                                 # list them
+sudo it-powerstrux offload audit on        # add the auditd archive as well
+sudo it-powerstrux offload containers on   # add `docker logs` per container
+```
+
+A path or a glob; **a directory is copied whole**. (The older `audit-offload`
+job took files only and logged a directory as *unreadable* — this does not.)
+
+### When it runs
+
+Straight after each scheduled audit, not on a clock of its own:
+`powerstrux-audit.service` names the offload in `Wants=`, and
+`powerstrux-offload.service` is `After=` the audit. So the offload starts when
+the audit **finishes**, however long the audit took — and still runs if the
+audit failed, because the log of a failed run is worth carrying off too.
+
+> This is what the old arrangement got wrong. `/etc/cron.weekly/audit-offload`
+> and `powerstrux-audit.timer` were two unrelated schedules, so the offload
+> could and did run *before* the week's report existed.
+
+`it-offload` (the auditd trail, `/etc/cron.weekly/audit-offload`) is a separate
+job and stays that way — see §4.4b. The AU-4 artifact an assessor opens should
+hold the audit trail and nothing else. Set `it-powerstrux offload audit on` if
+you would rather have one folder per week holding everything.
+
+### When the mount fails
+
+```bash
+sudo it-powerstrux offload test          # names the failure and what causes it
+sudo it-powerstrux offload log 50        # the run log
+smbclient -L //fileserver -U svc_audit   # is the share name even right?
+```
+
+An older NAS or Server 2008 R2 only speaks SMB 2.1:
+
+```bash
+sudo it-powerstrux offload opts 'vers=2.1,sec=ntlmssp,uid=0,gid=0,file_mode=0640,dir_mode=0750'
+```
+
+Going the other way — a share carrying system-audit reports should be
+**encrypted in transit**, which SMB3 signing alone does not give you:
+
+```bash
+sudo it-powerstrux offload opts 'vers=3.1.1,seal,sec=ntlmssp,uid=0,gid=0,file_mode=0640,dir_mode=0750'
+sudo it-powerstrux offload test     # `seal` fails the mount if the server will not encrypt
+```
+
 ## 3.3 Run a vulnerability scan (EMI)
 
 ```bash
@@ -961,6 +1090,8 @@ Credentials live one file per share in `/etc/stig-build/smb/<name>.cred`, `0600 
 ## 4.4b Offload logs to a share (closed space)
 
 The weekly `/etc/cron.weekly/audit-offload` job stages the rotated audit trail locally. In the closed space it can also collect container logs and push everything to an SMB share. **Off by default.**
+
+> **This job has never collected the PowerStrux reports** and does not now. Those go out weekly through `it-powerstrux offload` — §3.2d — which is ordered after the audit run and writes one dated folder per week. Configure that one if the reports are what you need off the box.
 
 ```bash
 sudo it-offload              # what is collected, where it goes, when it last ran

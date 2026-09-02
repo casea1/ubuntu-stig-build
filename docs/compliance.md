@@ -9,6 +9,7 @@ How to *run* any of this: [procedures.md](procedures.md). Ports, paths, software
 | | |
 |---|---|
 | [Hardening posture](#hardening-posture) | what the build enforces, deviates from, and leaves open |
+| [Getting evidence off the box](#getting-evidence-off-the-box-how-the-smb-offloads-actually-work) | how the offloads reach the file server, where the service-account password lives, and what is not claimed |
 | [The org Linux checklist](#the-org-linux-checklist) | met / not met / N-A per item, with the command to verify |
 | [DCSA / DoD RMF posture](#dcsa--dod-rmf-compliance-posture) | authorization context, 800-53 mapping, POA&M |
 | [Producing the STIG checklist](#producing-the-stig-checklist) | the two scanners, and how the `.cklb` gets built |
@@ -220,6 +221,127 @@ is true, and actively removed elsewhere (including on a rebuild as `emi-unclass`
 Turn it off with `offline_repo_dta_load_enabled: false`, at the cost of the
 two-copy workflow above.
 
+### Getting evidence off the box: how the SMB offloads actually work
+
+Two jobs copy evidence to a file server — `it-offload` (the auditd trail) and
+`it-powerstrux offload` (the weekly PowerStrux report folder). They use the same
+mechanism, and this is what an assessor asking *"how does that reach the share,
+and where does the password live?"* needs.
+
+#### There is no mounted share
+
+**Nothing is in `/etc/fstab`, and there is no automount unit.** The share exists
+only for the seconds the copy takes:
+
+1. The job mounts it read-write on a private mount point under `/run`
+   (`/run/powerstrux-offload.mnt`, `/run/audit-offload.mnt`) — `/run` is
+   `tmpfs`, so the mount point itself does not survive a reboot.
+2. It creates `<subdir>/<week>` on the share and copies the files.
+3. It **unmounts, in every path including failure**, and logs it if the unmount
+   did not take.
+
+Between runs the file server is not reachable as a filesystem from the box, is
+not a boot-time dependency, and is not a path an interactive user can walk onto.
+This is deliberately *unlike* `it-smb`, which exists for shares people work from
+and does use systemd automount units.
+
+The mount is performed by root from a `cron.weekly` job or a `systemd` oneshot
+service. No user session is involved and no user can trigger it — the scripts
+`exec sudo` on themselves, so an unprivileged invocation gets an authentication
+prompt, not a mount.
+
+#### Where the password lives, and where it does not
+
+| | |
+|---|---|
+| **Stored in** | `/etc/stig-build/powerstrux-offload.cred` (and `audit-offload.cred`), mode **`0600 root:root`**, in a `0700 root:root` directory |
+| **Written by** | `it-powerstrux offload creds` / `it-offload creds` only — typed at a prompt with terminal echo **off**, entered twice and compared |
+| **Never written to** | this git repository; `/opt/it/site.yml`; `group_vars`; any Ansible template or variable; the run log; the shell history |
+| **Never passed on a command line** | `mount.cifs` is invoked as `-o credentials=<path>` — the *file path*, not the secret. The password therefore never appears in `ps`, `/proc/<pid>/cmdline`, or the audit trail of executed commands |
+| **Ansible never sees it** | the role renders the *path* (`powerstrux_offload_smb_credentials`) and nothing else. A pull cannot create, read, or overwrite the credentials file |
+| **In memory** | `mount.cifs` hands the credential to the kernel CIFS client for the life of the mount. Since the mount lives only for the duration of the copy, so does that |
+
+Switching to guest auth **moves an existing credentials file aside**
+(`.cred.disabled`) instead of deleting it, so a mis-click cannot destroy a
+service-account password nothing else has a copy of.
+
+Rotation is manual and immediate: change the password on the Windows side, run
+`creds` again, then `test`. There is no fleet-wide credential — each box is
+configured on its own, and a box handed back or reimaged takes its credential
+with it.
+
+#### The account it uses
+
+A dedicated **service account**, not an operator's. `creds` asks which kind,
+because `mount.cifs` needs a different value in `domain=` for each:
+
+| Choice | `domain=` becomes | Use when |
+|---|---|---|
+| Domain account | the AD domain (`CORP`, `corp.example.com`) | there is a domain. **The box does not have to be joined to it** — this is an SMB session credential, not a machine account |
+| Local account on the file server | the **file server's own name** | workgroup / standalone server. `WORKGROUP` works on some servers and silently fails on others, which is why the prompt defaults to the share's host |
+| Guest | *(no credentials file)* | almost never — SMB2+ refuses guest by default |
+
+**Least privilege on the Windows side:** the account needs Share = *Change* and
+NTFS = *Modify* on its target folder and nothing else. It does not need, and
+should not have, interactive logon, domain admin, or access to any other share.
+Because the job only ever creates `<subdir>/<week>` and writes into it, scoping
+the account to that one folder is sufficient — and read-only is the most common
+misconfiguration, which fails at the `mkdir` and is reported in those words by
+`it-powerstrux offload test`.
+
+#### The transport
+
+`vers=3.1.1` — SMB 3.1.1, with `sec=ntlmssp`. SMB1 is not enabled anywhere in
+this baseline. SMB 3.1.1 negotiates pre-authentication integrity and signing
+according to the server's policy; a server configured to *require* signing gets
+signing.
+
+**Signing is not encryption.** For a share carrying system-audit reports, add
+SMB3 encryption explicitly:
+
+```bash
+sudo it-powerstrux offload opts 'vers=3.1.1,seal,sec=ntlmssp,uid=0,gid=0,file_mode=0640,dir_mode=0750'
+sudo it-powerstrux offload test
+```
+
+`seal` forces per-share SMB3 encryption and fails the mount if the server will
+not do it — which is the correct failure. It is **not** the default because a
+server that cannot encrypt would then never receive anything; make it the
+default for your site once `test` passes with it. Conversely an older NAS or
+Server 2008 R2 speaks only SMB 2.1 (`vers=2.1`) and cannot encrypt at all;
+treat that share as a plaintext path and place it accordingly.
+
+#### What is on the share, and what stays on the box
+
+Files land as `0640` with `uid=0,gid=0` where the server honours those
+(`file_mode`/`dir_mode` are what the *client* presents; a Windows server applies
+its own NTFS ACLs, which is where the real access control is). Once written, the
+files are the file server's to protect — this baseline makes no claim about
+encryption at rest on the share.
+
+**The local copy is always kept**, in `/opt/ia/powerstrux-offload/<week>/`
+(`root:audit 0750`) and `/opt/ia/audit-offload/` (`0750 root`), even when the
+push succeeds. A share that is unreachable, full or misconfigured must never be
+the reason evidence went missing, so the push is a **copy**, and its failure is
+loud — logged, and a non-zero exit so the scheduler records the run as failed —
+but never destructive.
+
+#### The record of the transfer
+
+| | |
+|---|---|
+| `/var/log/powerstrux-offload.log`, `/var/log/audit-offload.log` | every run: what was collected, what was pushed where, and the reason for any failure |
+| `MANIFEST.txt` in each week folder | host, deployment profile, baseline commit, and a **sha256 for every file** — so a folder on the share can be checked against the box it came from |
+| `systemctl status powerstrux-offload.service` | last run, result, and duration |
+| auditd | the mount is a privileged command run by root from a scheduled unit; `/var/log/sudo.log` records an operator who ran it by hand |
+
+#### What is not claimed
+
+These are **scheduled, staged offloads of evidence** — not a real-time audit
+collector. `audisp-remote` to a log server remains the POA&M item; a weekly copy
+to a file share does not close AU-4(1)/AU-6 on its own and is not presented as
+doing so.
+
 ---
 
 ## The org Linux checklist
@@ -362,7 +484,7 @@ Known deviations to remediate or risk-accept with the AO. None hidden; each is d
 |------|---------------|
 | **CAC/PIV multifactor (IA-2)** | Currently **password-only** (accounts locked until a password is set). CAC/PIV is the DoD expectation; the build de-selects the smartcard STIG rules as a documented deviation and can re-enable them once CAC readers/certs/SSSD are fielded. **Primary POA&M for the AO discussion.** |
 | **GRUB/UEFI bootloader password (CM/AC)** | Ships as a safe sentinel; set a vaulted PBKDF2 hash to close. |
-| **Audit-log offload (AU-4/AU-6)** | Local audit logging is on; central `audisp-remote` collector not yet configured (needs a log server). POA&M until a collector exists. |
+| **Audit-log offload (AU-4/AU-6)** | Local audit logging is on; central `audisp-remote` collector not yet configured (needs a log server). POA&M until a collector exists. The weekly file-share offloads (`it-offload` for the auditd trail, `it-powerstrux offload` for the system-audit reports) are staged evidence, not a real-time collector, and are not claimed as one. |
 | **FIPS inside inference containers** | **Host is fully FIPS**; the inference/extraction containers (vLLM, and docling via its bundled OpenCV/OpenSSL) use standard crypto. Those images ship no FIPS provider and aren't FIPS-validated, so on the FIPS host their OpenSSL selftest aborts unless carved out. Container traffic is host-local/enclave-internal. Documented POA&M; host-level FIPS is what the STIG assesses. |
 | **AI/ML software assurance** | vLLM, Open WebUI, Docling, etc. are open-source and not separately accredited; recommend internal image scanning + registry mirroring as part of the SSP. |
 
@@ -451,7 +573,11 @@ It can also attach `finding_details`, `comments`, and an `evidence_cmd` whose ou
     answers.yml         the adjudications, rendered per profile
     checklists/         generated .ckl / .cklb
     evidence/           `it-stig archive` bundles
-  audit-offload/        weekly staged audit logs
+  audit-offload/        weekly staged audit logs (auditd, AU-4)
+  powerstrux-offload/   one folder per ISO week: that week's PowerStrux report,
+                        its run logs, PowerStruxLAConfig.txt, and a MANIFEST.txt
+                        naming the host, profile, baseline commit and a sha256
+                        per file. Kept locally even after a successful push
 ```
 
 Tell the two scan styles apart by their filename: the role stamps date-only (`stig-arf-2026-08-24.xml`), `it-oscap` stamps date **and time** (`stig-arf-20260824-143656.xml`). `it-ckl` reads from all three scan directories, newest first — any of them is valid input.
@@ -583,6 +709,7 @@ Keep the generated `.cklb` alongside the `usg audit` report — together they ar
 
 - **This repository** (`ubuntu-stig-build`): the full, reviewable configuration-as-code baseline.
 - **`usg audit` reports** (XCCDF `.xml` + HTML) collected to `/opt/ia` on each box. STIG compliance evidence per host.
+- **Weekly PowerStrux system-audit reports**, offloaded per box as a dated week folder with a sha256 manifest (`/opt/ia/powerstrux-offload/<YYYY>-W<nn>/`, and to a file share where one is configured). The manifest records the host, deployment profile and baseline commit, so a report can be tied to the exact build that produced it.
 - **This document:** every documented deviation and POA&M.
 - **[Container-runtime compliance](#container-runtime-compliance-why-no-docker-stig):** why there's no docker-ce STIG and how the container layer is secured (CIS Docker Benchmark).
 - **Architecture, ports, software inventory:** [`reference.md`](reference.md).

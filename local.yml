@@ -268,6 +268,7 @@
     # PowerStrux launcher + weekly schedule. Self-skips when the hand-installed
     # PowerShell module is not present, so it is harmless on a box without it.
     - role: powerstrux              # auditor-facing audit launcher, desktop icon, Wednesday 03:00 run
+      tags: [scripts]               # so `it-pull scripts` ships it-powerstrux + its offload
       when: powerstrux_enabled | default(true) | bool
 
     # DTA transfer folders (/opt/dta/incoming|outgoing) and the `dta-log` record

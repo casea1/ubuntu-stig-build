@@ -18,6 +18,9 @@
 #   run-powerstrux schedule           show the current schedule
 #   run-powerstrux schedule "<spec>"  change it, e.g. "Wed *-*-* 03:00:00"
 #   run-powerstrux enable | disable   turn the scheduled run on or off
+#   run-powerstrux offload [...]      the weekly copy of the report to a file
+#                                     share -- setup, creds, test, run, status.
+#                                     `run-powerstrux offload --help` for those.
 #
 # A schedule change is written to BOTH the live timer and /opt/it/site.yml, so
 # it survives the next ansible-pull. Change only the timer and the pull puts it
@@ -179,6 +182,15 @@ set_schedule() {
 QUIET=0
 # Subcommands. `run` stays the DEFAULT so the desktop icon keeps working.
 case "${1:-}" in
+  # The offload is its own script: it is the half that talks to a file share
+  # and it is long enough that mixing it in here would bury the launcher. It
+  # self-elevates, so no sudo is forced on `offload --help`.
+  offload)
+    shift
+    OFFLOAD="$AUDIT_DIR/powerstrux-offload.sh"
+    [ -x "$OFFLOAD" ] || {
+      echo "Offload not installed at $OFFLOAD -- run an ansible-pull." >&2; exit 1; }
+    exec "$OFFLOAD" "$@" ;;
   open|report) cmd_open; exit $? ;;
   status)   LOG_DIR="$AUDIT_DIR/logs"; schedule_status; exit 0 ;;
   schedule)
