@@ -122,6 +122,20 @@ SITE_YML="${SITE_YML:-/opt/it/site.yml}"
 site_profile() { sed -nE 's/^deployment_profile[[:space:]]*:[[:space:]]*//p' "$SITE_YML" 2>/dev/null \
                  | tail -1 | tr -d "\"' " ; }
 
+# Does site.yml still parse? A broken one does not degrade gracefully: local.yml
+# loads it in pre_tasks, include_vars fails, and the WHOLE pull stops before any
+# role runs -- which is how a stray hand-appended line stopped an AI node dead.
+# Ansible carries PyYAML, so this is the same parser that will judge it.
+yaml_ok() {   # $1 = file -> 0 and silent, or 1 with the parser's complaint
+  [ -s "$1" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 -c 'import sys, yaml
+try:
+    yaml.safe_load(open(sys.argv[1]))
+except Exception as e:
+    print(str(e).splitlines()[0]); sys.exit(1)' "$1" 2>&1
+}
+
 PROFILE_ARG=""                       # --profile, parsed below with the others
 SITE_PROFILE="$(site_profile)"
 RECORDED_PROFILE="$(getkey deployment_profile "$PROFILE_FILE")"
@@ -176,6 +190,12 @@ do_status() {
     printf '              %sNOT persisted%s -- only %s records it, so a hand-typed\n' "$Y" "$R" "$PROFILE_FILE"
     printf '              ansible-pull with no -e would rebuild this box as `development`.\n'
     printf '              Fix once: sudo it-pull --profile %s\n' "${PROFILE_NAME:-<name>}"
+  fi
+  local yerr
+  if ! yerr=$(yaml_ok "$SITE_YML"); then
+    printf '  %sBROKEN%s    : %s does not parse as YAML -- the NEXT PULL WILL FAIL\n' "$RD" "$R" "$SITE_YML"
+    printf '              %s\n' "$yerr"
+    printf '              Fix or remove the offending line, then re-check: it-pull status\n'
   fi
   if [ -n "$SITE_PROFILE" ] && [ -n "$RECORDED_PROFILE" ] && [ "$SITE_PROFILE" != "$RECORDED_PROFILE" ]; then
     printf '              %sMISMATCH%s -- site.yml says %s, the last run built %s.\n' \
@@ -250,12 +270,26 @@ persist_profile() {   # $1 = profile name -> written into site.yml, idempotently
   install -d -m 2770 -o root -g "$(stat -c %G /opt/it 2>/dev/null || echo sudo)" \
     "$(dirname "$SITE_YML")" 2>/dev/null || true
   touch "$SITE_YML" 2>/dev/null || { warn_no_site; return 0; }
+  cp -a "$SITE_YML" "$SITE_YML.pre-it-pull" 2>/dev/null || true
   if grep -qE '^deployment_profile[[:space:]]*:' "$SITE_YML" 2>/dev/null; then
     sed -i -E "s|^deployment_profile[[:space:]]*:.*|deployment_profile: $want|" "$SITE_YML"
   else
     printf '\n# Written by it-pull. Which profile this box is. local.yml loads this\n# above group_vars, so ANY ansible-pull builds it the same way.\ndeployment_profile: %s\n' \
       "$want" >> "$SITE_YML"
   fi
+  # Never leave site.yml unparseable: the next pull would stop in pre_tasks,
+  # before any role runs, and the cause would be this command.
+  local yerr
+  if ! yerr=$(yaml_ok "$SITE_YML"); then
+    if [ -f "$SITE_YML.pre-it-pull" ]; then
+      mv -f "$SITE_YML.pre-it-pull" "$SITE_YML"
+      die "writing the profile would have left $SITE_YML unparseable, so it was restored:
+  $yerr
+Fix the file by hand, then run this again."
+    fi
+    die "$SITE_YML does not parse as YAML: $yerr"
+  fi
+  rm -f "$SITE_YML.pre-it-pull"
   printf '    profile persisted to %s\n' "$SITE_YML"
 }
 warn_no_site() {
