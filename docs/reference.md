@@ -90,6 +90,21 @@ reads AccountsService, not `~/.face` — so an account created between pulls
 inherits the image file and still shows the default picture until the next pull
 happens to enumerate it. `it-adduser` writes the record itself now.
 
+**21. A malformed `/opt/it/site.yml` stops the ENTIRE pull, before any role runs.**
+`local.yml` loads it with `include_vars` in `pre_tasks`, so a YAML error there
+fails the play at task 2 — nothing is applied, and the failure names the file
+rather than whatever you were actually trying to change. `expected '<document
+start>'` is the usual one: it means a `---` or `...` appears mid-file and the
+content after it is a second document. **Appending to site.yml by hand is how
+this happens** — `it-pull --profile <name>`, `it-offload`, `it-repo enable` and
+`run-powerstrux schedule` all edit it properly. `sudo it-pull status` now
+reports a file that will not parse, before the pull does. Check by hand with:
+
+```bash
+sudo grep -n '^\(---\|\.\.\.\)' /opt/it/site.yml
+python3 -c "import yaml; yaml.safe_load(open('/opt/it/site.yml'))"
+```
+
 **13. A passing benchmark is not a compliant box.** `usg fix` leaves `PermitRootLogin prohibit-password`, which satisfies the STIG rule (it only forbids a root *password* login) while still allowing root in **by SSH key** — which the org checklist forbids outright. Found on ASP-2 with a 96.41 % scan. Check what the rule actually asserts, not just its colour.
 
 **13. Audit rules on disk are not audit rules in the kernel, and they may not be in `rules.d`.** Two separate traps in one place. First, `usg fix` writes **`/etc/audit/audit.rules` directly**, not `rules.d/*.rules` — so an empty `rules.d` is normal on a USG box, and counting only `rules.d` reports "no rules" on a box with a full ruleset. Second, whatever is on disk still has to reach the kernel: the STIG sets auditd `-e 2` (immutable), after which new rules are refused until a reboot. Either way **every file-based OVAL still passes**, because those check files. ASP-2 ran with **1 rule in the kernel** against 8.5 KB in `audit.rules` and the 96.41 % scan said nothing. `it-checklist` item 6 counts whichever source holds rules and compares it against the kernel. Diagnose with:
