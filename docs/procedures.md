@@ -435,6 +435,26 @@ sudo ./xsetup --agree XilinxEULA,3rdPartyEULA \
 > `sudo it-fpga fixup` repairs it; `sudo it-fpga status` detects it, and the
 > pull corrects it on its own from then on.
 
+### Libero
+
+```bash
+sudo ./Libero_SoC_2025.1_online_lin.bin
+```
+
+Install to `/opt/microchip/Libero_SoC_2025.1`, common directory `/opt/microchip`,
+**Full** installation, and decline the post-install script it offers.
+
+> **Run the `.bin`, not the `.sh`.** The `.sh` is Microchip's OS gate — it
+> prints `System OS NAME=Ubuntu` and stops, because Libero is supported on
+> RHEL/CentOS only. The `.bin` is the actual installer and runs fine on 24.04.
+> Nothing is wrong with the download.
+
+> **`libxcb-cursor.so.0: cannot open shared object file`** means the pull has
+> not run since that dependency was added. Libero 2025.1's installer is Qt6 and
+> its xcb platform plugin needs `libxcb-cursor0` before it draws anything.
+> `sudo it-pull full` fixes it for good; `sudo apt install libxcb-cursor0`
+> unblocks you now.
+
 Then the fixes that touch the vendor tree — a command, not a pull, because
 Ansible never writes into a 150 GB install unattended:
 
