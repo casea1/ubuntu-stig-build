@@ -128,7 +128,13 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
      `local_users_common_groups`. They must be created in `local_groups`
      because `local_accounts` runs long before `fpga_tools` and
      `user: append:false` FAILS on a group that does not exist yet.
-  5. The i386 list is a WISH. Ubuntu publishes only a curated i386 subset on
+  5. The STIG's `umask 077` means a sudo-run vendor installer builds a
+     ROOT-ONLY tree (0700/0600), so engineers get "Permission denied" on
+     settings64.sh and it looks like a failed install. `it-fpga fixup` does
+     `chmod -R a+rX`; `it-fpga status` detects it. Never launch the tools with
+     sudo to work around it -- root has no Xauthority cookie for the user's
+     RDP session and the GUI then fails on X11 instead. See trap 29.
+  6. The i386 list is a WISH. Ubuntu publishes only a curated i386 subset on
      24.04, several vendor-listed libraries cannot be installed, and ONE
      unresolvable name fails the whole apt transaction -- that stopped a pull
      on dev-14 and took the 64-bit half with it. The role probes with

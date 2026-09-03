@@ -15,7 +15,8 @@
 #                              node-locked licence served by a local daemon
 #   it-fpga license --none     unset it
 #   it-fpga check              run the vendors' own checkers and translate
-#   it-fpga fixup              apply the post-install fixes to an INSTALLED tree
+#   it-fpga fixup              post-install fixes on an INSTALLED tree: make it
+#                              readable by every user, drop Libero's bundled libstdc++
 #   it-fpga cables             what is plugged in, and is it authorised
 #   it-fpga env                the environment a user gets, and how to load it
 #
@@ -157,6 +158,22 @@ cmd_status() {
   else
     say "  ${DIM}Microchip support is switched off (fpga_microchip_enabled).${R}"
   fi
+
+  # ---- permissions. The single most likely reason a correctly installed tool
+  # is unusable: the installer ran under sudo with the STIG's umask 077.
+  local st
+  for st in "$XROOT/Vivado/$XVER/settings64.sh" "$LIBDIR/Libero/bin64/libero"; do
+    [ -e "$st" ] || continue
+    if perms_ok "$st"; then
+      ok "readable          $(dirname "$(dirname "$st")" | xargs basename) -- every user"
+    else
+      bad "ROOT-ONLY         $st"
+      say "                    ${DIM}The STIG sets umask 077, so an installer run under sudo${R}"
+      say "                    ${DIM}made the whole tree 0700/0600. Engineers get \"Permission${R}"
+      say "                    ${DIM}denied\" on settings64.sh and it looks like a broken install.${R}"
+      say "                    ${DIM}fix: sudo it-fpga fixup${R}"
+    fi
+  done
 
   # ---- compatibility
   head2 "24.04 compatibility"
@@ -358,9 +375,40 @@ cmd_license() {
 # The post-install fixes that touch the VENDOR TREE. Deliberately a command and
 # not a role task: the role never writes into a 150 GB install unattended, and
 # these run once after an install, not on every pull.
+# The STIG sets umask 077. A vendor installer run under sudo therefore creates
+# its whole tree root-only -- 0700 directories, 0600 files -- and every engineer
+# gets "Permission denied" on settings64.sh. Nothing in the vendor's output says
+# so; it looks like a broken install.
+#
+# a+rX, not a+rx: capital X adds execute only to DIRECTORIES and to files that
+# already have it for someone, so data files do not come out executable.
+fix_perms() {   # $1 = tree, $2 = label
+  local d="$1" lbl="$2"
+  have_tree "$d" || return 0
+  say "  fixing read/traverse on $lbl ($(du -sh "$d" 2>/dev/null | cut -f1)) -- this takes a moment"
+  chmod -R a+rX "$d" 2>/dev/null
+  ok "$lbl is readable by every user"
+}
+
+# Cheap check: one stat, no recursion. The settings script is what a user
+# sources first, so if that is unreadable the tree is.
+perms_ok() {   # $1 = a file every user must be able to read
+  [ -r "$1" ] || return 1
+  # -r as root says nothing about other users; test the mode bits.
+  case "$(stat -c '%A' "$1" 2>/dev/null)" in
+    ??????r??|?????????r??) return 0 ;;
+  esac
+  [ "$(( 0$(stat -c '%a' "$1" 2>/dev/null) & 0004 ))" -ne 0 ]
+}
+
 cmd_fixup() {
   local n=0
   head2 "Post-install fixes"
+
+  # First, because it is the one that makes the tools unusable for everyone
+  # except the person who installed them.
+  fix_perms "$XROOT" "Xilinx"
+  fix_perms "$LIBDIR" "Libero"
 
   if have_tree "$LIBDIR"; then
     # Libero ships a RHEL libstdc++ OLDER than what Noble's libicuuc.so.74

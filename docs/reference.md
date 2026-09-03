@@ -137,6 +137,8 @@ sudo augenrules --check                                       # is audit.rules o
 
 **28. Ansible's free-form `shell:` splits arguments, and double quotes inside Jinja break it.** `shell: |` with `{{ x | default("") }}` in the body fails at parse time with *"failed at splitting arguments, either an unbalanced jinja2 block or quotes"* — before anything runs, so it looks like a YAML error and is not. Use the `cmd:` key (`shell:` → `cmd: |`), which is not split. Same script, same Jinja, parses fine.
 
+**29. The STIG umask makes every sudo-run vendor installer produce a root-only tree.** `umask 077` is the baseline setting, so an installer run under `sudo` -- which Vivado and Libero both need, to write `/tools` and `/opt` -- creates `0700` directories and `0600` files throughout. Engineers then get *"Permission denied"* sourcing `settings64.sh`, which reads as a failed install and is not one; the natural workaround, running the tool under `sudo su`, then fails differently because root has no `.Xauthority` cookie for the user's RDP session (*"Can't connect to X11 window server"*). Neither error names the cause. `sudo it-fpga fixup` applies `chmod -R a+rX` -- capital X, so data files do not come out executable -- and `it-fpga status` detects it with one stat. Applies to anything else installed the same way.
+
 **15. Pre-USG leftovers.** Two separate outages traced to files the current baseline neither writes nor removes, left by the old ansible-lockdown role (`/etc/audit/rules.d/stig.rules`, and `pam_faillock` lines in `common-auth` with `pam_unix`'s jump offset never recalculated). Assume there are others on any box built before the USG switch.
 
 ---

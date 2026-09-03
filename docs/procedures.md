@@ -404,6 +404,12 @@ sudo ./xsetup --agree XilinxEULA,3rdPartyEULA \
 > installed what it was trying to install. Same for Microchip's post-install
 > script.
 
+> **Run the installer under `sudo`, then fix the permissions.** The STIG sets
+> `umask 077`, so an installer running as root creates its entire tree `0700`
+> directories and `0600` files. Every engineer then gets *"Permission denied"*
+> on `settings64.sh` — which looks exactly like a broken install and is not.
+> `sudo it-fpga fixup` repairs it; `sudo it-fpga status` detects it.
+
 Then the fixes that touch the vendor tree — a command, not a pull, because
 Ansible never writes into a 150 GB install unattended:
 
@@ -458,6 +464,26 @@ placeholder, and serves it from a **systemd unit** (`fpga-lmgrd.service`). The
 vendor guides start `lmgrd` from a sourced environment script, which launches a
 fresh daemon for every shell — that is what produces the stale daemon squatting
 on the port, and the `lsof -i :1702` dance those guides then tell you to do.
+
+### Never run the tools as root
+
+Once the permissions are fixed, run them as yourself. Two things break under
+`sudo`:
+
+- **X11.** Root does not have your `.Xauthority` cookie, so a GUI launched from
+  an RDP or desktop session dies with *"Authorization required, but no
+  authorization protocol specified"* and `Can't connect to X11 window server`.
+  That is not a display problem — it is the wrong user.
+- **Your project files.** Anything Vivado writes ends up root-owned in your
+  home directory, and you will be back with `sudo` forever.
+
+If you find yourself reaching for `sudo` to launch an FPGA tool, the tree
+permissions are wrong. Fix those instead:
+
+```bash
+sudo it-fpga status      # says "ROOT-ONLY" when this is the problem
+sudo it-fpga fixup
+```
 
 ### Launching them
 
