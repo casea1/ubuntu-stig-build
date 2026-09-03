@@ -1,0 +1,140 @@
+---
+# =============================================================================
+# Launchers + app-grid entries for the vendor GUIs.
+#
+# WHY THESE EXIST. The vendors' installers create shortcuts only when the
+# install config asks for them, and a `--batch Install` run under sudo writes
+# them to /root/Desktop -- where no engineer will ever see them. So a correctly
+# installed Vivado looks, from the desktop, exactly like a missing one.
+#
+# System-wide in /usr/share/applications: every user gets them, nothing is
+# copied per account, and removing a toolchain removes its entry.
+# =============================================================================
+
+- name: "FPGA | Is each toolchain actually installed?"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ fpga_xilinx_root }}/Vivado/{{ fpga_xilinx_version }}/bin/vivado"
+    - "{{ fpga_xilinx_root }}/Vitis/{{ fpga_xilinx_version }}/bin/vitis"
+    - "{{ fpga_libero_dir }}/Libero/bin64/libero"
+  register: _fpga_bins
+  loop_control:
+    label: "{{ item }}"
+
+- name: "FPGA | Build the launcher set from what is present"
+  ansible.builtin.set_fact:
+    _fpga_apps: >-
+      {{
+        [
+          {
+            'cmd': 'vivado', 'name': 'Vivado',
+            'generic': 'FPGA Design Suite',
+            'comment': 'AMD Vivado ' ~ fpga_xilinx_version ~ ' -- RTL design, synthesis and implementation',
+            'root': fpga_xilinx_root,
+            'bin': fpga_xilinx_root ~ '/Vivado/' ~ fpga_xilinx_version ~ '/bin/vivado',
+            'settings': fpga_xilinx_root ~ '/Vivado/' ~ fpga_xilinx_version ~ '/settings64.sh',
+            'icon': fpga_icon_vivado,
+            'keywords': 'fpga;vivado;xilinx;amd;hdl;vhdl;verilog;synthesis;',
+            'present': _fpga_bins.results[0].stat.exists | default(false),
+          },
+          {
+            'cmd': 'vitis', 'name': 'Vitis',
+            'generic': 'Embedded Software IDE',
+            'comment': 'AMD Vitis ' ~ fpga_xilinx_version ~ ' -- embedded and accelerated application development',
+            'root': fpga_xilinx_root,
+            'bin': fpga_xilinx_root ~ '/Vitis/' ~ fpga_xilinx_version ~ '/bin/vitis',
+            'settings': fpga_xilinx_root ~ '/Vitis/' ~ fpga_xilinx_version ~ '/settings64.sh',
+            'icon': fpga_icon_vitis,
+            'keywords': 'fpga;vitis;xilinx;amd;embedded;soc;',
+            'present': _fpga_bins.results[1].stat.exists | default(false),
+          },
+          {
+            'cmd': 'libero', 'name': 'Libero SoC',
+            'generic': 'FPGA Design Suite',
+            'comment': 'Microchip Libero SoC ' ~ fpga_libero_version ~ ' -- PolarFire / IGLOO design',
+            'root': fpga_microchip_root,
+            'bin': fpga_libero_dir ~ '/Libero/bin64/libero',
+            'icon': fpga_icon_libero,
+            'ld_i386': true,
+            'keywords': 'fpga;libero;microchip;microsemi;polarfire;igloo;',
+            'present': _fpga_bins.results[2].stat.exists | default(false),
+          },
+        ]
+      }}
+
+- name: "FPGA | Launcher for each installed toolchain"
+  ansible.builtin.template:
+    src: fpga-launcher.j2
+    dest: "/usr/local/bin/{{ item.cmd }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ _fpga_apps | selectattr('present') | list }}"
+  loop_control:
+    label: "{{ item.cmd }}"
+
+- name: "FPGA | App-grid entry for each installed toolchain"
+  ansible.builtin.template:
+    src: fpga-desktop.j2
+    dest: "/usr/share/applications/fpga-{{ item.cmd }}.desktop"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ _fpga_apps | selectattr('present') | list }}"
+  loop_control:
+    label: "{{ item.cmd }}"
+  when: fpga_desktop_entries | default(true) | bool
+  register: _fpga_desktop
+
+# copy/template only ever CREATE (reference.md trap 3). A toolchain that was
+# uninstalled, or entries switched off, must have its launcher and tile taken
+# away -- otherwise the app grid keeps offering something that is not there.
+- name: "FPGA | Remove entries for toolchains that are absent"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {{ _fpga_apps
+       | rejectattr('present')
+       | map(attribute='cmd')
+       | map('regex_replace', '^(.*)$', '/usr/share/applications/fpga-\1.desktop')
+       | list
+       +
+       _fpga_apps
+       | rejectattr('present')
+       | map(attribute='cmd')
+       | map('regex_replace', '^(.*)$', '/usr/local/bin/\1')
+       | list }}
+  register: _fpga_desktop_gone
+
+- name: "FPGA | Remove every app-grid entry when they are switched off"
+  ansible.builtin.file:
+    path: "/usr/share/applications/fpga-{{ item.cmd }}.desktop"
+    state: absent
+  loop: "{{ _fpga_apps }}"
+  loop_control:
+    label: "{{ item.cmd }}"
+  when: not (fpga_desktop_entries | default(true) | bool)
+  register: _fpga_desktop_off
+
+# GNOME reads the desktop DATABASE, not the directory. Without this the tile
+# can stay missing until the next reboot -- which is exactly what happened when
+# the powerstrux launcher first shipped.
+- name: "FPGA | Refresh the desktop database"
+  ansible.builtin.command: update-desktop-database /usr/share/applications
+  changed_when: false
+  failed_when: false
+  when: >-
+    (_fpga_desktop is defined and _fpga_desktop is changed)
+    or (_fpga_desktop_gone is defined and _fpga_desktop_gone is changed)
+    or (_fpga_desktop_off is defined and _fpga_desktop_off is changed)
+
+- name: "FPGA | Nothing installed yet"
+  ansible.builtin.debug:
+    msg: >-
+      No vendor toolchain found under {{ fpga_xilinx_root }} or
+      {{ fpga_microchip_root }}, so no launchers or app-grid entries were
+      created. They appear on the next pull once an installer has run --
+      the scaffolding does not install the toolchains themselves.
+  when: (_fpga_apps | selectattr('present') | list | length) == 0

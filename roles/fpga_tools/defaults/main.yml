@@ -39,6 +39,23 @@ fpga_microchip_root: /opt/microchip
 fpga_libero_version: "2025.1"
 fpga_libero_dir: "{{ fpga_microchip_root }}/Libero_SoC_{{ fpga_libero_version }}"
 
+# ---- launchers and desktop entries -----------------------------------------
+# The vendors' installers create shortcuts only when asked, and a `--batch
+# Install` run under sudo puts them in /root/Desktop where nobody sees them.
+# These are system-wide in /usr/share/applications, so every user gets them in
+# the app grid with nothing to copy per account.
+#
+# Each entry runs a small wrapper in /usr/local/bin that sources the vendor's
+# settings script for that one process -- NOT for every login shell on the box.
+fpga_desktop_entries: true
+
+# Icon for each entry. A themed name (freedesktop) rather than a vendor PNG:
+# the vendor icon paths move between versions, and a broken Icon= gives a blank
+# tile with no clue why. Point these at a real file if you want the logos.
+fpga_icon_vivado: applications-engineering
+fpga_icon_vitis: applications-development
+fpga_icon_libero: applications-engineering
+
 # ---- licensing -------------------------------------------------------------
 # mode: server | local | none
 #   server -- a FlexLM licence server on another machine. The workstation gets

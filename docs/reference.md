@@ -244,6 +244,8 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `/opt/dta/incoming,outgoing,logs/` | Data-transfer staging and records (EMI) |
 | `/tools/Xilinx`, `/opt/microchip` | FPGA toolchains (development). **Not managed by Ansible** — baked into the image or installed by hand. Root-owned, NOT under a home directory: `$HOME` is the vendors' single-machine advice and means one 30+ GB copy per engineer |
 | `/etc/profile.d/{xilinx,microchip}.sh` | The FPGA environment every user gets at login. `vivado_env` / `libero_env` load the heavy `PATH` per shell |
+| `/usr/local/bin/{vivado,vitis,libero}` | Launchers. Source the vendor settings for that one process, not for every login shell. Written only when the toolchain is actually installed |
+| `/usr/share/applications/fpga-*.desktop` | App-grid tiles for every user. The vendors' installers do not make usable ones — a `--batch Install` under sudo puts them in `/root/Desktop` |
 | `/etc/stig-build/fpga/License.dat` | Node-locked FPGA licence, `0600 root:root`. Absent when a licence server is used, which is the fleet default |
 | `/opt/vscode-extensions/` | The box's single copy of the VS Code extension set. Users hold symlinks into it; `/etc/skel` holds the same. root:root 0755 |
 | `/etc/code-server/<user>.password` | Per-user code-server password, `0600 root:root`. Generated once, stable across pulls |

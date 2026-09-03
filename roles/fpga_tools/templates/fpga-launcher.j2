@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# {{ item.cmd }} -- launcher for {{ item.name }}.
+#
+# Managed by the fpga_tools role -- do not edit by hand.
+#
+# The vendor tools are NOT on everyone's PATH: settings64.sh prepends a large
+# PATH and LD_LIBRARY_PATH, and having that in every login shell on the box --
+# including for users who never touch an FPGA -- has broken unrelated system
+# tools. This wrapper gives the one command without that cost, and is what the
+# app-grid entry runs.
+#
+# NO `set -u`. This sources a VENDOR script, and settings64.sh dereferencing an
+# unset variable would abort the launcher instead of starting the tool.
+
+ROOT="{{ item.root }}"
+BIN="{{ item.bin }}"
+
+if [ ! -x "$BIN" ]; then
+  msg="{{ item.name }} is not installed under $ROOT.
+Expected: $BIN
+Check with: sudo it-fpga status"
+  # BOTH, not either: from the app grid there is no terminal, and if the
+  # dialog tools are missing too then a stderr-only message goes nowhere and
+  # the icon just looks broken.
+  printf '%s\n' "$msg" >&2
+  if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+    if command -v zenity >/dev/null 2>&1; then
+      zenity --error --no-wrap --title="{{ item.name }}" --text="$msg" 2>/dev/null
+    elif command -v notify-send >/dev/null 2>&1; then
+      notify-send -u critical "{{ item.name }}" "$msg" 2>/dev/null
+    elif command -v xmessage >/dev/null 2>&1; then
+      xmessage -center "$msg" 2>/dev/null
+    fi
+  fi
+  exit 1
+fi
+{% if item.settings is defined %}
+
+# shellcheck disable=SC1090
+[ -r "{{ item.settings }}" ] && . "{{ item.settings }}"
+{% endif %}
+{%- if item.ld_i386 | default(false) %}
+
+# Libero and Synplify carry 32-bit components.
+export LD_LIBRARY_PATH="/usr/lib/i386-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+{%- endif %}
+
+exec "$BIN" "$@"

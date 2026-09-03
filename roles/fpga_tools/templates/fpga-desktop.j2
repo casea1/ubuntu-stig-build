@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name={{ item.name }}
+GenericName={{ item.generic }}
+Comment={{ item.comment }}
+# Terminal=false: these are full GUI applications. The launcher shows a dialog
+# rather than failing silently if the tool is not installed.
+Terminal=false
+Exec=/usr/local/bin/{{ item.cmd }}
+Icon={{ item.icon }}
+Categories=Development;Electronics;
+Keywords={{ item.keywords }}
+StartupNotify=true

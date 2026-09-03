@@ -459,19 +459,45 @@ vendor guides start `lmgrd` from a sourced environment script, which launches a
 fresh daemon for every shell — that is what produces the stale daemon squatting
 on the port, and the `lsof -i :1702` dance those guides then tell you to do.
 
-### Loading the tools
+### Launching them
 
-Every user gets the environment at login with nothing to source. The heavy
-`PATH` is opt-in, per shell:
+**The installers do not create working shortcuts.** They make them only when the
+install config asks, and a `--batch Install` run under `sudo` writes them to
+`/root/Desktop`, where no engineer will ever see them — so a correctly installed
+Vivado looks, from the desktop, exactly like a missing one. No reboot changes
+that; there is nothing to find.
+
+The pull creates them instead, system-wide, once a toolchain is actually
+present: **Vivado**, **Vitis** and **Libero SoC** appear in the app grid for
+every user, and `vivado`, `vitis` and `libero` work as commands:
 
 ```bash
-vivado_env && vivado
-libero_env && libero
+vivado          # a wrapper in /usr/local/bin; sources settings64.sh for
+libero          # that one process, not for every login shell on the box
+```
+
+If a tile is missing after an install, the pull has not run since:
+
+```bash
+sudo it-pull full
+sudo it-fpga status          # is the tree where the entries expect it?
+```
+
+A tile that is present but whose tool has been removed says so in a dialog
+rather than failing silently.
+
+For a shell with the full vendor environment — `vivado -mode tcl`, the Vitis
+command-line tools, Synplify:
+
+```bash
+vivado_env      # then the whole toolchain is on PATH in that shell
+libero_env
 sudo it-fpga env          # exactly what a user gets, and from which file
 ```
 
 `settings64.sh` is deliberately **not** sourced for every login shell — it
-prepends a large `PATH` and `LD_LIBRARY_PATH` for users who never touch Vivado.
+prepends a large `PATH` and `LD_LIBRARY_PATH` for users who never touch Vivado,
+and has broken unrelated system tools that way.
 
 ### Programmer cables
 

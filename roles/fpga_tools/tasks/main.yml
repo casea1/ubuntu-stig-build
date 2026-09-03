@@ -235,6 +235,10 @@
         label: "{{ item.path }}"
       when: not item.keep
 
+    # ---- launchers and desktop entries ------------------------------------
+    - name: "FPGA | Launchers and app-grid entries"
+      ansible.builtin.import_tasks: desktop.yml
+
     # ---- licensing --------------------------------------------------------
     - name: "FPGA | Licence configuration"
       ansible.builtin.import_tasks: license.yml
