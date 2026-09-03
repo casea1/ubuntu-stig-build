@@ -96,6 +96,29 @@
       when: >-
         (fpga_packages_i386 | difference(_fpga_i386_have.stdout_lines | default([])) | length) > 0
 
+    # ---- where the toolchains go ------------------------------------------
+    # The PARENT only, empty and root-owned. The role never creates or writes
+    # anything inside these -- the installers do, run under sudo, so the tree
+    # ends up root-owned and the engineers who use it cannot modify it.
+    #
+    # Creating them here removes the one manual step before the installer:
+    # the Xilinx .bin needs /tools to exist to write into it, and the Libero
+    # installer offered ~/Microchip as its default is how you end up with a
+    # 30 GB copy per engineer.
+    - name: "FPGA | Install locations exist (empty; the installers fill them)"
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - { path: "{{ fpga_xilinx_root }}",    keep: "{{ fpga_xilinx_enabled | bool }}" }
+        - { path: "{{ fpga_microchip_root }}", keep: "{{ fpga_microchip_enabled | bool }}" }
+      loop_control:
+        label: "{{ item.path }}"
+      when: item.keep
+
     # ---- compatibility shims ----------------------------------------------
     # Vivado wants libtinfo.so.5 / libncurses.so.5. Symlinks onto the ncurses 6
     # sonames, NOT the Jammy .debs: a package from another Ubuntu release on a

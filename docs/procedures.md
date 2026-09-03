@@ -370,10 +370,23 @@ Do this on the golden box, not on twelve workstations. The web installers pull
 from AMD's and Microchip's CDNs and are the first thing a filtering proxy
 breaks; the **SFD** (single-file download) installer is the reliable route.
 
-Install to **`/tools/Xilinx`** and **`/opt/microchip`**, root-owned. The vendors'
-guides tell you to install under `$HOME` to dodge permission problems — that is
-single-machine advice. On a shared workstation it means every engineer installs
-their own 30+ GB copy and the second one to log in gets nothing.
+Install to **`/tools/Xilinx`** and **`/opt/microchip`**, root-owned — the pull
+creates both, empty. The vendors' guides tell you to install under `$HOME` to
+dodge permission problems; that is single-machine advice. On a shared
+workstation it means every engineer installs their own 30+ GB copy and the
+second one to log in gets nothing.
+
+**Run both installers under `sudo`** so the tree ends up root-owned and the
+engineers who use it cannot modify it.
+
+> **If your versions differ from the defaults**, set them before the pull or the
+> environment scripts point at paths that do not exist:
+> ```yaml
+> # /opt/it/site.yml  (or group_vars for the whole fleet)
+> fpga_xilinx_version: "2024.2"
+> fpga_libero_version: "2025.1"
+> ```
+> `sudo it-fpga status` tells you when a tree is not where it is expected.
 
 ```bash
 # Xilinx -- needs root to write /tools/Xilinx
