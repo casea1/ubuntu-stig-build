@@ -91,7 +91,7 @@ pw_choose() {
   local who="$1" skip_label="$2" skip_help="$3" choice PW2 reason
 
   printf '\n%sPassword for %s%s\n' "${B:-}" "$who" "${R:-}"
-  printf '  1) %-21s %s\n' "Set one now"        "you type it. Must be changed at first login."
+  printf '  1) %-21s %s\n' "Set one now"        "you type it. This IS the password -- no forced change."
   printf '  2) %-21s %s\n' "Temporary password" "generated here and shown once. Must be changed at first login."
   printf '  3) %-21s %s\n' "$skip_label"        "$skip_help"
   printf '\n'

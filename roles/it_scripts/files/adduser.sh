@@ -20,13 +20,19 @@
 #   it-adduser ... --vscode           copy the VS Code extension set in (slow, GBs)
 #   it-adduser ... --no-vscode        do not offer it
 #   it-adduser ... --lock             create locked, set the password later
-#   it-adduser ... --no-expire        do not force a password change at first login
+#   it-adduser ... --expire           force a password change at first login even
+#                                     for a password you typed
+#   it-adduser ... --no-expire        never force one (the default for a typed
+#                                     password; ignored for a temporary one)
 #   it-adduser --dry-run              show what would happen, change nothing
 set -uo pipefail
 
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
-TYPE=""; FIRST=""; LAST=""; LOCKED=0; FORCE_EXPIRE=1; DRY=0; TEMP=0; VSCODE=ask
+TYPE=""; FIRST=""; LAST=""; LOCKED=0; DRY=0; TEMP=0; VSCODE=ask
+# Empty until a flag sets it: the DEFAULT depends on how the password was
+# chosen, and a global default is what made a typed password expire too.
+FORCE_EXPIRE=""; 
 PW=""; PW_MODE=""
 
 if [ -t 1 ]; then
@@ -65,6 +71,7 @@ while [ $# -gt 0 ]; do
     --temp)  TEMP=1; shift ;;
     --vscode)    VSCODE=yes; shift ;;
     --no-vscode) VSCODE=no; shift ;;
+    --expire)    FORCE_EXPIRE=1; shift ;;
     --no-expire) FORCE_EXPIRE=0; shift ;;
     --dry-run) DRY=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -172,8 +179,17 @@ else
   die "no terminal to ask on -- pass --temp or --lock"
 fi
 
-# A temporary password nobody has to change is not temporary.
-if [ "$PW_MODE" = temp ] && [ "$FORCE_EXPIRE" -eq 0 ]; then
+# WHO HAS TO CHANGE IT, and when. Driven by how the password was chosen, not by
+# a blanket default -- forcing a change on a password the admin just typed WITH
+# the user makes option 1 indistinguishable from option 2, which is the bug this
+# replaced.
+#
+#   typed  -> this IS the account's password. No forced change.
+#   temp   -> generated here and read off a screen. Always a forced change:
+#             a temporary password nobody has to change is not temporary.
+if [ -z "$FORCE_EXPIRE" ]; then
+  case "$PW_MODE" in temp) FORCE_EXPIRE=1 ;; *) FORCE_EXPIRE=0 ;; esac
+elif [ "$PW_MODE" = temp ] && [ "$FORCE_EXPIRE" -eq 0 ]; then
   warn "--no-expire ignored for a temporary password: it must be changed at first login"
   FORCE_EXPIRE=1
 fi
@@ -202,6 +218,12 @@ else
   ok "password set"
   if [ "$FORCE_EXPIRE" -eq 1 ]; then
     chage -d 0 "$USERNAME" && ok "must be changed at first login"
+  else
+    # Start the ageing clock from today. chpasswd already sets it, but saying so
+    # explicitly is what makes "no forced change" verifiable in `chage -l`
+    # rather than something you have to trust.
+    chage -d "$(date +%Y-%m-%d)" "$USERNAME" 2>/dev/null \
+      && ok "usable immediately -- no forced change, expiry counted from today"
   fi
 fi
 

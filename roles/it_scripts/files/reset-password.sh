@@ -17,11 +17,19 @@
 #   it-passwd <account> --no-expire
 #   it-passwd <account> --temp    generate a temporary password, no prompt
 #   it-passwd <account> --unlock-only    clear the lock + faillock, keep the password
+#   it-passwd <account> --expire         force a change at next login even for a
+#                                        password you typed
+#   it-passwd <account> --no-expire      never force one (the default for a typed
+#                                        password; ignored for a temporary one)
 set -uo pipefail
 
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
-ACCOUNT=""; FORCE_EXPIRE=1; LIST=0; UNLOCK_ONLY=0; TEMP=0
+ACCOUNT=""; LIST=0; UNLOCK_ONLY=0; TEMP=0
+# Empty until a flag sets it: the DEFAULT depends on how the password was
+# chosen. A global default is what made a typed password expire too, so
+# "set one now" and "temporary" behaved identically.
+FORCE_EXPIRE=""; 
 PW=""; PW_MODE=""
 
 if [ -t 1 ]; then
@@ -125,6 +133,11 @@ else
   die "no terminal to ask on -- pass --temp or --unlock-only"
 fi
 
+# typed -> this IS the password, no forced change. temp -> always forced: a
+# temporary password nobody has to change is not temporary.
+if [ -z "$FORCE_EXPIRE" ]; then
+  case "$PW_MODE" in temp) FORCE_EXPIRE=1 ;; *) FORCE_EXPIRE=0 ;; esac
+fi
 if [ "$PW_MODE" = temp ] && [ "$FORCE_EXPIRE" -eq 0 ]; then
   warn "--no-expire ignored for a temporary password: it must be changed at next login"
   FORCE_EXPIRE=1
@@ -156,14 +169,29 @@ if command -v faillock >/dev/null 2>&1; then
     && ok "faillock cleared ($n failed attempt(s) removed)"
 fi
 
-# An expired ACCOUNT (not password) blocks login no matter what the password is.
+# An expired ACCOUNT (not password) blocks login no matter what the password is,
+# and someone resetting a password is trying to get that person logged in. A
+# date already PAST is cleared; a future one is a deliberate end-date and is
+# only reported -- silently extending someone's access is not this tool's call.
 acct_exp=$(chage -l "$ACCOUNT" 2>/dev/null | awk -F: '/^Account expires/{sub(/^ /,"",$2); print $2}')
 if [ -n "$acct_exp" ] && [ "$acct_exp" != "never" ]; then
-  warn "account expires $acct_exp -- clear it with: chage -E -1 $ACCOUNT"
+  exp_epoch=$(date -d "$acct_exp" +%s 2>/dev/null || echo "")
+  if [ -n "$exp_epoch" ] && [ "$exp_epoch" -le "$(date +%s)" ]; then
+    chage -E -1 "$ACCOUNT" && ok "account expiry cleared (it was $acct_exp -- in the past, and blocking login)"
+  else
+    warn "account expires $acct_exp -- deliberate end-date, left alone."
+    say  "  ${DIM}Clear it if that is wrong: chage -E -1 $ACCOUNT${R}"
+  fi
 fi
 
-if [ "$UNLOCK_ONLY" -eq 0 ] && [ "$FORCE_EXPIRE" -eq 1 ]; then
-  chage -d 0 "$ACCOUNT" && ok "must be changed at next login"
+if [ "$UNLOCK_ONLY" -eq 0 ]; then
+  if [ "$FORCE_EXPIRE" -eq 1 ]; then
+    chage -d 0 "$ACCOUNT" && ok "must be changed at next login"
+  else
+    # Restart the ageing clock from today, so the reset actually resets it.
+    chage -d "$(date +%Y-%m-%d)" "$ACCOUNT" 2>/dev/null \
+      && ok "usable immediately -- no forced change, expiry counted from today"
+  fi
 fi
 
 # ---- report ------------------------------------------------------------------

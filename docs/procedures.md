@@ -1145,6 +1145,29 @@ Passwords are checked against this box's own `pwquality` policy before being set
 
 Generated passwords are 20 characters with all four character classes, and deliberately contain no `0`/`O`/`1`/`l`/`I` or `:` — it gets read off one screen and typed on another, once, by someone who did not choose it, and a misread character is indistinguishable from "the reset did not work".
 
+### What each password option does
+
+Both `it-adduser` and `it-passwd` ask the same three-way question, and the
+three answers differ in **who ends up knowing the password**:
+
+| Choice | Result |
+|---|---|
+| **1 Set one now** | You type it, and that **is** the account's password. No forced change. The account is unlocked, faillock cleared, and the ageing clock restarts from today |
+| **2 Temporary password** | Generated, shown once, stored nowhere. **Always** forced to change at first login — a temporary password nobody has to change is not temporary |
+| **3 Leave locked / Keep current** | No password is set. `it-passwd` still unlocks and clears faillock |
+
+Option 1 is for handing a password over in person. Option 2 is for one you read
+off a screen and pass on, where you should not keep knowing it.
+
+Override per run if you need to: `--expire` forces a change even on a typed
+password, `--no-expire` is the default for one (and is ignored for a temporary
+password).
+
+> `it-passwd` also **clears an account expiry that is already in the past**,
+> since that blocks login however good the password is and someone resetting a
+> password is trying to get that person logged in. A *future* end-date is
+> deliberate and is only reported.
+
 ## 3.8 Reset a password / unlock an account
 
 ```bash
