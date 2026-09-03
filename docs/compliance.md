@@ -31,6 +31,39 @@ USG audit report auto-copies to `/opt/ia/` every run (HTML + XCCDF), readable by
 sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml
 ```
 
+### ⚠️ i386 multiarch on the engineering workstations (approved deviation)
+
+**What.** `dpkg --add-architecture i386` plus ~27 32-bit runtime libraries, on
+the `development` profile only. Written by the `fpga_tools` role, gated
+`fpga_tools_enabled`, which defaults to `is_development` and is false everywhere
+else.
+
+**Why it is necessary.** AMD/Xilinx Vivado ships 32-bit JTAG cable drivers, and
+Microchip Libero SoC and Synplify carry 32-bit GUI and synthesis components.
+Neither vendor publishes a 64-bit-only build; there is no alternative and no
+workaround. The engineering mission requires both toolchains.
+
+**What it costs.** A second set of shared libraries roughly doubles the library
+surface apt tracks and patches, and the i386 packages follow the same Ubuntu
+security stream as their 64-bit counterparts (so they *are* patched, on the same
+cadence, by the same `apt upgrade`). It does not enable a 32-bit kernel
+interface that was previously off, add a service, or open a port.
+
+**Scope and containment.**
+
+- **`development` only.** Not on EMI (classified or unclassified) and not on the
+  AI nodes. A box rebuilt as another profile does not get it.
+- The 32-bit libraries are runtime dependencies of vendor GUI tools. Nothing
+  privileged links against them; no setuid binary in the baseline does.
+- Device access for the programmers is `MODE="0660"` with a group, **not** the
+  `MODE="0666"` both vendors' own instructions specify — a world-writable device
+  node would itself be a finding.
+- The vendor tool trees live in `/tools/Xilinx` and `/opt/microchip`, root-owned
+  and not writable by the engineers who use them.
+
+**Verify:** `dpkg --print-foreign-architectures`, and `sudo it-fpga status`,
+which reports the multiarch state alongside what it is there for.
+
 ### ✅ Additionally remediated by `usg_remediate` (every run, idempotent)
 
 `usg fix` is stamped run-once and its in-role audit is a mid-build snapshot. The `usg_remediate` role runs **after** USG + the firewall and closes these (none can lose password/SSH login):

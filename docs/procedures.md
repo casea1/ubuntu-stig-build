@@ -352,6 +352,142 @@ In this order:
    sudo it-clamav test          # must PASS
    ```
 
+## 2.5 Install the FPGA toolchains (development)
+
+The baseline installs **everything around** Vivado/Vitis and Libero SoC — the
+24.04-correct dependencies, i386 multiarch, the compat shims, udev rules for the
+programmer cables, the system-wide environment, and the licence server. It does
+**not** install the toolchains themselves: both are interactive, authenticate
+against a vendor account, and Xilinx alone is ~150 GB. Bake them into the image.
+
+```bash
+sudo it-fpga            # what is installed, licence, cables -- start here
+```
+
+### Install once, image, deploy
+
+Do this on the golden box, not on twelve workstations. The web installers pull
+from AMD's and Microchip's CDNs and are the first thing a filtering proxy
+breaks; the **SFD** (single-file download) installer is the reliable route.
+
+Install to **`/tools/Xilinx`** and **`/opt/microchip`**, root-owned. The vendors'
+guides tell you to install under `$HOME` to dodge permission problems — that is
+single-machine advice. On a shared workstation it means every engineer installs
+their own 30+ GB copy and the second one to log in gets nothing.
+
+```bash
+# Xilinx -- needs root to write /tools/Xilinx
+sudo ./FPGAs_AdaptiveSoCs_Unified_*_Lin64.bin
+
+# scriptable, if you would rather not click through it
+./FPGAs_AdaptiveSoCs_Unified_*_Lin64.bin --noexec --keep --target ~/xsetup
+cd ~/xsetup && ./xsetup -b AuthTokenGen && ./xsetup -b ConfigGen
+sudo ./xsetup --agree XilinxEULA,3rdPartyEULA \
+     --batch Install --config ~/.Xilinx/install_config.txt --location /tools/Xilinx
+```
+
+> **Do not run Xilinx's `installLibs.sh`.** It uses 22.04 package names
+> (`libasound2`, `compat-openssl10`) and fails on Noble. The role has already
+> installed what it was trying to install. Same for Microchip's post-install
+> script.
+
+Then the fixes that touch the vendor tree — a command, not a pull, because
+Ansible never writes into a 150 GB install unattended:
+
+```bash
+sudo it-fpga fixup      # removes Libero's bundled RHEL libstdc++, and tells
+                        # you where the Xilinx cable drivers are
+sudo it-fpga check      # ldd on vivado + Microchip's own checker, translated
+```
+
+`fixup` **renames** the bundled `libstdc++.so.6` rather than deleting it, so it
+can be put back. Without that, `libero_bin` dies with *GLIBCXX_3.4.30 not found*
+— Noble's `libicuuc.so.74` needs a newer C++ runtime than the RHEL one Libero
+ships.
+
+The Xilinx JTAG cable drivers must be installed with **no cables plugged in**,
+so `fixup` prints the command rather than running it.
+
+### The licence server
+
+Point every workstation at the FlexLM server; nothing is per-box, there is no
+MAC to register and no `License.dat` on disk:
+
+```bash
+sudo it-fpga license --server 1702@licsrv                    # Microchip + Xilinx
+sudo it-fpga license --server 1702@licsrv --xilinx 2100@licsrv   # different port/host
+sudo it-fpga license --server 1702@a,1702@b,1702@c           # redundant triad
+```
+
+That writes **both** `/etc/profile.d/*.sh` (a new shell has it at once) **and**
+`/opt/it/site.yml` (so the next pull renders the same thing). Set
+`fpga_license_microchip` / `fpga_license_xilinx` in `group_vars` instead to make
+it the fleet default and skip the per-box step entirely.
+
+`it-fpga status` probes the port and says so when it is unreachable. **A licence
+variable pointing at a host nobody can talk to looks identical to a correct one
+until someone builds.**
+
+> **FlexLM needs two ports open, not one.** `lmgrd` listens on the port you
+> configured; the *vendor daemon* (`snpslmd`, `xilinxd`) gets a **random** port
+> unless it is pinned in the licence file on the server. If the port below is
+> open and checkout still fails, that is why — pin it server-side with a `PORT=`
+> on the `DAEMON` line.
+
+A box that must license standalone uses a node-locked file instead:
+
+```bash
+sudo it-fpga license --file /path/to/License.dat
+```
+
+That installs it `0600 root:root`, replaces Microchip's `<put.hostname.here>`
+placeholder, and serves it from a **systemd unit** (`fpga-lmgrd.service`). The
+vendor guides start `lmgrd` from a sourced environment script, which launches a
+fresh daemon for every shell — that is what produces the stale daemon squatting
+on the port, and the `lsof -i :1702` dance those guides then tell you to do.
+
+### Loading the tools
+
+Every user gets the environment at login with nothing to source. The heavy
+`PATH` is opt-in, per shell:
+
+```bash
+vivado_env && vivado
+libero_env && libero
+sudo it-fpga env          # exactly what a user gets, and from which file
+```
+
+`settings64.sh` is deliberately **not** sourced for every login shell — it
+prepends a large `PATH` and `LD_LIBRARY_PATH` for users who never touch Vivado.
+
+### Programmer cables
+
+```bash
+sudo it-fpga cables       # what is plugged in, and whether it can be reached
+```
+
+> **The udev rule is not enough on its own.** USBGuard authorises a device
+> before udev ever names it, so a JTAG cable is blocked no matter what the rule
+> says. Enrol each one once — `sudo it-usb enroll`, then re-plug. Same workflow
+> as the dongles and COM adapters. `sudo it-usb blocked` shows what is being
+> refused right now.
+
+Engineers get device access through the `plugdev` (JTAG) and `dialout`
+(USB-serial console) groups. Both are in `local_users_common_groups`, so every
+standing account has them — there is no per-person `adduser` step.
+
+The rules set `MODE="0660"` with a group, **not** the `MODE="0666"` both vendors
+ask for: a world-writable device node is a finding and buys nothing over a group.
+
+### Before you trust it
+
+Prove a full flow on the golden box — synthesis, licence checkout, and
+programming a real device — before cutting the image. **These boxes run a FIPS
+kernel and both toolchains bundle their own crypto.** This fleet has been bitten
+by that twice: vLLM and Docling abort at startup without a FIPS provider, and
+ClamAV reported every file clean while scanning *zero bytes*, because FIPS
+refuses MD5. `it-fpga check` says so when FIPS is on.
+
 ---
 
 # 3. Routine operations

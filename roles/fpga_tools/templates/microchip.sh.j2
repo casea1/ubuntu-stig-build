@@ -1,0 +1,32 @@
+# Managed by the fpga_tools role -- do not edit by hand.
+# Microchip Libero SoC {{ fpga_libero_version }}.
+#
+# It does NOT start lmgrd. {% if fpga_license_mode == 'server' %}The licence comes from a server on another
+# machine.{% else %}A local daemon is a systemd unit (fpga-lmgrd.service), not
+# something a login shell starts -- one daemon, not one per shell.{% endif %}
+
+export LIBERO_INSTALL_DIR={{ fpga_libero_dir }}
+export FPGENPROG=$LIBERO_INSTALL_DIR/Libero/bin64/fpgenprog
+export LOCALE=C
+{% if fpga_license_microchip | default('') | length > 0 %}
+
+# FlexLM: <port>@<host>, comma-separated for redundant servers. Synplify reads
+# its own variable, so both are set.
+export LM_LICENSE_FILE={{ fpga_license_microchip }}
+export SNPSLMD_LICENSE_FILE={{ fpga_license_microchip }}
+{% endif %}
+
+libero_env() {
+    if [ ! -d "$LIBERO_INSTALL_DIR" ]; then
+        echo "Libero {{ fpga_libero_version }} is not installed at $LIBERO_INSTALL_DIR." >&2
+        echo "Check with: sudo it-fpga status" >&2
+        return 1
+    fi
+    PATH="$PATH:$LIBERO_INSTALL_DIR/Libero/bin:$LIBERO_INSTALL_DIR/Libero/bin64"
+    PATH="$PATH:$LIBERO_INSTALL_DIR/Synplify/bin"
+    export PATH
+    # Libero and Synplify carry 32-bit components; without this they load the
+    # 64-bit library and abort.
+    export LD_LIBRARY_PATH="/usr/lib/i386-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    echo "Libero {{ fpga_libero_version }} tools on PATH."
+}

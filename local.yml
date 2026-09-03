@@ -164,6 +164,15 @@
     - role: dev_tools               # compilers/SDKs, /opt/eng-venv, VS Code extensions, docker.io (development + emi)
       tags: [packages]
       when: is_development or is_emi
+    # FPGA vendor toolchain SCAFFOLDING -- deps, i386 multiarch, udev, the
+    # system-wide environment and the licence server. It does NOT install
+    # Vivado or Libero: those are interactive, authenticated and ~150 GB, so
+    # they are baked into the image. Runs with dev_tools, before hardening,
+    # because it needs apt and adds a foreign architecture.
+    - role: fpga_tools              # Vivado/Vitis + Libero SoC support (development only)
+      tags: [packages]
+      when: fpga_tools_enabled | default(false) | bool
+
     - role: remote_desktop          # GNOME desktop + xrdp (RDP into the dev GUI); runs before hardening. development only -- emi/baseline are local-GUI.
       tags: [packages]
       when: is_development

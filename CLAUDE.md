@@ -107,6 +107,29 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   `mount.cifs` wants different things: `domain=<AD domain>`, `domain=<the file
   server's own name>` for a LOCAL account, or guest.
 
+- **The FPGA toolchains are scaffolding-only, deliberately.** `fpga_tools`
+  (development profile only) installs the 24.04-correct deps, i386 multiarch,
+  the ncurses-5 symlinks, `/usr/tmp` 1777, the RHEL CA path, udev rules and the
+  `/etc/profile.d` environment. It NEVER installs or writes into Vivado or
+  Libero: they are interactive, authenticated, ~150 GB, and baked into the
+  image. The tree-touching fixes are `it-fpga fixup`, a command run once after
+  an install, not a pull task. Four things not to undo:
+  1. `vivado_env` / `libero_env` use UNDERSCORES. `/etc/profile.d/*.sh` is
+     sourced by **dash** for `sh` logins and dash rejects a hyphen in a function
+     name -- it passes an interactive bash test and breaks every `sh -l`.
+  2. Licences come from a FlexLM **server**; `it-fpga license --server` writes
+     both `/etc/profile.d/*.sh` and `site.yml`. A LOCAL daemon is a systemd unit,
+     never a line in an env script -- that starts one daemon per shell, which is
+     the "stale lmgrd on the port" the vendor guides work around instead of fix.
+  3. udev is `MODE="0660"` + group, not the vendors' `0666`. And **USBGuard
+     blocks the cable before udev names it** -- `it-usb enroll` is the step
+     people miss.
+  4. `dialout`/`plugdev` are in BOTH `local_groups` and
+     `local_users_common_groups`. They must be created in `local_groups`
+     because `local_accounts` runs long before `fpga_tools` and
+     `user: append:false` FAILS on a group that does not exist yet.
+  i386 multiarch is written up as an approved deviation in `compliance.md`.
+
 ## Open threads
 
 - **Rotate the leaked credentials.** The old pgvector password, Open WebUI
