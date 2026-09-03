@@ -236,3 +236,88 @@
         mode: "0644"
       loop: "{{ _human_users.stdout_lines }}"
       failed_when: false
+
+# ---------------------------------------------------------------------------
+# GNOME's first-login wizard.
+#
+# gnome-initial-setup runs once per account and asks for language, keyboard and
+# online accounts. On this fleet all three are already decided -- the image sets
+# locale and keyboard, it-adduser provisions the account, and a closed-space box
+# has no online accounts to add. So it is a wizard that asks an engineer to
+# confirm choices made for them, with an icon the desktop theme cannot resolve,
+# which is what makes it look broken.
+#
+# The documented off switch is a per-user marker file; the wizard reads it and
+# exits immediately. /etc/skel covers new accounts, the loop covers the ones
+# that already exist.
+#
+# Enumerated here rather than reusing _human_users: that fact is registered
+# inside the avatar block, which only runs when an avatar image is present, so
+# depending on it would make this silently skip on a box without one.
+# ---------------------------------------------------------------------------
+- name: "BRANDING | Human local users (for the first-login wizard)"
+  ansible.builtin.shell:
+    cmd: |
+      awk -F: '$3>=1000 && $3<65534 && $6 ~ /^\/home\// {print $1}' /etc/passwd
+      exit 0
+  register: _branding_humans
+  changed_when: false
+  check_mode: false
+
+- name: "BRANDING | GNOME first-login wizard suppressed"
+  when: not (desktop_initial_setup | default(false) | bool)
+  block:
+    - name: "BRANDING | Config dirs exist"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - /etc/skel/.config
+
+    - name: "BRANDING | Skip the wizard for future accounts (/etc/skel)"
+      ansible.builtin.copy:
+        dest: /etc/skel/.config/gnome-initial-setup-done
+        content: "yes\n"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: "BRANDING | Config dir for each existing account"
+      ansible.builtin.file:
+        path: "/home/{{ item }}/.config"
+        state: directory
+        owner: "{{ item }}"
+        group: "{{ item }}"
+        mode: "0700"
+      loop: "{{ _branding_humans.stdout_lines | default([]) }}"
+      failed_when: false
+
+    - name: "BRANDING | Skip it for accounts that already exist"
+      ansible.builtin.copy:
+        dest: "/home/{{ item }}/.config/gnome-initial-setup-done"
+        content: "yes\n"
+        owner: "{{ item }}"
+        group: "{{ item }}"
+        mode: "0644"
+      loop: "{{ _branding_humans.stdout_lines | default([]) }}"
+      failed_when: false
+
+# Turning it back ON has to REMOVE the markers -- copy only ever creates, so a
+# box that once suppressed the wizard would suppress it forever (trap 3).
+# Two plain loops rather than one clever regex_replace: the backslash escaping
+# for a backreference has to survive YAML *and* Jinja, and getting it wrong
+# yields a literal control character in the path instead of the username.
+- name: "BRANDING | Restore the wizard for future accounts"
+  ansible.builtin.file:
+    path: /etc/skel/.config/gnome-initial-setup-done
+    state: absent
+  when: desktop_initial_setup | default(false) | bool
+
+- name: "BRANDING | Restore it for accounts that already exist"
+  ansible.builtin.file:
+    path: "/home/{{ item }}/.config/gnome-initial-setup-done"
+    state: absent
+  loop: "{{ _branding_humans.stdout_lines | default([]) }}"
+  when: desktop_initial_setup | default(false) | bool
+  failed_when: false

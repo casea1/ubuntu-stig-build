@@ -469,6 +469,14 @@ ssg_release_base: "https://github.com/ComplianceAsCode/content/releases/download
 # roles/dev_tools/defaults/main.yml)
 # =============================================================================
 dev_tools_user: austin_case_adm        # owns VS Code extensions + docker group
+# GNOME's first-login wizard ("Welcome!", language, keyboard, online accounts).
+# Suppressed: these accounts are provisioned by it-adduser and the image already
+# sets language, keyboard and timezone, so the wizard asks an engineer to
+# confirm decisions that were made for them and offers online accounts a
+# closed-space box cannot use. Its broken-looking icon is the same wizard --
+# gnome-initial-setup ships no icon that the desktop theme here resolves.
+desktop_initial_setup: false
+
 eng_venv_path: /opt/eng-venv           # shared Python environment ("eng" command)
 
 # ONE copy of the VS Code extension set for the whole box, instead of one per

@@ -388,6 +388,30 @@ engineers who use it cannot modify it.
 > ```
 > `sudo it-fpga status` tells you when a tree is not where it is expected.
 
+**Do it once by hand, then automate the rest of the fleet.** Once a config
+exists there is nothing interactive left:
+
+```bash
+# on the box you installed by hand:
+sudo it-fpga install --save-config       # captures /root/.Xilinx/install_config.txt
+
+# on every other box: stage the .bin in /opt/it/installers, then
+sudo it-fpga install xilinx
+journalctl -u xilinx-install -f
+```
+
+It finds the installer in `/opt/it/installers` or on attached media, extracts
+it, and runs the batch install under **`systemd-run`** — so it survives a
+dropped SSH session, a closed terminal and a logout, records an exit code, and
+logs to the journal. A `tmux` session that vanished is exactly how the first
+attempt on this fleet ended with nobody able to say whether it had finished.
+
+Commit the saved config as `roles/fpga_tools/files/xilinx-install_config.txt`
+and every box installs the same modules and device families — which is the
+difference between a 40 GB install and a 150 GB one.
+
+The by-hand path, for the first box:
+
 ```bash
 # Xilinx -- needs root to write /tools/Xilinx
 sudo ./FPGAs_AdaptiveSoCs_Unified_*_Lin64.bin

@@ -17,6 +17,12 @@
 #   it-fpga check              run the vendors' own checkers and translate
 #   it-fpga fixup              post-install fixes on an INSTALLED tree: make it
 #                              readable by every user, drop Libero's bundled libstdc++
+#   it-fpga install xilinx     run the Xilinx installer unattended from a staged
+#                              .bin + saved config, under systemd so it survives
+#                              a dropped session. Then fixes permissions itself.
+#   it-fpga install --save-config
+#                              capture this box's install config so every other
+#                              box installs identically
 #   it-fpga cables             what is plugged in, and is it authorised
 #   it-fpga env                the environment a user gets, and how to load it
 #
@@ -498,6 +504,130 @@ cmd_fixup() {
   say ""
 }
 
+# ---------------------------------------------------------------------------
+# Unattended Xilinx install.
+#
+# The pull does NOT do this and should not: it is ~150 GB and an hour or more.
+# But there is nothing interactive left once a config exists, so it does not
+# have to be done by hand on every box either.
+#
+# systemd-run rather than tmux: it survives a dropped SSH session, a closed
+# terminal and a logout, it records an exit code, and everything lands in the
+# journal. A tmux session that vanished is exactly how the first attempt on
+# this fleet ended with nobody able to say whether it had finished.
+# ---------------------------------------------------------------------------
+INSTALLER_DIR="${FPGA_INSTALLER_DIR:-/opt/it/installers}"
+XCONFIG=/etc/stig-build/fpga/xilinx-install_config.txt
+
+find_installer() {   # -> path of the newest Xilinx .bin we can see
+  local d f
+  for d in "$INSTALLER_DIR" /media/*/* /media/* /run/media/*/* /mnt/*; do
+    [ -d "$d" ] || continue
+    f=$(find "$d" -maxdepth 2 -type f -name '*AdaptiveSoCs*Lin64.bin' 2>/dev/null | sort | tail -1)
+    [ -n "$f" ] && { printf '%s' "$f"; return 0; }
+  done
+  return 1
+}
+
+cmd_install() {
+  local what="${1:-}" bin="" cfg="$XCONFIG" save=0
+  shift 2>/dev/null || true
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --bin)    bin="${2:?--bin needs a path}"; shift 2 ;;
+      --config) cfg="${2:?--config needs a path}"; shift 2 ;;
+      *) die "unknown option: $1" ;;
+    esac
+  done
+  case "$what" in
+    --save-config) save=1 ;;
+    xilinx|"") ;;
+    libero) die "Libero has no saved-response install yet -- run its installer once by hand (procedures 2.5), then tell me and I will add it" ;;
+    *) die "usage: it-fpga install xilinx [--bin PATH] [--config PATH]" ;;
+  esac
+
+  if [ "$save" -eq 1 ]; then
+    local src=/root/.Xilinx/install_config.txt
+    [ -r "$src" ] || die "no $src -- run the installer once (or ./xsetup -b ConfigGen) first"
+    install -d -m 0755 "$(dirname "$XCONFIG")"
+    install -m 0644 "$src" "$XCONFIG"
+    ok "saved $XCONFIG"
+    say "  ${DIM}Commit it to the repo as roles/fpga_tools/files/xilinx-install_config.txt${R}"
+    say "  ${DIM}and every box installs the same modules and devices.${R}"
+    return 0
+  fi
+
+  head2 "Unattended Xilinx install"
+  if [ -z "$bin" ]; then
+    bin="$(find_installer)" || die \
+"no Xilinx installer found.
+Looked in $INSTALLER_DIR and on attached media for *AdaptiveSoCs*Lin64.bin
+Point at one:  sudo it-fpga install xilinx --bin /path/to/installer.bin"
+  fi
+  [ -r "$bin" ] || die "cannot read $bin"
+
+  if [ ! -r "$cfg" ]; then
+    bad "no install config at $cfg"
+    say "  The config decides which modules and device families are installed --"
+    say "  it is the difference between 40 GB and 150 GB, so it is not guessed."
+    say ""
+    say "  Make one on this box:"
+    say "    ${B}cd $(dirname "$bin") && ./xsetup -b ConfigGen${R}"
+    say "    ${DIM}then: sudo it-fpga install --save-config${R}"
+    say "  Or point at one you already have:  --config /path/to/install_config.txt"
+    return 1
+  fi
+
+  local dest
+  dest="$(sed -nE 's/^Destination=//p' "$cfg" | tail -1)"
+  printf '  %-12s %s\n' "installer" "$bin"
+  printf '  %-12s %s\n' "config" "$cfg"
+  printf '  %-12s %s\n' "destination" "${dest:-<not set in the config>}"
+  # df on a destination that does not exist yet answers nothing -- ask about the
+  # nearest parent that does, which is the filesystem it will land on.
+  local dfp="${dest:-/}"
+  while [ -n "$dfp" ] && [ ! -d "$dfp" ]; do dfp="$(dirname "$dfp")"; done
+  printf '  %-12s %s\n' "free space" "$(df -h "${dfp:-/}" 2>/dev/null | awk 'NR==2{print $4" on "$6}')"
+  say ""
+
+  if have_tree "$XROOT"; then
+    warn "$XROOT already has something in it ($(du -sh "$XROOT" 2>/dev/null | cut -f1))"
+    say  "  The installer may refuse, or resume. Remove it first for a clean run."
+  fi
+
+  if [ -t 0 ]; then
+    printf '  This runs for an hour or more and writes ~150 GB. Type YES to start: '
+    local a; read -r a; [ "$a" = YES ] || die "not confirmed -- nothing was started"
+  fi
+
+  # Extract once, next to the .bin, so a re-run does not unpack it again.
+  local xdir="$INSTALLER_DIR/xsetup"
+  if [ ! -x "$xdir/xsetup" ]; then
+    say "  extracting the installer..."
+    install -d -m 0755 "$INSTALLER_DIR"
+    "$bin" --noexec --keep --target "$xdir" >/dev/null 2>&1 \
+      || die "could not extract $bin"
+  fi
+  ok "installer ready at $xdir"
+
+  systemctl reset-failed xilinx-install.service 2>/dev/null || true
+  if systemd-run --unit=xilinx-install --collect \
+       --working-directory="$xdir" \
+       --property=TimeoutStartSec=infinity \
+       "$xdir/xsetup" --agree XilinxEULA,3rdPartyEULA \
+       --batch Install --config "$cfg" >/dev/null 2>&1; then
+    ok "started as xilinx-install.service"
+    say ""
+    say "  ${B}journalctl -u xilinx-install -f${R}      watch it; detach any time"
+    say "  ${B}systemctl status xilinx-install${R}      did it finish, and how"
+    say ""
+    say "  ${DIM}It survives a dropped session, a closed terminal and a logout.${R}"
+    say "  ${DIM}When it finishes:  sudo it-fpga fixup   (permissions + the rest)${R}"
+  else
+    die "systemd-run failed to start the installer"
+  fi
+}
+
 cmd_check() {
   head2 "Vendor checkers"
   local c="$LIBDIR/bin/check_linux_req"
@@ -598,6 +728,7 @@ case "${1:-status}" in
   ""|status) cmd_status ;;
   license|licence) shift; cmd_license "$@" ;;
   fixup)     cmd_fixup ;;
+  install)   shift; cmd_install "$@" ;;
   check)     cmd_check ;;
   cables)    head2 "Programmer cables"; cables_show; say "" ;;
   env)       cmd_env ;;
