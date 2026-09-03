@@ -1,0 +1,96 @@
+---
+# =============================================================================
+# Licensing. Three modes; `server` is the fleet default and the simple one.
+#
+# SERVER mode writes nothing but environment variables. No local daemon, no
+# License.dat on the box, no MAC to register per workstation, and moving the
+# licence server is one variable rather than a visit to every desk.
+#
+# LOCAL mode is for a box that must work standalone: a node-locked License.dat
+# served by an lmgrd that this role runs as a SYSTEMD UNIT rather than from a
+# login script. Launching lmgrd out of /etc/profile.d -- which is what the
+# vendor guides do -- starts a fresh daemon for every shell, which is exactly
+# how you end up with a stale one squatting on the port and a "Cannot locate
+# license file" that is really "the port is taken".
+# =============================================================================
+
+- name: "FPGA | Licence directory (root-only; License.dat is never in git)"
+  ansible.builtin.file:
+    path: "{{ fpga_license_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: fpga_license_mode == 'local'
+
+- name: "FPGA | Local licence daemon (lmgrd)"
+  when: fpga_license_mode == 'local'
+  block:
+    - name: "FPGA | Is the node-locked licence present?"
+      ansible.builtin.stat:
+        path: "{{ fpga_license_file }}"
+      register: _fpga_lic
+
+    - name: "FPGA | No licence file yet -- daemon not started"
+      ansible.builtin.debug:
+        msg: >-
+          fpga_license_mode is 'local' but {{ fpga_license_file }} does not
+          exist. Install it with `sudo it-fpga license --file /path/License.dat`.
+          Nothing is started until it is there -- an lmgrd with no licence
+          fails in a loop and buries the real error.
+      when: not _fpga_lic.stat.exists
+
+    - name: "FPGA | lmgrd systemd unit"
+      ansible.builtin.template:
+        src: fpga-lmgrd.service.j2
+        dest: /etc/systemd/system/fpga-lmgrd.service
+        owner: root
+        group: root
+        mode: "0644"
+      register: _fpga_lmgrd_unit
+      when: _fpga_lic.stat.exists
+
+    - name: "FPGA | Enable lmgrd"
+      ansible.builtin.systemd:
+        name: fpga-lmgrd.service
+        enabled: true
+        state: "{{ 'restarted' if _fpga_lmgrd_unit is changed else 'started' }}"
+        daemon_reload: true
+      when: _fpga_lic.stat.exists
+
+# Switching away from local has to STOP and REMOVE the daemon: copy/template
+# only ever create, so a box that once served its own licence would keep doing
+# it while its environment pointed at the server (gotcha 3 in reference.md).
+- name: "FPGA | Not local mode -- remove any local licence daemon"
+  when: fpga_license_mode != 'local'
+  block:
+    - name: "FPGA | Stop and disable lmgrd"
+      ansible.builtin.systemd:
+        name: fpga-lmgrd.service
+        enabled: false
+        state: stopped
+      failed_when: false
+
+    - name: "FPGA | Remove the lmgrd unit"
+      ansible.builtin.file:
+        path: /etc/systemd/system/fpga-lmgrd.service
+        state: absent
+      register: _fpga_lmgrd_gone
+
+    - name: "FPGA | Reload systemd"
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: _fpga_lmgrd_gone is changed
+
+- name: "FPGA | Licence server not set yet"
+  ansible.builtin.debug:
+    msg: >-
+      fpga_license_mode is '{{ fpga_license_mode }}' and no licence server is
+      configured, so the tools will start and refuse to build. Point them at
+      the server with:  sudo it-fpga license --server 1702@licsrv
+      (that writes both the live environment and /opt/it/site.yml, so it
+      survives the next pull).
+  when:
+    - fpga_license_mode in ['none', 'server']
+    - (fpga_license_microchip | default('') | length) == 0
+    - (fpga_license_xilinx | default('') | length) == 0

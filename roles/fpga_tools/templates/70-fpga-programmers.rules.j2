@@ -1,0 +1,22 @@
+# Managed by the fpga_tools role -- do not edit by hand.
+#
+# JTAG programmers and USB-serial adapters, readable and writable by
+# {{ fpga_device_group }} members. NOT MODE="0666": both vendors' instructions ask for a
+# world-writable device node, which is a finding on a hardened box and buys
+# nothing over a group.
+#
+# A rule here is NOT enough on its own -- USBGuard authorises the device before
+# udev ever names it. Enrol each cable once with:  sudo it-usb enroll
+{% for v in fpga_udev_vendor_ids %}
+
+# {{ v.what }}
+SUBSYSTEM=="usb", ATTRS{idVendor}=="{{ v.id }}", MODE="0660", GROUP="{{ fpga_device_group }}", TAG+="uaccess"
+SUBSYSTEM=="usb_device", ATTRS{idVendor}=="{{ v.id }}", MODE="0660", GROUP="{{ fpga_device_group }}"
+{% endfor %}
+
+# USB-serial consoles on dev boards (FTDI, CP210x, CH34x, CDC-ACM). dialout
+# owns these by Ubuntu convention; the rule is here so the group is explicit
+# rather than depending on the default.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", MODE="0660", GROUP="dialout"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", MODE="0660", GROUP="dialout"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", MODE="0660", GROUP="dialout"

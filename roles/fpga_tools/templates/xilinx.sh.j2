@@ -1,0 +1,31 @@
+# Managed by the fpga_tools role -- do not edit by hand.
+# AMD/Xilinx Vivado + Vitis {{ fpga_xilinx_version }}.
+#
+# This does NOT source settings64.sh. That script prepends a large PATH and
+# LD_LIBRARY_PATH for every login shell on the box, including for users who
+# never touch Vivado, and its LD_LIBRARY_PATH has been known to break unrelated
+# system tools. It exports the location and a `vivado_env` shortcut instead;
+# run that in the shell where you want the tools.
+export XILINX_ROOT={{ fpga_xilinx_root }}
+export XILINX_VERSION={{ fpga_xilinx_version }}
+{% if fpga_license_xilinx | default('') | length > 0 %}
+export XILINXD_LICENSE_FILE={{ fpga_license_xilinx }}
+{% endif %}
+
+# UNDERSCORE, not a hyphen. /etc/profile.d/*.sh is sourced by DASH for every
+# `sh` login, and dash rejects a hyphen in a function name -- "Bad function
+# name" printed at every login on every workstation.
+# settings64.sh is identical under Vivado/ and Vitis/, so either gives you both.
+vivado_env() {
+    local s="$XILINX_ROOT/Vivado/$XILINX_VERSION/settings64.sh"
+    [ -r "$s" ] || s="$XILINX_ROOT/Vitis/$XILINX_VERSION/settings64.sh"
+    if [ -r "$s" ]; then
+        # shellcheck disable=SC1090
+        . "$s"
+        echo "Xilinx $XILINX_VERSION tools on PATH."
+    else
+        echo "Xilinx $XILINX_VERSION is not installed under $XILINX_ROOT." >&2
+        echo "Check with: sudo it-fpga status" >&2
+        return 1
+    fi
+}

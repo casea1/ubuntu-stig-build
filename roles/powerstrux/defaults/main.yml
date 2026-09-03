@@ -30,3 +30,47 @@ powerstrux_schedule_enabled: true
 powerstrux_schedule_method: timer
 powerstrux_oncalendar: "Wed *-*-* 03:00:00"
 powerstrux_cron: "0 3 * * 3"   # 3 = Wednesday
+
+# --- Weekly offload ---------------------------------------------------------
+# The report is the point of the whole role, and until now nothing carried it
+# off the box: /etc/cron.weekly/audit-offload collects the AUDITD trail and has
+# never looked at /opt/_AuditFiles. This collects the week's report, the run
+# logs behind it and the config that produced it into ONE dated folder --
+# <YYYY>-W<nn> -- and copies that folder to a Windows file share.
+#
+# Ordered AFTER the audit rather than guessed at: powerstrux-audit.service
+# Wants= the offload and the offload is After= the audit, so the offload runs
+# when the audit finishes, however long the audit took.
+#
+# `it-powerstrux offload setup` writes all of this to /opt/it/site.yml. Set it
+# here (or in group_vars) only for a fleet-wide default.
+powerstrux_offload_enabled: true
+powerstrux_offload_dir: /opt/ia/powerstrux-offload
+powerstrux_offload_keep: 26        # week folders kept locally (~6 months)
+powerstrux_offload_window_days: 8  # 8, not 7: a run that slipped a day still counts
+
+# Extras. The auditd archive stays OFF by default -- audit-offload owns the
+# AU-4 artifact and pushes it separately. Turn it on for one folder per week.
+powerstrux_offload_include_audit: false
+powerstrux_offload_containers: false
+powerstrux_offload_container_names: []   # empty = every container
+powerstrux_offload_extra: []             # paths or globs; a directory is copied whole
+
+# The share. OFF until a site sets one -- with it off the week folder is still
+# built locally, which is what an air-gapped box carries off on media.
+# The PASSWORD never appears here: it lives in the 0600 credentials file that
+# `it-powerstrux offload creds` writes.
+powerstrux_offload_smb_enabled: false
+powerstrux_offload_smb_share: ""                  # //fileserver/audit$
+powerstrux_offload_smb_subdir: "{{ ansible_hostname | default('unknown') }}"
+powerstrux_offload_smb_credentials: /etc/stig-build/powerstrux-offload.cred
+# domain | workgroup | guest -- see the conf template for what each writes.
+powerstrux_offload_smb_auth: domain
+# vers=3.1.1 is Server 2012 R2 and later. An older NAS or Server 2008 R2 needs
+# vers=2.1; `it-powerstrux offload test` says so when the mount fails.
+powerstrux_offload_smb_options: "vers=3.1.1,sec=ntlmssp,uid=0,gid=0,file_mode=0640,dir_mode=0750"
+
+# Normally empty: the offload is chained to the audit and needs no timer of its
+# own. Set a calendar spec to ALSO run it independently (e.g. a box where the
+# reports arrive from somewhere other than the local audit).
+powerstrux_offload_oncalendar: ""

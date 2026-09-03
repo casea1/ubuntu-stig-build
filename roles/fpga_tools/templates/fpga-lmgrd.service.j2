@@ -1,0 +1,26 @@
+# Managed by the fpga_tools role -- do not edit by hand.
+#
+# A local FlexLM daemon, for a box that must license standalone. One daemon for
+# the machine -- NOT one per login shell, which is what sourcing an env script
+# that ends in `lmgrd ...` produces, and is why the vendor guides then tell you
+# to hunt a stale daemon with `lsof -i :{{ fpga_license_local_port }}`.
+[Unit]
+Description=FlexLM licence daemon (Microchip Libero)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists={{ fpga_license_file }}
+
+[Service]
+Type=simple
+ExecStart={{ fpga_libero_dir }}/Libero/bin64/lmgrd -z -c {{ fpga_license_file }}
+Restart=on-failure
+RestartSec=10
+# lmgrd wants /usr/tmp/.flexlm; the role creates /usr/tmp 1777.
+Environment=TMPDIR=/usr/tmp
+# It does not need to be root to serve a licence.
+User=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

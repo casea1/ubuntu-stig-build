@@ -42,6 +42,14 @@
         group: audit
         mode: "0750"
 
+    - name: "POWERSTRUX | Install the offload engine"
+      ansible.builtin.copy:
+        src: powerstrux-offload.sh
+        dest: "{{ powerstrux_audit_dir }}/powerstrux-offload.sh"
+        owner: root
+        group: audit
+        mode: "0750"
+
     - name: "POWERSTRUX | Short command for admins (it-powerstrux)"
       ansible.builtin.file:
         src: "{{ powerstrux_audit_dir }}/run-powerstrux.sh"
@@ -84,6 +92,144 @@
       failed_when: false
       when: _ps_desktop is changed or _ps_desktop_view is changed
 
+    # ---- weekly offload ---------------------------------------------------
+    # Placed BEFORE the schedule block so powerstrux-offload.service exists by
+    # the time powerstrux-audit.service names it in Wants=.
+    - name: "POWERSTRUX | Weekly offload"
+      when: powerstrux_offload_enabled | default(true) | bool
+      block:
+        # The script reads this, not group_vars: `it-powerstrux offload setup`
+        # has to take effect immediately, without waiting for a pull. It writes
+        # BOTH this file and /opt/it/site.yml, which is what this template
+        # renders from -- so an on-box change and a pull agree.
+        - name: "POWERSTRUX | Offload configuration"
+          ansible.builtin.template:
+            src: powerstrux-offload.conf.j2
+            dest: /etc/stig-build/powerstrux-offload.conf
+            owner: root
+            group: root
+            mode: "0640"
+
+        - name: "POWERSTRUX | Local staging dir for the week folders"
+          ansible.builtin.file:
+            path: "{{ powerstrux_offload_dir }}"
+            state: directory
+            owner: root
+            group: audit
+            mode: "0750"
+
+        # cifs-utils and smbclient are NOT installed here: base_common_packages
+        # already puts both on every box, and an apt call in this role would
+        # run under `it-pull scripts`, which is the one mode that has no apt.
+        - name: "POWERSTRUX | offload service unit"
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/powerstrux-offload.service
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              # Managed by the powerstrux role -- do not edit by hand.
+              [Unit]
+              Description=Offload the week's PowerStrux report and logs
+              Documentation=file:///etc/stig-build/powerstrux-offload.conf
+              # Ordered after the audit, and pulled in BY the audit (Wants= in
+              # powerstrux-audit.service). That is the whole ordering fix: the
+              # old audit-offload cron.weekly job could and did run before the
+              # week's report existed.
+              After=powerstrux-audit.service network-online.target
+              Wants=network-online.target
+
+              [Service]
+              Type=oneshot
+              ExecStart={{ powerstrux_audit_dir }}/powerstrux-offload.sh run --quiet
+              # Mounting a share that is not there, then copying a few hundred
+              # MB over it, is the slow part -- not the collection.
+              TimeoutStartSec=1800
+              Nice=10
+              IOSchedulingClass=idle
+          register: _ps_off_unit
+
+        # Normally absent: the offload is chained to the audit and needs no
+        # timer. A site that wants it on its own cadence sets
+        # powerstrux_offload_oncalendar and gets one as well.
+        - name: "POWERSTRUX | offload timer unit (only if given its own schedule)"
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/powerstrux-offload.timer
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              # Managed by the powerstrux role -- do not edit by hand.
+              [Unit]
+              Description=PowerStrux offload ({{ powerstrux_offload_oncalendar }})
+
+              [Timer]
+              OnCalendar={{ powerstrux_offload_oncalendar }}
+              Persistent=true
+              RandomizedDelaySec=600
+              Unit=powerstrux-offload.service
+
+              [Install]
+              WantedBy=timers.target
+          when: powerstrux_offload_oncalendar | default('') | length > 0
+          register: _ps_off_timer
+
+        - name: "POWERSTRUX | Remove the offload timer when it has no schedule"
+          ansible.builtin.systemd:
+            name: powerstrux-offload.timer
+            enabled: false
+            state: stopped
+          failed_when: false
+          when: powerstrux_offload_oncalendar | default('') | length == 0
+
+        - name: "POWERSTRUX | Drop the unused offload timer unit"
+          ansible.builtin.file:
+            path: /etc/systemd/system/powerstrux-offload.timer
+            state: absent
+          when: powerstrux_offload_oncalendar | default('') | length == 0
+
+        - name: "POWERSTRUX | Enable the offload timer"
+          ansible.builtin.systemd:
+            name: powerstrux-offload.timer
+            enabled: true
+            state: started
+            daemon_reload: true
+          when: powerstrux_offload_oncalendar | default('') | length > 0
+
+        - name: "POWERSTRUX | Reload systemd for the offload units"
+          ansible.builtin.systemd:
+            daemon_reload: true
+          when: _ps_off_unit is changed or (_ps_off_timer is defined and _ps_off_timer is changed)
+
+    # Turning the offload off has to take the units away: copy/template only
+    # ever create, so a box that once had it enabled would keep firing it.
+    - name: "POWERSTRUX | Offload disabled -- remove its units"
+      when: not (powerstrux_offload_enabled | default(true) | bool)
+      block:
+        - name: "POWERSTRUX | Stop and disable the offload units"
+          ansible.builtin.systemd:
+            name: "{{ item }}"
+            enabled: false
+            state: stopped
+          loop:
+            - powerstrux-offload.timer
+            - powerstrux-offload.service
+          failed_when: false
+
+        - name: "POWERSTRUX | Remove the offload units"
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /etc/systemd/system/powerstrux-offload.timer
+            - /etc/systemd/system/powerstrux-offload.service
+          register: _ps_off_gone
+
+        - name: "POWERSTRUX | Reload systemd after removing the offload units"
+          ansible.builtin.systemd:
+            daemon_reload: true
+          when: _ps_off_gone is changed
+
     # ---- schedule ---------------------------------------------------------
     - name: "POWERSTRUX | Scheduled audit ({{ powerstrux_schedule_method }})"
       when: powerstrux_schedule_enabled | default(true) | bool
@@ -100,6 +246,11 @@
               Description=PowerStrux system audit report
               Documentation=file://{{ powerstrux_audit_dir }}
               After=network-online.target
+              # The offload is Wants=, not Requires=, and is itself ordered
+              # After= this unit -- so it starts when the audit FINISHES,
+              # however long the audit took, and still runs if the audit
+              # failed (the log of a failed run is worth offloading too).
+              {% if powerstrux_offload_enabled | default(true) | bool %}Wants=powerstrux-offload.service{% endif %}
 
               [Service]
               Type=oneshot
@@ -157,7 +308,8 @@
               # matters, which on a laptop it does.
               SHELL=/bin/bash
               PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-              {{ powerstrux_cron }} root {{ powerstrux_audit_dir }}/run-powerstrux.sh --quiet >/dev/null 2>&1
+              # `;` not `&&`: a failed audit still has a log worth offloading.
+              {{ powerstrux_cron }} root {{ powerstrux_audit_dir }}/run-powerstrux.sh --quiet >/dev/null 2>&1{% if powerstrux_offload_enabled | default(true) | bool %}; {{ powerstrux_audit_dir }}/powerstrux-offload.sh run --quiet >/dev/null 2>&1{% endif %}
           when: powerstrux_schedule_method == 'cron'
 
         # Only one scheduler may be active, or the audit runs twice.
@@ -175,4 +327,9 @@
           (also `sudo it-powerstrux`, and "PowerStrux Audit" in the app menu).
           Scheduled {{ powerstrux_oncalendar if powerstrux_schedule_method == 'timer' else powerstrux_cron }}
           via {{ powerstrux_schedule_method }}. Config is NOT managed:
-          {{ powerstrux_script | dirname }}/PowerStruxLAConfig.txt
+          {{ powerstrux_script | dirname }}/PowerStruxLAConfig.txt.
+          {% if powerstrux_offload_enabled | default(true) | bool %}Offload:
+          {{ 'pushes to ' ~ powerstrux_offload_smb_share ~ '/' ~ powerstrux_offload_smb_subdir
+             if powerstrux_offload_smb_enabled | default(false) | bool
+             else 'stages locally in ' ~ powerstrux_offload_dir ~ ' only -- set a share with `it-powerstrux offload setup`' }}
+          {% else %}Offload: disabled.{% endif %}

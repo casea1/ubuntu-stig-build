@@ -113,6 +113,17 @@ cmd_status() {
     warn "remote push         OFF (local staging only)"
   fi
 
+  # The PowerStrux report is NOT collected here and never has been. Say so:
+  # "the offload is configured" has been read as "the reports are going out".
+  head2 "PowerStrux reports"
+  if [ -x /opt/_AuditFiles/powerstrux-offload.sh ]; then
+    say "  ${DIM}Not this job's -- it-powerstrux offload owns the weekly report folder.${R}"
+    say "  ${DIM}Check it with: it-powerstrux offload${R}"
+  else
+    warn "not collected by anything on this box (this job only takes the audit trail)"
+    say  "  ${DIM}The powerstrux role installs the report offload; run an ansible-pull.${R}"
+  fi
+
   head2 "Last run"
   if [ -r "$RUN_LOG" ]; then
     last=$(tail -5 "$RUN_LOG")

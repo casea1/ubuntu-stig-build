@@ -8,7 +8,7 @@
 #
 #   it-pull              light: config, scripts, hardening re-assert  (the default)
 #   it-pull full         + packages/images + a fresh usg audit and SCAP scan
-#   it-pull scripts      the it_scripts role alone -- fastest way to ship a script
+#   it-pull scripts      the script-shipping roles only -- fastest way to ship one
 #   it-pull ai           light + the Docker/compose stacks (ai nodes; see below)
 #   it-pull check        Ansible --check. Changes nothing, but see the warning it
 #                        prints: check mode cannot run a command, so a task that
@@ -159,7 +159,7 @@ mode_desc() {
   case "$1" in
     light)   echo "no apt, no image builds, no scan, no container touched" ;;
     full)    echo "packages and images, plus a fresh usg audit and SCAP scan (still no container touched)" ;;
-    scripts) echo "the it_scripts role only" ;;
+    scripts) echo "the it_scripts + powerstrux roles only" ;;
     ai)      echo "${Y}INCLUDES the AI runtime -- rewrites compose files and may recreate containers${R}" ;;
     check)   echo "dry run -- reports what would change, changes nothing" ;;
   esac

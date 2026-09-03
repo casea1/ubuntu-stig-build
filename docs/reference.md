@@ -123,6 +123,14 @@ sudo augenrules --check                                       # is audit.rules o
 
 **16. Blacklisting `usb-storage` does not disable USB storage.** SSG's UBTU-24-300039 covers that one module, which drives the bulk-only transport. A USB3 device that speaks USB Attached SCSI binds **`uas`**, a separate module the rule never mentions — so the scan passes green while a modern USB SSD mounts normally. `usg_remediate` blacklists both wherever `usb_storage_enabled` is false. Conversely, neither module has anything to do with **non-storage** USB: dongles, serial/COM adapters (`ftdi_sio`, `cp210x`, `ch341`, `cdc_acm`), HID and printers are unaffected, and **USBGuard** is what blocks those until `it-usb enroll` authorises them. Verify with `lsmod | grep -E '^(usb_storage|uas)'` (empty is correct) — not with the scan result.
 
+**22. Two offloads, and only one of them carries the report.** `/etc/cron.weekly/audit-offload` (`it-offload`) has only ever collected the rotated **auditd** trail — its extra-file stage takes files, not directories, and nothing pointed it at `/opt/_AuditFiles`. Its schedule is also unrelated to `powerstrux-audit.timer`, so even pointed there it could run *before* the week's report existed. The PowerStrux reports go out through **`it-powerstrux offload`** instead, which is pulled in by `powerstrux-audit.service` (`Wants=`) and ordered `After=` it, so it starts when the audit finishes however long that took. Do not "fix" this by adding `/opt/_AuditFiles` to `usg_audit_offload_extra`; it would log *unreadable, not collected* and still race.
+
+**23. A hyphen in a `/etc/profile.d` function name breaks every `sh` login.** `/etc/profile` sources `/etc/profile.d/*.sh`, and for an `sh` login that shell is **dash**, which rejects a hyphen in a function name — `Syntax error: Bad function name`, printed at every login on every workstation. Bash accepts it, so it passes an interactive test and fails for cron, scripts and `sh -l`. The FPGA helpers are `vivado_env` / `libero_env` with underscores for exactly this reason; do not "tidy" them. Test any profile.d change with `dash -c '. /etc/profile.d/x.sh'`, not just bash.
+
+**24. Starting a licence daemon from a login script starts one per shell.** Both FPGA vendors' guides end their environment script with `lmgrd -c License.dat`, then tell you to hunt the stale daemon with `lsof -i :1702` when checkout fails with *"Cannot locate license file"*. The port was simply taken by the copy the last shell started. A local daemon is `fpga-lmgrd.service`, one per machine. Better still, use a licence server and run no daemon at all.
+
+**25. FlexLM needs two ports, and one of them is random.** `lmgrd` listens where you configured it; the *vendor* daemon (`snpslmd`, `xilinxd`) picks a random port at startup unless it is pinned with `PORT=` on the `DAEMON` line in the server's licence file. Through a firewall the symptom is a licence server that answers on the port you opened and still fails every checkout. `it-fpga status` probes the `lmgrd` port and says this when it succeeds.
+
 **15. Pre-USG leftovers.** Two separate outages traced to files the current baseline neither writes nor removes, left by the old ansible-lockdown role (`/etc/audit/rules.d/stig.rules`, and `pam_faillock` lines in `common-auth` with `pam_unix`'s jump offset never recalculated). Assume there are others on any box built before the USG switch.
 
 ---
@@ -168,17 +176,19 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `it-checklist` | The org checklist, one line per item. `--fail-only`, `--out FILE`, and **`--fix`** — prints how to close every FAIL and what each MANUAL item needs from a human. Prints steps, changes nothing |
 | `it-oscap` | Run an OpenSCAP DISA-STIG scan now |
 | `it-powerstrux` | Run the PowerStrux audit. `open` copies the newest report to `~/PowerStrux-Reports/` and opens it — **necessary**, because Firefox is a snap and cannot see `/opt` (trap 18). Also `status`, `schedule "<spec>"`, `enable`/`disable`; a schedule change is persisted to `site.yml` |
+| `it-powerstrux offload` | Carry the week's report off the box. `status` (default), `setup`, `creds`, `test`, `run [--local]`, `extra list\|add\|remove`, `list`, `log [N]`, `on\|off`, `push on\|off`, `audit on\|off`, `containers on\|off`, `opts <cifs-options>`, `where`. Builds one dated folder per ISO week — the report, its run logs, `PowerStruxLAConfig.txt`, a sha256 `MANIFEST.txt` — and copies it to a Windows share. Runs **after** the scheduled audit, not on a clock of its own. Writes both `/etc/stig-build/powerstrux-offload.conf` (immediate) and `/opt/it/site.yml` (survives the pull) |
 | `it-ckl` | Build the DISA `.cklb`/`.ckl` from the scan + `answers.yml` |
 | `it-stig` | `status` / `run` / `scan` / `checklist` / `archive` — wraps the two above |
 | `it-domain` | `status`, `preflight`, `stage`, `join`, `test`, `leave`, `pam-restore`. Joins a box to AD. **`preflight` changes nothing** and checks the things that actually make joins fail: SRV records, clock skew, ports 88/389/445/464/3268, PAM health. `join` backs up the PAM stack first — `realm join` regenerates it |
 | `it-smb` | `status`, `add`, `test`, `mount\|umount [--all]`, `creds`, `remove`, `log`. Mounts Windows/SMB shares as systemd **automount** units — an unreachable server cannot delay boot, and the share mounts on first access. `test` walks cifs-utils → credentials → DNS → port 445 → a real mount attempt, and translates the cifs status code into a cause |
-| `it-offload` | `status`, `setup`, `creds`, `containers on\|off`, `push on\|off`, `test`, `log [N]`, `apply`. Configures the weekly audit/log offload — what is collected, the remote share, the credentials. Writes to `/opt/it/site.yml` so it survives `ansible-pull`; re-running is idempotent |
+| `it-offload` | `status`, `setup`, `creds`, `containers on\|off`, `push on\|off`, `test`, `log [N]`, `apply`. Configures the weekly **auditd** offload — what is collected, the remote share, the credentials. Writes to `/opt/it/site.yml` so it survives `ansible-pull`; re-running is idempotent. **It does not collect the PowerStrux reports** — that is `it-powerstrux offload` |
 | `it-clamav` | `check`, `list`, `install`, **`scan PATH...`**, `test`, `sync`, `rollback`, `revert`, `image-save`, `image-load`. `scan` proves the engine detects EICAR **before** trusting a verdict and refuses to scan if it does not — a CLEAN from an unverified engine is worse than no scan. Reports unreadable paths as PARTIAL rather than folding them into "0 infected". Records every run in `/var/log/clamav-scan.log` |
 | `it-goclassified` | Pre-classification gate. `--report` for machine checks only |
 | `it-repo` *(was `it-offline-repo` until 2026-09-01; the old symlink is removed on the next pull)* | `scan` / `load` / `enable` / `disable` / `verify` — run apt off a local repo. `scan` finds repo trees on attached media; `load` (no path needed) mirrors **only this box's release** — all of its pockets including `-security` — incrementally, packages first then indexes. `--prune`, `--dry-run`, `--suite <name>`. **`howto [topic]`** is a package-management cheat sheet — apt, dpkg, single `.deb` files, pip on 24.04, the local repo, what needs a reboot. It prints commands and runs none; `it-repo howto` alone lists every section, `it-repo howto python` one of them |
 | `it-users` | Every local account on one screen: state, days until the password expires, last login, groups. Read-only. `--all` includes system accounts, `--wide` stops truncating groups, `--csv` and `--out FILE` for evidence (the saved copy is written without colour) |
 | `it-adduser` | Create a local account. Asks the type (standard/dta/admin/audit) and derives both the username suffix and the group set from it, then **how to set the password: type one, generate a temporary one, or leave it locked**. `--temp` / `--lock` skip the question for scripted use |
 | `it-passwd` | Reset a password, unlock the account, and clear its faillock counter. Asks the same three-way question as `it-adduser`: type one, **generate a temporary one** (`--temp`), or keep the current one. `--list` shows every account's state and expiry; `--unlock-only` skips the password |
+| `it-fpga` *(development only)* | The FPGA toolchains: `status` (default — what is installed, licence reachability, cables), `license --server <port>@<host> [--xilinx …]` / `--file <License.dat>` / `--none`, `check`, `fixup`, `cables`, `env`. The baseline installs the scaffolding, **not** Vivado or Libero — those are baked into the image. A licence change writes both `/etc/profile.d/*.sh` and `/opt/it/site.yml` |
 | `it-set-classification` | Set the banner level |
 | `it-inventory` | Hardware/serials/listening ports → `/opt/it/inventory-<host>.txt` |
 | `pam-auth-check` | Can `common-auth` authenticate at all? Read-only |
@@ -215,16 +225,23 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `/opt/ia/stig/content,checklists,evidence/` | DISA's manual STIG XCCDF (shipped by `scap_scan`, no longer staged by hand), generated checklists, archived bundles |
 | `/opt/ia/goclassified/` | Pre-classification records |
 | `/opt/ia/vulnscans/` | `it-vulnscan` reports (EMI) |
-| `/opt/ia/audit-offload/` | Weekly staged audit logs |
+| `/opt/ia/audit-offload/` | Weekly staged audit logs (`it-offload`) |
+| `/opt/ia/powerstrux-offload/<YYYY>-W<nn>/` | The week's PowerStrux folder: report, run logs, config, `MANIFEST.txt`. Always kept locally even after a successful push. `root:audit 0750`, newest 26 weeks |
+| `/opt/_AuditFiles/` | PowerStrux reports and `logs/`. `root:audit 2770` — reading needs the `audit` group. Also holds `run-powerstrux.sh` and `powerstrux-offload.sh` |
 | `/opt/it/` | IT admin area, same ownership |
 | `/opt/it/scripts/` | The `it-*` scripts |
 | `/opt/it/site.yml` | **Per-node overrides. Beats `group_vars`.** Never in git |
 | `/opt/it/clamavsigs/` | Drop ClamAV signature archives here |
 | `/opt/it/apt-sources-backup/` | Online apt sources parked by `it-repo enable` |
 | `/opt/dta/incoming,outgoing,logs/` | Data-transfer staging and records (EMI) |
+| `/tools/Xilinx`, `/opt/microchip` | FPGA toolchains (development). **Not managed by Ansible** — baked into the image or installed by hand. Root-owned, NOT under a home directory: `$HOME` is the vendors' single-machine advice and means one 30+ GB copy per engineer |
+| `/etc/profile.d/{xilinx,microchip}.sh` | The FPGA environment every user gets at login. `vivado_env` / `libero_env` load the heavy `PATH` per shell |
+| `/etc/stig-build/fpga/License.dat` | Node-locked FPGA licence, `0600 root:root`. Absent when a licence server is used, which is the fleet default |
 | `/opt/stacks/<stack>/` | AI compose stacks — Dockge watches this dir |
 | `/srv/repo/` | The carried offline apt repo. `root:root 0755` |
-| `/etc/stig-build/` | Root-only. Generated `*.pw`, the GRUB hash, and `profile` — which records the deployment profile and the **baseline revision** this box last pulled |
+| `/etc/stig-build/` | Root-only. Generated `*.pw`, the GRUB hash, `profile` — which records the deployment profile and the **baseline revision** this box last pulled — and the offload configs/credentials |
+| `/etc/stig-build/powerstrux-offload.conf` | What `it-powerstrux offload` reads. Rendered from `site.yml` by the pull; the commands write both |
+| `/etc/stig-build/powerstrux-offload.cred` | The share service account, `0600 root:root`. Never in git, never in `site.yml` |
 | `/etc/luks/initial-passphrase` | Read once to bind the TPM, then deleted |
 | `/var/lib/clamav-container/` | The containerised scanner's own signature database |
 
@@ -267,6 +284,20 @@ The ones worth knowing:
 | `scap_scan_on_pull` | `build` | Same for `oscap xccdf eval`. A routine pull runs **no** benchmark evaluation; evidence comes from the first build, the weekly `oscap-scan.timer`, and `it-stig run` |
 | `scap_ckl_on_pull` | true | Build the `.cklb` from the scan that just ran. Now also requires that a scan actually ran this pull — without one it would rewrite an identical checklist every time |
 | `local_accounts_enabled` | true | Org users/groups/ACL'd folders |
+| `powerstrux_offload_enabled` | true | Build a week folder after each scheduled audit. With the share off it stages locally only — which is what an air-gapped box carries out on media |
+| `powerstrux_offload_window_days` | 8 | How far back "this week" reaches. 8 not 7, so a run the `Persistent=true` timer caught up late is still collected |
+| `powerstrux_offload_keep` | 26 | Week folders held locally before pruning (~6 months) |
+| `powerstrux_offload_smb_enabled` | false | Copy each week folder to a Windows share |
+| `powerstrux_offload_smb_share` / `_subdir` | — / hostname | `//fileserver/audit$` and the per-box folder under it |
+| `powerstrux_offload_smb_auth` | `domain` | `domain` \| `workgroup` \| `guest`. Decides what `mount.cifs` gets in `domain=` — an AD domain, or the **file server's own name** for a local account |
+| `powerstrux_offload_smb_options` | `vers=3.1.1,sec=ntlmssp,…` | An older NAS or Server 2008 R2 needs `vers=2.1`; `it-powerstrux offload test` says so when the mount fails |
+| `powerstrux_offload_include_audit` / `_containers` / `_extra` | false / false / `[]` | Also put the auditd archive, `docker logs`, or named paths/globs in the week folder. A directory in `_extra` is copied whole |
+| `powerstrux_offload_oncalendar` | `""` | Empty = chained to the audit run, which is what you want. Set a calendar spec only to give the offload a schedule of its own as well |
+| `fpga_tools_enabled` | development only | The FPGA scaffolding. i386 multiarch is an approved deviation on the engineering workstations and has no business on EMI or an AI node |
+| `fpga_license_mode` | `none` | `server` \| `local` \| `none`. `server` is the fleet answer: no local daemon, no per-box `License.dat`, no MAC registration |
+| `fpga_license_microchip` / `_xilinx` | — | `<port>@<host>`, comma-separated for a redundant triad. Set here for a fleet default, or per box with `it-fpga license` |
+| `fpga_device_group` | `plugdev` | Who may talk to the JTAG programmers. `dialout` covers USB-serial consoles; both are in `local_users_common_groups` |
+| `fpga_ncurses5_shim` | true | Symlink `libtinfo.so.5`/`libncurses.so.5` onto the ncurses 6 sonames. Vivado hangs at *"Generating installed device list"* without it |
 | `ai_model_fetch` | — | Fetch model weights during the build |
 | `ai_compose_deploy` | — | Bring the stacks up during the build |
 

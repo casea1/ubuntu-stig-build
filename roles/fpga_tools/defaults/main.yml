@@ -1,0 +1,203 @@
+---
+# =============================================================================
+# fpga_tools -- everything AROUND the AMD/Xilinx and Microchip FPGA toolchains.
+#
+# It does NOT install the toolchains. Both are interactive, authenticated
+# (`.bin` web installers that log in to a vendor account) and ~150 GB for
+# Xilinx alone, so they are installed once on a golden box and baked into the
+# image, or run by hand from the SFD installer. Nothing here copies or
+# templates into the tool trees either -- Ansible's copy/template overwrite
+# on-box edits (gotcha 2), which is the last thing you want pointed at a
+# 150 GB install.
+#
+# What this DOES own is the part that is deterministic, per-box, and easy to
+# get wrong: the 24.04-correct dependency set, the i386 multiarch enable, the
+# compat shims the vendors' own post-install scripts still get wrong on Noble,
+# the udev rules, the system-wide environment, and the licence configuration.
+#
+# development profile only. i386 multiarch roughly doubles the library attack
+# surface and is an approved deviation on the engineering workstations -- it
+# has no business on EMI or on an AI node.
+# =============================================================================
+fpga_tools_enabled: "{{ is_development | default(false) | bool }}"
+
+# ---- what is installed, and where it lives ---------------------------------
+# NOT created by this role -- the tree is baked into the image or installed by
+# hand. These paths are what the environment scripts and `it-fpga status`
+# point at, so they must match where the installers actually put things.
+#
+# /opt and /tools, NOT a home directory. The vendors' own guides say to install
+# under $HOME to dodge permission problems on a personal machine; on a shared
+# workstation that means every engineer installs their own 30+ GB copy and the
+# second one to log in gets nothing.
+fpga_xilinx_enabled: true
+fpga_xilinx_root: /tools/Xilinx
+fpga_xilinx_version: "2024.2"
+
+fpga_microchip_enabled: true
+fpga_microchip_root: /opt/microchip
+fpga_libero_version: "2025.1"
+fpga_libero_dir: "{{ fpga_microchip_root }}/Libero_SoC_{{ fpga_libero_version }}"
+
+# ---- licensing -------------------------------------------------------------
+# mode: server | local | none
+#   server -- a FlexLM licence server on another machine. The workstation gets
+#             <port>@<host> in its environment and runs NO local daemon. This
+#             is the fleet default: nothing per-box, no MAC registration, no
+#             License.dat on disk, and a licence change is one variable.
+#   local  -- a node-locked License.dat on this box, served by a local lmgrd
+#             run as a systemd unit. Only for a box that must work standalone.
+#   none   -- install the scaffolding, configure no licence yet.
+#
+# `it-fpga license` sets all of this at runtime and writes BOTH the live conf
+# and /opt/it/site.yml, so a change takes effect at once and survives the pull.
+fpga_license_mode: none
+
+# <port>@<host>. Microchip/Synplify default to 1702, Xilinx to 2100 -- but the
+# port is whatever the server was configured with, so both are explicit.
+# Redundant servers are a comma-separated list in FlexLM, e.g.
+#   fpga_license_microchip: "1702@lic1,1702@lic2,1702@lic3"
+fpga_license_microchip: ""      # LM_LICENSE_FILE / SNPSLMD_LICENSE_FILE
+fpga_license_xilinx: ""         # XILINXD_LICENSE_FILE
+
+# local mode only: where the node-locked file lives. Root-owned; never in git.
+fpga_license_file: /etc/stig-build/fpga/License.dat
+fpga_license_local_port: 1702
+
+# ---- device access ---------------------------------------------------------
+# The group that may talk to JTAG programmers and USB-serial adapters. Members
+# get the cable device nodes; NOT world-writable -- the vendors' instructions
+# say MODE="0666", which on a STIG box is a finding and is not necessary.
+fpga_device_group: plugdev
+
+# USB vendor IDs the udev rules cover.
+#   0x1514  Microsemi/Microchip  (FlashPro4/5/6)
+#   0x0403  FTDI                 (FlashPro3, and most third-party JTAG cables)
+#   0x03fd  Xilinx               (Platform Cable USB, Digilent-on-Xilinx VID)
+#   0x1443  Digilent             (HS2/HS3, JTAG-SMT2 -- what most boards carry)
+fpga_udev_vendor_ids:
+  - { id: "1514", what: "Microchip FlashPro" }
+  - { id: "0403", what: "FTDI (FlashPro3, generic JTAG)" }
+  - { id: "03fd", what: "Xilinx Platform Cable USB" }
+  - { id: "1443", what: "Digilent JTAG" }
+
+# ---- 24.04 compatibility ---------------------------------------------------
+# Vivado links against libtinfo.so.5 / libncurses.so.5, which 24.04 does not
+# ship; without them it hangs at "Generating installed device list". The fix is
+# a symlink onto the ncurses 6 sonames, NOT the Jammy .deb: pulling a package
+# from another Ubuntu release onto a STIG box is a supply-chain problem, and it
+# is unreachable the moment the box goes offline.
+#
+# Set false and check first -- confirm the shim is actually needed for your
+# version before creating it. `it-fpga check` reports whether it is in use.
+fpga_ncurses5_shim: true
+
+# /usr/tmp is where FlexLM's lmgrd creates .flexlm. It does not exist on Ubuntu.
+# root:root 1777 (sticky, same semantics as /tmp) -- NOT chowned to one user,
+# which is the single-user advice that locks out the second engineer.
+fpga_usr_tmp: true
+
+# Libero looks for RHEL's CA bundle path.
+fpga_rhel_ca_symlink: true
+
+# Libero 2025.1 ships a RHEL-targeted libstdc++ that is OLDER than the one
+# Noble's libicuuc.so.74 needs, so libero_bin dies with GLIBCXX_3.4.30 not
+# found. Deleting the bundled copy forces it onto the system library.
+# Done by `it-fpga fixup`, not by the role: it modifies the vendor tree, and
+# this role deliberately never writes there unattended.
+
+# ---- dependency sets -------------------------------------------------------
+# Corrected for 24.04. The vendors' own post-install scripts (Xilinx
+# installLibs.sh, Microchip's setup script) still use 22.04-era names and fail
+# on the t64 rename -- libasound2 -> libasound2t64, libgtk2.0-0 -> libgtk2.0-0t64.
+# Do not run those scripts; this list is what they were trying to install.
+fpga_packages_common:
+  - build-essential
+  - gcc-multilib
+  - g++
+  - make
+  - automake
+  - autoconf
+  - libtool
+  - net-tools
+  - unzip
+  - locales
+  - lsb-release
+
+# AMD/Xilinx Vivado + Vitis.
+fpga_packages_xilinx:
+  - libncurses-dev
+  - libtinfo-dev
+  - libx11-6
+  - libxext6
+  - libxrender1
+  - libxtst6
+  - libxi6
+  - libxft2
+  - libsm6
+  - libice6
+  - libfontconfig1
+  - libfreetype6
+  - libgtk2.0-0t64
+  - libcanberra-gtk-module
+  - libnss3
+  - libnspr4
+  - libasound2t64
+  - libegl1
+  - libglu1-mesa
+  - libgbm1
+  - libxcb-xinerama0
+  - libxcb-randr0
+  - libxcb-xtest0
+  - libxcb-shape0
+  - libxcb-xkb1
+  - libxkbcommon-x11-0
+  - libftdi1-2
+  - libusb-1.0-0
+  - xvfb
+
+# 32-bit half. Vivado's cable drivers and parts of Libero/Synplify are still
+# i386, which is why multiarch has to be on at all.
+fpga_packages_i386:
+  - lib32stdc++6
+  - libc6:i386
+  - zlib1g:i386
+  - libx11-6:i386
+  - libx11-xcb1:i386
+  - libxext6:i386
+  - libxrender1:i386
+  - libfontconfig1:i386
+  - libfreetype6:i386
+  - libsm6:i386
+  - libice6:i386
+  - libgtk2.0-0t64:i386
+  - libcanberra-gtk-module:i386
+  - libxft2:i386
+  - libdrm2:i386
+  - libexpat1:i386
+  - libglapi-mesa:i386
+  - libglib2.0-0t64:i386
+  - libgl1:i386
+  - libuuid1:i386
+  - libxau6:i386
+  - libxcb-dri2-0:i386
+  - libxcb-glx0:i386
+  - libxcb1:i386
+  - libxdamage1:i386
+  - libxfixes3:i386
+  - libxxf86vm1:i386
+
+# Microchip Libero SoC + Synplify.
+fpga_packages_microchip:
+  - libflac12t64
+  - libpcre3
+  - libxcb-xinerama0
+  - libxcb-xinput0
+  - ksh
+  - libfreetype-dev
+  - libharfbuzz-dev
+  - xfonts-intl-asian
+  - xfonts-intl-chinese
+  - xfonts-intl-chinese-big
+  - xfonts-intl-japanese
+  - xfonts-intl-japanese-big

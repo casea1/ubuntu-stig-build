@@ -44,7 +44,8 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   `it-stig run`. The `usg_harden`-stage audit is skipped whenever
   `usg_remediate` will re-audit. Role tags `packages` and `scripts` exist
   alongside `ai-runtime`/`ai-gpu`; `it-pull` is the only place the skip-tag
-  strings are written down.
+  strings are written down. `scripts` covers `it_scripts` AND `powerstrux`, so
+  `it-pull scripts` ships `it-powerstrux` and its offload too.
 - **The deployment profile is persisted in `/opt/it/site.yml`**, loaded above
   `group_vars` by `local.yml`'s pre_tasks. It has to be: `group_vars` defaults
   to `development`, so any `ansible-pull` without `-e deployment_profile=` used
@@ -86,6 +87,48 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
    database only. On an existing box they must be changed in the UI.
 8. **Stacks behind a `profiles:` tag read "n/a" in Dockge.** That is correct
    behaviour for the run-and-exit tools, not a fault.
+
+- **Two offloads, deliberately.** `/etc/cron.weekly/audit-offload` (`it-offload`)
+  carries the **auditd** trail and nothing else -- that is the AU-4 artifact an
+  assessor opens. The PowerStrux reports go out through `it-powerstrux offload`,
+  which builds one folder per ISO week (`/opt/ia/powerstrux-offload/<YYYY>-W<nn>/`:
+  report + run logs + `PowerStruxLAConfig.txt` + a sha256 `MANIFEST.txt` naming
+  host/profile/baseline) and copies it to an SMB share. Do NOT merge them by
+  adding `/opt/_AuditFiles` to `usg_audit_offload_extra`: that stage copies
+  files with `cp -p` in a glob loop, so a directory logs "unreadable", and the
+  two schedules are unrelated so it can run before the week's report exists.
+  The new one is ordered instead -- `powerstrux-audit.service` has
+  `Wants=powerstrux-offload.service` and the offload is `After=` it, so it
+  starts when the audit FINISHES however long that took, and still runs when
+  the audit failed. Its settings are written to BOTH
+  `/etc/stig-build/powerstrux-offload.conf` (immediate) and `/opt/it/site.yml`
+  (survives the pull); the share password only ever reaches the 0600
+  `powerstrux-offload.cred`. Windows auth is a three-way choice because
+  `mount.cifs` wants different things: `domain=<AD domain>`, `domain=<the file
+  server's own name>` for a LOCAL account, or guest.
+
+- **The FPGA toolchains are scaffolding-only, deliberately.** `fpga_tools`
+  (development profile only) installs the 24.04-correct deps, i386 multiarch,
+  the ncurses-5 symlinks, `/usr/tmp` 1777, the RHEL CA path, udev rules and the
+  `/etc/profile.d` environment. It NEVER installs or writes into Vivado or
+  Libero: they are interactive, authenticated, ~150 GB, and baked into the
+  image. The tree-touching fixes are `it-fpga fixup`, a command run once after
+  an install, not a pull task. Four things not to undo:
+  1. `vivado_env` / `libero_env` use UNDERSCORES. `/etc/profile.d/*.sh` is
+     sourced by **dash** for `sh` logins and dash rejects a hyphen in a function
+     name -- it passes an interactive bash test and breaks every `sh -l`.
+  2. Licences come from a FlexLM **server**; `it-fpga license --server` writes
+     both `/etc/profile.d/*.sh` and `site.yml`. A LOCAL daemon is a systemd unit,
+     never a line in an env script -- that starts one daemon per shell, which is
+     the "stale lmgrd on the port" the vendor guides work around instead of fix.
+  3. udev is `MODE="0660"` + group, not the vendors' `0666`. And **USBGuard
+     blocks the cable before udev names it** -- `it-usb enroll` is the step
+     people miss.
+  4. `dialout`/`plugdev` are in BOTH `local_groups` and
+     `local_users_common_groups`. They must be created in `local_groups`
+     because `local_accounts` runs long before `fpga_tools` and
+     `user: append:false` FAILS on a group that does not exist yet.
+  i386 multiarch is written up as an approved deviation in `compliance.md`.
 
 ## Open threads
 

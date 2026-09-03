@@ -841,6 +841,14 @@ local_groups:
   - dta
   - audit
   - sentry
+  # Not org access groups -- hardware access, and they are HERE rather than in
+  # the role that needs them because of ordering. local_accounts runs long
+  # before fpga_tools, and `user: append:false` FAILS on a group that does not
+  # exist yet, which would break account creation on every profile. Creating
+  # them here is idempotent and costs nothing where the devices are absent.
+  # dialout ships with Ubuntu; plugdev does not on a minimal install.
+  - dialout
+  - plugdev
 
 # Standing accounts. Each is created with a LOCKED password ('!') -- the account
 # exists but cannot be logged into until an admin sets one per-machine at deploy:
@@ -867,6 +875,14 @@ local_users:
 # workspace) in addition to their role groups. Set to [] to disable.
 local_users_common_groups:
   - sentry
+  # Hardware access on the engineering workstations. dialout is USB-serial
+  # consoles on dev boards; plugdev is the JTAG programmers (fpga_device_group,
+  # and the udev rules fpga_tools writes name it). Adding them here is what
+  # stops `sudo adduser $USER dialout` being a per-person support ticket --
+  # append:false makes the merged set authoritative, so a re-run re-asserts it.
+  # Harmless on the other profiles: the groups exist, the devices do not.
+  - dialout
+  - plugdev
 
 # ---- Automation accounts ----------------------------------------------------
 # Non-human accounts created exactly like the human ones (locked password, own

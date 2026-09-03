@@ -1,0 +1,196 @@
+---
+# =============================================================================
+# fpga_tools -- the scaffolding around Vivado/Vitis and Libero SoC.
+#
+# The tool trees themselves are NOT installed or managed here. See defaults for
+# why. Everything below is idempotent, survives a reimage, and is the part that
+# is easy to get wrong by hand on twelve workstations.
+# =============================================================================
+
+- name: "FPGA | Not a development box -- nothing to do"
+  ansible.builtin.debug:
+    msg: >-
+      fpga_tools is development-profile only (i386 multiarch is an approved
+      deviation there and nowhere else). Profile is
+      {{ deployment_profile | default('unknown') }}.
+  when: not (fpga_tools_enabled | bool)
+
+- name: "FPGA | FPGA toolchain support"
+  when: fpga_tools_enabled | bool
+  block:
+
+    # ---- i386 multiarch ---------------------------------------------------
+    # An approved deviation, documented in compliance.md. Vivado's cable
+    # drivers and parts of Libero/Synplify are 32-bit and there is no
+    # alternative build. Recorded rather than assumed.
+    - name: "FPGA | Which architectures does dpkg know about?"
+      ansible.builtin.command: dpkg --print-foreign-architectures
+      register: _fpga_arches
+      changed_when: false
+      check_mode: false          # a read-only probe; check mode would skip it
+                                 # and the task below would act on no answer
+
+    - name: "FPGA | Enable i386 multiarch (32-bit vendor components)"
+      ansible.builtin.command: dpkg --add-architecture i386
+      when: "'i386' not in _fpga_arches.stdout_lines"
+      register: _fpga_arch_added
+
+    - name: "FPGA | Refresh apt after adding i386"
+      ansible.builtin.apt:
+        update_cache: true
+      when: _fpga_arch_added is changed
+
+    # ---- packages ---------------------------------------------------------
+    # One apt call, not four: each transaction re-resolves the whole dependency
+    # graph, and with the i386 half that is slow enough to notice.
+    - name: "FPGA | Vendor dependencies (24.04-correct names)"
+      ansible.builtin.apt:
+        name: "{{ (fpga_packages_common
+                   + (fpga_packages_xilinx if fpga_xilinx_enabled | bool else [])
+                   + (fpga_packages_microchip if fpga_microchip_enabled | bool else [])
+                   + fpga_packages_i386) | unique }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    # ---- compatibility shims ----------------------------------------------
+    # Vivado wants libtinfo.so.5 / libncurses.so.5. Symlinks onto the ncurses 6
+    # sonames, NOT the Jammy .debs: a package from another Ubuntu release on a
+    # STIG box is a supply-chain problem and is unreachable once the box is
+    # offline. If the ABI assumption ever stops holding, Vivado fails loudly at
+    # load rather than silently -- `ldd` on the vivado binary says so.
+    - name: "FPGA | ncurses 5 compatibility symlinks (Vivado)"
+      ansible.builtin.file:
+        src: "/usr/lib/x86_64-linux-gnu/lib{{ item }}.so.6"
+        dest: "/usr/lib/x86_64-linux-gnu/lib{{ item }}.so.5"
+        state: link
+        force: false
+      loop: [tinfo, ncurses]
+      when:
+        - fpga_xilinx_enabled | bool
+        - fpga_ncurses5_shim | bool
+
+    # FlexLM creates /usr/tmp/.flexlm. Ubuntu has no /usr/tmp.
+    # root:root 1777 -- the sticky bit is what makes it safe to share, and is
+    # what the "chown $USER /usr/tmp" advice gets wrong: that locks out every
+    # engineer but the one who ran it.
+    - name: "FPGA | /usr/tmp for FlexLM (root:root, sticky)"
+      ansible.builtin.file:
+        path: /usr/tmp
+        state: directory
+        owner: root
+        group: root
+        mode: "1777"
+      when: fpga_usr_tmp | bool
+
+    # Libero looks for RHEL's CA bundle path and cannot reach the licence
+    # server or the vendor's package host without it.
+    - name: "FPGA | RHEL CA bundle path (Libero)"
+      ansible.builtin.file:
+        path: /etc/pki/tls/certs
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when:
+        - fpga_microchip_enabled | bool
+        - fpga_rhel_ca_symlink | bool
+
+    - name: "FPGA | RHEL CA bundle symlink (Libero)"
+      ansible.builtin.file:
+        src: /etc/ssl/certs/ca-certificates.crt
+        dest: /etc/pki/tls/certs/ca-bundle.crt
+        state: link
+        force: true
+      when:
+        - fpga_microchip_enabled | bool
+        - fpga_rhel_ca_symlink | bool
+
+    # ---- device access ----------------------------------------------------
+    # MODE="0660" and a group, NOT the MODE="0666" both vendors' instructions
+    # ask for. A world-writable device node on a STIG box is a finding, and it
+    # buys nothing a group does not.
+    - name: "FPGA | Device-access group exists ({{ fpga_device_group }})"
+      ansible.builtin.group:
+        name: "{{ fpga_device_group }}"
+        state: present
+
+    - name: "FPGA | udev rules for JTAG programmers"
+      ansible.builtin.template:
+        src: 70-fpga-programmers.rules.j2
+        dest: /etc/udev/rules.d/70-fpga-programmers.rules
+        owner: root
+        group: root
+        mode: "0644"
+      register: _fpga_udev
+
+    - name: "FPGA | Reload udev"
+      ansible.builtin.shell: udevadm control --reload-rules && udevadm trigger
+      changed_when: false
+      when: _fpga_udev is changed
+
+    # ---- environment ------------------------------------------------------
+    # /etc/profile.d, not a home directory: every user gets it with nothing to
+    # source by hand, and it is one file to change when a version moves.
+    - name: "FPGA | System-wide environment (Xilinx)"
+      ansible.builtin.template:
+        src: xilinx.sh.j2
+        dest: /etc/profile.d/xilinx.sh
+        owner: root
+        group: root
+        mode: "0644"
+      when: fpga_xilinx_enabled | bool
+
+    - name: "FPGA | System-wide environment (Microchip)"
+      ansible.builtin.template:
+        src: microchip.sh.j2
+        dest: /etc/profile.d/microchip.sh
+        owner: root
+        group: root
+        mode: "0644"
+      when: fpga_microchip_enabled | bool
+
+    - name: "FPGA | Remove the environment for a toolchain that is switched off"
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop:
+        - { path: /etc/profile.d/xilinx.sh,   keep: "{{ fpga_xilinx_enabled | bool }}" }
+        - { path: /etc/profile.d/microchip.sh, keep: "{{ fpga_microchip_enabled | bool }}" }
+      loop_control:
+        label: "{{ item.path }}"
+      when: not item.keep
+
+    # ---- licensing --------------------------------------------------------
+    - name: "FPGA | Licence configuration"
+      ansible.builtin.import_tasks: license.yml
+
+    # ---- the helper -------------------------------------------------------
+    # it_scripts owns /usr/local/sbin; this one lives with the role because it
+    # is meaningless without it, and is removed with it.
+    - name: "FPGA | Install it-fpga"
+      ansible.builtin.copy:
+        src: fpga.sh
+        dest: "{{ it_scripts_dir | default('/opt/it/scripts') }}/fpga.sh"
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: "FPGA | Short command (it-fpga)"
+      ansible.builtin.file:
+        src: "{{ it_scripts_dir | default('/opt/it/scripts') }}/fpga.sh"
+        dest: /usr/local/sbin/it-fpga
+        state: link
+        force: true
+
+    - name: "FPGA | Where things are"
+      ansible.builtin.debug:
+        msg: >-
+          FPGA scaffolding in place.
+          {{ 'Xilinx ' ~ fpga_xilinx_version ~ ' expected at ' ~ fpga_xilinx_root ~ '. '
+             if fpga_xilinx_enabled | bool else '' }}
+          {{ 'Libero ' ~ fpga_libero_version ~ ' expected at ' ~ fpga_libero_dir ~ '. '
+             if fpga_microchip_enabled | bool else '' }}
+          Licence mode: {{ fpga_license_mode }}.
+          The toolchains themselves are NOT installed by Ansible -- check with
+          `sudo it-fpga status`, set the licence server with `sudo it-fpga license`.
