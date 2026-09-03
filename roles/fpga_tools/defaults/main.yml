@@ -232,6 +232,17 @@ fpga_packages_microchip:
   - libpcre3
   - libxcb-xinerama0
   - libxcb-xinput0
+  # Libero 2025.1's installer is Qt6, and Qt6's xcb platform plugin needs these
+  # or it will not start at all. libxcb-cursor0 is the one that actually bit --
+  # the installer died with "libxcb-cursor.so.0: cannot open shared object
+  # file" before drawing anything. The rest are the same plugin's other xcb
+  # dependencies, added together so the next attempt does not fail on the next
+  # one in the list.
+  - libxcb-cursor0
+  - libxcb-icccm4
+  - libxcb-image0
+  - libxcb-keysyms1
+  - libxcb-render-util0
   - ksh
   - libfreetype-dev
   - libharfbuzz-dev

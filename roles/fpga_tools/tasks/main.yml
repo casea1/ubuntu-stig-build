@@ -246,6 +246,10 @@
     # ---- the helper -------------------------------------------------------
     # it_scripts owns /usr/local/sbin; this one lives with the role because it
     # is meaningless without it, and is removed with it.
+    # Tagged `scripts` as well as the role's `packages`, so shipping a change to
+    # it-fpga is a light pull. Without this every fix to the command needed a
+    # `full` pull -- apt, images and all -- to reach a box, which is how
+    # `it-fpga install` came to exist in the repo and not on dev-15.
     - name: "FPGA | Install it-fpga"
       ansible.builtin.copy:
         src: fpga.sh
@@ -253,6 +257,7 @@
         owner: root
         group: root
         mode: "0750"
+      tags: [scripts]
 
     - name: "FPGA | Short command (it-fpga)"
       ansible.builtin.file:
@@ -260,6 +265,7 @@
         dest: /usr/local/sbin/it-fpga
         state: link
         force: true
+      tags: [scripts]
 
     - name: "FPGA | Where things are"
       ansible.builtin.debug:
