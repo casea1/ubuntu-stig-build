@@ -128,6 +128,11 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
      `local_users_common_groups`. They must be created in `local_groups`
      because `local_accounts` runs long before `fpga_tools` and
      `user: append:false` FAILS on a group that does not exist yet.
+  5. The i386 list is a WISH. Ubuntu publishes only a curated i386 subset on
+     24.04, several vendor-listed libraries are absent, and ONE uninstallable
+     name fails the whole apt transaction -- that stopped a pull on dev-14 and
+     took the 64-bit half with it. The role probes `apt-cache policy` and
+     installs what exists; the 64-bit list stays strict. See trap 26.
   i386 multiarch is written up as an approved deviation in `compliance.md`.
 
 ## Open threads
