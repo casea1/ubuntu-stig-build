@@ -158,6 +158,15 @@ fpga_packages_xilinx:
 
 # 32-bit half. Vivado's cable drivers and parts of Libero/Synplify are still
 # i386, which is why multiarch has to be on at all.
+#
+# THIS LIST IS A WISH, NOT A GUARANTEE. Ubuntu stopped publishing a full i386
+# archive after 19.10; 24.04 ships a curated subset, and several of these are
+# not built for i386 on noble at all -- libgtk2.0-0t64:i386 pulls
+# libcups2t64:i386 -> libgnutls30t64:i386, which does not exist. The role asks
+# apt what it can actually install and installs only that, because one
+# uninstallable name fails the WHOLE transaction and would take the 64-bit half
+# down with it. What was skipped is reported by the pull and by `it-fpga check`.
+# Do not "fix" a missing one by pinning a version or pulling a foreign .deb.
 fpga_packages_i386:
   - lib32stdc++6
   - libc6:i386

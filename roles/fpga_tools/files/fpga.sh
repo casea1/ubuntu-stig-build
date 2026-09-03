@@ -416,6 +416,40 @@ cmd_check() {
     fi
   fi
 
+  # The i386 half. Ubuntu 24.04 publishes only a curated subset for i386, so
+  # some vendor dependencies cannot be installed at all -- the pull says so
+  # once, and this says so whenever anyone asks.
+  head2 "32-bit dependencies"
+  if ! dpkg --print-foreign-architectures 2>/dev/null | grep -qx i386; then
+    bad "i386 multiarch is not enabled -- run: sudo it-pull full"
+  else
+    local want missing=0 p c
+    want="libc6 zlib1g libx11-6 libx11-xcb1 libxext6 libxrender1 libfontconfig1
+          libfreetype6 libsm6 libice6 libgtk2.0-0t64 libcanberra-gtk-module
+          libxft2 libdrm2 libexpat1 libglapi-mesa libglib2.0-0t64 libgl1
+          libuuid1 libxau6 libxcb-dri2-0 libxcb-glx0 libxcb1 libxdamage1
+          libxfixes3 libxxf86vm1"
+    for p in $want; do
+      if dpkg -l "$p:i386" 2>/dev/null | grep -q '^ii'; then continue; fi
+      c=$(apt-cache policy "$p:i386" 2>/dev/null | awk '/Candidate:/{print $2}')
+      if [ -z "$c" ] || [ "$c" = "(none)" ]; then
+        [ "$missing" -eq 0 ] && warn "not published for i386 on this release:"
+        printf '      %s\n' "$p:i386"; missing=$((missing + 1))
+      else
+        [ "$missing" -eq 0 ] && warn "available but NOT installed:" 
+        printf '      %s (%s)\n' "$p:i386" "$c"; missing=$((missing + 1))
+      fi
+    done
+    if [ "$missing" -eq 0 ]; then
+      ok "every 32-bit dependency is installed"
+    else
+      say "  ${DIM}Ubuntu has shipped only a curated i386 subset since 19.10. A${R}"
+      say "  ${DIM}component needing one of these will not start -- that is the${R}"
+      say "  ${DIM}32-bit GUI half of Libero/Synplify and Vivado's cable drivers.${R}"
+      say "  ${DIM}Do not pin a version or pull a foreign .deb to force it.${R}"
+    fi
+  fi
+
   # FIPS. Both toolchains bundle their own crypto, and this fleet has been
   # bitten twice by a FIPS kernel refusing a bundled algorithm silently.
   if [ "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null || echo 0)" = 1 ]; then

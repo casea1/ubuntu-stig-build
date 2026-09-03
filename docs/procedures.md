@@ -479,6 +479,23 @@ standing account has them — there is no per-person `adduser` step.
 The rules set `MODE="0660"` with a group, **not** the `MODE="0666"` both vendors
 ask for: a world-writable device node is a finding and buys nothing over a group.
 
+### The 32-bit libraries you will not get
+
+Ubuntu ships only a **curated i386 subset** on 24.04 — the full 32-bit archive
+stopped after 19.10. Several libraries every vendor guide lists are simply not
+built for i386 on noble (`libgtk2.0-0t64:i386` and anything else pulling
+`libgnutls30t64:i386` or `libgcrypt20:i386`). The role installs what apt can
+actually resolve and **names the rest** rather than failing the pull:
+
+```bash
+sudo it-fpga check      # what is missing, and what it means
+```
+
+A vendor component that needs one of them will not start — that is the 32-bit
+GUI half of Libero/Synplify and Vivado's cable drivers. **Do not pin a version
+or side-load a foreign `.deb` to force one in**; find out on the pilot box
+whether the component you actually need works without it.
+
 ### Before you trust it
 
 Prove a full flow on the golden box — synthesis, licence checkout, and

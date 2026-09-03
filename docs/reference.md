@@ -131,6 +131,8 @@ sudo augenrules --check                                       # is audit.rules o
 
 **25. FlexLM needs two ports, and one of them is random.** `lmgrd` listens where you configured it; the *vendor* daemon (`snpslmd`, `xilinxd`) picks a random port at startup unless it is pinned with `PORT=` on the `DAEMON` line in the server's licence file. Through a firewall the symptom is a licence server that answers on the port you opened and still fails every checkout. `it-fpga status` probes the `lmgrd` port and says this when it succeeds.
 
+**26. Ubuntu 24.04 publishes only a CURATED i386 subset, and one uninstallable name fails the whole apt transaction.** Ubuntu stopped building a full 32-bit archive after 19.10. `libgtk2.0-0t64:i386` pulls `libcups2t64:i386` -> `libgnutls30t64:i386`, which is not published for i386 on noble; same chain via `libsystemd0:i386` -> `libgcrypt20:i386`. Every FPGA vendor guide on the internet lists these as prerequisites, and apt refuses the **entire** install — which on dev-14 took the 64-bit half down with it and stopped the pull. `fpga_tools` now asks `apt-cache policy` what is actually installable, installs that, and reports the rest; the 64-bit list stays strict. Never pin a version or side-load a foreign `.deb` to force one in. `sudo it-fpga check` lists what is missing.
+
 **15. Pre-USG leftovers.** Two separate outages traced to files the current baseline neither writes nor removes, left by the old ansible-lockdown role (`/etc/audit/rules.d/stig.rules`, and `pam_faillock` lines in `common-auth` with `pam_unix`'s jump offset never recalculated). Assume there are others on any box built before the USG switch.
 
 ---

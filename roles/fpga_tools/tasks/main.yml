@@ -41,17 +41,60 @@
       when: _fpga_arch_added is changed
 
     # ---- packages ---------------------------------------------------------
-    # One apt call, not four: each transaction re-resolves the whole dependency
-    # graph, and with the i386 half that is slow enough to notice.
-    - name: "FPGA | Vendor dependencies (24.04-correct names)"
+    # The 64-bit half is STRICT: a missing name here is a real error and the
+    # pull should stop on it.
+    - name: "FPGA | Vendor dependencies, 64-bit"
       ansible.builtin.apt:
         name: "{{ (fpga_packages_common
                    + (fpga_packages_xilinx if fpga_xilinx_enabled | bool else [])
-                   + (fpga_packages_microchip if fpga_microchip_enabled | bool else [])
-                   + fpga_packages_i386) | unique }}"
+                   + (fpga_packages_microchip if fpga_microchip_enabled | bool else [])) | unique }}"
         state: present
         update_cache: true
         cache_valid_time: 3600
+
+    # The 32-bit half is BEST-EFFORT, and separate, for a reason that cost a
+    # pull on dev-14: Ubuntu stopped publishing a full i386 archive after 19.10
+    # and 24.04 ships only a CURATED SUBSET. Several libraries the vendors'
+    # guides list are simply not built for i386 on noble --
+    #   libgtk2.0-0t64:i386 -> libcups2t64:i386 -> libgnutls30t64:i386 (absent)
+    #   ...                 -> libsystemd0:i386  -> libgcrypt20:i386   (absent)
+    # and ONE uninstallable name fails the WHOLE apt transaction, which took
+    # the 64-bit half down with it and stopped the pull at this task.
+    #
+    # So: ask apt what it can actually install, install that, and say plainly
+    # what is missing. Skipping quietly would be worse -- Libero would fail
+    # later with a confusing error instead of here with a clear one.
+    - name: "FPGA | Which i386 packages does this release actually publish?"
+      ansible.builtin.shell: |
+        for p in {{ fpga_packages_i386 | join(' ') }}; do
+          c=$(apt-cache policy "$p" 2>/dev/null | awk '/Candidate:/{print $2}')
+          [ -n "$c" ] && [ "$c" != "(none)" ] && echo "$p"
+        done
+        exit 0
+      register: _fpga_i386_have
+      changed_when: false
+      check_mode: false          # a read-only probe; in check mode the task
+                                 # below would otherwise act on no answer
+
+    - name: "FPGA | Vendor dependencies, 32-bit (what this release publishes)"
+      ansible.builtin.apt:
+        name: "{{ _fpga_i386_have.stdout_lines }}"
+        state: present
+      when: (_fpga_i386_have.stdout_lines | default([]) | length) > 0
+
+    - name: "FPGA | 32-bit libraries this release does NOT publish"
+      ansible.builtin.debug:
+        msg: >-
+          Ubuntu 24.04 does not publish these for i386 (the archive has been a
+          curated subset since 19.10), so they were skipped rather than failing
+          the pull:
+          {{ fpga_packages_i386 | difference(_fpga_i386_have.stdout_lines | default([])) | join(', ') }}.
+          A vendor component that needs one of them will not start. This is the
+          32-bit GUI half of Libero/Synplify and Vivado's cable drivers, so
+          prove those on the pilot box before imaging --
+          `sudo it-fpga check` lists this again at any time.
+      when: >-
+        (fpga_packages_i386 | difference(_fpga_i386_have.stdout_lines | default([])) | length) > 0
 
     # ---- compatibility shims ----------------------------------------------
     # Vivado wants libtinfo.so.5 / libncurses.so.5. Symlinks onto the ncurses 6
