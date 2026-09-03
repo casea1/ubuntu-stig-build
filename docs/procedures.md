@@ -408,7 +408,8 @@ sudo ./xsetup --agree XilinxEULA,3rdPartyEULA \
 > `umask 077`, so an installer running as root creates its entire tree `0700`
 > directories and `0600` files. Every engineer then gets *"Permission denied"*
 > on `settings64.sh` — which looks exactly like a broken install and is not.
-> `sudo it-fpga fixup` repairs it; `sudo it-fpga status` detects it.
+> `sudo it-fpga fixup` repairs it; `sudo it-fpga status` detects it, and the
+> pull corrects it on its own from then on.
 
 Then the fixes that touch the vendor tree — a command, not a pull, because
 Ansible never writes into a 150 GB install unattended:
@@ -464,6 +465,35 @@ placeholder, and serves it from a **systemd unit** (`fpga-lmgrd.service`). The
 vendor guides start `lmgrd` from a sourced environment script, which launches a
 fresh daemon for every shell — that is what produces the stale daemon squatting
 on the port, and the `lsof -i :1702` dance those guides then tell you to do.
+
+### Who can use them
+
+`root` owns the trees; **members of `sentry` may read and execute them; nobody
+else can read them at all**. That gives every engineer the full toolchain —
+Vivado, Vitis, Libero, Synplify, the programmers, licence checkout — while
+nobody can modify a shared install.
+
+Every standing account joins `sentry` (it also owns `/home/shared`), so a new
+engineer created with `it-adduser` has full use with no extra step.
+
+The pull enforces this. It tests **one file** per tree, so a correct box does no
+work; only a tree that is actually wrong gets a recursive pass. That matters
+because the state it corrects is not an edge case — it is what `umask 077` plus
+a `sudo` install produces every single time.
+
+```bash
+sudo it-fpga status      # who can use each tree, and why not if they cannot
+sudo it-fpga fixup       # apply it now rather than waiting for a pull
+```
+
+Change the group with `fpga_tools_access_group`, or set
+`fpga_tools_enforce_access: false` to manage the modes yourself.
+
+Nothing needs to be writable inside the trees. Vivado keeps per-user data in
+`~/.Xilinx`, both write projects wherever the user puts them, and FlexLM uses
+`/usr/tmp` (which the role creates `1777`, sticky, so it is shared safely).
+Libero's IP vault is per-user — set it in the GUI rather than pointing everyone
+at one inside the install tree.
 
 ### Never run the tools as root
 

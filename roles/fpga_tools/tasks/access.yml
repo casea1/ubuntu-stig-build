@@ -1,0 +1,72 @@
+---
+# =============================================================================
+# Who may use the installed toolchains.
+#
+# root owns them; {{ fpga_tools_access_group }} may read and execute; nobody
+# else. An engineer must not be able to modify a shared toolchain, and the
+# tools do not need to write into their own tree for normal use -- Vivado keeps
+# user data in ~/.Xilinx and both write projects wherever the user puts them.
+#
+# Why this is enforced rather than merely reported: the STIG sets umask 077 and
+# both installers need sudo, so the tree lands 0700/0600 and NOBODY but root
+# can use it. That is not an edge case, it is what happens every time.
+# =============================================================================
+
+# it-fpga reads this so `fixup` applies the same model the pull does, rather
+# than a second copy of the policy that could drift from it.
+- name: "FPGA | Configuration for it-fpga"
+  ansible.builtin.template:
+    src: fpga.conf.j2
+    dest: /etc/stig-build/fpga.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: "FPGA | Access group exists ({{ fpga_tools_access_group }})"
+  ansible.builtin.group:
+    name: "{{ fpga_tools_access_group }}"
+    state: present
+
+# One stat per tree. A correct box does no work at all; only a tree that is
+# actually wrong gets the recursive pass.
+- name: "FPGA | Can the group already use each tree?"
+  ansible.builtin.stat:
+    path: "{{ item.probe }}"
+  loop: "{{ _fpga_trees }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _fpga_acl
+
+- name: "FPGA | Grant {{ fpga_tools_access_group }} read+execute where it is missing"
+  # a+rX would work too, but the group is the point: this is who may use the
+  # toolchain, and o-rwx keeps it off every other account on the box.
+  # Capital X adds execute to DIRECTORIES and to files that already have it,
+  # so data files do not come out executable.
+  ansible.builtin.shell:
+    cmd: |
+      set -e
+      chgrp -R '{{ fpga_tools_access_group }}' '{{ item.item.path }}'
+      chmod -R g+rX,o-rwx '{{ item.item.path }}'
+  loop: "{{ _fpga_acl.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - fpga_tools_enforce_access | bool
+    - item.stat.exists | default(false)
+    - (item.stat.gr_name | default('')) != fpga_tools_access_group
+        or not (item.stat.rgrp | default(false))
+  register: _fpga_acl_fixed
+
+- name: "FPGA | Who can use what"
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.item.item.name }}: readable and executable by
+      {{ fpga_tools_access_group }}{{ ' (just corrected -- the installer left it
+      root-only, which is what umask 077 does to a sudo install)'
+      if item is changed else '' }}.
+      Members get the full toolchain; nobody outside the group can read it, and
+      nobody can modify it.
+  loop: "{{ _fpga_acl_fixed.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.item.name | default('?') }}"
+  when: item is not skipped

@@ -15,13 +15,38 @@
 ROOT="{{ item.root }}"
 BIN="{{ item.bin }}"
 
-if [ ! -x "$BIN" ]; then
-  msg="{{ item.name }} is not installed under $ROOT.
-Expected: $BIN
+# Three different problems with one symptom, and naming the wrong one sends
+# someone hunting for hours. Note that a user who cannot TRAVERSE the tree gets
+# a false answer from `-e`, so "does not exist" is never assumed on its own.
+msg=""
+if [ ! -d "$ROOT" ]; then
+  msg="{{ item.name }} is not installed.
+Nothing is under $ROOT.
 Check with: sudo it-fpga status"
-  # BOTH, not either: from the app grid there is no terminal, and if the
-  # dialog tools are missing too then a stderr-only message goes nowhere and
-  # the icon just looks broken.
+elif [ ! -e "$BIN" ]; then
+  msg="{{ item.name }} cannot be reached at:
+    $BIN
+Either it is not installed, a different version is (this launcher is built for
+the version the pull is configured with), or this account cannot traverse the
+install tree -- which looks identical from here.
+Check with: sudo it-fpga status"
+elif [ ! -x "$BIN" ] || [ ! -r "$BIN" ]; then
+  msg="{{ item.name }} is installed, but this account cannot use it.
+Access is granted by the '{{ access_group }}' group:
+    id -nG        should list {{ access_group }}
+An administrator adds you with:
+    sudo usermod -aG {{ access_group }} <user>     then log out and back in
+If you ARE in the group, the install tree permissions are wrong -- the STIG's
+umask 077 does that to any installer run under sudo:
+    sudo it-fpga fixup"
+fi
+
+# ONE reporting path for all of them. Having this inside a branch is how the
+# first version failed silently and then ran exec anyway.
+if [ -n "$msg" ]; then
+  # BOTH stderr and a dialog, not either: from the app grid there is no
+  # terminal, and if the dialog tools are missing too then a stderr-only
+  # message goes nowhere and the icon just looks broken.
   printf '%s\n' "$msg" >&2
   if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
     if command -v zenity >/dev/null 2>&1; then

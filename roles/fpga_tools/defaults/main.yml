@@ -81,6 +81,19 @@ fpga_license_xilinx: ""         # XILINXD_LICENSE_FILE
 fpga_license_file: /etc/stig-build/fpga/License.dat
 fpga_license_local_port: 1702
 
+# ---- who may use the toolchains --------------------------------------------
+# The trees are root-owned and NOT writable by the people who use them -- an
+# engineer must not be able to modify a shared toolchain. Access is granted by
+# GROUP rather than world-readable: `sentry` is the group every standing
+# account joins, so every engineer gets full use and nothing outside it does.
+#
+# This is enforced, not just checked: the STIG sets umask 077, so an installer
+# run under sudo (which both vendors need) leaves the whole tree 0700/0600 and
+# unusable by anyone but root. The pull tests ONE file -- cheap -- and only
+# recurses when that test fails, so a correct box pays nothing.
+fpga_tools_access_group: sentry
+fpga_tools_enforce_access: true
+
 # ---- device access ---------------------------------------------------------
 # The group that may talk to JTAG programmers and USB-serial adapters. Members
 # get the cable device nodes; NOT world-writable -- the vendors' instructions

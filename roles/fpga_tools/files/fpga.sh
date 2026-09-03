@@ -26,6 +26,7 @@
 set -uo pipefail
 
 SITE_YML="${SITE_YML:-/opt/it/site.yml}"
+CONF=/etc/stig-build/fpga.conf
 XILINX_ENV=/etc/profile.d/xilinx.sh
 MICROCHIP_ENV=/etc/profile.d/microchip.sh
 LIC_DIR=/etc/stig-build/fpga
@@ -56,6 +57,15 @@ LIBDIR="$(env_var "$MICROCHIP_ENV" LIBERO_INSTALL_DIR)"
 LIBDIR="${LIBDIR:-/opt/microchip/Libero_SoC_2025.1}"
 LIC_MCHP="$(env_var "$MICROCHIP_ENV" LM_LICENSE_FILE)"
 LIC_XLNX="$(env_var "$XILINX_ENV" XILINXD_LICENSE_FILE)"
+
+# Who may use the toolchains. Read from the conf the role renders, so this and
+# the pull cannot disagree about the policy.
+conf_get() {   # $1 = key, $2 = default
+  local v=""
+  [ -r "$CONF" ] && v=$(sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$CONF" | tail -1)
+  printf '%s' "${v:-$2}"
+}
+ACCESS_GROUP="$(conf_get ACCESS_GROUP sentry)"
 
 # ---------------------------------------------------------------------------
 # site.yml, with the same guard the pull applies on the way in: a file that
@@ -165,12 +175,17 @@ cmd_status() {
   for st in "$XROOT/Vivado/$XVER/settings64.sh" "$LIBDIR/Libero/bin64/libero"; do
     [ -e "$st" ] || continue
     if perms_ok "$st"; then
-      ok "readable          $(dirname "$(dirname "$st")" | xargs basename) -- every user"
+      local grp members
+      grp="$(stat -c '%G' "$st")"
+      members="$(getent group "$grp" | cut -d: -f4 | tr ',' ' ')"
+      ok "usable by         group $grp${members:+ -- $members}"
+      check_parents "$st" || true
     else
-      bad "ROOT-ONLY         $st"
+      bad "NOT USABLE        $st"
       say "                    ${DIM}The STIG sets umask 077, so an installer run under sudo${R}"
       say "                    ${DIM}made the whole tree 0700/0600. Engineers get \"Permission${R}"
       say "                    ${DIM}denied\" on settings64.sh and it looks like a broken install.${R}"
+      say "                    ${DIM}group is $(stat -c '%G' "$st" 2>/dev/null), should be $ACCESS_GROUP${R}"
       say "                    ${DIM}fix: sudo it-fpga fixup${R}"
     fi
   done
@@ -385,20 +400,59 @@ cmd_license() {
 fix_perms() {   # $1 = tree, $2 = label
   local d="$1" lbl="$2"
   have_tree "$d" || return 0
-  say "  fixing read/traverse on $lbl ($(du -sh "$d" 2>/dev/null | cut -f1)) -- this takes a moment"
-  chmod -R a+rX "$d" 2>/dev/null
-  ok "$lbl is readable by every user"
+  if ! getent group "$ACCESS_GROUP" >/dev/null 2>&1; then
+    bad "no '$ACCESS_GROUP' group on this box -- run an ansible-pull first"; return 1
+  fi
+  say "  granting $ACCESS_GROUP read+execute on $lbl ($(du -sh "$d" 2>/dev/null | cut -f1)) -- takes a moment"
+  # g+rX, o-rwx: the group may USE the toolchain, nobody may modify it, and it
+  # is not readable by every account on the box. Capital X adds execute only to
+  # directories and to files that already have it, so data files do not come
+  # out executable.
+  chgrp -R "$ACCESS_GROUP" "$d" 2>/dev/null
+  chmod -R g+rX,o-rwx "$d" 2>/dev/null
+  ok "$lbl usable by every member of $ACCESS_GROUP"
 }
 
 # Cheap check: one stat, no recursion. The settings script is what a user
 # sources first, so if that is unreadable the tree is.
-perms_ok() {   # $1 = a file every user must be able to read
-  [ -r "$1" ] || return 1
-  # -r as root says nothing about other users; test the mode bits.
-  case "$(stat -c '%A' "$1" 2>/dev/null)" in
-    ??????r??|?????????r??) return 0 ;;
-  esac
-  [ "$(( 0$(stat -c '%a' "$1" 2>/dev/null) & 0004 ))" -ne 0 ]
+# Can the access group read this? -r as root says nothing about anyone else,
+# so test the GROUP bit and the group owner, not our own access.
+perms_ok() {   # $1 = a file every entitled user must be able to read
+  [ -e "$1" ] || return 1
+  [ "$(stat -c '%G' "$1" 2>/dev/null)" = "$ACCESS_GROUP" ] || return 1
+  [ "$(( 0$(stat -c '%a' "$1" 2>/dev/null) & 0040 ))" -ne 0 ]
+}
+
+# A tree with perfect modes is still unreachable if any PARENT blocks traverse,
+# and the symptom is identical -- "Permission denied" on settings64.sh. Worth
+# one loop: this is not hypothetical, it is what an install into a directory
+# someone created under the STIG umask looks like.
+#
+# "Traversable" is not the same as "other-executable": a member of the access
+# group traverses a 0750 directory owned by that group perfectly well. Testing
+# only the other bit reports directories that are in fact fine.
+traversable() {   # $1 = directory
+  local m g
+  m="$(stat -c '%a' "$1" 2>/dev/null)" || return 0    # unreadable to us: not our call
+  g="$(stat -c '%G' "$1" 2>/dev/null)"
+  [ "$(( 0$m & 0001 ))" -ne 0 ] && return 0                       # world-traversable
+  [ "$g" = "$ACCESS_GROUP" ] && [ "$(( 0$m & 0010 ))" -ne 0 ] && return 0  # group-traversable
+  return 1
+}
+
+check_parents() {   # $1 = path -> 0 quiet, 1 after naming the blocker
+  local d rc=0
+  d="$(dirname "$1")"
+  while [ "$d" != / ] && [ -n "$d" ] && [ "$d" != . ]; do
+    if ! traversable "$d"; then
+      bad "$d is $(stat -c '%a %U:%G' "$d" 2>/dev/null) -- $ACCESS_GROUP cannot traverse it,"
+      say "      so nothing underneath is reachable however its own modes look."
+      say "      ${DIM}fix: sudo chgrp $ACCESS_GROUP $d && sudo chmod g+x $d${R}"
+      rc=1
+    fi
+    d="$(dirname "$d")"
+  done
+  return "$rc"
 }
 
 cmd_fixup() {
@@ -409,6 +463,8 @@ cmd_fixup() {
   # except the person who installed them.
   fix_perms "$XROOT" "Xilinx"
   fix_perms "$LIBDIR" "Libero"
+  have_tree "$XROOT"  && check_parents "$XROOT"
+  have_tree "$LIBDIR" && check_parents "$LIBDIR"
 
   if have_tree "$LIBDIR"; then
     # Libero ships a RHEL libstdc++ OLDER than what Noble's libicuuc.so.74

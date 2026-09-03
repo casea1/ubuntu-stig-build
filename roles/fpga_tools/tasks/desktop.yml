@@ -11,6 +11,24 @@
 # copied per account, and removing a toolchain removes its entry.
 # =============================================================================
 
+# The installed trees, named once so both the launchers and the access pass
+# work from the same list.
+- name: "FPGA | The toolchain trees"
+  ansible.builtin.set_fact:
+    _fpga_trees: >-
+      {{
+        ([{'name': 'Xilinx', 'path': fpga_xilinx_root,
+           'probe': fpga_xilinx_root ~ '/Vivado/' ~ fpga_xilinx_version ~ '/settings64.sh'}]
+         if fpga_xilinx_enabled | bool else [])
+        +
+        ([{'name': 'Libero', 'path': fpga_libero_dir,
+           'probe': fpga_libero_dir ~ '/Libero/bin64/libero'}]
+         if fpga_microchip_enabled | bool else [])
+      }}
+
+- name: "FPGA | Who may use the toolchains"
+  ansible.builtin.import_tasks: access.yml
+
 - name: "FPGA | Is each toolchain actually installed?"
   ansible.builtin.stat:
     path: "{{ item }}"
@@ -67,6 +85,8 @@
   ansible.builtin.template:
     src: fpga-launcher.j2
     dest: "/usr/local/bin/{{ item.cmd }}"
+  vars:
+    access_group: "{{ fpga_tools_access_group }}"
     owner: root
     group: root
     mode: "0755"
@@ -129,34 +149,6 @@
     (_fpga_desktop is defined and _fpga_desktop is changed)
     or (_fpga_desktop_gone is defined and _fpga_desktop_gone is changed)
     or (_fpga_desktop_off is defined and _fpga_desktop_off is changed)
-
-# One stat, no recursion -- cheap enough to run on every pull. The role does
-# NOT chmod the tree itself: it never writes into a 150 GB vendor install
-# unattended, and a recursive chmod there is not something a routine pull
-# should do silently.
-- name: "FPGA | Can everyone read what is installed?"
-  ansible.builtin.stat:
-    path: "{{ item.settings | default(item.bin) }}"
-  loop: "{{ _fpga_apps | selectattr('present') | list }}"
-  loop_control:
-    label: "{{ item.cmd }}"
-  register: _fpga_perm
-
-- name: "FPGA | Installed root-only -- engineers cannot run it"
-  ansible.builtin.debug:
-    msg: >-
-      {{ item.item.name }} is installed but readable only by root
-      ({{ item.stat.path }} is {{ '%04o' | format(item.stat.mode | int(base=8)) }}).
-      The STIG sets umask 077, so an installer run under sudo creates its whole
-      tree 0700/0600 and every engineer gets "Permission denied" on
-      settings64.sh -- which looks like a broken install and is not.
-      Fix it once with:  sudo it-fpga fixup
-  loop: "{{ _fpga_perm.results | default([]) }}"
-  loop_control:
-    label: "{{ item.item.cmd | default('?') }}"
-  when:
-    - item.stat.exists | default(false)
-    - not (item.stat.roth | default(true))
 
 - name: "FPGA | Nothing installed yet"
   ansible.builtin.debug:

@@ -134,6 +134,10 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
      `chmod -R a+rX`; `it-fpga status` detects it. Never launch the tools with
      sudo to work around it -- root has no Xauthority cookie for the user's
      RDP session and the GUI then fails on X11 instead. See trap 29.
+     Access is by GROUP (`fpga_tools_access_group`, `sentry`): root owns the
+     trees, the group reads and executes, nobody else reads them, nobody
+     modifies them. The pull enforces it with ONE stat per tree and only
+     recurses when wrong. Nothing needs to be writable inside a tree.
   6. The i386 list is a WISH. Ubuntu publishes only a curated i386 subset on
      24.04, several vendor-listed libraries cannot be installed, and ONE
      unresolvable name fails the whole apt transaction -- that stopped a pull

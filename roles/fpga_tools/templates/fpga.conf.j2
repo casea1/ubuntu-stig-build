@@ -1,0 +1,12 @@
+# /etc/stig-build/fpga.conf
+# Rendered by the fpga_tools role from group_vars / /opt/it/site.yml.
+# Read as data by it-fpga -- no quoting, no shell, one KEY=value per line.
+
+# Who may use the installed toolchains. root owns them; this group may read and
+# execute; nobody else. Engineers must not be able to modify a shared toolchain.
+ACCESS_GROUP={{ fpga_tools_access_group }}
+ENFORCE_ACCESS={{ fpga_tools_enforce_access | bool | lower }}
+
+XILINX_ROOT={{ fpga_xilinx_root }}
+XILINX_VERSION={{ fpga_xilinx_version }}
+LIBERO_DIR={{ fpga_libero_dir }}
