@@ -430,14 +430,20 @@ cmd_check() {
           libuuid1 libxau6 libxcb-dri2-0 libxcb-glx0 libxcb1 libxdamage1
           libxfixes3 libxxf86vm1"
     for p in $want; do
-      if dpkg -l "$p:i386" 2>/dev/null | grep -q '^ii'; then continue; fi
+      dpkg -l "$p:i386" 2>/dev/null | grep -q '^ii' && continue
       c=$(apt-cache policy "$p:i386" 2>/dev/null | awk '/Candidate:/{print $2}')
+      [ "$missing" -eq 0 ] && warn "not installed:"
+      missing=$((missing + 1))
       if [ -z "$c" ] || [ "$c" = "(none)" ]; then
-        [ "$missing" -eq 0 ] && warn "not published for i386 on this release:"
-        printf '      %s\n' "$p:i386"; missing=$((missing + 1))
+        printf '      %-32s %s\n' "$p:i386" "not published for i386"
+      # A candidate is NOT proof it can be installed: apt must resolve the
+      # whole dependency closure, and libgtk2.0-0t64:i386 reaches
+      # libgnutls30t64:i386 / libgcrypt20:i386, which noble does not satisfy.
+      # Simulate answers the real question and does no dpkg work.
+      elif apt-get -s -q install -y "$p:i386" >/dev/null 2>&1; then
+        printf '      %-32s %s\n' "$p:i386" "available ($c) -- run: sudo it-pull full"
       else
-        [ "$missing" -eq 0 ] && warn "available but NOT installed:" 
-        printf '      %s (%s)\n' "$p:i386" "$c"; missing=$((missing + 1))
+        printf '      %-32s %s\n' "$p:i386" "published ($c) but its dependencies are not"
       fi
     done
     if [ "$missing" -eq 0 ]; then

@@ -64,11 +64,17 @@
     # So: ask apt what it can actually install, install that, and say plainly
     # what is missing. Skipping quietly would be worse -- Libero would fail
     # later with a confusing error instead of here with a clear one.
-    - name: "FPGA | Which i386 packages does this release actually publish?"
+    # `apt-get --simulate`, NOT `apt-cache policy`. Policy answers "does this
+    # NAME have a candidate", which is not the question -- libgtk2.0-0t64:i386
+    # has one and still cannot be installed, because its dependency closure
+    # reaches libgnutls30t64:i386 and libgcrypt20:i386, which noble does not
+    # satisfy for i386. That distinction is the difference between apt saying
+    # "not installable" and "not going to be installed", and a policy probe
+    # cannot see it. Simulate resolves the whole tree and does no dpkg work.
+    - name: "FPGA | Which i386 packages can apt actually resolve?"
       ansible.builtin.shell: |
         for p in {{ fpga_packages_i386 | join(' ') }}; do
-          c=$(apt-cache policy "$p" 2>/dev/null | awk '/Candidate:/{print $2}')
-          [ -n "$c" ] && [ "$c" != "(none)" ] && echo "$p"
+          apt-get -s -q install -y "$p" >/dev/null 2>&1 && echo "$p"
         done
         exit 0
       register: _fpga_i386_have
@@ -82,17 +88,19 @@
         state: present
       when: (_fpga_i386_have.stdout_lines | default([]) | length) > 0
 
-    - name: "FPGA | 32-bit libraries this release does NOT publish"
+    - name: "FPGA | 32-bit libraries apt cannot install on this release"
       ansible.builtin.debug:
         msg: >-
-          Ubuntu 24.04 does not publish these for i386 (the archive has been a
-          curated subset since 19.10), so they were skipped rather than failing
-          the pull:
+          apt cannot resolve these for i386 on 24.04 -- either the package is
+          not published (the i386 archive has been a curated subset since
+          19.10) or its dependencies are not, so they were skipped rather than
+          failing the pull:
           {{ fpga_packages_i386 | difference(_fpga_i386_have.stdout_lines | default([])) | join(', ') }}.
           A vendor component that needs one of them will not start. This is the
           32-bit GUI half of Libero/Synplify and Vivado's cable drivers, so
           prove those on the pilot box before imaging --
-          `sudo it-fpga check` lists this again at any time.
+          `sudo it-fpga check` lists this again at any time, with the reason
+          for each.
       when: >-
         (fpga_packages_i386 | difference(_fpga_i386_have.stdout_lines | default([])) | length) > 0
 

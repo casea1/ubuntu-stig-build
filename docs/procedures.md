@@ -495,10 +495,11 @@ ask for: a world-writable device node is a finding and buys nothing over a group
 ### The 32-bit libraries you will not get
 
 Ubuntu ships only a **curated i386 subset** on 24.04 — the full 32-bit archive
-stopped after 19.10. Several libraries every vendor guide lists are simply not
-built for i386 on noble (`libgtk2.0-0t64:i386` and anything else pulling
-`libgnutls30t64:i386` or `libgcrypt20:i386`). The role installs what apt can
-actually resolve and **names the rest** rather than failing the pull:
+stopped after 19.10. Several libraries every vendor guide lists cannot be
+installed on noble: `libgtk2.0-0t64:i386` is published, but its dependencies
+reach `libgnutls30t64:i386` and `libgcrypt20:i386`, which are not. The role asks
+apt to resolve each one and installs only what actually resolves, **naming the
+rest** rather than failing the pull:
 
 ```bash
 sudo it-fpga check      # what is missing, and what it means
