@@ -135,6 +135,8 @@ sudo augenrules --check                                       # is audit.rules o
 
 **27. `apt-cache policy` does not tell you whether a package can be installed.** It answers "does this NAME have a candidate", which is a different question from "does its dependency closure resolve". `libgtk2.0-0t64:i386` has a candidate on noble and still cannot be installed. The tell is in apt's own wording: *"not installable"* means no candidate, *"not going to be installed"* means there is one and the resolver refused — and a policy probe cannot distinguish them. This cost a second failed pull on dev-13 after the first fix used policy as the oracle. The correct oracle is **`apt-get -s -q install -y <pkg>`**, which resolves the whole tree, does no dpkg work, and exits 100 when it cannot. Both `fpga_tools` and `it-fpga check` use it.
 
+**28. Ansible's free-form `shell:` splits arguments, and double quotes inside Jinja break it.** `shell: |` with `{{ x | default("") }}` in the body fails at parse time with *"failed at splitting arguments, either an unbalanced jinja2 block or quotes"* — before anything runs, so it looks like a YAML error and is not. Use the `cmd:` key (`shell:` → `cmd: |`), which is not split. Same script, same Jinja, parses fine.
+
 **15. Pre-USG leftovers.** Two separate outages traced to files the current baseline neither writes nor removes, left by the old ansible-lockdown role (`/etc/audit/rules.d/stig.rules`, and `pam_faillock` lines in `common-auth` with `pam_unix`'s jump offset never recalculated). Assume there are others on any box built before the USG switch.
 
 ---
@@ -193,6 +195,8 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `it-adduser` | Create a local account. Asks the type (standard/dta/admin/audit) and derives both the username suffix and the group set from it, then **how to set the password: type one, generate a temporary one, or leave it locked**. `--temp` / `--lock` skip the question for scripted use |
 | `it-passwd` | Reset a password, unlock the account, and clear its faillock counter. Asks the same three-way question as `it-adduser`: type one, **generate a temporary one** (`--temp`), or keep the current one. `--list` shows every account's state and expiry; `--unlock-only` skips the password |
 | `it-fpga` *(development only)* | The FPGA toolchains: `status` (default — what is installed, licence reachability, cables), `license --server <port>@<host> [--xilinx …]` / `--file <License.dat>` / `--none`, `check`, `fixup`, `cables`, `env`. The baseline installs the scaffolding, **not** Vivado or Libero — those are baked into the image. A licence change writes both `/etc/profile.d/*.sh` and `/opt/it/site.yml` |
+| `it-vscode` *(development)* | One copy of the VS Code extension set for the box. `status` (default), `link <user>\|--all`, `unlink`, `copy`, `verify`. Users get **symlinks** into `/opt/vscode-extensions`, so an account costs bytes rather than 3 GB; `/etc/skel` holds the same links so `useradd` stays instant. `verify` asks the editor what it can actually see |
+| `it-codeserver` *(development)* | Who has a browser IDE. `status` (default), `password <user>`, `url`, `restart`, `log`. code-server is single-user per instance, so each engineer runs their own on `dev_code_server_port + (uid - 1000)`. Entitlement is membership of `dev_code_server_group` — applied by the pull, not by enabling the unit |
 | `it-set-classification` | Set the banner level |
 | `it-inventory` | Hardware/serials/listening ports → `/opt/it/inventory-<host>.txt` |
 | `pam-auth-check` | Can `common-auth` authenticate at all? Read-only |
@@ -241,6 +245,8 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `/tools/Xilinx`, `/opt/microchip` | FPGA toolchains (development). **Not managed by Ansible** — baked into the image or installed by hand. Root-owned, NOT under a home directory: `$HOME` is the vendors' single-machine advice and means one 30+ GB copy per engineer |
 | `/etc/profile.d/{xilinx,microchip}.sh` | The FPGA environment every user gets at login. `vivado_env` / `libero_env` load the heavy `PATH` per shell |
 | `/etc/stig-build/fpga/License.dat` | Node-locked FPGA licence, `0600 root:root`. Absent when a licence server is used, which is the fleet default |
+| `/opt/vscode-extensions/` | The box's single copy of the VS Code extension set. Users hold symlinks into it; `/etc/skel` holds the same. root:root 0755 |
+| `/etc/code-server/<user>.password` | Per-user code-server password, `0600 root:root`. Generated once, stable across pulls |
 | `/opt/stacks/<stack>/` | AI compose stacks — Dockge watches this dir |
 | `/srv/repo/` | The carried offline apt repo. `root:root 0755` |
 | `/etc/stig-build/` | Root-only. Generated `*.pw`, the GRUB hash, `profile` — which records the deployment profile and the **baseline revision** this box last pulled — and the offload configs/credentials |
@@ -302,6 +308,12 @@ The ones worth knowing:
 | `fpga_license_microchip` / `_xilinx` | — | `<port>@<host>`, comma-separated for a redundant triad. Set here for a fleet default, or per box with `it-fpga license` |
 | `fpga_device_group` | `plugdev` | Who may talk to the JTAG programmers. `dialout` covers USB-serial consoles; both are in `local_users_common_groups` |
 | `fpga_ncurses5_shim` | true | Symlink `libtinfo.so.5`/`libncurses.so.5` onto the ncurses 6 sonames. Vivado hangs at *"Generating installed device list"* without it |
+| `dev_code_server_group` | `sentry` | Who gets a code-server instance. Every standing account joins `sentry`, so a new engineer gets one on the next pull. Empty = the primary user only |
+| `dev_code_server_exclude` | `[]` | Accounts in that group that should not get one. Locked accounts are skipped already (by shell); this is for `dta`/`audit`, which are in `sentry` too |
+| `dev_code_server_port` / `_uid_base` / `_port_span` | 8080 / 1000 / 20 | `port = base + (uid - uid_base)`. Derived from the UID so it is stable per person; a UID outside the span is skipped rather than colliding. The span is what ufw opens |
+| `dev_code_server_bind_addr` | `0.0.0.0` | **N IDEs on the LAN, one per engineer.** `127.0.0.1` takes them off it (RDP browser or SSH tunnel) and the pull removes the ufw rule |
+| `vscode_shared_extensions_dir` | `/opt/vscode-extensions` | One copy of the extension set for the whole box |
+| `dev_tools_vscode_skel_seed` | false | The old behaviour: a real 3 GB copy in `/etc/skel`, so every `useradd` copies it. Superseded by the symlink store |
 | `ai_model_fetch` | — | Fetch model weights during the build |
 | `ai_compose_deploy` | — | Bring the stacks up during the build |
 

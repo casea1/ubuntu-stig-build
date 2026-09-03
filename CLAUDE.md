@@ -138,6 +138,23 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
      second failed pull on dev-13. See traps 26 and 27.
   i386 multiarch is written up as an approved deviation in `compliance.md`.
 
+- **VS Code extensions are shared, not copied.** One store in
+  `/opt/vscode-extensions`; users hold symlinks, `/etc/skel` holds the same so
+  `useradd` stays instant. The old `/etc/skel` seeding was a real 3.0 GB /
+  27,395-file copy per account (65 s per `useradd`) and is off. A user's own
+  real directory is never replaced by a link. VS Code loads from
+  `extensions.json`, NOT by scanning, so the shared manifest travels with the
+  links -- `it-vscode verify` asks the editor rather than the filesystem, and
+  `it-vscode copy <user>` is the fallback if a version rejects it.
+- **code-server is single-user per instance.** Every engineer gets their own on
+  `dev_code_server_port + (uid - dev_code_server_uid_base)` -- derived from the
+  UID, never from a list position, or removing one person moves everyone else's
+  port. Entitlement is membership of `dev_code_server_group` (`sentry`), applied
+  by the pull; the pull also DISABLES instances for people no longer in it.
+  Locked accounts are skipped by their shell. Default bind is `0.0.0.0`, so this
+  is N IDEs on the LAN with shell access as that user -- `127.0.0.1` takes them
+  off it and the pull then removes the ufw range.
+
 ## Open threads
 
 - **Rotate the leaked credentials.** The old pgvector password, Open WebUI

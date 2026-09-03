@@ -1,79 +1,103 @@
 ---
-# VS Code extensions are per-user. Install for the primary user, then seed
-# /etc/skel so any future account inherits them + the venv interpreter default.
+# =============================================================================
+# VS Code extensions -- ONE copy on the box, reached by symlink.
+#
+# VS Code keeps extensions per-user. The obvious way to give everyone the set
+# is to seed /etc/skel, and that is what this used to do: `useradd -m` copies
+# /etc/skel in full, the set measured 3.0 GB across 27,395 files on ASP-2, so a
+# single account took 65 seconds and carried its own 3 GB -- the build's own
+# accounts included, several times per box.
+#
+# Instead the set is installed ONCE into vscode_shared_extensions_dir, and each
+# user's ~/.vscode/extensions holds SYMLINKS into it. /etc/skel holds the same
+# symlinks, so useradd copies links (bytes, instantly) and a new account has
+# the whole set. Users can still install their own alongside: the directory is
+# theirs and writable, only the shared entries are links.
+# =============================================================================
 
-- name: Ensure the primary user's VS Code config dir exists
-  become: true
-  become_user: "{{ dev_tools_user }}"
+- name: "VSCODE | Shared extension store ({{ vscode_shared_extensions_dir }})"
   ansible.builtin.file:
-    path: "/home/{{ dev_tools_user }}/.config/Code/User"
+    path: "{{ vscode_shared_extensions_dir }}"
     state: directory
-    mode: "0700"
+    owner: root
+    group: root
+    mode: "0755"
 
-- name: Install VS Code extensions for {{ dev_tools_user }}
-  become: true
-  become_user: "{{ dev_tools_user }}"
-  environment:
-    HOME: "/home/{{ dev_tools_user }}"
+# Installed as root into the shared dir. HOME must be set: ansible-pull runs
+# from systemd with none, and `code` dereferences it.
+- name: "VSCODE | Install the extension set into the shared store"
   ansible.builtin.command:
-    cmd: code --install-extension {{ item }} --force
+    cmd: >-
+      code --install-extension {{ item }} --force
+      --extensions-dir {{ vscode_shared_extensions_dir }}
+      --user-data-dir /root/.vscode-shared-userdata
+  environment:
+    HOME: /root
   loop: "{{ vscode_extensions }}"
   changed_when: false      # code exits 0 whether it installs or is already present
+  register: _vsc_install
+  failed_when:
+    - _vsc_install.rc != 0
+    - "'already installed' not in (_vsc_install.stdout | default(''))"
 
-- name: Set the venv as the VS Code default interpreter (primary user)
-  become: true
-  become_user: "{{ dev_tools_user }}"
-  ansible.builtin.copy:
-    dest: "/home/{{ dev_tools_user }}/.config/Code/User/settings.json"
-    mode: "0644"
-    content: |
-      {
-        "python.defaultInterpreterPath": "{{ eng_venv_path }}/bin/python"
-      }
+- name: "VSCODE | Readable by everyone (the store is shared, not per-user)"
+  ansible.builtin.file:
+    path: "{{ vscode_shared_extensions_dir }}"
+    state: directory
+    recurse: true
+    owner: root
+    group: root
+    mode: u=rwX,go=rX
 
-- name: Ensure /etc/skel VS Code dirs exist
+# ---------------------------------------------------------------------------
+# /etc/skel: the symlinks, so a NEW account gets the set for free.
+# ---------------------------------------------------------------------------
+- name: "VSCODE | What is in the shared store?"
+  ansible.builtin.find:
+    paths: "{{ vscode_shared_extensions_dir }}"
+    file_type: directory
+    recurse: false
+  register: _vsc_shared
+
+- name: "VSCODE | /etc/skel dirs"
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
     mode: "0755"
   loop:
     - /etc/skel/.config/Code/User
+    - /etc/skel/.vscode/extensions
 
-# EXTENSIONS ARE NOT SEEDED INTO /etc/skel, deliberately.
-#
-# `useradd -m` copies the whole of /etc/skel for every account it creates. On
-# ASP-2 the seeded extension set measured 3.0 GB across 27,395 files, so a
-# single `it-adduser` took 65 seconds and every account carried its own 3 GB
-# copy -- including the standing accounts the build itself creates, several
-# times per box. The settings.json below is a few hundred bytes and stays.
-#
-# The set is still available: it_scripts records where it lives and `it-adduser`
-# offers to copy it into a new account that actually wants it, showing the size
-# first. Set dev_tools_vscode_skel_seed: true to go back to the old behaviour
-# and its cost.
-- name: "Remove the extension set from /etc/skel (it makes every useradd copy GBs)"
+# The old 3 GB seeding, actively removed -- a box that got it from an earlier
+# build keeps it forever otherwise (reference.md trap 3).
+- name: "VSCODE | Remove any real extension copy left in /etc/skel"
+  ansible.builtin.shell:
+    cmd: |
+      find /etc/skel/.vscode/extensions -maxdepth 1 -mindepth 1 -type d -exec rm -rf {} +
+  changed_when: false
+
+- name: "VSCODE | Symlink the shared set into /etc/skel"
   ansible.builtin.file:
-    path: /etc/skel/.vscode
-    state: absent
-  when: not (dev_tools_vscode_skel_seed | default(false) | bool)
+    src: "{{ item.path }}"
+    dest: "/etc/skel/.vscode/extensions/{{ item.path | basename }}"
+    state: link
+    force: true
+    follow: false
+  loop: "{{ _vsc_shared.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
 
-- name: "Seed installed extensions into /etc/skel (opt-in; slows every useradd)"
-  when: dev_tools_vscode_skel_seed | default(false) | bool
-  block:
-    - name: Ensure the /etc/skel extensions dir exists
-      ansible.builtin.file:
-        path: /etc/skel/.vscode/extensions
-        state: directory
-        mode: "0755"
+# VS Code builds its extension list from this manifest, not by scanning, so the
+# symlinks alone are not enough -- the shared manifest has to travel with them.
+- name: "VSCODE | Copy the shared manifest into /etc/skel"
+  ansible.builtin.copy:
+    src: "{{ vscode_shared_extensions_dir }}/extensions.json"
+    dest: /etc/skel/.vscode/extensions/extensions.json
+    remote_src: true
+    mode: "0644"
+  failed_when: false      # absent on a first run before any extension installs
 
-    - name: Seed installed extensions into /etc/skel for future accounts
-      ansible.builtin.copy:
-        src: "/home/{{ dev_tools_user }}/.vscode/extensions/"
-        dest: /etc/skel/.vscode/extensions/
-        remote_src: true
-        mode: preserve
-
-- name: Seed the default interpreter setting into /etc/skel
+- name: "VSCODE | Default interpreter for new accounts"
   ansible.builtin.copy:
     dest: /etc/skel/.config/Code/User/settings.json
     mode: "0644"
@@ -81,3 +105,27 @@
       {
         "python.defaultInterpreterPath": "{{ eng_venv_path }}/bin/python"
       }
+
+# ---------------------------------------------------------------------------
+# Accounts that ALREADY exist. it-vscode does the same linking; the role calls
+# it so a pull brings existing users up to date without anyone running it.
+# ---------------------------------------------------------------------------
+- name: "VSCODE | Install it-vscode"
+  ansible.builtin.copy:
+    src: vscode-extensions.sh
+    dest: "{{ it_scripts_dir | default('/opt/it/scripts') }}/vscode-extensions.sh"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: "VSCODE | Short command (it-vscode)"
+  ansible.builtin.file:
+    src: "{{ it_scripts_dir | default('/opt/it/scripts') }}/vscode-extensions.sh"
+    dest: /usr/local/sbin/it-vscode
+    state: link
+    force: true
+
+- name: "VSCODE | Link the shared set into every existing account"
+  ansible.builtin.command:
+    cmd: /usr/local/sbin/it-vscode link --all --quiet
+  changed_when: false

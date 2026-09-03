@@ -109,13 +109,31 @@
   loop_control:
     label: "{{ item.port }}/{{ item.proto | default('tcp') }}"
 
-- name: "FW | Open code-server ({{ dev_code_server_port | default(8080) }}/tcp, rate-limited) when enabled"
+# A RANGE, not one port: code-server is single-user per instance, so every
+# engineer has their own, and the port is derived from their UID. The span is
+# dev_code_server_port_span -- keep it tight, it is what is reachable on the LAN.
+- name: "FW | Open code-server ({{ dev_code_server_port | default(8080) }}:{{ (dev_code_server_port | default(8080) | int) + (dev_code_server_port_span | default(20) | int) - 1 }}/tcp, rate-limited) when enabled"
+  community.general.ufw:
+    rule: limit
+    port: "{{ dev_code_server_port | default(8080) | int }}:{{ (dev_code_server_port | default(8080) | int) + (dev_code_server_port_span | default(20) | int) - 1 }}"
+    proto: tcp
+    comment: "code-server, one port per user (rate-limited)"
+  when:
+    - dev_code_server_enabled | default(false) | bool
+    - dev_code_server_bind_addr | default('0.0.0.0') != '127.0.0.1'
+
+# Bound to loopback -- nothing to open, and an old single-port rule from a
+# previous build has to go or it outlives the reason it existed.
+- name: "FW | Close code-server when it is loopback-only"
   community.general.ufw:
     rule: limit
     port: "{{ dev_code_server_port | default(8080) | string }}"
     proto: tcp
-    comment: "code-server (rate-limited)"
-  when: dev_code_server_enabled | default(false) | bool
+    delete: true
+  failed_when: false
+  when:
+    - dev_code_server_enabled | default(false) | bool
+    - dev_code_server_bind_addr | default('0.0.0.0') == '127.0.0.1'
 
 - name: "FW | Open Cockpit ({{ cockpit_port | default(9090) }}/tcp, rate-limited) when enabled"
   # Privileged management surface (root-capable). Rate-limited; restrict it to an

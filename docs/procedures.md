@@ -928,6 +928,99 @@ change after a reset; `EXPIRED 10d ago` means they cannot log in until they set 
 `it-passwd --list` is the shorter view with the faillock counter; `it-users` is the one
 with expiry and groups.
 
+## 3.6c VS Code and code-server for the engineers
+
+### One copy of the extensions, not one per person
+
+The extension set lives once in **`/opt/vscode-extensions`**. Each user's
+`~/.vscode/extensions` (and `~/.local/share/code-server/extensions`) holds
+**symlinks** into it, so an account costs bytes rather than the 3.0 GB /
+27,395 files a real copy costs — which is what made a single `useradd` take
+65 seconds when the set was seeded into `/etc/skel`.
+
+```bash
+sudo it-vscode                 # what is shared, and who is linked
+sudo it-vscode link <user>     # link one account
+sudo it-vscode link --all      # every human account
+sudo it-vscode verify          # ask VS Code itself what it can see
+```
+
+New accounts get the links from `/etc/skel` automatically — `useradd` copies
+symlinks as symlinks, so it stays instant. The pull links existing accounts on
+every run, so adding an engineer needs no extra step.
+
+**Users can still install their own extensions.** The directory is theirs and
+writable; only the shared entries are links, and a real directory of the same
+name is never replaced by one. `code --uninstall-extension` on a shared one
+removes that user's *link*, not the store.
+
+> **Verify this on the pilot box.** VS Code builds its extension list from a
+> manifest (`extensions.json`), not by scanning the directory, so the links are
+> only useful if the editor accepts the shared manifest. `sudo it-vscode verify`
+> asks the editor directly. If it lists nothing, that version needs a real copy
+> for that user — `sudo it-vscode copy <user>` — and the store is still worth
+> having as the source.
+
+### code-server, one per engineer
+
+code-server is **single-user per instance** — there is no multi-tenant mode — so
+every user gets their own, on their own port:
+
+```
+port = dev_code_server_port + (uid - dev_code_server_uid_base)
+```
+
+Derived from the UID, not from a position in a list, so removing one engineer
+does not move everyone else's port. With the defaults, uid 1000 → 8080, 1001 →
+8081, and so on.
+
+```bash
+sudo it-codeserver                    # who, on what port, and is it up
+sudo it-codeserver password <user>    # their password (generated, root-only)
+sudo it-codeserver url <user>
+sudo it-codeserver restart <user>
+sudo it-codeserver log <user> 100
+```
+
+**Entitlement is group membership.** Anyone in `dev_code_server_group`
+(`sentry` by default — the group every standing account joins) gets an
+instance on the next pull. Remove them from the group and the next pull stops
+and disables it. Don't enable the unit by hand; the pull won't know about it.
+
+Two filters apply automatically:
+
+- **Accounts that cannot log in are skipped.** `auto_audit` is in `sentry` and
+  is deliberately locked — a service for it would be a listening port nobody
+  can use.
+- **A UID outside the port span is skipped**, loudly, rather than landing on a
+  port the firewall does not cover or on something else's.
+
+The `dta` and `audit` accounts are in `sentry` too, because every standing
+account is. Exclude them if you would rather they had no IDE:
+
+```yaml
+# /opt/it/site.yml
+dev_code_server_exclude: [bob_smith_dta, amy_lee_aud]
+```
+
+### What this puts on the network
+
+Each instance is password-authed over self-signed TLS, with its **own**
+generated password in `/etc/code-server/<user>.password`, root-only. `ufw`
+rate-limits the whole range rather than a single port.
+
+> **These are on the LAN.** N ports, one per engineer, each a full IDE with
+> shell access as that user. That is a real surface and an assessor will ask
+> about it. To take them off the LAN entirely:
+> ```yaml
+> dev_code_server_bind_addr: 127.0.0.1
+> ```
+> The pull then removes the ufw rule as well. Users reach it from the RDP
+> desktop's browser, or over a tunnel: `ssh -L 8080:127.0.0.1:<port> <box>`.
+>
+> Keep `dev_code_server_port_span` as tight as the number of engineers — it is
+> exactly what is reachable.
+
 ## 3.7 Create a user account
 
 ```bash

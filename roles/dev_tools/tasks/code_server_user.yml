@@ -1,0 +1,52 @@
+---
+# One code-server instance. Included per user from code_server.yml.
+#
+# The port is derived from the UID so it is stable for a person: deriving it
+# from a position in a list would move everyone else's port whenever someone
+# left the group.
+
+- name: "CODE-SERVER | {{ cs_user }} | Account details"
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ cs_user }}"
+
+- name: "CODE-SERVER | {{ cs_user }} | Resolve home, uid and port"
+  ansible.builtin.set_fact:
+    _cs_home: "{{ ansible_facts.getent_passwd[cs_user][4] }}"
+    _cs_group: "{{ ansible_facts.getent_passwd[cs_user][2] }}"
+    _cs_port: >-
+      {{ dev_code_server_port | int
+         + (ansible_facts.getent_passwd[cs_user][1] | int)
+         - (dev_code_server_uid_base | int) }}
+
+- name: "CODE-SERVER | {{ cs_user }} | Config dir"
+  ansible.builtin.file:
+    path: "{{ _cs_home }}/.config/code-server"
+    state: directory
+    owner: "{{ cs_user }}"
+    group: "{{ cs_user }}"
+    mode: "0700"
+
+- name: "CODE-SERVER | {{ cs_user }} | config.yaml (own port, own password)"
+  ansible.builtin.copy:
+    dest: "{{ _cs_home }}/.config/code-server/config.yaml"
+    owner: "{{ cs_user }}"
+    group: "{{ cs_user }}"
+    mode: "0600"
+    content: |
+      # Managed by ansible (dev_tools/code_server_user.yml) -- do not edit by hand.
+      # Port is derived from this account's UID; see group_vars dev_code_server_*.
+      bind-addr: {{ dev_code_server_bind_addr }}:{{ _cs_port }}
+      auth: password
+      password: {{ lookup('ansible.builtin.password',
+                          '/etc/code-server/' ~ cs_user ~ '.password chars=ascii_letters,digits length=24') }}
+      cert: {{ (dev_code_server_tls | default(true) | bool) | lower }}
+  no_log: true
+  register: _cs_conf
+
+- name: "CODE-SERVER | {{ cs_user }} | Enable and start"
+  ansible.builtin.systemd:
+    name: "code-server@{{ cs_user }}"
+    enabled: true
+    state: "{{ 'restarted' if _cs_conf is changed else 'started' }}"
+    daemon_reload: true

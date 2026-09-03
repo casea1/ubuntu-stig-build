@@ -1,11 +1,16 @@
 ---
 # =============================================================================
-# code-server -- VS Code in the browser, for the development profile. Installed
-# here (online, before hardening) and run as a per-user systemd service so users
-# can reach a full VS Code from a browser in addition to RDP.
+# code-server -- VS Code in the browser, one instance per user.
 #
-# Served over self-signed TLS with a generated password (kept root-only); the
-# desktop_hardening role opens dev_code_server_port on the firewall after USG.
+# code-server is SINGLE-USER PER INSTANCE; there is no multi-tenant mode. So
+# every user who gets one needs their own port, and the port is derived from
+# the UID rather than from a position in a list -- removing one engineer must
+# not silently move everyone else's port.
+#
+#   port = dev_code_server_port + (uid - dev_code_server_uid_base)
+#
+# Each instance has its OWN generated password, root-only in /etc/code-server.
+# desktop_hardening opens the port range, rate-limited, after USG.
 # =============================================================================
 
 - name: "CODE-SERVER | Install code-server (coder's official installer)"
@@ -24,45 +29,111 @@
   environment:
     HOME: /root
 
-- name: "CODE-SERVER | Resolve the service user's home directory"
-  ansible.builtin.getent:
-    database: passwd
-    key: "{{ dev_tools_user }}"
+- name: "CODE-SERVER | Password store (root-only)"
+  ansible.builtin.file:
+    path: /etc/code-server
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
 
-- name: "CODE-SERVER | Configure + enable the service for {{ dev_tools_user }}"
-  # Only when the account exists (the installer account is hand-created; the
-  # playbook must not invent it).
-  when: dev_tools_user in ansible_facts.getent_passwd
-  vars:
-    _cs_home: "{{ ansible_facts.getent_passwd[dev_tools_user][4] }}"
-    # Generated once, persisted root-only, stable across re-runs.
-    _cs_password: "{{ lookup('ansible.builtin.password', '/etc/code-server/' ~ dev_tools_user ~ '.password chars=ascii_letters,digits length=24') }}"
-  block:
-    - name: "CODE-SERVER | Ensure the user's config dir exists"
-      ansible.builtin.file:
-        path: "{{ _cs_home }}/.config/code-server"
-        state: directory
-        owner: "{{ dev_tools_user }}"
-        group: "{{ dev_tools_user }}"
-        mode: "0700"
+# Group membership two ways, because `getent group` lists only SUPPLEMENTARY
+# members -- an account whose PRIMARY group is this one would be missed, and on
+# these boxes that is a plausible way to create an engineer.
+- name: "CODE-SERVER | Who gets an instance?"
+  ansible.builtin.shell:
+    cmd: |
+      g='{{ dev_code_server_group | default('') }}'
+      if [ -z "$g" ] || ! getent group "$g" >/dev/null 2>&1; then
+        # No group configured, or it does not exist: fall back to the one account
+        # this used to serve.
+        id -u '{{ dev_tools_user }}' >/dev/null 2>&1 && echo '{{ dev_tools_user }}'
+        exit 0
+      fi
+      gid=$(getent group "$g" | cut -d: -f3)
+      { getent group "$g" | cut -d: -f4 | tr ',' '\n'
+        awk -F: -v g="$gid" '$4==g {print $1}' /etc/passwd
+      } | sed '/^$/d' | sort -u | while read -r u; do
+        # Only real human accounts, and only those whose UID maps into the port
+        # range -- one outside it would land on a port the firewall does not
+        # cover, or on something else's.
+        uid=$(id -u "$u" 2>/dev/null) || continue
+        [ "$uid" -ge 1000 ] && [ "$uid" -lt 65534 ] || continue
+        # An account that cannot log in does not need a browser IDE. auto_audit
+        # is in this group (every standing account joins it) and is deliberately
+        # locked -- starting a service for it would be a listening port nobody
+        # can use, on a box that is counting listening ports.
+        case "$(getent passwd "$u" | cut -d: -f7)" in
+          */nologin|*/false|"") continue ;;
+        esac
+        # Optional per-site exclusions, e.g. the dta and audit accounts, which
+        # are in the group too.
+        for x in {{ dev_code_server_exclude | default([]) | join(' ') }}; do
+          [ "$u" = "$x" ] && continue 2
+        done
+        off=$((uid - {{ dev_code_server_uid_base }}))
+        [ "$off" -ge 0 ] && [ "$off" -lt {{ dev_code_server_port_span }} ] || continue
+        echo "$u"
+      done
+      exit 0
+  register: _cs_probe
+  changed_when: false
+  check_mode: false
 
-    - name: "CODE-SERVER | Write the user's config.yaml (bind, auth, TLS)"
-      ansible.builtin.copy:
-        dest: "{{ _cs_home }}/.config/code-server/config.yaml"
-        owner: "{{ dev_tools_user }}"
-        group: "{{ dev_tools_user }}"
-        mode: "0600"
-        content: |
-          # Managed by ansible (dev_tools/code_server.yml) -- do not edit by hand.
-          bind-addr: {{ dev_code_server_bind_addr }}:{{ dev_code_server_port }}
-          auth: password
-          password: {{ _cs_password }}
-          cert: {{ (dev_code_server_tls | default(true) | bool) | lower }}
-      no_log: true
+- name: "CODE-SERVER | The list"
+  ansible.builtin.set_fact:
+    _cs_users: "{{ _cs_probe.stdout_lines | default([]) }}"
 
-    - name: "CODE-SERVER | Enable + start the per-user service"
-      ansible.builtin.systemd:
-        name: "code-server@{{ dev_tools_user }}"
-        enabled: true
-        state: started
-        daemon_reload: true
+- name: "CODE-SERVER | Configure and enable an instance per user"
+  ansible.builtin.include_tasks: code_server_user.yml
+  loop: "{{ _cs_users }}"
+  loop_control:
+    loop_var: cs_user
+    label: "{{ cs_user }}"
+  when: _cs_users | length > 0
+
+# Removing someone from the group has to STOP their instance: systemd units
+# enabled by an earlier run stay enabled forever otherwise (trap 3).
+- name: "CODE-SERVER | Which instances are enabled right now?"
+  ansible.builtin.shell:
+    cmd: |
+      systemctl list-unit-files 'code-server@*' --no-legend 2>/dev/null \
+        | awk '$2=="enabled"{print $1}' \
+        | sed 's/^code-server@//; s/\.service$//'
+      exit 0
+  register: _cs_enabled
+  changed_when: false
+  check_mode: false
+
+- name: "CODE-SERVER | Stop instances for users who are no longer entitled"
+  ansible.builtin.systemd:
+    name: "code-server@{{ item }}"
+    enabled: false
+    state: stopped
+  loop: "{{ _cs_enabled.stdout_lines | default([]) | difference(_cs_users) }}"
+  failed_when: false
+
+- name: "CODE-SERVER | Install it-codeserver"
+  ansible.builtin.copy:
+    src: code-server-status.sh
+    dest: "{{ it_scripts_dir | default('/opt/it/scripts') }}/code-server-status.sh"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: "CODE-SERVER | Short command (it-codeserver)"
+  ansible.builtin.file:
+    src: "{{ it_scripts_dir | default('/opt/it/scripts') }}/code-server-status.sh"
+    dest: /usr/local/sbin/it-codeserver
+    state: link
+    force: true
+
+- name: "CODE-SERVER | Where things are"
+  ansible.builtin.debug:
+    msg: >-
+      code-server for {{ _cs_users | length }} user(s):
+      {{ _cs_users | join(', ') }}.
+      Ports {{ dev_code_server_port }}-{{ dev_code_server_port + dev_code_server_port_span - 1 }}
+      on {{ dev_code_server_bind_addr }} (uid {{ dev_code_server_uid_base }} -> {{ dev_code_server_port }}).
+      Each has its own password under /etc/code-server/. `sudo it-codeserver`
+      lists who is on which port.

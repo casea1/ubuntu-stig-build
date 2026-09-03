@@ -470,6 +470,16 @@ ssg_release_base: "https://github.com/ComplianceAsCode/content/releases/download
 # =============================================================================
 dev_tools_user: austin_case_adm        # owns VS Code extensions + docker group
 eng_venv_path: /opt/eng-venv           # shared Python environment ("eng" command)
+
+# ONE copy of the VS Code extension set for the whole box, instead of one per
+# account. The set measured 3.0 GB / 27,395 files on ASP-2; seeded into
+# /etc/skel it made every `useradd -m` copy all of it (65 s and 3 GB per
+# account), which is why that seeding is off.
+#
+# Users reach it by SYMLINK: ~/.vscode/extensions/<ext> -> here. /etc/skel gets
+# the symlinks, so useradd copies links (bytes) rather than the tree, and
+# `it-vscode link` does the same for accounts that already exist.
+vscode_shared_extensions_dir: /opt/vscode-extensions
 dotnet_sdk_package: dotnet-sdk-8.0      # .NET SDK from the Ubuntu archive (LTS)
 
 # PowerShell LTS — installed in base_packages as a pinned .deb (PowerStrux backend).
@@ -497,8 +507,32 @@ nodejs_major_version: "22"
 dev_code_server_enabled: "{{ is_development | default(true) | bool }}"
 dev_code_server_version: ""           # "" = latest; pin e.g. "4.100.1" for frozen images
 dev_code_server_bind_addr: "0.0.0.0"  # set 127.0.0.1 to require an SSH tunnel / RDP browser
-dev_code_server_port: 8080
 dev_code_server_tls: true             # self-signed HTTPS (front with a real cert for prod)
+
+# code-server is SINGLE-USER PER INSTANCE -- there is no multi-tenant mode. So
+# every user who gets one needs their own port, and the port has to be stable
+# per person: derived from the UID, not from a position in a list, or removing
+# one engineer would silently move everyone else's.
+#
+#   port = dev_code_server_port + (uid - dev_code_server_uid_base)
+#
+# With the defaults, uid 1000 -> 8080, uid 1001 -> 8081, and so on. A uid
+# outside the span is skipped rather than colliding with something else.
+dev_code_server_port: 8080            # base; the primary user keeps 8080
+dev_code_server_uid_base: 1000
+dev_code_server_port_span: 20         # how many ports the range covers
+
+# Who gets an instance. Members of this group, which every standing account
+# joins (it also owns /home/shared) -- so `it-adduser` gives a new engineer one
+# without a further step, and removing them from the group takes it away.
+# Empty string = the old behaviour, dev_tools_user only.
+dev_code_server_group: sentry
+
+# Accounts in that group that should NOT get one. Locked accounts are already
+# skipped by their shell (auto_audit), so this is for a login-capable account
+# you simply do not want serving an IDE -- the dta and audit accounts are in
+# `sentry` too, because every standing account is.
+dev_code_server_exclude: []
 
 # =============================================================================
 # REMOTE DESKTOP  (development profile -> remote_desktop role)
