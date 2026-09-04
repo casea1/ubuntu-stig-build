@@ -840,6 +840,39 @@ refuses MD5. `it-fpga check` says so when FIPS is on.
 
 # 3. Routine operations
 
+## 3.0 Capture a baseline before a box leaves
+
+```bash
+sudo it-pull scripts && sudo it-baseline
+```
+
+Writes `/opt/it/baseline-<host>-<stamp>.txt`. **Read-only** — it runs no fix,
+starts nothing, changes nothing.
+
+This answers a different question from `it-checklist` and `it-stig`. Those ask
+*is this box compliant*. This asks **if the machine were rebuilt from an
+`ansible-pull` tomorrow, what would be missing?** Everything a person did by
+hand lives in that gap, and nothing else on the box reports it. Take one before
+a box ships, and the rebuild is a comparison rather than an act of faith.
+
+The sections that carry the weight are the ones about what is **not** managed:
+
+| | |
+|---|---|
+| `apt-mark showmanual` | every package someone chose to install. Diffed against the repo's lists, the remainder is exactly what a rebuild loses |
+| `dpkg --verify` | package files that differ from the package — hand-edited config |
+| `/etc/systemd/system` unit names | anything the baseline did not write is drift |
+| `/usr/local/{bin,sbin}` | the `it-*` commands, plus anything hand-placed |
+| sysctl / modprobe / udev drop-ins | the same question for kernel and device config |
+
+**No secrets are included.** Credential files, `*.pw`, `*.cred`, `.env`, the Pro
+token and any keytab are listed by name, mode and size only. The capture is
+meant to be sent to someone off the box, so that rule is absolute rather than
+best-effort.
+
+`--brief` skips the long package and file inventories; `--stdout` prints instead
+of writing a file.
+
 ## 3.1 Check a box
 
 ```bash
