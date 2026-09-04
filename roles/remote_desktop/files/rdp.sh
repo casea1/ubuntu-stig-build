@@ -36,6 +36,24 @@ set -uo pipefail
 PENDING=/run/xrdp-sesman-restart-pending
 SESMAN_INI=/etc/xrdp/sesman.ini
 
+# The display numbers xrdp allocates. Everything outside this range belongs to
+# somebody else and must not be touched: gdm keeps sockets at X1024/X1025 (seen
+# on dev-13), and a sweep that deleted those would break the local greeter --
+# on a box whose whole point is that people can still log in at the console
+# when RDP is broken.
+ini_get() {   # $1 = key, $2 = default
+  local v
+  v="$(sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$SESMAN_INI" 2>/dev/null | tail -1)"
+  printf '%s' "${v:-$2}"
+}
+DISP_MIN="$(ini_get X11DisplayOffset 10)"
+DISP_MAX="$(ini_get MaxDisplayNumber 63)"
+
+ours() {   # $1 = display number -> 0 if xrdp could have allocated it
+  case "$1" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$1" -ge "$DISP_MIN" ] && [ "$1" -le "$DISP_MAX" ]
+}
+
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   B=$'\033[1m'; DIM=$'\033[2m'; GRN=$'\033[32m'; YEL=$'\033[33m'; RED=$'\033[31m'; R=$'\033[0m'
 else B=""; DIM=""; GRN=""; YEL=""; RED=""; R=""; fi
@@ -69,28 +87,45 @@ xrdp_xservers() {
 
 # Is this X server orphaned?
 #
-# A live session's Xorg is a child of the per-session xrdp-sesman that forked
-# it, and that sesman is a child of the main one. When the main sesman is
-# restarted -- which an ansible-pull used to do on any sesman.ini change -- the
-# per-session children are reparented to init and the main sesman comes back
-# with an EMPTY session table. The processes keep running and serve nobody.
+# Precisely: is it a descendant of the xrdp-sesman systemd is currently
+# running? A live session was forked by that process and its chain leads back
+# to it. When sesman is restarted -- which an ansible-pull used to do on any
+# sesman.ini change -- the sessions it held are reparented to init and the new
+# sesman starts with an empty table. Those sessions keep running, serve nobody,
+# cannot be reconnected to, and block their owner's next login.
 #
-# So: PPID 1 anywhere in the chain means nothing is managing this session any
-# more. That is the whole test, and it is the state that breaks the next login.
-is_orphan() {   # $1 = Xorg pid, $2 = its ppid
-  local pid="$1" ppid="$2" comm=""
-  [ "$ppid" = "1" ] && return 0
-  comm="$(ps -o comm= -p "$ppid" 2>/dev/null | tr -d ' ')"
-  case "$comm" in
-    xrdp-sesman)
-      # The session sesman exists. Is IT still attached to the main one?
-      local gp
-      gp="$(ps -o ppid= -p "$ppid" 2>/dev/null | tr -d ' ')"
-      [ "$gp" = "1" ] && return 0
-      return 1 ;;
-    "") return 0 ;;   # parent gone between the two ps calls
-    *)  return 1 ;;
-  esac
+# Asking systemd for the PID rather than inferring one from the process tree:
+# on a box mid-incident there are SEVERAL xrdp-sesman processes with PPID 1 --
+# the live one and every session orphaned by a restart -- and picking the wrong
+# one either spares an orphan or kills a working desktop. Observed on dev-13:
+# the running sesman was PID 277906 while an orphaned session's was 182320,
+# both PPID 1, and only systemd can say which is which.
+MAIN_SESMAN=""
+main_sesman() {
+  [ -n "$MAIN_SESMAN" ] && { printf '%s' "$MAIN_SESMAN"; return; }
+  MAIN_SESMAN="$(systemctl show -p MainPID --value xrdp-sesman.service 2>/dev/null)"
+  case "$MAIN_SESMAN" in ''|0) MAIN_SESMAN="" ;; esac
+  printf '%s' "$MAIN_SESMAN"
+}
+
+is_descendant() {   # $1 = pid, $2 = ancestor pid
+  local p="$1" n=0
+  while [ -n "$p" ] && [ "$p" != 1 ] && [ "$p" != 0 ] && [ "$n" -lt 32 ]; do
+    [ "$p" = "$2" ] && return 0
+    p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
+    n=$((n + 1))
+  done
+  return 1
+}
+
+is_orphan() {   # $1 = Xorg pid  (the second argument is no longer used)
+  local main
+  main="$(main_sesman)"
+  # No running sesman means nothing can be judged -- and reaping on a guess is
+  # how a sweep logs out a room. Fail safe: nothing is an orphan.
+  [ -n "$main" ] || return 1
+  is_descendant "$1" "$main" && return 1
+  return 0
 }
 
 # The chansrv belonging to ONE display. Scoped by its DISPLAY, not by its user:
@@ -154,12 +189,14 @@ cmd_status() {
 
   # Sockets with no process: harmless on their own, but they make sesman skip
   # a display, which is how a user ends up on :11 with an orphan on :10.
-  head2 "X sockets"
+  head2 "X sockets  ${DIM}(xrdp allocates :$DISP_MIN-:$DISP_MAX)${R}"
   local s n stale=0
   for s in /tmp/.X11-unix/X*; do
     [ -e "$s" ] || continue
     n="${s##*/X}"
-    if pgrep -f "Xorg :$n " >/dev/null 2>&1; then
+    if ! ours "$n"; then
+      say "  X$n  $(stat -c '%U' "$s" 2>/dev/null) -- outside xrdp's range, left alone"
+    elif pgrep -f "Xorg :$n " >/dev/null 2>&1; then
       say "  X$n  in use"
     else
       stale=$((stale + 1))
@@ -210,11 +247,14 @@ cmd_sweep() {
     fi
   done < <(xrdp_xservers)
 
-  # Sockets whose X server is already gone.
+  # Sockets whose X server is already gone -- inside xrdp's display range only.
+  # gdm's live sockets sit at X1024/X1025 and deleting those breaks the console
+  # greeter, which is the one way back in when RDP is the thing that is broken.
   local s d
   for s in /tmp/.X11-unix/X*; do
     [ -e "$s" ] || continue
     d="${s##*/X}"
+    ours "$d" || continue
     if ! pgrep -f "Xorg :$d " >/dev/null 2>&1; then
       rm -f "$s" "/tmp/.X$d-lock" 2>/dev/null && { ok "removed leftover socket X$d"; n=$((n + 1)); }
     fi

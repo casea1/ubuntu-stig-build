@@ -1476,11 +1476,27 @@ Those two lines together are the signature. Anything else — the consent banner
 |---|---|
 | The pull will not restart `xrdp-sesman` while sessions are live | Restarting it orphans every session it holds. It defers, leaves `/run/xrdp-sesman-restart-pending`, and applies at the next reboot or the next pull on an idle box. `it-rdp status` reports it |
 | sesman reaps orphans when it starts | A systemd drop-in runs `it-rdp sweep` as `ExecStartPre` |
+| `xrdp-reap.timer` sweeps every 15 min | So the person who hits this is not waiting on an admin — their login just closes, and there is nothing they can do about it themselves. `dev_rdp_reap_enabled` / `dev_rdp_reap_interval` |
 | Abandoned sessions time out | `KillDisconnected=true` + `dev_rdp_disconnected_time_limit` (default 8 h) |
 
 The timeout only reaches sessions sesman still knows about, which is why the
-first two matter more than the third: a session orphaned by a sesman restart is
-invisible to sesman and no timeout will ever reach it.
+others matter more: a session orphaned by a sesman restart is invisible to
+sesman and no timeout will ever reach it.
+
+**Reconnecting to your own session is not affected.** xrdp resumes a
+disconnected session normally — `Policy=Default` matches on
+`<User,BitPerPixel>`, so a different monitor, resolution or client machine
+still finds your desktop, and `KillDisconnected` only fires after the grace
+period. The only thing that breaks resume is a **sesman restart**, which empties
+the table it matches against.
+
+**What counts as an orphan**, and why it is asked this way: an `Xorg` that is
+not a descendant of the `xrdp-sesman` systemd is currently running
+(`systemctl show -p MainPID`). A PPID-of-1 test is not enough — mid-incident
+there are several `xrdp-sesman` processes with PPID 1, the live one among them.
+With no running sesman, nothing is treated as an orphan. The socket cleanup is
+confined to `X11DisplayOffset`..`MaxDisplayNumber` (10–63), because gdm keeps
+live sockets at `X1024`/`X1025` and removing those breaks the console greeter.
 
 ```yaml
 # /opt/it/site.yml, or group_vars for the fleet
