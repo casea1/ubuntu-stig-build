@@ -201,6 +201,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `it-host` | OS, kernel, FIPS, uptime, disks |
 | `it-luks` | Encryption state + TPM binding |
 | `it-luks-rebind` | Re-bind LUKS to the current PCRs after a firmware change |
+| `it-pro` | The Ubuntu Pro subscription — which USG, FIPS and ESM all come from. `status` (default; flags a **free/personal/trial** contract, which entitles USG and FIPS exactly like a paid one so nothing else looks wrong), `token <file>` (stored token only — governs a REBUILD), `switch <file>` (**this box**: detach, re-attach, re-enable its services, store it), `attach`, `refresh`. `usg_harden` attaches only an UNATTACHED box, so changing the token file alone leaves a trial-attached box on that trial forever — `switch` is the only thing that moves it. Tokens are read from a file, never an argument (`ps` shows a command line to every user) |
 | `it-grub` | `status` / `hash` (fleet) / `set` (one box) — GRUB password |
 | `it-usb` | USBGuard: `status`, `list`, `blocked`, `enroll`, `allow`, `trust` |
 | `it-checklist` | The org checklist, one line per item. `--fail-only`, `--out FILE`, and **`--fix`** — prints how to close every FAIL and what each MANUAL item needs from a human. Prints steps, changes nothing |

@@ -1645,6 +1645,55 @@ was abandoned overnight and never a same-day reconnect.
 
 # 4. Patching
 
+## 4.0 Check — and change — the Ubuntu Pro subscription
+
+```bash
+sudo it-pro                      # subscription, expiry, services
+```
+
+Pro is not a billing detail on these boxes: **USG (the DISA-STIG hardening),
+FIPS and ESM all come from it**. An unattached box is an unhardened box —
+`usg_harden` self-skips and records a POA&M.
+
+**A free personal subscription entitles USG and FIPS exactly like a paid one**,
+so nothing about the box looks wrong. The difference shows up later — it is
+capped at 5 machines, and at renewal. The contract name is the only place it is
+visible, which is why `it-pro status` flags it.
+
+### The trap: changing the token does not move the box
+
+`usg_harden` attaches only a box that is **not already attached**. So writing a
+new token to `/etc/ubuntu-advantage/pro-token` changes what a *rebuild* would
+use and nothing at all about the machine in front of you — a box brought up on a
+trial stays on that trial through every future pull, silently.
+
+| Command | What it changes |
+|---|---|
+| `it-pro token <file>` | the stored token only — future pulls and rebuilds |
+| `it-pro switch <file>` | **this box**: detach, re-attach on the new token, re-enable its services, and store it |
+| `it-pro attach [<file>]` | an unattached box (uses the token file by default) |
+
+```bash
+sudo it-pro switch /path/to/real-token
+```
+
+> **`switch` detaches first, and detaching disables every Pro service** —
+> including FIPS and USG. They are re-enabled immediately afterwards, but in
+> between the box is not receiving Pro updates, and a service the new
+> subscription does not entitle **will not come back**. `fips-updates` also pins
+> a kernel. Do it on a box you can reboot, not mid-workday. It prints what is
+> enabled, requires a typed `YES`, and names anything that failed to return.
+
+Tokens are read from a **file**, never passed as an argument — a command line is
+visible in `ps` to every user on the box and lands in shell history. `-` reads
+standard input. The stored copy is written with `umask 077` so it is never
+briefly world-readable.
+
+```bash
+sudo it-pro token -            # paste it, then Ctrl-D
+sudo it-pro refresh            # re-pull contract data after a renewal
+```
+
 ## 4.1 Patch a connected box
 
 ```bash

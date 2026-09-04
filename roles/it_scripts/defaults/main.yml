@@ -54,6 +54,7 @@ it_scripts_common:
   - { file: usb-guard.sh,          link: it-usb }
   - { file: usb-render.py,         link: '' }
   - { file: grub-password.sh,      link: it-grub }
+  - { file: ubuntu-pro.sh,         link: it-pro }
   - { file: checklist.sh,          link: it-checklist }
   - { file: stig-checklist.py,     link: it-ckl }
   - { file: stig-run.sh,           link: it-stig }
