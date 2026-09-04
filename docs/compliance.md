@@ -31,6 +31,46 @@ USG audit report auto-copies to `/opt/ia/` every run (HTML + XCCDF), readable by
 sudo usg audit --tailoring-file /etc/usg/managed-tailoring.xml
 ```
 
+### ⚠️ `docker` group membership on the engineering workstations (accepted risk)
+
+**Standard (engineer) accounts on the development profile are members of
+`docker`, and that is root-equivalent.** Anyone in the group can run
+
+```
+docker run -v /:/host -it alpine chroot /host
+```
+
+and write to the host filesystem as root — with **no sudo, no password prompt,
+and no privileged action to attribute it to**. `sudo` is logged to
+`/var/log/sudo.log` (UBTU-24-500010); this path is not. It is a genuine
+privilege-escalation route on an otherwise hardened box, and it is granted
+deliberately because the engineering mission needs containers to work without
+an admin in the loop.
+
+**Scoped as tightly as the mission allows:**
+
+| Account type | In `docker`? | Why |
+|---|---|---|
+| standard (engineer) | **yes** | needs containers; this is the accepted risk |
+| admin | no | already has `sudo`, so `sudo docker` works — adding them widens the root-equivalent set for nothing |
+| audit | no | an auditor who can silently become root cannot audit the box independently |
+| dta | no | no container workload |
+
+Applied by `it-adduser` for the `standard` type and by `local_users` for
+standing accounts. `docker` is in `local_groups` so it exists before
+`local_accounts` runs — `dev_tools` does not install `docker.io` until much
+later, and `user: append:false` fails on a group that does not exist yet.
+
+**Compensating controls**: the boxes are headless and reachable only by SSH and
+RDP from the local network; every account is individually named and
+password-protected with faillock; auditd records the execve of `docker` itself
+even where the in-container action is not attributable; and the `ai` profile —
+which runs the actual container fleet — grants the group to nobody.
+
+**To withdraw it**: remove `docker` from `type_groups()` in `adduser.sh` and
+from the standing accounts, and engineers use `sudo docker` instead. That trades
+convenience for attribution and is the stricter posture if an assessor objects.
+
 ### ⚠️ i386 multiarch on the engineering workstations (approved deviation)
 
 **What.** `dpkg --add-architecture i386` plus ~27 32-bit runtime libraries, on

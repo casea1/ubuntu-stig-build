@@ -4,7 +4,7 @@
 # Account types decide BOTH the name suffix and the groups, so nobody has to
 # remember either:
 #
-#   standard   first_last        sentry
+#   standard   first_last        sentry, docker
 #   dta        first_last_dta    dta, sentry
 #   admin      first_last_adm    sudo, sentry
 #   audit      first_last_aud    audit, sudo, sentry
@@ -91,8 +91,19 @@ type_suffix() {
 }
 type_groups() {
   # sentry is local_users_common_groups -- every standing account joins it.
+  #
+  # `docker` goes to STANDARD accounts only, and that is a deliberate line.
+  # Membership of docker is ROOT-EQUIVALENT: `docker run -v /:/host` writes to
+  # the host filesystem as root with no sudo, no password and no privileged
+  # action to attribute it to. Engineers need it to work, so it is granted and
+  # written up (compliance.md) rather than granted quietly.
+  #
+  # Admins are NOT in it: they have sudo, so `sudo docker` already works, and
+  # putting them in the group would widen the root-equivalent set for nothing.
+  # Auditors and DTAs are not in it either -- neither role runs containers, and
+  # an auditor who can become root cannot audit the box independently.
   case "$1" in
-    standard) printf 'sentry' ;;
+    standard) printf 'sentry,docker' ;;
     dta)      printf 'dta,sentry' ;;
     admin)    printf 'sudo,sentry' ;;
     audit)    printf 'audit,sudo,sentry' ;;
@@ -102,7 +113,7 @@ type_groups() {
 # ---- gather ------------------------------------------------------------------
 if [ -z "$TYPE" ]; then
   head2 "Account type"
-  say "  standard   no special access          -> first_last"
+  say "  standard   engineer: sentry + docker   -> first_last"
   say "  dta        USB data transfer          -> first_last_dta"
   say "  admin      full sudo                  -> first_last_adm"
   say "  audit      /opt/_AuditFiles + sudo    -> first_last_aud"

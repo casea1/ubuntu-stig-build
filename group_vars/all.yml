@@ -953,6 +953,12 @@ local_groups:
   # dialout ships with Ubuntu; plugdev does not on a minimal install.
   - dialout
   - plugdev
+  # docker is created by the docker.io package, which dev_tools installs LONG
+  # after local_accounts runs -- so without this, `user: append:false` fails on
+  # a group that does not exist yet and account creation breaks on a fresh
+  # build. Same reason dialout and plugdev are here. Harmless on a profile that
+  # never installs docker: an empty group costs nothing.
+  - docker
 
 # Standing accounts. Each is created with a LOCKED password ('!') -- the account
 # exists but cannot be logged into until an admin sets one per-machine at deploy:
@@ -977,7 +983,9 @@ local_users:
   # one box each and in no group_vars, so a rebuild of dev-13 or dev-15 would
   # have silently dropped a real person's account.
   - { name: elie_sanestin_adm, groups: [sudo] }        # was on dev-13 only
-  - { name: luke_lambert,      groups: [] }            # was on dev-15 only; sentry comes from local_users_common_groups
+  # docker, because he is a standard engineering account -- the same set
+  # `it-adduser` gives a `standard` user. Root-equivalent; see compliance.md.
+  - { name: luke_lambert,      groups: [docker] }     # was on dev-15 only; sentry comes from local_users_common_groups
 
 # Groups EVERY standing account above ALSO joins, merged into each account's own
 # `groups` list. All initial accounts get `sentry` (the shared /home/shared

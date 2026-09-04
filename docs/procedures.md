@@ -1603,6 +1603,13 @@ Passwords are checked against this box's own `pwquality` policy before being set
 
 Generated passwords are 20 characters with all four character classes, and deliberately contain no `0`/`O`/`1`/`l`/`I` or `:` — it gets read off one screen and typed on another, once, by someone who did not choose it, and a misread character is indistinguishable from "the reset did not work".
 
+> **A `standard` account joins `docker`**, which is **root-equivalent** — that
+> account can write to the host filesystem as root via a container, with no
+> sudo and nothing in `/var/log/sudo.log` to attribute it to. It is granted
+> deliberately so engineers can run containers without an admin in the loop, and
+> it is written up in `compliance.md` as an accepted risk. Admin, audit and dta
+> accounts are deliberately **not** in the group.
+
 ### What each password option does
 
 Both `it-adduser` and `it-passwd` ask the same three-way question, and the
