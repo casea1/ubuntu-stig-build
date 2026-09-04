@@ -199,6 +199,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | Command | Does |
 |---|---|
 | `it-pull` | Re-run the baseline. `it-pull` (light — config + scripts, no apt, no scan, **no container touched**), `full` (+ packages and a fresh audit/scan), `scripts` (that role alone), `ai` (opts into the compose stacks), **`load [PATH]`** (air-gapped: adopt a baseline repo carried in on media — mirrors it to `/srv/baseline.git`, sets `REPO_URL` in `pull.conf`, admin-only, verifies the repo by content and requires a typed `YES`), `check` (Ansible `--check`; unreliable — check mode can report the opposite of the truth, see procedures §1.10), `status` (behind origin? plus the incoming commits and files), `log`. Reads the repo/branch off the box's own `ansible-pull` checkout; override in `/etc/stig-build/pull.conf` |
+| `it-baseline` | Capture what the box actually IS, so the repo can be checked against it — **read-only**, writes `/opt/it/baseline-<host>-<stamp>.txt`. Answers "if this were rebuilt from a pull tomorrow, what would be missing?", which is a different question from `it-checklist`. The load-bearing sections are the unmanaged ones: `apt-mark showmanual`, `dpkg --verify`, unit files in `/etc/systemd/system`, `/usr/local/{bin,sbin}`, sysctl/modprobe/udev drop-ins. Secret-bearing files are listed by name, mode and size **only** — the capture is meant to leave the box. `--brief`, `--stdout` |
 | `it-status` | Everything at a glance |
 | `it-host` | OS, kernel, FIPS, uptime, disks |
 | `it-luks` | Encryption state + TPM binding |
