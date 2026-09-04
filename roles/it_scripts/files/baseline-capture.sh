@@ -81,7 +81,10 @@ LIMIT=80 run "cat /opt/it/site.yml 2>/dev/null || echo '(none)'"
 sec "SUBSCRIPTION AND HARDENING STATE"
 LIMIT=30 run "pro status 2>&1"
 sub "USG"
-run "usg version 2>&1 || echo '(usg not installed)'"
+# `usg version` is NOT a subcommand -- usg's own error listing the valid ones
+# was being read as "not installed" on boxes where it plainly is.
+run "usg --version 2>&1 | head -2 || echo '(usg not installed)'"
+LIMIT=6 run "dpkg -l usg ssg-debderived 2>/dev/null | grep '^ii' || echo '(usg package absent)'"
 LIMIT=20 run "ls -lt /opt/ia/*.html /opt/ia/*.xml 2>/dev/null | head -8 || echo '(no USG/oscap reports)'"
 
 # ---------------------------------------------------------------------------
@@ -100,13 +103,21 @@ shape /var/log/sudo.log
 
 # ---------------------------------------------------------------------------
 sec "ACCOUNTS, GROUPS, SUDO"
-LIMIT=40 run "it-users --all 2>/dev/null || getent passwd | awk -F: '\$3>=1000 && \$3<65000'"
+LIMIT=120 run "it-users --all 2>/dev/null || getent passwd | awk -F: '\$3>=1000 && \$3<65000'"
 sub "group membership that matters"
 for g in sudo sentry audit dta dialout plugdev; do
   printf '  %-10s %s\n' "$g" "$(getent group "$g" | cut -d: -f4)"
 done
 sub "sudoers drop-ins (names only)"
 LIMIT=30 run "ls -l /etc/sudoers.d/ 2>/dev/null"
+
+# Can this box still authenticate? libpam-sss's postinst regenerates
+# common-auth, which is how ASP-2 became unloggable -- so sssd installed on an
+# UNJOINED box makes this the most important line in the capture.
+sub "PAM health"
+LIMIT=25 run "pam-auth-check 2>&1 || echo '(pam-auth-check not installed)'"
+LIMIT=8  run "dpkg -l libpam-sss sssd 2>/dev/null | grep '^ii' || echo '(sssd absent -- expected before a domain join)'"
+LIMIT=20 run "grep -vE '^[[:space:]]*(#|$)' /etc/pam.d/common-auth"
 
 # ---------------------------------------------------------------------------
 sec "PASSWORD AND LOCKOUT POLICY"
@@ -139,12 +150,12 @@ LIMIT=60 run "ls -1 /etc/systemd/system/*.service /etc/systemd/system/*.timer /e
 sec "DEVELOPMENT PROFILE: THE TOOLCHAINS"
 LIMIT=60 run "it-fpga status 2>&1"
 sub "vendor app tiles"
-LIMIT=20 run "ls -1 /usr/share/applications/fpga-*.desktop /usr/local/bin/fpga-vendor-* 2>/dev/null"
+LIMIT=60 run "ls -1 /usr/share/applications/fpga-*.desktop /usr/local/bin/fpga-vendor-* 2>/dev/null"
 sub "RDP"
 LIMIT=40 run "it-rdp status 2>&1"
 sub "code-server + shared extensions"
 LIMIT=25 run "it-codeserver status 2>&1"
-LIMIT=10 run "it-vscode status 2>&1"
+LIMIT=40 run "it-vscode status 2>&1"
 sub "USB"
 LIMIT=30 run "it-usb status 2>&1"
 sub "serial adapters"
