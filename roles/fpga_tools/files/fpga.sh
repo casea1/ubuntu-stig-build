@@ -845,13 +845,22 @@ cmd_install_libero() {
 
 cmd_check() {
   head2 "Vendor checkers"
-  local c="$LIBDIR/bin/check_linux_req"
-  if [ -x "$c" ]; then
+  # Microchip moves this between releases -- 2025.1 buries it at
+  # Libero_SoC/Designer/bin/check_linux_req/check_linux_req.sh -- so find it
+  # rather than hardcode a path that silently reports "not found" on the next
+  # version and looks like a missing install.
+  local c=""
+  if [ -d "$LIBDIR" ]; then
+    c="$(find "$LIBDIR" -maxdepth 6 -type f -name 'check_linux_req*' \
+           -perm -u+x 2>/dev/null | sort | head -1)"
+  fi
+  if [ -n "$c" ] && [ -x "$c" ]; then
+    say "  ${DIM}$c${R}"
     say "  ${DIM}Microchip's checker reports in RPM names -- translate before believing it.${R}"
     say ""
     "$c" 2>&1 | sed 's/^/  /'
   else
-    warn "Microchip's check_linux_req not found at $c"
+    warn "Microchip's check_linux_req not found under $LIBDIR"
   fi
 
   local v="$XROOT/Vivado/$XVER/bin/unwrapped/lnx64.o/vivado"
