@@ -82,6 +82,27 @@
          if (_pro_status_final.rc == 0 and (_pro_status_final.stdout | default('') | length) > 0)
          else false }}
 
+# Which Pro services are ALREADY on. Read from the status document we just
+# fetched, because `pro enable <x>` on a service that is already enabled is not
+# free: it contacts contracts.canonical.com first ("One moment, checking your
+# subscription first") and can fail there for reasons that have nothing to do
+# with the service. On dev-15 that was
+#   An unexpected error occurred: [CRYPTO] unknown error (_ssl.c:3026)
+# -- a TLS failure inside the pro client on a FIPS kernel -- and it stopped the
+# whole pull at usg_harden, leaving everything after it unrun, on a box where
+# fips-updates was ALREADY ENABLED and nothing needed doing.
+#
+# The old guard tolerated "is already enabled" in pro's own output, which only
+# helps when pro gets far enough to say it. Ask the box, not the command.
+- name: "USG | Which Pro services are already enabled"
+  ansible.builtin.set_fact:
+    _pro_enabled: >-
+      {{ ((_pro_status_final.stdout | from_json).services | default([])
+          | selectattr('status', 'equalto', 'enabled')
+          | map(attribute='name') | list)
+         if (_pro_status_final.rc == 0 and (_pro_status_final.stdout | default('') | length) > 0)
+         else [] }}
+
 - name: "USG | POA&M WARNING -- not Pro-attached, skipping USG hardening"
   ansible.builtin.debug:
     msg: >-
@@ -101,6 +122,7 @@
     - name: "USG | Enable the usg Pro service (tolerant: some releases ship it in the attached repos)"
       ansible.builtin.command: pro enable usg --assume-yes
       register: _usg_enable
+      when: "'usg' not in (_pro_enabled | default([]))"
       changed_when: "'Updating' in _usg_enable.stdout or 'Installing' in _usg_enable.stdout"
       # Not fatal: on releases where `usg` isn't a distinct pro service the enable
       # is a no-op error and the package installs straight from the attached repo.
@@ -115,19 +137,26 @@
     - name: "USG | Enable FIPS (fips-updates) -- swaps the kernel, needs a reboot"
       ansible.builtin.command: pro enable fips-updates --assume-yes
       register: _fips_enable
-      when: usg_enable_fips | default(false) | bool
+      when:
+        - usg_enable_fips | default(false) | bool
+        - "'fips-updates' not in (_pro_enabled | default([]))"
       changed_when: _fips_enable.rc == 0 and 'is already enabled' not in _fips_enable.stdout
       failed_when:
         - _fips_enable.rc != 0
         - "'is already enabled' not in (_fips_enable.stdout + _fips_enable.stderr)"
 
+        # `is not skipped` matters here: when fips-updates was already on, the
+    # enable above does not run, and a skipped registered variable has no rc at
+    # all -- so testing .rc would throw, and treating it as changed would demand
+    # a reboot on every pull forever.
     - name: "USG | FIPS enabled -> reboot required"
       ansible.builtin.set_fact:
         usg_reboot_required: true
       when:
         - usg_enable_fips | default(false) | bool
         - _fips_enable is defined
-        - _fips_enable.rc == 0
+        - _fips_enable is not skipped
+        - _fips_enable.rc | default(1) == 0
 
     # ---- Smart-card (CAC) opt-out via a generated tailoring file ------------
     # This image is password-login only (smartcard POA&M'd), but disa_stig's
