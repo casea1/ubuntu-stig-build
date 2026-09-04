@@ -2006,6 +2006,19 @@ line is in `ps` for every user on the box and in shell history — and live in a
 `0600` temporary file removed on exit, Ctrl-C included. Backslashes are accepted,
 so a UNC pasted from Windows works as-is.
 
+**Type the username the way Windows shows it.** `ASPLAB\acase.asp`,
+`acase.asp@asplab.local` and a plain `acase.asp` all work: the domain is split
+out and passed to `mount.cifs` as a separate `domain=` field. It has to be
+separate — a backslash inside `username=` is read literally by some servers and
+stripped by others, which is why `DOMAIN\user` "sometimes works", the least
+useful behaviour available.
+
+**`mount error(2)` means the share name does not exist on that server** — not a
+credential problem. cifs returns the same `NT_STATUS_BAD_NETWORK_NAME` whether
+the name is wrong or your account cannot see the share, so check the spelling
+first: `\\server\Share` is case-insensitive but not fuzzy, and `FileServer`,
+`Fileserver$` and `Files` are three different shares.
+
 A **bare name** is the other question entirely: diagnose a share this box
 already manages. `it-smb test <name>` walks the chain in order and stops at the
 first thing that is actually wrong:

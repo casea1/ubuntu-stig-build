@@ -187,11 +187,22 @@ probe_unc() {   # $1 = //server/share  [--user U] [--domain D] [--guest] [--vers
   # Credentials. Asked for here rather than taken as an argument: a password on
   # a command line is in `ps` for every user on the box and in shell history.
   if [ "$guest" -eq 0 ]; then
-    [ -n "$user" ] || { printf '  Username (blank for guest): ' >&2; read -r user; }
+    [ -n "$user" ] || { printf '  Username (DOMAIN\\user, or blank for guest): ' >&2; read -r user; }
     if [ -z "$user" ]; then
       guest=1
     else
-      printf '  Password for %s (not shown): ' "$user" >&2
+      # People type what Windows shows them. Split it rather than pass it
+      # through: mount.cifs wants username= and domain= as SEPARATE fields, and
+      # a backslash inside username= is read literally by some servers and
+      # stripped by others -- which is why DOMAIN\user "sometimes works", the
+      # least useful behaviour available.
+      case "$user" in
+        *\\*) domain="${user%%\\*}"; user="${user##*\\}" ;;
+        *@*)   domain="${user##*@}";  user="${user%%@*}" ;;
+        */*)   domain="${user%%/*}";  user="${user##*/}" ;;
+      esac
+      [ -n "$domain" ] && ok "domain $domain, user $user  (split for mount.cifs)"
+      printf '  Password for %s (not shown): ' "${domain:+$domain\\}$user" >&2
       read -rs pass; printf '\n' >&2
     fi
   fi
@@ -204,7 +215,7 @@ probe_unc() {   # $1 = //server/share  [--user U] [--domain D] [--guest] [--vers
     if [ "$guest" -eq 1 ]; then
       list="$(smbclient -L "//$server" -N -g 2>&1)"; rc2=$?
     else
-      list="$(printf '%s' "$pass" | smbclient -L "//$server" -U "${domain:+$domain\\}$user" -g 2>&1)"; rc2=$?
+      list="$(printf '%s' "$pass" | smbclient -L "//$server" -U "$user" ${domain:+-W "$domain"} -g 2>&1)"; rc2=$?
     fi
     if [ "$rc2" -eq 0 ]; then
       if printf '%s' "$list" | awk -F'|' 'tolower($1)=="disk"{print $2}' \
@@ -216,7 +227,12 @@ probe_unc() {   # $1 = //server/share  [--user U] [--domain D] [--guest] [--vers
         printf '%s' "$list" | awk -F'|' 'tolower($1)=="disk"{print "      " $2}'
       fi
     else
-      warn "could not list shares (many servers refuse this) -- continuing to the mount"
+      warn "could not list shares -- continuing to the mount"
+      # Printed, not swallowed. smbclient usually says exactly what is wrong
+      # (bad password, SMB1 disabled, listing denied), and hiding it here is
+      # how a probe reports less than the raw command would have.
+      printf '%s\n' "$list" | grep -viE '^(Anonymous login|session setup failed$)' \
+        | sed 's/^/      /' | tail -4
     fi
   fi
 
@@ -242,7 +258,12 @@ probe_unc() {   # $1 = //server/share  [--user U] [--domain D] [--guest] [--vers
 
   say ""
   say "  mount -t cifs $unc $tmpd -o ${opts//,credentials=*/,credentials=<file>}"
+  # The kernel log around the attempt, exactly as `diagnose` does it: cifs puts
+  # the real reason there and only a generic errno on stderr.
+  local before kern
+  before=$(dmesg 2>/dev/null | wc -l)
   out="$(mount -t cifs "$unc" "$tmpd" -o "$opts" 2>&1)"; rc=$?
+  kern=$(dmesg 2>/dev/null | tail -n +$((before + 1)) | grep -i cifs || true)
   if [ "$rc" -eq 0 ]; then
     ok "MOUNTED read-only"
     say "    top level:"
@@ -250,8 +271,9 @@ probe_unc() {   # $1 = //server/share  [--user U] [--domain D] [--guest] [--vers
     umount "$tmpd" 2>/dev/null && ok "unmounted -- nothing left behind"
   else
     bad "mount failed"
-    explain_mount_error "$out"
+    explain_cifs "$out" "$kern"
     printf '%s\n' "$out" | sed 's/^/      /'
+    [ -n "$kern" ] && { say "  ${DIM}--- kernel ---${R}"; printf '%s\n' "$kern" | sed 's/^/      /' | tail -8; }
   fi
   say ""
   say "  ${DIM}To keep it: it-smb add --name <name> --share $unc${R}"
