@@ -39,6 +39,14 @@ fpga_microchip_root: /opt/microchip
 fpga_libero_version: "2025.1"
 fpga_libero_dir: "{{ fpga_microchip_root }}/Libero_SoC_{{ fpga_libero_version }}"
 
+# Where the Designer binaries actually are inside that tree. Microchip MOVED
+# this in 2025.1: it used to be <root>/Libero/bin64, it is now
+# <root>/Libero_SoC/Designer/bin64. Hardcoding one of them makes a perfectly
+# good install report as missing -- no app-grid tile, no `libero` command, and
+# `it-fpga status` saying NOT INSTALLED. Override for an older release.
+fpga_libero_designer_dir: "{{ fpga_libero_dir }}/Libero_SoC/Designer"
+fpga_libero_bin: "{{ fpga_libero_designer_dir }}/bin64/libero"
+
 # ---- launchers and desktop entries -----------------------------------------
 # The vendors' installers create shortcuts only when asked, and a `--batch
 # Install` run under sudo puts them in /root/Desktop where nobody sees them.

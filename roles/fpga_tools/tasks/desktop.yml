@@ -22,7 +22,7 @@
          if fpga_xilinx_enabled | bool else [])
         +
         ([{'name': 'Libero', 'path': fpga_libero_dir,
-           'probe': fpga_libero_dir ~ '/Libero/bin64/libero'}]
+           'probe': fpga_libero_bin}]
          if fpga_microchip_enabled | bool else [])
       }}
 
@@ -35,7 +35,7 @@
   loop:
     - "{{ fpga_xilinx_root }}/Vivado/{{ fpga_xilinx_version }}/bin/vivado"
     - "{{ fpga_xilinx_root }}/Vitis/{{ fpga_xilinx_version }}/bin/vitis"
-    - "{{ fpga_libero_dir }}/Libero/bin64/libero"
+    - "{{ fpga_libero_bin }}"
   register: _fpga_bins
   loop_control:
     label: "{{ item }}"
@@ -72,7 +72,7 @@
             'generic': 'FPGA Design Suite',
             'comment': 'Microchip Libero SoC ' ~ fpga_libero_version ~ ' -- PolarFire / IGLOO design',
             'root': fpga_microchip_root,
-            'bin': fpga_libero_dir ~ '/Libero/bin64/libero',
+            'bin': fpga_libero_bin,
             'icon': fpga_icon_libero,
             'ld_i386': true,
             'keywords': 'fpga;libero;microchip;microsemi;polarfire;igloo;',

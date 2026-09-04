@@ -161,8 +161,8 @@ cmd_status() {
   if [ -r "$MICROCHIP_ENV" ]; then
     if have_tree "$LIBDIR"; then
       ok "Libero            $LIBDIR  ($(du -sh "$LIBDIR" 2>/dev/null | cut -f1))"
-      [ -x "$LIBDIR/Libero/bin64/libero" ] && ok "  libero           present" \
-        || warn "  libero           NOT found at $LIBDIR/Libero/bin64/libero"
+      [ -x "$LIBERO_BIN" ] && ok "  libero           $LIBERO_BIN" \
+        || warn "  libero           NOT found under $LIBDIR"
       # The bundled RHEL libstdc++ is older than what Noble's libicuuc needs.
       local bundled
       bundled=$(find "$LIBDIR" -name 'libstdc++.so.6' -type f 2>/dev/null | head -3)
@@ -199,7 +199,7 @@ cmd_status() {
   # ---- permissions. The single most likely reason a correctly installed tool
   # is unusable: the installer ran under sudo with the STIG's umask 077.
   local st
-  for st in "$XROOT/Vivado/$XVER/settings64.sh" "$LIBDIR/Libero/bin64/libero"; do
+  for st in "$XROOT/Vivado/$XVER/settings64.sh" "$LIBERO_BIN"; do
     [ -e "$st" ] || continue
     if perms_ok "$st"; then
       local grp members
@@ -693,6 +693,14 @@ Point at one:  sudo it-fpga install xilinx --bin /path/to/installer.bin"
 # ---------------------------------------------------------------------------
 COMPAT_DIR="$(conf_get COMPAT_DIR /opt/microchip/compat/lib)"
 VAULT_DIR="$(conf_get VAULT_DIR "$MCHP_ROOT/common")"
+# Microchip moved Designer under Libero_SoC/ in 2025.1; the conf carries
+# whichever the role was told, and the fallback finds it either way.
+LIBERO_BIN="$(conf_get LIBERO_BIN "$LIBDIR/Libero_SoC/Designer/bin64/libero")"
+if [ ! -x "$LIBERO_BIN" ] && [ -d "$LIBDIR" ]; then
+  _lb="$(find "$LIBDIR" -maxdepth 5 -type f -name libero -perm -u+x 2>/dev/null \
+          | grep -E '/bin64/libero$' | head -1)"
+  [ -n "$_lb" ] && LIBERO_BIN="$_lb"
+fi
 LIBPNG15_URL="https://downloads.sourceforge.net/project/libpng/libpng15/1.5.30/libpng-1.5.30.tar.gz"
 
 compat_status() {
@@ -706,7 +714,7 @@ compat_status() {
   fi
   # What is actually still missing, asked of the binaries themselves.
   local b
-  for b in "$LIBDIR/Libero/bin64/libero" "$LIBDIR/Libero/bin/libero_bin"; do
+  for b in "$LIBERO_BIN" "$(dirname "$LIBERO_BIN")/libero_bin"; do
     [ -x "$b" ] || continue
     if LD_LIBRARY_PATH="$COMPAT_DIR:/usr/lib/i386-linux-gnu" ldd "$b" 2>/dev/null | grep -q 'not found'; then
       bad "still missing for $(basename "$b"):"

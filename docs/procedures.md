@@ -510,6 +510,25 @@ sudo it-fpga fixup               # takes the tree back
 owned by whoever happened to install it. Until you run it, `/opt/microchip` is
 writable by you — which is the point, and also why it is not optional.
 
+> **If the app-grid tile never appears**, the tree shape probably changed.
+> 2025.1 moved the binaries from `<install dir>/Libero/bin64/` to
+> `<install dir>/Libero_SoC/Designer/bin64/`, and every probe in the role used
+> the old path — so a correct install read as "not installed" and no launcher
+> was created. Confirm where they actually landed and set
+> `fpga_libero_designer_dir` if it differs again:
+> ```bash
+> find /opt/microchip/Libero_SoC_2025.1 -maxdepth 5 -type f -name libero
+> ```
+
+> **Do NOT run the two post-install scripts the installer offers.**
+> `check_linux_req.sh` reports in RPM names on a Debian box — `sudo it-fpga
+> check` runs the same checker and translates it. `fp6_env_install` writes
+> vendor udev rules at `MODE="0666"`, world-writable device nodes; the pull
+> already covers those cables (`1514` FlashPro, `0403` FTDI, `03fd` Xilinx
+> Platform Cable, `1443` Digilent) at `0660` with a group. Check with
+> `sudo it-fpga cables` — if a programmer does not appear it is almost always
+> USBGuard, not udev, and `sudo it-usb enroll` is the missing step.
+
 > **Run the `.bin`, not the `.sh`.** The `.sh` is Microchip's OS gate — it
 > prints `System OS NAME=Ubuntu` and stops, because Libero is supported on
 > RHEL/CentOS only. The `.bin` is the actual installer and runs fine on 24.04.

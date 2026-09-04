@@ -6,7 +6,9 @@
 # something a login shell starts -- one daemon, not one per shell.{% endif %}
 
 export LIBERO_INSTALL_DIR={{ fpga_libero_dir }}
-export FPGENPROG=$LIBERO_INSTALL_DIR/Libero/bin64/fpgenprog
+# Designer moved under Libero_SoC/ in 2025.1 -- it used to be <root>/Libero.
+export LIBERO_DESIGNER_DIR={{ fpga_libero_designer_dir }}
+export FPGENPROG=$LIBERO_DESIGNER_DIR/bin64/fpgenprog
 export LOCALE=C
 {% if fpga_license_microchip | default('') | length > 0 %}
 
@@ -22,8 +24,16 @@ libero_env() {
         echo "Check with: sudo it-fpga status" >&2
         return 1
     fi
-    PATH="$PATH:$LIBERO_INSTALL_DIR/Libero/bin:$LIBERO_INSTALL_DIR/Libero/bin64"
-    PATH="$PATH:$LIBERO_INSTALL_DIR/Synplify/bin"
+    # Every candidate that actually exists, rather than one hardcoded layout.
+    # Microchip moved Designer under Libero_SoC/ in 2025.1, and a PATH built
+    # from the old layout has nothing on it -- `libero` then reports "command
+    # not found" on a working install, which reads as a failed install.
+    for _d in "$LIBERO_DESIGNER_DIR/bin64" "$LIBERO_DESIGNER_DIR/bin" \
+              "$LIBERO_INSTALL_DIR/Libero/bin64" "$LIBERO_INSTALL_DIR/Libero/bin" \
+              "$LIBERO_INSTALL_DIR"/*/Synplify*/bin "$LIBERO_INSTALL_DIR/Synplify/bin"; do
+        [ -d "$_d" ] && PATH="$PATH:$_d"
+    done
+    unset _d
     export PATH
     # Libero and Synplify carry 32-bit components; without this they load the
     # 64-bit library and abort. {{ fpga_libero_compat_dir }} holds the old
