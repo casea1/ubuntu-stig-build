@@ -224,6 +224,20 @@ base_common_packages:
   - net-tools
   - unzip
   - cron                       # provides /usr/bin/crontab + the cron daemon
+  - vim                        # NOT tied to editor_choice. That picks the
+                               # ENGINEER's editor (vscode by default); this is
+                               # the one an admin needs over SSH on a box with
+                               # no GUI, and `vi` on a minimal Ubuntu is
+                               # vim-tiny, which has no syntax highlighting and
+                               # a different keymap. Editing sudoers or an
+                               # audit rule in vim-tiny by accident is how a
+                               # box stops authenticating.
+  - openssl                    # present on a stock install, but nothing here
+                               # required it. On a FIPS box it is the tool that
+                               # ANSWERS the compliance question -- `openssl
+                               # version`, cert and CSR work, verifying the
+                               # offload share's certificate -- so it is
+                               # declared rather than assumed.
 
 # ---- Active Directory join prerequisites -----------------------------------
 # development / ai / baseline only. The EMI laptop stays standalone.

@@ -14,6 +14,9 @@
 #   it-fpga license --file /path/License.dat
 #                              node-locked licence served by a local daemon
 #   it-fpga license --none     unset it
+#   it-fpga license --check    what each licence SOURCE actually serves, with
+#                              expiry dates -- including a trial .lic sitting
+#                              in ~/.Xilinx that nothing here configured
 #   it-fpga check              run the vendors' own checkers and translate
 #   it-fpga fixup              post-install fixes on an INSTALLED tree: make it
 #                              readable by every user, drop Libero's bundled libstdc++
@@ -201,14 +204,19 @@ cmd_status() {
 
   # ---- permissions. The single most likely reason a correctly installed tool
   # is unusable: the installer ran under sudo with the STIG's umask 077.
-  local st
+  local st _perm_grp_shown=""
   for st in "$XROOT/Vivado/$XVER/settings64.sh" "$LIBERO_BIN"; do
     [ -e "$st" ] || continue
     if perms_ok "$st"; then
       local grp members
       grp="$(stat -c '%G' "$st")"
-      members="$(getent group "$grp" | cut -d: -f4 | tr ',' ' ')"
-      ok "usable by         group $grp${members:+ -- $members}"
+      # Once per GROUP, not once per tree. Both toolchains are owned by the same
+      # group on a normal box, so this printed the same long member list twice.
+      if [ "$grp" != "$_perm_grp_shown" ]; then
+        members="$(getent group "$grp" | cut -d: -f4 | tr ',' ' ')"
+        ok "usable by         group $grp${members:+ -- $members}"
+        _perm_grp_shown="$grp"
+      fi
       check_parents "$st" || true
     else
       bad "NOT USABLE        $st"
@@ -340,6 +348,140 @@ cables_show() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# WHICH licence, not just which was configured.
+#
+# `it-fpga license` prints what this box is POINTED AT. That is a different
+# question from what it is actually checking out, and the gap is exactly where
+# an evaluation licence hides: a trial .lic left in ~/.Xilinx or beside the
+# install is picked up by the tools whether or not anything here mentions it,
+# so a box can be configured for the real server and still be building against
+# a trial that expires on a Friday.
+#
+# So this looks at every source the tools themselves consult and reports what
+# each one serves, with expiry dates.
+# ---------------------------------------------------------------------------
+lmutil_bin() {
+  local c
+  for c in "$XROOT/Vivado/$XVER/bin/unwrapped/lnx64.o/lmutil" \
+           "$LIBDIR/Libero_SoC/Designer/bin64/lmutil" \
+           "$LIBDIR/Libero/bin64/lmutil"; do
+    [ -x "$c" ] && { printf '%s' "$c"; return 0; }
+  done
+  command -v lmutil 2>/dev/null && return 0
+  return 1
+}
+
+# Every licence file the tools might read, whether or not we put it there.
+lic_files() {
+  local f d
+  [ -f "$LIC_FILE" ] && printf '%s\n' "$LIC_FILE"
+  for d in "$XROOT" "$MCHP_ROOT" /root/.Xilinx /home/*/.Xilinx /root/.flexlmrc; do
+    [ -d "$d" ] || continue
+    find "$d" -maxdepth 3 -type f \( -iname '*.lic' -o -iname 'License.dat' \) 2>/dev/null
+  done
+}
+
+# FEATURE/INCREMENT: $2 name, $3 vendor daemon, $4 version, $5 expiry.
+# A DATE is the thing to look at -- an evaluation licence is dated, a purchased
+# one is usually permanent -- so the date is what gets flagged, not a guess at
+# the word "trial" appearing somewhere in the file.
+lic_features() {   # $1 = file
+  # NOT a variable called `exp`: that is an awk BUILT-IN (exponential), and
+  # assigning to it is a fatal error -- which the 2>/dev/null here would have
+  # hidden, printing an empty feature list on a box that has a perfectly good
+  # licence file.
+  awk 'toupper($1)=="FEATURE" || toupper($1)=="INCREMENT" {
+         xp = ($5 == "" ? "?" : $5)
+         printf "      %-30s %-14s %s\n", $2, xp, $3
+       }' "$1" | sort -u
+}
+
+lic_expiry_warn() {   # $1 = file -> warn about anything dated within 60 days
+  local d today soon
+  today=$(date +%s); soon=$((today + 60*86400))
+  awk 'toupper($1)=="FEATURE" || toupper($1)=="INCREMENT" {print $2, $5}' "$1" 2>/dev/null \
+  | while read -r feat exp; do
+      case "$exp" in
+        permanent|1-jan-0|01-jan-0|0) continue ;;
+      esac
+      d=$(date -d "$exp" +%s 2>/dev/null) || continue
+      if [ "$d" -lt "$today" ]; then
+        bad "$feat EXPIRED $exp"
+      elif [ "$d" -lt "$soon" ]; then
+        warn "$feat expires $exp"
+      fi
+    done
+}
+
+cmd_license_check() {
+  head2 "Licence sources this box actually uses"
+
+  local srv_m srv_x lm any=0
+  srv_m="$LIC_MCHP"
+  srv_x="$LIC_XLNX"
+
+  # ---- servers
+  local s
+  for s in "$srv_m" "$srv_x"; do
+    [ -n "$s" ] || continue
+    any=1
+  done
+  if [ -n "$srv_m$srv_x" ]; then
+    say "  ${B}Licence servers${R}"
+    [ -n "$srv_m" ] && printf '    %-12s %s\n' "Microchip" "$srv_m"
+    [ -n "$srv_x" ] && printf '    %-12s %s\n' "Xilinx" "$srv_x"
+    if lm="$(lmutil_bin)"; then
+      for s in $(printf '%s\n%s\n' "$srv_m" "$srv_x" | sort -u); do
+        [ -n "$s" ] || continue
+        say ""
+        say "    ${DIM}lmstat $s${R}"
+        # -a lists every feature and who has one checked out. A server that is
+        # not answering is the single most common cause of "the tool starts and
+        # then refuses to build", and it looks nothing like a licence problem
+        # from inside the GUI.
+        if ! "$lm" lmstat -a -c "$s" 2>&1 | sed -n '1,40p' | sed 's/^/      /'; then
+          bad "could not query $s"
+        fi
+      done
+    else
+      say "    ${DIM}no lmutil found -- install a toolchain to query the server${R}"
+    fi
+    say ""
+  fi
+
+  # ---- files, including ones nobody configured
+  local f n=0
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    n=$((n + 1)); any=1
+    say "  ${B}$f${R}"
+    printf '      %-30s %-14s %s\n' "FEATURE" "EXPIRES" "DAEMON"
+    lic_features "$f"
+    lic_expiry_warn "$f"
+    # A file the tools read that this box was never configured to use is the
+    # one worth noticing: it is how a trial keeps being used after the real
+    # licence is in place.
+    case "$f" in
+      "$LIC_FILE") ;;
+      *) [ -z "$srv_m$srv_x" ] || warn "not configured here, but the tools will still read it" ;;
+    esac
+    say ""
+  done < <(lic_files | sort -u)
+
+  [ "$n" -eq 0 ] && say "  ${DIM}no licence FILES found under $XROOT, $MCHP_ROOT or any ~/.Xilinx${R}"
+
+  if [ "$any" -eq 0 ]; then
+    bad "nothing configured and nothing found -- the tools will start and refuse to build"
+    say "  ${B}sudo it-fpga license --server 1702@licsrv${R}"
+  fi
+  say ""
+  say "  ${DIM}A DATED feature is normally an evaluation licence; a purchased one is${R}"
+  say "  ${DIM}usually permanent. Swap to the real one with --server or --file, then${R}"
+  say "  ${DIM}re-run this: the old file is still read if it is left on disk.${R}"
+  say ""
+}
+
 cmd_license() {
   local server="" xilinx="" file="" clear=0
   while [ $# -gt 0 ]; do
@@ -348,6 +490,8 @@ cmd_license() {
       --xilinx)  xilinx="${2:?--xilinx needs <port>@<host>}"; shift 2 ;;
       --file)    file="${2:?--file needs a path}"; shift 2 ;;
       --none)    clear=1; shift ;;
+      --check|--status)
+                 cmd_license_check; return $? ;;
       *) die "unknown option: $1  (try: it-fpga --help)" ;;
     esac
   done

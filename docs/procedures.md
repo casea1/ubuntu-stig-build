@@ -593,10 +593,51 @@ so `fixup` prints the command rather than running it.
 Point every workstation at the FlexLM server; nothing is per-box, there is no
 MAC to register and no `License.dat` on disk:
 
+### Which licence am I actually on?
+
+```bash
+sudo it-fpga license --check
+```
+
+`it-fpga license` prints what the box is **pointed at**. That is a different
+question from what it is **checking out**, and the gap is where an evaluation
+licence hides: a trial `.lic` left in `~/.Xilinx` or beside the install is read
+by the tools whether or not anything here mentions it, so a box can be
+configured for the real server and still be building against a trial that
+expires on a Friday.
+
+`--check` looks at every source the tools themselves consult — the configured
+servers (queried with `lmutil lmstat`, using the `lmutil` the toolchains ship),
+plus every `*.lic` and `License.dat` under `/tools/Xilinx`, `/opt/microchip` and
+any `~/.Xilinx` — and prints each feature with its expiry:
+
+```
+      FEATURE                        EXPIRES        DAEMON
+      ACTEL_EDA                      30-sep-2026    snpslmd
+      Libero_Gold                    permanent      snpslmd
+      Vivado                         31-dec-2024    xilinxd
+  FAIL Vivado EXPIRED 31-dec-2024
+```
+
+A **dated** feature is normally an evaluation licence; a purchased one is
+usually permanent. Anything already expired or expiring within 60 days is
+flagged, and a licence file the tools will read but that this box was never
+configured to use is called out — that is how a trial keeps being used after the
+real licence is in place.
+
+### Moving from a trial to the real licence
+
 ```bash
 sudo it-fpga license --server 1702@licsrv                    # Microchip + Xilinx
 sudo it-fpga license --server 1702@licsrv --xilinx 2100@licsrv   # different port/host
 sudo it-fpga license --server 1702@a,1702@b,1702@c           # redundant triad
+```
+
+Then **remove the trial file** and re-check — pointing at a server does not stop
+the tools reading a `.lic` that is still on disk:
+
+```bash
+sudo it-fpga license --check     # confirm nothing dated is left
 ```
 
 That writes **both** `/etc/profile.d/*.sh` (a new shell has it at once) **and**
