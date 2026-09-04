@@ -1936,6 +1936,7 @@ It also moves the **CAC/PIV POA&M** materially closer: smart-card auth against A
 sudo it-smb add                 # asks for everything, one field at a time
 sudo it-smb                     # every managed share, mounted or idle
 sudo it-smb test <name>         # why will it not mount?
+sudo it-smb test //SERVER/SHARE # is a share I have NOT added even there?
 ```
 
 `add` with no arguments is the normal way in — you do not need to remember any syntax. It asks for the name, server, share, username, domain, password, mount point, read-only, and SMB version in turn, each with a default in brackets, **re-asking on bad input rather than dropping you back to the shell**. It probes the server on port 445 as soon as you name it, so you find out it is unreachable *before* typing a password. Nothing is written until you confirm at a review screen, and it offers to test the mount immediately afterwards.
@@ -1981,7 +1982,33 @@ The units *are* the registry — mountpoints under `/mnt/smb/<name>`, no second 
 
 ### When it will not mount
 
-`it-smb test <name>` walks the chain in order and stops at the first thing that is actually wrong:
+### Probing a share before you add it
+
+```bash
+sudo it-smb test //192.168.1.51/FileServer
+sudo it-smb test '\\192.168.1.51\FileServer' --user svc_audit --domain CORP
+sudo it-smb test //fileserver/Public --guest
+```
+
+A **UNC path** probes a share this box does not manage and **configures
+nothing** — no unit, no credentials file, no mountpoint. It checks reachability,
+asks the server whether that share name actually exists, and then does a
+read-only mount that it undoes.
+
+The share-name check is the part worth having: `mount` cannot tell a **wrong
+share name** from **a share you may not reach** — both come back the same way.
+`smbclient -L` asks the server outright, and when the name is wrong it prints
+the shares the server does offer. (Plenty of servers refuse that listing; the
+probe says so and carries on to the mount.)
+
+Credentials are prompted, never taken as an argument — a password on a command
+line is in `ps` for every user on the box and in shell history — and live in a
+`0600` temporary file removed on exit, Ctrl-C included. Backslashes are accepted,
+so a UNC pasted from Windows works as-is.
+
+A **bare name** is the other question entirely: diagnose a share this box
+already manages. `it-smb test <name>` walks the chain in order and stops at the
+first thing that is actually wrong:
 
 ```
   cifs-utils installed
