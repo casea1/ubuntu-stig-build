@@ -128,13 +128,26 @@ is_orphan() {   # $1 = Xorg pid  (the second argument is no longer used)
   return 0
 }
 
-# The chansrv belonging to ONE display. Scoped by its DISPLAY, not by its user:
-# somebody with a live session and an orphan has two, and killing both by name
-# takes down the desktop they are sitting in front of.
-chansrv_on() {   # $1 = display, $2 = user -> pids
+# Every process of this user bound to ONE display, found by its own DISPLAY
+# rather than by name.
+#
+# Scoped that way on purpose: somebody with a live session and an orphan has two
+# of each, and killing by name would take down the desktop they are sitting in
+# front of.
+#
+# gnome-session is the one that matters and the one the first version missed.
+# It owns org.gnome.SessionManager on the user's bus, and that name -- not the
+# X server -- is what makes the NEXT login exit 1 with "Session manager already
+# running!". Reaping the X server and leaving it behind fixes the symptom in
+# `it-rdp status` and not the thing the user is complaining about.
+procs_on() {   # $1 = display, $2 = user -> pids
   local pid d
-  for pid in $(pgrep -u "$2" -x xrdp-chansrv 2>/dev/null); do
-    d="$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | sed -n 's/^DISPLAY=//p' | head -1)"
+  for pid in $(ps -u "$2" -o pid= 2>/dev/null); do
+    # Braces around the redirect, not just 2>/dev/null on tr: a kernel thread or
+    # a process that exited between `ps` and here makes the SHELL print "No such
+    # process" when it opens the file, and that message does not go through the
+    # command's stderr.
+    d="$({ tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null | sed -n 's/^DISPLAY=//p' | head -1)"
     [ "$d" = ":$1" ] && printf '%s\n' "$pid"
   done
 }
@@ -143,12 +156,17 @@ chansrv_on() {   # $1 = display, $2 = user -> pids
 # and the socket that makes sesman skip the display next time.
 kill_display() {   # $1 = display number, $2 = user
   local disp="$1" user="$2" pid
-  for pid in $(pgrep -u "$user" -f "Xorg :$disp " 2>/dev/null) \
-             $(chansrv_on "$disp" "$user"); do
+  # The session's own processes first -- gnome-session among them -- so the bus
+  # name is released, then the X server they were drawing on.
+  for pid in $(procs_on "$disp" "$user"); do
+    kill -TERM "$pid" 2>/dev/null
+  done
+  for pid in $(pgrep -u "$user" -f "Xorg :$disp " 2>/dev/null); do
     kill -TERM "$pid" 2>/dev/null
   done
   sleep 2
-  for pid in $(pgrep -u "$user" -f "Xorg :$disp " 2>/dev/null); do
+  for pid in $(procs_on "$disp" "$user") \
+             $(pgrep -u "$user" -f "Xorg :$disp " 2>/dev/null); do
     kill -KILL "$pid" 2>/dev/null
   done
   # The socket outlives the process it belonged to, and sesman reads the
