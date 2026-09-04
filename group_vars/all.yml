@@ -898,6 +898,23 @@ grub_superuser: "bootadmin"
 #   Paste the resulting !vault block in place of the line below.
 grub_password_pbkdf2: "grub.pbkdf2.sha512.10000.CHANGEME_RUN_grub-mkpasswd-pbkdf2_AND_VAULT_THE_HASH"
 
+# ---- Automatic apt upgrades --------------------------------------------------
+# OFF. Patching on this fleet is deliberate (`it-pull full`, procedures 4.1/4.2),
+# and an unattended upgrade on a FIPS box with TPM-sealed LUKS is not a
+# background convenience: a kernel it installs is no longer the one that was
+# validated, and if shim or grub move, PCR 7 changes and the TPM stops releasing
+# the LUKS key -- a passphrase prompt at the next boot, in a closed space, with
+# no network. It can also pull a PAM package unattended, which is the failure
+# mode that made ASP-2 unloggable.
+#
+# This does NOT affect UBTU-24-700320: that rule checks
+# /etc/apt/apt.conf.d/50unattended-upgrades for the two Remove-Unused settings,
+# which usg_remediate keeps in place regardless. Verified against the shipped
+# V1R6 XCCDF.
+#
+# true re-enables apt-daily.timer and apt-daily-upgrade.timer.
+apt_auto_upgrade_timers_enabled: false
+
 # ---- USBGuard (device authorisation allow-list) ------------------------------
 # A DIFFERENT layer from the `dta` USB controls below: those gate MOUNTING,
 # USBGuard gates whether the kernel authorises the DEVICE at all. Both apply.

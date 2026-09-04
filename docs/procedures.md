@@ -1797,6 +1797,41 @@ sudo it-pro token              # store it for rebuilds, prompted
 sudo it-pro refresh            # re-pull contract data after a renewal
 ```
 
+## 4.0b Automatic apt upgrades are OFF, deliberately
+
+`apt-daily.timer` and `apt-daily-upgrade.timer` are disabled by the pull
+(`apt_auto_upgrade_timers_enabled: false`). Patching here is a decision someone
+makes, not something that happens overnight.
+
+On a FIPS box with TPM-sealed LUKS an unattended upgrade is not a background
+convenience:
+
+- a kernel it installs is no longer the kernel that was validated, and the box
+  reboots into it with nobody watching;
+- if `shim` or `grub` move, **PCR 7 changes and the TPM stops releasing the LUKS
+  key** — which surfaces as a passphrase prompt at the next boot, in a closed
+  space, with no network and possibly no console;
+- it can pull a PAM or crypto package on a schedule, which is the failure mode
+  that made ASP-2 unloggable;
+- and it holds the dpkg lock, which is how it usually announces itself.
+
+**This does not open a finding.** `UBTU-24-700320` (V-270773, CAT II) checks the
+*config file* — `grep -i remove-unused /etc/apt/apt.conf.d/50unattended-upgrades`
+— for `Remove-Unused-Dependencies` and `Remove-Unused-Kernel-Packages`, not
+whether anything runs on a schedule. `usg_remediate` keeps both set. Checked
+against the shipped V1R6 XCCDF rather than assumed.
+
+Set `apt_auto_upgrade_timers_enabled: true` to put them back.
+
+> **If a pull or an install ever stalls on the dpkg lock**, find the holder and
+> **wait** — never delete the lock file:
+> ```bash
+> ps -o pid,ppid,etime,cmd -p <pid>
+> while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 5; done
+> ```
+> If a transaction was interrupted, `sudo dpkg --configure -a` before anything
+> else. It is a no-op when nothing is broken.
+
 ## 4.1 Patch a connected box
 
 ```bash

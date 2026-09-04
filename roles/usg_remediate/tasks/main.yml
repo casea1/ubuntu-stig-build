@@ -1290,6 +1290,70 @@
 # /run/log/journal is on tmpfs and is recreated at every boot, so a chmod alone
 # never survives a reboot -- the tmpfiles.d drop-in is what makes it stick.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Unattended apt: configured, but not on a timer.
+#
+# The STIG rule here (UBTU-24-700320 / V-270773, CAT II) checks the CONFIG FILE
+# -- `grep -i remove-unused /etc/apt/apt.conf.d/50unattended-upgrades` -- not
+# whether anything runs on a schedule. So the two Remove-Unused settings must be
+# present, and disabling the timers does not touch that rule. Verified against
+# the shipped V1R6 XCCDF rather than assumed, because getting it backwards would
+# trade a real risk for a real finding.
+#
+# WHY THE TIMERS COME OFF. On a FIPS box with TPM-sealed LUKS, an unattended
+# upgrade is not a background convenience:
+#   * a kernel it installs is no longer the kernel that was validated, and the
+#     box reboots into it with nobody watching;
+#   * if shim or grub move, PCR 7 changes and the TPM stops releasing the LUKS
+#     key -- which surfaces as a passphrase prompt at the next boot, in a closed
+#     space, with no network and possibly no console;
+#   * it can pull a PAM or crypto package on a schedule, which is the failure
+#     mode that made ASP-2 unloggable;
+#   * and it holds the dpkg lock, which is how it announced itself during this
+#     deployment.
+# Patching here is deliberate -- `it-pull full`, or procedures 4.1/4.2 -- and
+# that is a policy choice, so it is recorded rather than silent.
+- name: "REMED | Unattended-upgrade settings the STIG checks (UBTU-24-700320)"
+  ansible.builtin.lineinfile:
+    path: /etc/apt/apt.conf.d/50unattended-upgrades
+    regexp: '^\s*//?\s*Unattended-Upgrade::{{ item }}\s'
+    line: 'Unattended-Upgrade::{{ item }} "true";'
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - Remove-Unused-Dependencies
+    - Remove-Unused-Kernel-Packages
+  loop_control:
+    label: "{{ item }}"
+
+- name: "REMED | Automatic apt timers OFF (patching here is deliberate)"
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+  loop_control:
+    label: "{{ item }}"
+  when: apt_auto_upgrade_timers_enabled is defined and not (apt_auto_upgrade_timers_enabled | bool)
+  failed_when: false
+
+- name: "REMED | Automatic apt timers ON (a site that wants them back)"
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+  loop_control:
+    label: "{{ item }}"
+  when: apt_auto_upgrade_timers_enabled | default(false) | bool
+  failed_when: false
+
 - name: "REMED | Final permission sweep (before the re-audit)"
   when: usg_final_permission_sweep | default(true) | bool
   block:
