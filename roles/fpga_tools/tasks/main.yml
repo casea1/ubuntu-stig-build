@@ -248,6 +248,32 @@
         label: "{{ item.path }}"
       when: not item.keep
 
+    # Every directory the scripts-tagged tasks below write into, created HERE
+    # and tagged the same. `it-pull scripts` runs this role BEFORE it_scripts
+    # (local.yml order), so nothing else has made them yet -- that ordering is
+    # what broke the first scripts-only pull with "Destination directory
+    # /etc/stig-build/fpga does not exist".
+    #
+    # /etc/stig-build is created explicitly with its own 0700 root:root rather
+    # than left to Ansible's implicit parent creation, which would use a
+    # default mode and leave a directory that holds generated secrets
+    # world-readable until it_scripts ran later and corrected it.
+    - name: "FPGA | Directories the script-shipping tasks write into"
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: root
+        group: "{{ item.group | default('root') }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /etc/stig-build,      mode: "0700" }
+        - { path: /etc/stig-build/fpga, mode: "0755" }
+        - { path: "{{ it_scripts_dir | default('/opt/it/scripts') }}",
+            mode: "2750", group: "{{ ia_it_group | default('sudo') }}" }
+      loop_control:
+        label: "{{ item.path }}"
+      tags: [scripts]
+
     # The install selection, so `it-fpga install xilinx` reproduces one box's
     # choice on every other. Not a secret -- it lists modules and device
     # families, nothing more.

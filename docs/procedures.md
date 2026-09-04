@@ -460,6 +460,14 @@ Install to `/opt/microchip/Libero_SoC_2025.1`, common directory `/opt/microchip`
 > sudo it-fpga compat            # /opt/microchip/compat/lib -- private to Libero
 > ```
 >
+> To run the **installer** with it before the environment scripts exist:
+> ```bash
+> cd /opt/it/installers
+> sudo env LD_LIBRARY_PATH=/opt/microchip/compat/lib ./Libero_SoC_2025.1_online_lin.bin
+> ```
+> `sudo env`, not `sudo -E`: sudo strips `LD_*` unconditionally, so `-E` looks
+> like it passes the variable and does not (trap 31).
+>
 > It goes in a directory only Libero sees, on its `LD_LIBRARY_PATH`. **Never a
 > symlink or a foreign `.deb` in `/usr/lib`** — that puts an unmaintained
 > libpng in front of every program on the box. `it-fpga compat` then runs `ldd`

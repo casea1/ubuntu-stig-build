@@ -14,15 +14,6 @@
 
 # it-fpga reads this so `fixup` applies the same model the pull does, rather
 # than a second copy of the policy that could drift from it.
-- name: "FPGA | Config dir"
-  ansible.builtin.file:
-    path: /etc/stig-build/fpga
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-  tags: [scripts]
-
 - name: "FPGA | Configuration for it-fpga"
   ansible.builtin.template:
     src: fpga.conf.j2
