@@ -10,7 +10,7 @@ Comment=Copy the newest PowerStrux report into your home folder and open it
 # A silent launch that half-worked would send someone hunting for a
 # permissions problem that is not there.
 Terminal=true
-Exec=/opt/_AuditFiles/run-powerstrux.sh open
+Exec=/usr/local/sbin/it-powerstrux open
 Icon=text-html
 Categories=System;Security;
 Keywords=audit;powerstrux;report;compliance;view;

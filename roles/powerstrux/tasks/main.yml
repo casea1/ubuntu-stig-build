@@ -27,32 +27,48 @@
     mode: "2770"
   tags: [scripts]
 
-# 0750 root:audit -- auditors run it, nobody else can read or edit it. The
-# script self-elevates, so group-execute is enough.
-- name: "POWERSTRUX | Install the launcher"
+# REAL files in /usr/local/sbin, root:root 0755 -- the same pattern it_scripts
+# uses for a command more than one group must reach.
+#
+# They used to live in {{ powerstrux_audit_dir }} as 0750 root:audit, with a
+# symlink. That directory is 2770 root:audit, so an ADMIN who is not an auditor
+# could not traverse it: `it-powerstrux` was unreadable and unexecutable for
+# them, the self-elevating first line never got the chance to run, and
+# `it-help` listed the command as "(cannot read its script)". Two groups need
+# this -- auditors run the audit, admins run the offload -- and one file cannot
+# be group-owned by both.
+#
+# World-executable is not a privilege here: the scripts self-elevate through
+# sudo, so sudo still decides who may actually do anything.
+- name: "POWERSTRUX | Install the launcher (it-powerstrux)"
   ansible.builtin.copy:
     src: run-powerstrux.sh
-    dest: "{{ powerstrux_audit_dir }}/run-powerstrux.sh"
+    dest: /usr/local/sbin/it-powerstrux
     owner: root
-    group: audit
-    mode: "0750"
+    group: root
+    mode: "0755"
+    follow: false          # dest may still be the old symlink into /opt
   tags: [scripts]
 
-- name: "POWERSTRUX | Install the offload engine"
+- name: "POWERSTRUX | Install the offload engine (it-powerstrux-offload)"
   ansible.builtin.copy:
     src: powerstrux-offload.sh
-    dest: "{{ powerstrux_audit_dir }}/powerstrux-offload.sh"
+    dest: /usr/local/sbin/it-powerstrux-offload
     owner: root
-    group: audit
-    mode: "0750"
+    group: root
+    mode: "0755"
+    follow: false
   tags: [scripts]
 
-- name: "POWERSTRUX | Short command for admins (it-powerstrux)"
+# No second copy left behind: it would be the one an old desktop entry or cron
+# line still points at, and the one a future edit forgets (trap 3).
+- name: "POWERSTRUX | Drop the old copies under {{ powerstrux_audit_dir }}"
   ansible.builtin.file:
-    src: "{{ powerstrux_audit_dir }}/run-powerstrux.sh"
-    dest: /usr/local/sbin/it-powerstrux
-    state: link
-    force: true
+    path: "{{ powerstrux_audit_dir }}/{{ item }}"
+    state: absent
+  loop:
+    - run-powerstrux.sh
+    - powerstrux-offload.sh
   tags: [scripts]
 
 
@@ -158,7 +174,7 @@
 
               [Service]
               Type=oneshot
-              ExecStart={{ powerstrux_audit_dir }}/powerstrux-offload.sh run --quiet
+              ExecStart=/usr/local/sbin/it-powerstrux-offload run --quiet
               # Mounting a share that is not there, then copying a few hundred
               # MB over it, is the slow part -- not the collection.
               TimeoutStartSec=1800
@@ -271,7 +287,7 @@
 
               [Service]
               Type=oneshot
-              ExecStart={{ powerstrux_audit_dir }}/run-powerstrux.sh --quiet
+              ExecStart=/usr/local/sbin/it-powerstrux --quiet
               # The audit walks the whole system; give it room rather than
               # having a slow box produce a truncated report.
               TimeoutStartSec=3600
@@ -326,7 +342,7 @@
               SHELL=/bin/bash
               PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
               # `;` not `&&`: a failed audit still has a log worth offloading.
-              {{ powerstrux_cron }} root {{ powerstrux_audit_dir }}/run-powerstrux.sh --quiet >/dev/null 2>&1{% if powerstrux_offload_enabled | default(true) | bool %}; {{ powerstrux_audit_dir }}/powerstrux-offload.sh run --quiet >/dev/null 2>&1{% endif %}
+              {{ powerstrux_cron }} root /usr/local/sbin/it-powerstrux --quiet >/dev/null 2>&1{% if powerstrux_offload_enabled | default(true) | bool %}; /usr/local/sbin/it-powerstrux-offload run --quiet >/dev/null 2>&1{% endif %}
           when: powerstrux_schedule_method == 'cron'
 
         # Only one scheduler may be active, or the audit runs twice.
@@ -340,7 +356,7 @@
     - name: "POWERSTRUX | Where things are"
       ansible.builtin.debug:
         msg: >-
-          PowerStrux launcher: {{ powerstrux_audit_dir }}/run-powerstrux.sh
+          PowerStrux launcher: /usr/local/sbin/it-powerstrux
           (also `sudo it-powerstrux`, and "PowerStrux Audit" in the app menu).
           Scheduled {{ powerstrux_oncalendar if powerstrux_schedule_method == 'timer' else powerstrux_cron }}
           via {{ powerstrux_schedule_method }}. Config is NOT managed:

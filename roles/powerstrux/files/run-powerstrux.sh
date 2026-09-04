@@ -58,8 +58,24 @@ KEEP="${POWERSTRUX_KEEP:-26}"
 # powerstrux_days_keys / powerstrux_dir_keys in group_vars) if a release
 # renames one.
 POWERSTRUX_DAYS="${POWERSTRUX_DAYS:-8}"
-POWERSTRUX_DAYS_KEYS="${POWERSTRUX_DAYS_KEYS:-EventLogDays LogDays DaysToReport ReportDays NumberOfDays Days}"
-POWERSTRUX_DIR_KEYS="${POWERSTRUX_DIR_KEYS:-ReportPath ReportDirectory OutputPath OutputDirectory ReportLocation SavePath}"
+POWERSTRUX_DAYS_KEYS="${POWERSTRUX_DAYS_KEYS:-DaysToAudit EventLogDays DaysToReport ReportDays}"
+POWERSTRUX_DIR_KEYS="${POWERSTRUX_DIR_KEYS:-ReportLocation ReportPath ReportDirectory OutputPath}"
+POWERSTRUX_NAME_KEYS="${POWERSTRUX_NAME_KEYS:-ReportName}"
+
+# ReportName is a PowerShell expression the vendor evaluates, not a literal:
+#
+#   ReportName = "$(Get-Date -Format yyyyMMdd)_DEV-14_REPORT"
+#
+# The hostname in the middle is why a report is identifiable once it has been
+# offloaded to a share alongside a dozen others -- and it is baked in per box,
+# so a config copied from another machine names the WRONG host in every report
+# it produces. That is an evidence-integrity problem, not a cosmetic one, and
+# nothing catches it downstream: the file is well-formed and the report looks
+# fine. Set from this box's own hostname, uppercased to match the convention.
+powerstrux_report_name() {
+  printf '"$(Get-Date -Format yyyyMMdd)_%s_REPORT"' \
+    "$(hostname -s 2>/dev/null | tr '[:lower:]' '[:upper:]')"
+}
 
 SITE_YML="${SITE_YML:-/opt/it/site.yml}"
 TIMER=/etc/systemd/system/powerstrux-audit.timer
@@ -252,7 +268,7 @@ unzip_to() {   # $1 = zip, $2 = destination directory
 # the vendor's naming produces a clear "not found", never a silently appended
 # line the tool ignores or a corrupted config an assessor later reads.
 cfg_set() {   # $1 = key, $2 = value  -> 0 changed/already, 1 key absent
-  local k="$1" v="$2" cur
+  local k="$1" v="$2" cur esc
   grep -qiE "^[[:space:]]*$k[[:space:]]*=" "$CONFIG" 2>/dev/null || return 1
   cur=$(sed -nE "s/^[[:space:]]*$k[[:space:]]*=[[:space:]]*//Ip" "$CONFIG" | tail -1)
   cur="${cur%"${cur##*[![:space:]]}"}"
@@ -260,7 +276,10 @@ cfg_set() {   # $1 = key, $2 = value  -> 0 changed/already, 1 key absent
     iok "$k already $v"
     return 0
   fi
-  sed -i -E "s|^([[:space:]]*$k[[:space:]]*=[[:space:]]*).*$|\1$v|I" "$CONFIG"
+  # & and \ are special on the right-hand side of s///, and ReportName's value
+  # is a PowerShell expression full of punctuation. Escape before substituting.
+  esc=$(printf '%s' "$v" | sed -e 's/[\\&|]/\\&/g')
+  sed -i -E "s|^([[:space:]]*$k[[:space:]]*=[[:space:]]*).*$|\1$esc|I" "$CONFIG"
   iok "$k: ${cur:-<empty>} -> $v"
   return 0
 }
@@ -299,6 +318,12 @@ cmd_config() {
     cfg_set "$k" "$dir" && { hit=1; break; }
   done
   [ "$hit" -eq 1 ] || { iwarn "no report-directory key found (tried: $POWERSTRUX_DIR_KEYS)"; rc=1; }
+
+  hit=0
+  for k in $POWERSTRUX_NAME_KEYS; do
+    cfg_set "$k" "$(powerstrux_report_name)" && { hit=1; break; }
+  done
+  [ "$hit" -eq 1 ] || { iwarn "no report-name key found (tried: $POWERSTRUX_NAME_KEYS)"; rc=1; }
 
   if [ "$rc" -ne 0 ]; then
     isay ""
@@ -413,7 +438,7 @@ case "${1:-}" in
   # self-elevates, so no sudo is forced on `offload --help`.
   offload)
     shift
-    OFFLOAD="$AUDIT_DIR/powerstrux-offload.sh"
+    OFFLOAD=/usr/local/sbin/it-powerstrux-offload
     [ -x "$OFFLOAD" ] || {
       echo "Offload not installed at $OFFLOAD -- run an ansible-pull." >&2; exit 1; }
     exec "$OFFLOAD" "$@" ;;

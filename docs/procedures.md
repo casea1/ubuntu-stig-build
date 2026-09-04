@@ -889,8 +889,9 @@ reporting window and report directory in `PowerStruxLAConfig.txt`:
 | | |
 |---|---|
 | Module | `/opt/microsoft/powershell/7/Modules/ReportHTML/`, `root:root`, world-readable, nothing writable |
-| Reporting window | 8 days (`--days N`) — a weekly run then always overlaps the previous one, so no day falls between two reports |
-| Report directory | `/opt/_AuditFiles` (`--dir PATH`) |
+| `DaysToAudit` | 8 (`--days N`) — a weekly run then always overlaps the previous one, so no day falls between two reports |
+| `ReportLocation` | `/opt/_AuditFiles` (`--dir PATH`) |
+| `ReportName` | `"$(Get-Date -Format yyyyMMdd)_<HOSTNAME>_REPORT"`, from **this** box's hostname |
 
 Then pick up the parts the pull skips until the tool exists:
 
@@ -906,6 +907,14 @@ on the USB stick: `sudo it-powerstrux install --zip /media/<user>/<vol>/PowerStr
 it is hand-tuned per site — that is the same reason the pull never writes it.
 `--force-config` replaces it with the vendor's. Any previous module directory is
 moved aside to `ReportHTML.bak-<timestamp>` rather than deleted.
+
+`ReportName` matters more than it looks. It is a PowerShell expression the
+vendor evaluates, and the hostname in the middle is baked in per box — so a
+config copied from another machine names the **wrong host in every report it
+produces**, and nothing downstream catches it: the file is well-formed and the
+report looks fine. Once a dozen reports are sitting on the offload share, the
+name is what identifies them. `install` and `config` set it from the box's own
+hostname, uppercased.
 
 **It never invents a config key.** A key is edited only where it already exists
 in the vendor's file, so if a release renames one you get a clear "not found"

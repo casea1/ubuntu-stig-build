@@ -25,9 +25,15 @@
   ansible.builtin.copy:
     src: it-inventory.sh
     dest: /usr/local/sbin/it-inventory
+    # 0755, not 0750 root:root. A real file in /usr/local/sbin that only root
+    # can read cannot self-elevate: the shell has to execute the script before
+    # its first line runs, so `it-inventory` failed with Permission denied
+    # rather than prompting for sudo. World-executable is not a privilege --
+    # the script elevates through sudo, which still decides who may do
+    # anything. Same pattern as it_scripts_public.
     owner: root
     group: root
-    mode: "0750"
+    mode: "0755"
 
 - name: "INVENTORY | Generate the inventory report now"
   ansible.builtin.command: "/usr/local/sbin/it-inventory {{ inventory_report_dir }}"

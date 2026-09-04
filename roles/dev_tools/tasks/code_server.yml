@@ -117,8 +117,13 @@
   ansible.builtin.copy:
     src: code-server-status.sh
     dest: "{{ it_scripts_dir | default('/opt/it/scripts') }}/code-server-status.sh"
+  # root:%s, not root:root. A 0750 root:root script cannot be READ or
+  # executed by anyone but root, so the self-elevating first line never gets
+  # the chance to run -- `it-<name>` fails with Permission denied instead of
+  # prompting for sudo, and `it-help` lists it as "(cannot read its script)".
+  # Every it_scripts command uses this group; these did not.
     owner: root
-    group: root
+    group: "{{ ia_it_group | default('sudo') }}"
     mode: "0750"
 
 - name: "CODE-SERVER | Short command (it-codeserver)"

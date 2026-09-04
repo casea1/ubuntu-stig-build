@@ -8,7 +8,7 @@ Comment=Run the PowerStrux system audit and generate the report
 # auditor the password prompt, the progress output, and the report path at the
 # end. A silent graphical launch would look like nothing happened.
 Terminal=true
-Exec=/opt/_AuditFiles/run-powerstrux.sh
+Exec=/usr/local/sbin/it-powerstrux
 Icon=utilities-system-monitor
 Categories=System;Security;
 Keywords=audit;powerstrux;report;compliance;
