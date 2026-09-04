@@ -29,16 +29,19 @@
       changed_when: false
       check_mode: false          # a read-only probe; check mode would skip it
                                  # and the task below would act on no answer
+      tags: [packages]
 
     - name: "FPGA | Enable i386 multiarch (32-bit vendor components)"
       ansible.builtin.command: dpkg --add-architecture i386
       when: "'i386' not in _fpga_arches.stdout_lines"
       register: _fpga_arch_added
+      tags: [packages]
 
     - name: "FPGA | Refresh apt after adding i386"
       ansible.builtin.apt:
         update_cache: true
       when: _fpga_arch_added is changed
+      tags: [packages]
 
     # ---- packages ---------------------------------------------------------
     # The 64-bit half is STRICT: a missing name here is a real error and the
@@ -51,6 +54,7 @@
         state: present
         update_cache: true
         cache_valid_time: 3600
+      tags: [packages]
 
     # The 32-bit half is BEST-EFFORT, and separate, for a reason that cost a
     # pull on dev-14: Ubuntu stopped publishing a full i386 archive after 19.10
@@ -81,12 +85,14 @@
       changed_when: false
       check_mode: false          # a read-only probe; in check mode the task
                                  # below would otherwise act on no answer
+      tags: [packages]
 
     - name: "FPGA | Vendor dependencies, 32-bit (what this release publishes)"
       ansible.builtin.apt:
         name: "{{ _fpga_i386_have.stdout_lines }}"
         state: present
       when: (_fpga_i386_have.stdout_lines | default([]) | length) > 0
+      tags: [packages]
 
     - name: "FPGA | 32-bit libraries apt cannot install on this release"
       ansible.builtin.debug:
@@ -103,6 +109,7 @@
           for each.
       when: >-
         (fpga_packages_i386 | difference(_fpga_i386_have.stdout_lines | default([])) | length) > 0
+      tags: [packages]
 
     # ---- where the toolchains go ------------------------------------------
     # The PARENT only, empty and root-owned. The role never creates or writes
@@ -298,10 +305,11 @@
     # ---- the helper -------------------------------------------------------
     # it_scripts owns /usr/local/sbin; this one lives with the role because it
     # is meaningless without it, and is removed with it.
-    # Tagged `scripts` as well as the role's `packages`, so shipping a change to
-    # it-fpga is a light pull. Without this every fix to the command needed a
-    # `full` pull -- apt, images and all -- to reach a box, which is how
-    # `it-fpga install` came to exist in the repo and not on dev-15.
+    # Tagged `scripts` so `it-pull scripts` ships a fix to it-fpga on its own.
+    # This USED to be paired with a role-level `packages` tag, which quietly
+    # defeated it: --skip-tags beats a task's own tag, so a light `it-pull`
+    # skipped the whole role and the new it-fpga never landed. The role tag is
+    # gone and the apt tasks carry `packages` themselves.
     - name: "FPGA | Install it-fpga"
       ansible.builtin.copy:
         src: fpga.sh

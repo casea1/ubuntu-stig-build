@@ -15,6 +15,7 @@
     state: present
     update_cache: true
     cache_valid_time: 3600
+  tags: [packages]
 
 # TLS: xrdp runs as the 'xrdp' user and must read the private key of the cert it
 # presents. On 24.04 the key lives in /etc/ssl/private (root:ssl-cert 0640), so
@@ -135,6 +136,7 @@
     name: libpam-gnome-keyring
     state: present
   when: dev_rdp_keyring_autounlock | default(true) | bool
+  tags: [packages]
 
 - name: "XRDP | Unlock the GNOME keyring at RDP login (auth hook)"
   ansible.builtin.lineinfile:
@@ -198,6 +200,7 @@
   ansible.builtin.apt:
     name: ufw
     state: present
+  tags: [packages]
 
 - name: "XRDP | Rate-limit RDP inbound ({{ dev_rdp_port }}/tcp)"
   community.general.ufw:

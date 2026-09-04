@@ -314,9 +314,26 @@ cables_show() {
   # The one that catches people out. A udev rule sets permissions on a device
   # node USBGuard may never have let appear.
   if command -v usbguard >/dev/null 2>&1 && systemctl is-active --quiet usbguard 2>/dev/null; then
-    warn "USBGuard          ACTIVE -- a cable must be enrolled before udev ever sees it"
-    say  "                    ${DIM}sudo it-usb enroll     (then re-plug)${R}"
-    say  "                    ${DIM}sudo it-usb blocked    what is being refused right now${R}"
+    # Read the class policy rather than assert one. Programmers present as
+    # vendor-specific (ff), so where the class rule is in place they are
+    # authorised on connect and telling people to enrol one sends them off to
+    # fix something that is not broken.
+    local cls
+    cls=$(sed -nE 's/^allow with-interface none-of \{ (.*) \}.*/\1/p' \
+            /etc/usbguard/rules.conf 2>/dev/null | tail -1)
+    case "$cls" in
+      *ff:*)
+        warn "USBGuard          ACTIVE -- and vendor-specific is NOT auto-allowed here"
+        say  "                    ${DIM}sudo it-usb enroll     (then re-plug)${R}" ;;
+      "")
+        warn "USBGuard          ACTIVE -- every device is enrolled by hand on this box"
+        say  "                    ${DIM}sudo it-usb enroll     (then re-plug)${R}"
+        say  "                    ${DIM}sudo it-usb blocked    what is being refused right now${R}" ;;
+      *)
+        ok   "USBGuard          ACTIVE -- programmers are authorised on connect"
+        say  "                    ${DIM}Still enrolled by hand: $cls${R}"
+        say  "                    ${DIM}sudo it-usb blocked    if a cable does not appear${R}" ;;
+    esac
   fi
 }
 

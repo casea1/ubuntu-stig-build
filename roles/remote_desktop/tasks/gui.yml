@@ -14,11 +14,13 @@
     update_cache: true
     cache_valid_time: 3600
   when: (dev_gnome_package | default('') | length) > 0
+  tags: [packages]
 
 - name: "GUI | Ensure GDM3 is installed (display manager)"
   ansible.builtin.apt:
     name: gdm3
     state: present
+  tags: [packages]
 
 - name: "GUI | Boot to the graphical target by default"
   # Equivalent to `systemctl set-default graphical.target`, done as an idempotent
