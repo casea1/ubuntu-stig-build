@@ -64,6 +64,8 @@ XROOT="$(env_var "$XILINX_ENV" XILINX_ROOT)";        XROOT="${XROOT:-/tools/Xili
 XVER="$(env_var "$XILINX_ENV" XILINX_VERSION)";      XVER="${XVER:-2024.2}"
 LIBDIR="$(env_var "$MICROCHIP_ENV" LIBERO_INSTALL_DIR)"
 LIBDIR="${LIBDIR:-/opt/microchip/Libero_SoC_2025.1}"
+# The parent, which the installer writes into as well (the "common" directory).
+MCHP_ROOT="$(dirname "$LIBDIR")"
 LIC_MCHP="$(env_var "$MICROCHIP_ENV" LM_LICENSE_FILE)"
 LIC_XLNX="$(env_var "$XILINX_ENV" XILINXD_LICENSE_FILE)"
 
@@ -417,9 +419,12 @@ fix_perms() {   # $1 = tree, $2 = label
   # is not readable by every account on the box. Capital X adds execute only to
   # directories and to files that already have it, so data files do not come
   # out executable.
-  chgrp -R "$ACCESS_GROUP" "$d" 2>/dev/null
+  # chown, not just chgrp: an installer run unprivileged (which is how Libero
+  # avoids needing an X cookie for root) leaves the tree owned by that person,
+  # and "engineers cannot modify a shared toolchain" then is not true.
+  chown -R "root:$ACCESS_GROUP" "$d" 2>/dev/null
   chmod -R g+rX,o-rwx "$d" 2>/dev/null
-  ok "$lbl usable by every member of $ACCESS_GROUP"
+  ok "$lbl owned by root, usable by every member of $ACCESS_GROUP"
 }
 
 # Cheap check: one stat, no recursion. The settings script is what a user
@@ -545,8 +550,8 @@ cmd_install() {
   case "$what" in
     --save-config) save=1 ;;
     xilinx|"") ;;
-    libero) die "Libero has no saved-response install yet -- run its installer once by hand (procedures 2.5), then tell me and I will add it" ;;
-    *) die "usage: it-fpga install xilinx [--bin PATH] [--config PATH]" ;;
+    libero) cmd_install_libero; return $? ;;
+    *) die "usage: it-fpga install xilinx|libero [--bin PATH] [--config PATH]" ;;
   esac
 
   if [ "$save" -eq 1 ]; then
@@ -739,6 +744,57 @@ cmd_compat() {
       compat_build ;;
     *) die "usage: it-fpga compat [status|build]" ;;
   esac
+}
+
+# Libero's installer is a GUI and there is no batch response file for it, so it
+# cannot be run unattended the way Xilinx can. What CAN be removed is the reason
+# people run it as root.
+#
+# It needs to write /opt/microchip, so the obvious move is sudo -- and then the
+# Qt GUI cannot open the display, because sudo drops DISPLAY and XAUTHORITY and
+# root has no X cookie for the user's session. The usual workaround, `xhost
+# +SI:localuser:root`, opens the display to root for everything else too.
+#
+# Instead: hand the directory to the person doing the install, let them run the
+# installer as themselves with a working display, and take ownership back
+# afterwards. `it-fpga fixup` is what takes it back -- it chowns to root and
+# grants the access group, so nothing is left owned by whoever happened to
+# install it.
+cmd_install_libero() {
+  local who="${SUDO_USER:-}"
+  [ -n "$who" ] || die "run this with sudo from your own account -- it needs to know who to hand the directory to"
+
+  head2 "Preparing a Libero install for $who"
+  say "  Libero has no batch response file, so the GUI has to run -- and it must"
+  say "  NOT run as root: sudo drops DISPLAY and XAUTHORITY, and root has no X"
+  say "  cookie for your session. That is the \"could not connect to display\""
+  say "  you get from sudo, and xhost +SI:localuser:root is not the answer."
+  say ""
+
+  install -d -m 0755 "$MCHP_ROOT" 2>/dev/null || true
+  chown -R "$who" "$MCHP_ROOT" 2>/dev/null \
+    || die "could not hand $MCHP_ROOT to $who"
+  ok "$MCHP_ROOT is writable by $who (temporarily)"
+
+  local bin
+  bin=$(find "$INSTALLER_DIR" /media/*/* /mnt/* -maxdepth 2 -type f \
+          -name 'Libero_SoC_*_lin.bin' 2>/dev/null | sort | tail -1)
+
+  say ""
+  say "  Now run it ${B}as yourself, no sudo${R}, in your desktop session:"
+  say ""
+  say "    ${B}env LD_LIBRARY_PATH=$COMPAT_DIR ${bin:-/path/to/Libero_SoC_*_lin.bin}${R}"
+  say ""
+  say "  Install directory : ${B}$LIBDIR${R}"
+  say "  Common directory  : ${B}$MCHP_ROOT${R}"
+  say "  Installation type : ${B}Full${R}   -- and DECLINE its post-install script"
+  say ""
+  say "  When it finishes, take the tree back:"
+  say ""
+  say "    ${B}sudo it-fpga fixup${R}"
+  say ""
+  warn "until you run fixup, $MCHP_ROOT is writable by $who -- that is the point,"
+  say  "  and it is also why fixup is not optional."
 }
 
 cmd_check() {

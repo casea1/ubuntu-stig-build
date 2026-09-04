@@ -437,12 +437,27 @@ sudo ./xsetup --agree XilinxEULA,3rdPartyEULA \
 
 ### Libero
 
+Libero has no batch response file, so its GUI has to run — and it must **not**
+run as root. `sudo` drops `DISPLAY` and `XAUTHORITY`, and root has no X cookie
+for your session, so a `sudo`-launched installer dies with *"could not connect
+to display"* however good the rest of the command is. `xhost +SI:localuser:root`
+is not the answer either: it opens your display to root for everything else too.
+
 ```bash
-sudo ./Libero_SoC_2025.1_online_lin.bin
+sudo it-fpga install libero      # hands /opt/microchip to you, prints the command
 ```
 
+Then run what it prints, **as yourself, no sudo**, in your desktop session.
 Install to `/opt/microchip/Libero_SoC_2025.1`, common directory `/opt/microchip`,
 **Full** installation, and decline the post-install script it offers.
+
+```bash
+sudo it-fpga fixup               # takes the tree back
+```
+
+`fixup` **chowns** to `root:sentry` and applies `g+rX,o-rwx`, so nothing is left
+owned by whoever happened to install it. Until you run it, `/opt/microchip` is
+writable by you — which is the point, and also why it is not optional.
 
 > **Run the `.bin`, not the `.sh`.** The `.sh` is Microchip's OS gate — it
 > prints `System OS NAME=Ubuntu` and stops, because Libero is supported on
