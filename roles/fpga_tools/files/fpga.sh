@@ -26,7 +26,10 @@
 #   it-fpga install --save-config
 #                              capture this box's install config so every other
 #                              box installs identically
-#   it-fpga cables             what is plugged in, and is it authorised
+#   it-fpga desktop            import the VENDOR's own app tiles system-wide, so
+                             every user gets Libero SoC / FPExpress / SmartHLS
+                             / PFSoC MSS and not just whoever installed them
+  it-fpga cables             what is plugged in, and is it authorised
 #   it-fpga env                the environment a user gets, and how to load it
 #
 # A licence change is written to BOTH the live /etc/profile.d scripts (so a new
@@ -554,6 +557,9 @@ cmd_fixup() {
     warn "Libero is not installed at $LIBDIR -- nothing to fix"
   fi
 
+  # The vendor's own tiles, which otherwise belong to whoever ran the installer.
+  cmd_desktop
+
   if have_tree "$XROOT"; then
     local drv="$XROOT/Vivado/$XVER/data/xicom/cable_drivers/lin64/install_script/install_drivers"
     if [ -x "$drv/install_drivers" ]; then
@@ -868,6 +874,144 @@ cmd_install_libero() {
   say "  ${DIM}the selected directory\", a pull has been past -- run this again.${R}"
 }
 
+# ---------------------------------------------------------------------------
+# VENDOR APP TILES.
+#
+# Both installers write .desktop files into the INSTALLING USER'S HOME
+# (~/.local/share/applications). Libero has to be installed as a person rather
+# than root -- root has no X cookie for the session -- so the branded tiles for
+# Libero SoC, FPExpress, SmartHLS, PFSoC MSS Configurator and Program Debug end
+# up belonging to one account. Everybody else gets the single generic tile the
+# pull creates, and none of the sub-tools at all.
+#
+# So: import them system-wide. NOT as a straight copy -- the vendor's Exec line
+# launches the binary with no environment, and Libero's 32-bit components need
+# the compat libraries and the i386 path or they abort at load. Each import gets
+# a wrapper that sets the environment and then runs the vendor's own command, so
+# what everyone gets is the vendor's name and icon on a launcher that works.
+#
+# A command rather than a pull task, for the same reason `fixup` is: it reads a
+# 150 GB tree that Ansible has no business walking on every run, and it is a
+# once-after-install step.
+# ---------------------------------------------------------------------------
+IMPORT_PREFIX=/usr/share/applications/fpga-vendor-
+WRAP_PREFIX=/usr/local/bin/fpga-vendor-
+
+# Where an installer might have left them: the vendor trees themselves, and the
+# per-user directories of anyone who has run one.
+vendor_desktops() {
+  local d
+  for d in "$XROOT" "$MCHP_ROOT"; do
+    [ -d "$d" ] && find "$d" -maxdepth 6 -type f -name '*.desktop' 2>/dev/null
+  done
+  for d in /root/.local/share/applications /home/*/.local/share/applications; do
+    [ -d "$d" ] && find "$d" -maxdepth 1 -type f -name '*.desktop' 2>/dev/null
+  done
+}
+
+# First value of a key, ignoring the localised variants (Name[de] and friends).
+dget() { sed -nE "s/^$2=(.*)$/\1/p" "$1" 2>/dev/null | head -1; }
+
+import_one() {   # $1 = a vendor .desktop -> 0 if imported
+  local f="$1" name exec_line bin icon comment slug wrap
+
+  name="$(dget "$f" Name)"
+  exec_line="$(dget "$f" Exec)"
+  [ -n "$name" ] && [ -n "$exec_line" ] || return 1
+
+  # Field codes are for file managers passing arguments; a launcher has none.
+  exec_line="$(printf '%s' "$exec_line" | sed -E 's/%[fFuUickvm]//g; s/[[:space:]]+$//')"
+
+  # The binary must live inside a vendor tree. That is the whole filter: it
+  # keeps this from importing Firefox because someone's home happened to have a
+  # .desktop file in it.
+  bin="$(printf '%s' "$exec_line" | sed -E 's/^"([^"]*)".*/\1/; t; s/^([^[:space:]]+).*/\1/')"
+  case "$bin" in
+    "$XROOT"/*|"$MCHP_ROOT"/*) ;;
+    *) return 1 ;;
+  esac
+  [ -e "$bin" ] || return 1
+
+  icon="$(dget "$f" Icon)"
+  comment="$(dget "$f" Comment)"
+  slug="$(basename "$f" .desktop | tr -cs '[:alnum:]._-' '-' | tr '[:upper:]' '[:lower:]')"
+  slug="${slug%-}"
+  wrap="$WRAP_PREFIX$slug"
+
+  # An absolute Icon that no longer exists gives a blank tile, which looks like
+  # a broken install. Fall back to a themed name in that case only -- a bare
+  # name is a theme lookup and is left alone.
+  case "$icon" in
+    /*) [ -e "$icon" ] || icon="applications-engineering" ;;
+    "") icon="applications-engineering" ;;
+  esac
+
+  cat > "$wrap" <<WRAP
+#!/usr/bin/env bash
+# Managed by it-fpga -- do not edit by hand. Regenerate with: it-fpga desktop
+#
+# $name, imported from
+#   $f
+# The vendor's launcher runs the binary with no environment. Libero's 32-bit
+# components need the compat libraries and the i386 path, or they abort at
+# load with a missing library rather than saying what is wrong.
+export LD_LIBRARY_PATH="$COMPAT_DIR:/usr/lib/i386-linux-gnu\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+exec $exec_line "\$@"
+WRAP
+  chmod 0755 "$wrap"; chown root:root "$wrap"
+
+  cat > "$IMPORT_PREFIX$slug.desktop" <<DESK
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=$name
+${comment:+Comment=$comment}
+Exec=$wrap
+Icon=$icon
+Terminal=false
+Categories=Development;Electronics;
+DESK
+  chmod 0644 "$IMPORT_PREFIX$slug.desktop"; chown root:root "$IMPORT_PREFIX$slug.desktop"
+  ok "$name"
+  return 0
+}
+
+# An import whose wrapper points at a binary that is gone -- an uninstalled or
+# renamed toolchain -- must go too, or the app grid keeps offering something
+# that is not there (trap 3: copy only ever creates).
+prune_imports() {
+  local d slug wrap bin
+  for d in "$IMPORT_PREFIX"*.desktop; do
+    [ -e "$d" ] || continue
+    slug="$(basename "$d" .desktop)"; slug="${slug#fpga-vendor-}"
+    wrap="$WRAP_PREFIX$slug"
+    bin="$(sed -nE 's/^exec ("?)([^" ]+).*/\2/p' "$wrap" 2>/dev/null | head -1)"
+    if [ -z "$bin" ] || [ ! -e "$bin" ]; then
+      rm -f "$d" "$wrap"
+      warn "removed $slug -- its program is gone"
+    fi
+  done
+}
+
+cmd_desktop() {
+  head2 "Vendor app tiles, system-wide"
+  say "  The installers write these into the installing user's home, so only"
+  say "  that account sees them. Imported here for every member of $ACCESS_GROUP."
+  say ""
+  local f n=0
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    import_one "$f" && n=$((n + 1))
+  done < <(vendor_desktops | sort -u)
+  [ "$n" -eq 0 ] && warn "no vendor .desktop files found under $XROOT, $MCHP_ROOT or any home"
+  prune_imports
+  # GNOME reads the desktop DATABASE, not the directory.
+  update-desktop-database /usr/share/applications 2>/dev/null || true
+  say ""
+  [ "$n" -gt 0 ] && say "  ${DIM}$n tile(s). They appear for every user -- no re-login needed.${R}"
+  say ""
+}
+
 cmd_check() {
   head2 "Vendor checkers"
   # Microchip moves this between releases -- 2025.1 buries it at
@@ -977,6 +1121,7 @@ case "${1:-status}" in
   ""|status) cmd_status ;;
   license|licence) shift; cmd_license "$@" ;;
   fixup)     cmd_fixup ;;
+  desktop)   cmd_desktop ;;
   install)   shift; cmd_install "$@" ;;
   compat)    shift; cmd_compat "$@" ;;
   check)     cmd_check ;;

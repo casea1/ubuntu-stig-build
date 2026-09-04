@@ -702,6 +702,30 @@ vivado          # a wrapper in /usr/local/bin; sources settings64.sh for
 libero          # that one process, not for every login shell on the box
 ```
 
+### The vendor's own tiles
+
+Both installers write `.desktop` files into the **installing user's home**
+(`~/.local/share/applications`). Libero has to be installed as a person rather
+than root — root has no X cookie for the session — so the branded tiles for
+**Libero SoC**, **FPExpress**, **SmartHLS**, **PFSoC MSS Configurator** and
+**Program Debug** end up belonging to one account. Everyone else sees the single
+generic tile the pull creates, and none of the sub-tools at all.
+
+```bash
+sudo it-fpga desktop     # import them system-wide (fixup does this too)
+```
+
+It is **not** a copy. The vendor's `Exec` line runs the binary with no
+environment, and Libero's 32-bit components need the compat libraries and the
+i386 path or they abort at load. Each import gets a wrapper that sets the
+environment and then runs the vendor's own command, so what everyone gets is the
+vendor's name and icon on a launcher that actually works.
+
+Only entries whose `Exec` points inside `/tools/Xilinx` or `/opt/microchip` are
+imported — that filter is what stops it hoovering up whatever else is in
+somebody's home — and an import whose program later disappears is removed rather
+than left in the app grid pointing at nothing.
+
 If a tile is missing after an install, the pull has not run since:
 
 ```bash
