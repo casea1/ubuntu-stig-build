@@ -449,6 +449,23 @@ Install to `/opt/microchip/Libero_SoC_2025.1`, common directory `/opt/microchip`
 > RHEL/CentOS only. The `.bin` is the actual installer and runs fine on 24.04.
 > Nothing is wrong with the download.
 
+> **`libpng15.so.15: cannot open shared object file`** is a different problem
+> with the same shape, and there is no apt answer: noble ships libpng16, and
+> libpng 1.5 → 1.6 was an **ABI break** (the structs became opaque), so a
+> symlink onto libpng16 is *not* the ncurses situation — it links and then
+> misbehaves, which is worse than failing at load.
+>
+> ```bash
+> sudo it-fpga compat build      # libpng15 from upstream source into
+> sudo it-fpga compat            # /opt/microchip/compat/lib -- private to Libero
+> ```
+>
+> It goes in a directory only Libero sees, on its `LD_LIBRARY_PATH`. **Never a
+> symlink or a foreign `.deb` in `/usr/lib`** — that puts an unmaintained
+> libpng in front of every program on the box. `it-fpga compat` then runs `ldd`
+> against the Libero binaries and names anything still missing, so you find the
+> whole set at once rather than one failed launch at a time.
+
 > **`libxcb-cursor.so.0: cannot open shared object file`** means the pull has
 > not run since that dependency was added. Libero 2025.1's installer is Qt6 and
 > its xcb platform plugin needs `libxcb-cursor0` before it draws anything.

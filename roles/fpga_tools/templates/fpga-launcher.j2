@@ -66,8 +66,9 @@ fi
 {% endif %}
 {%- if item.ld_i386 | default(false) %}
 
-# Libero and Synplify carry 32-bit components.
-export LD_LIBRARY_PATH="/usr/lib/i386-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# Libero and Synplify carry 32-bit components, and need old RHEL-era libraries
+# Ubuntu does not package. Both are private to this process.
+export LD_LIBRARY_PATH="{{ compat_dir }}:/usr/lib/i386-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 {%- endif %}
 
 exec "$BIN" "$@"

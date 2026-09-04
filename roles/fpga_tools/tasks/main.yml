@@ -128,6 +128,19 @@
       when: item.keep
 
     # ---- compatibility shims ----------------------------------------------
+    # Private compat directory for the old RHEL-era libraries Libero needs and
+    # Ubuntu does not package. Created empty: it-fpga populates it, and an
+    # empty directory on LD_LIBRARY_PATH is harmless where a missing one is
+    # just noise in every ld.so trace.
+    - name: "FPGA | Libero compat library directory"
+      ansible.builtin.file:
+        path: "{{ fpga_libero_compat_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: fpga_microchip_enabled | bool
+
     # Vivado wants libtinfo.so.5 / libncurses.so.5. Symlinks onto the ncurses 6
     # sonames, NOT the Jammy .debs: a package from another Ubuntu release on a
     # STIG box is a supply-chain problem and is unreachable once the box is
@@ -234,6 +247,19 @@
       loop_control:
         label: "{{ item.path }}"
       when: not item.keep
+
+    # The install selection, so `it-fpga install xilinx` reproduces one box's
+    # choice on every other. Not a secret -- it lists modules and device
+    # families, nothing more.
+    - name: "FPGA | Xilinx install configuration"
+      ansible.builtin.copy:
+        src: xilinx-install_config.txt
+        dest: /etc/stig-build/fpga/xilinx-install_config.txt
+        owner: root
+        group: root
+        mode: "0644"
+      when: fpga_xilinx_enabled | bool
+      tags: [scripts]
 
     # ---- launchers and desktop entries ------------------------------------
     - name: "FPGA | Launchers and app-grid entries"

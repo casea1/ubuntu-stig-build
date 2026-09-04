@@ -26,7 +26,10 @@ libero_env() {
     PATH="$PATH:$LIBERO_INSTALL_DIR/Synplify/bin"
     export PATH
     # Libero and Synplify carry 32-bit components; without this they load the
-    # 64-bit library and abort.
-    export LD_LIBRARY_PATH="/usr/lib/i386-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    # 64-bit library and abort. {{ fpga_libero_compat_dir }} holds the old
+    # RHEL-era libraries Ubuntu does not package (libpng15 and friends) -- kept
+    # private to Libero rather than dropped in /usr/lib, where an unmaintained
+    # libpng would sit in front of every program on the box.
+    export LD_LIBRARY_PATH="{{ fpga_libero_compat_dir }}:/usr/lib/i386-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     echo "Libero {{ fpga_libero_version }} tools on PATH."
 }

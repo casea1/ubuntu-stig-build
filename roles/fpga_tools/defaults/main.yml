@@ -130,6 +130,20 @@ fpga_usr_tmp: true
 # Libero looks for RHEL's CA bundle path.
 fpga_rhel_ca_symlink: true
 
+# ---- Libero's old-library problem ------------------------------------------
+# Libero's installer and tools are built against RHEL library versions that
+# Ubuntu 24.04 does not ship and does not package -- libpng15 is the one that
+# stops the installer dead. There is no apt answer: noble has libpng16, and
+# libpng 1.5 -> 1.6 was an ABI break (the structs became opaque), so a symlink
+# is NOT the ncurses situation. It links, then misbehaves or crashes, which is
+# worse than failing at load.
+#
+# The containable answer is a PRIVATE compat directory that only Libero sees,
+# via LD_LIBRARY_PATH -- never a symlink or a foreign .deb in /usr/lib, which
+# would put an unmaintained libpng in front of every program on the box.
+# Populate it with `it-fpga compat build` (see procedures 2.5).
+fpga_libero_compat_dir: /opt/microchip/compat/lib
+
 # Libero 2025.1 ships a RHEL-targeted libstdc++ that is OLDER than the one
 # Noble's libicuuc.so.74 needs, so libero_bin dies with GLIBCXX_3.4.30 not
 # found. Deleting the bundled copy forces it onto the system library.

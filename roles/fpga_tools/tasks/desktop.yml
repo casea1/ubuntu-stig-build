@@ -87,6 +87,7 @@
     dest: "/usr/local/bin/{{ item.cmd }}"
   vars:
     access_group: "{{ fpga_tools_access_group }}"
+    compat_dir: "{{ fpga_libero_compat_dir }}"
     owner: root
     group: root
     mode: "0755"

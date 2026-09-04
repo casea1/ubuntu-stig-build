@@ -20,6 +20,9 @@
 #   it-fpga install xilinx     run the Xilinx installer unattended from a staged
 #                              .bin + saved config, under systemd so it survives
 #                              a dropped session. Then fixes permissions itself.
+#   it-fpga compat build       build the old RHEL-era libraries Libero needs
+#                              (libpng15) into a private directory only it sees
+#   it-fpga compat status      what is in there
 #   it-fpga install --save-config
 #                              capture this box's install config so every other
 #                              box installs identically
@@ -628,6 +631,116 @@ Point at one:  sudo it-fpga install xilinx --bin /path/to/installer.bin"
   fi
 }
 
+# ---------------------------------------------------------------------------
+# Libero's old-library problem.
+#
+# Its installer and tools are built against RHEL library versions Ubuntu 24.04
+# does not ship and does not package. libpng15 is the one that stops the
+# installer at load. There is no apt answer, and this is NOT the ncurses
+# situation: libpng 1.5 -> 1.6 was an ABI break (the structs became opaque), so
+# a symlink onto libpng16 links and then misbehaves, which is worse than
+# failing cleanly.
+#
+# Built from upstream source into a directory only Libero sees, via
+# LD_LIBRARY_PATH. Never a symlink or a foreign .deb in /usr/lib -- that would
+# put an unmaintained libpng in front of every program on the box.
+# ---------------------------------------------------------------------------
+COMPAT_DIR="$(conf_get COMPAT_DIR /opt/microchip/compat/lib)"
+LIBPNG15_URL="https://downloads.sourceforge.net/project/libpng/libpng15/1.5.30/libpng-1.5.30.tar.gz"
+
+compat_status() {
+  head2 "Libero compatibility libraries"
+  printf '  %-14s %s\n' "directory" "$COMPAT_DIR"
+  if [ -d "$COMPAT_DIR" ] && [ -n "$(ls -A "$COMPAT_DIR" 2>/dev/null)" ]; then
+    ls -1 "$COMPAT_DIR" | sed 's/^/      /'
+  else
+    warn "empty -- Libero and its installer will fail on the first old library"
+    say  "  ${DIM}build them: sudo it-fpga compat build${R}"
+  fi
+  # What is actually still missing, asked of the binaries themselves.
+  local b
+  for b in "$LIBDIR/Libero/bin64/libero" "$LIBDIR/Libero/bin/libero_bin"; do
+    [ -x "$b" ] || continue
+    if LD_LIBRARY_PATH="$COMPAT_DIR:/usr/lib/i386-linux-gnu" ldd "$b" 2>/dev/null | grep -q 'not found'; then
+      bad "still missing for $(basename "$b"):"
+      LD_LIBRARY_PATH="$COMPAT_DIR:/usr/lib/i386-linux-gnu" ldd "$b" 2>/dev/null \
+        | awk '/not found/{print "      " $1}'
+    else
+      ok "$(basename "$b") resolves every library"
+    fi
+  done
+  say ""
+}
+
+compat_build() {
+  head2 "Building Libero's compatibility libraries"
+  say "  Into $COMPAT_DIR, which only Libero sees. Nothing is installed into"
+  say "  /usr/lib -- an unmaintained libpng in front of every program on the"
+  say "  box is a worse problem than the one it solves."
+  say ""
+
+  local missing=""
+  command -v gcc  >/dev/null 2>&1 || missing="$missing build-essential"
+  command -v make >/dev/null 2>&1 || missing="$missing make"
+  [ -n "$missing" ] && die "install these first: apt install$missing"
+
+  install -d -m 0755 "$COMPAT_DIR"
+  if [ -e "$COMPAT_DIR/libpng15.so.15" ]; then
+    ok "libpng15 already built"
+  else
+    local tmp; tmp="$(mktemp -d /tmp/fpga-compat.XXXXXX)" || die "mktemp failed"
+    say "  fetching libpng 1.5.30..."
+    if ! curl -fsSL -o "$tmp/libpng.tar.gz" "$LIBPNG15_URL"; then
+      rm -rf "$tmp"
+      bad "could not download libpng 1.5.30"
+      say "  ${DIM}Air-gapped? Carry the tarball in and:${R}"
+      say "  ${DIM}  sudo it-fpga compat build --source /path/to/libpng-1.5.30.tar.gz${R}"
+      return 1
+    fi
+    say "  building (a minute or so)..."
+    # Output to a log, not the terminal: libpng's install step runs with set -x
+    # and buries the result in link commands. Kept on failure so the reason
+    # survives, removed on success.
+    local blog=/var/log/fpga-compat-build.log
+    if ! ( set -e
+           cd "$tmp"
+           tar xzf libpng.tar.gz
+           cd libpng-1.5.30
+           ./configure --prefix="$tmp/out" --disable-static
+           make -j"$(nproc)"
+           make install ) > "$blog" 2>&1; then
+      rm -rf "$tmp"
+      bad "libpng 1.5.30 failed to build -- see $blog"
+      tail -15 "$blog" | sed 's/^/      /'
+      return 1
+    fi
+    rm -f "$blog"
+    install -m 0644 "$tmp/out/lib/"libpng15.so.15* "$COMPAT_DIR/" 2>/dev/null
+    ( cd "$COMPAT_DIR" && ln -sfn libpng15.so.15.*.* libpng15.so.15 2>/dev/null ) || true
+    rm -rf "$tmp"
+    ok "libpng15 built into $COMPAT_DIR"
+  fi
+
+  chgrp -R "$ACCESS_GROUP" "$COMPAT_DIR" 2>/dev/null || true
+  chmod -R g+rX,o-rwx "$COMPAT_DIR" 2>/dev/null || true
+  say ""
+  compat_status
+}
+
+cmd_compat() {
+  case "${1:-status}" in
+    ""|status) compat_status ;;
+    build)
+      shift
+      if [ "${1:-}" = --source ]; then
+        [ -r "${2:-}" ] || die "cannot read ${2:-<nothing>}"
+        die "carrying a tarball in is not wired up yet -- extract it and run configure/make by hand into $COMPAT_DIR, then: sudo it-fpga compat status"
+      fi
+      compat_build ;;
+    *) die "usage: it-fpga compat [status|build]" ;;
+  esac
+}
+
 cmd_check() {
   head2 "Vendor checkers"
   local c="$LIBDIR/bin/check_linux_req"
@@ -729,6 +842,7 @@ case "${1:-status}" in
   license|licence) shift; cmd_license "$@" ;;
   fixup)     cmd_fixup ;;
   install)   shift; cmd_install "$@" ;;
+  compat)    shift; cmd_compat "$@" ;;
   check)     cmd_check ;;
   cables)    head2 "Programmer cables"; cables_show; say "" ;;
   env)       cmd_env ;;
