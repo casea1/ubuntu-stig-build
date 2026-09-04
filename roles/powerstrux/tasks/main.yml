@@ -8,6 +8,54 @@
 # never writes them -- a hand-edited config surviving a pull is the whole point.
 # =============================================================================
 
+# ---------------------------------------------------------------------------
+# The COMMAND is installed unconditionally. It used to live inside the block
+# below, gated on PowerStrux already being present -- so on a box without it
+# `it-powerstrux` did not exist, and the command that installs PowerStrux was
+# the one thing you could not run. "Why is there no it-powerstrux on this
+# profile" was that, every time, and the answer sounded like a profile gate
+# when it was a bootstrap ordering bug.
+#
+# What still waits for the tool: the desktop icon, the schedule, and anything
+# that RUNS it. Those are meaningless without it; the command is not.
+- name: "POWERSTRUX | Audit dir exists ({{ powerstrux_audit_dir }})"
+  ansible.builtin.file:
+    path: "{{ powerstrux_audit_dir }}"
+    state: directory
+    owner: root
+    group: audit
+    mode: "2770"
+  tags: [scripts]
+
+# 0750 root:audit -- auditors run it, nobody else can read or edit it. The
+# script self-elevates, so group-execute is enough.
+- name: "POWERSTRUX | Install the launcher"
+  ansible.builtin.copy:
+    src: run-powerstrux.sh
+    dest: "{{ powerstrux_audit_dir }}/run-powerstrux.sh"
+    owner: root
+    group: audit
+    mode: "0750"
+  tags: [scripts]
+
+- name: "POWERSTRUX | Install the offload engine"
+  ansible.builtin.copy:
+    src: powerstrux-offload.sh
+    dest: "{{ powerstrux_audit_dir }}/powerstrux-offload.sh"
+    owner: root
+    group: audit
+    mode: "0750"
+  tags: [scripts]
+
+- name: "POWERSTRUX | Short command for admins (it-powerstrux)"
+  ansible.builtin.file:
+    src: "{{ powerstrux_audit_dir }}/run-powerstrux.sh"
+    dest: /usr/local/sbin/it-powerstrux
+    state: link
+    force: true
+  tags: [scripts]
+
+
 - name: "POWERSTRUX | Is the PowerShell entry point present?"
   ansible.builtin.stat:
     path: "{{ powerstrux_script }}"
@@ -16,47 +64,16 @@
 - name: "POWERSTRUX | Not installed -- skipping"
   ansible.builtin.debug:
     msg: >-
-      PowerStrux not found at {{ powerstrux_script }}. The launcher and schedule
-      are skipped. Install the ReportHTML module + Initiate-PowerstruxLA.ps1,
-      then re-run the pull (or set powerstrux_script if it lives elsewhere).
+      PowerStrux is not installed at {{ powerstrux_script }}, so the desktop
+      icon and the schedule are skipped -- `it-powerstrux` itself IS installed.
+      Stage the vendor zip in {{ powerstrux_installer_dir }} and run
+      `sudo it-powerstrux install`, then pull again. Set powerstrux_script if
+      it lives somewhere else.
   when: not _ps_script.stat.exists
 
 - name: "POWERSTRUX | Configure the launcher and schedule"
   when: _ps_script.stat.exists
   block:
-    - name: "POWERSTRUX | Audit dir exists ({{ powerstrux_audit_dir }})"
-      ansible.builtin.file:
-        path: "{{ powerstrux_audit_dir }}"
-        state: directory
-        owner: root
-        group: audit
-        mode: "2770"
-
-    # 0750 root:audit -- auditors run it, nobody else can read or edit it. The
-    # script self-elevates, so group-execute is enough.
-    - name: "POWERSTRUX | Install the launcher"
-      ansible.builtin.copy:
-        src: run-powerstrux.sh
-        dest: "{{ powerstrux_audit_dir }}/run-powerstrux.sh"
-        owner: root
-        group: audit
-        mode: "0750"
-
-    - name: "POWERSTRUX | Install the offload engine"
-      ansible.builtin.copy:
-        src: powerstrux-offload.sh
-        dest: "{{ powerstrux_audit_dir }}/powerstrux-offload.sh"
-        owner: root
-        group: audit
-        mode: "0750"
-
-    - name: "POWERSTRUX | Short command for admins (it-powerstrux)"
-      ansible.builtin.file:
-        src: "{{ powerstrux_audit_dir }}/run-powerstrux.sh"
-        dest: /usr/local/sbin/it-powerstrux
-        state: link
-        force: true
-
     # In /usr/share/applications it appears in the app grid for every user and
     # needs no per-user "trust this launcher" step, which a file dropped on the
     # Desktop does need under GNOME.

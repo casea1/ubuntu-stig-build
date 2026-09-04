@@ -871,6 +871,61 @@ default, `it-powerstrux schedule "<spec>"` to change — the change is written t
 Reading it needs membership of the `audit` group (`/opt/_AuditFiles` is
 `2770 root:audit`); `id -nG` should list it.
 
+## 3.2c-i Install PowerStrux
+
+PowerStrux is vendor software and is **not** in this repo. Stage the zip and run
+one command:
+
+```bash
+sudo cp PowerStrux*.zip /opt/it/installers/
+sudo it-powerstrux install
+```
+
+It unpacks the archive, finds `Initiate-PowerstruxLA.ps1` inside it (by the
+entry point, not by an expected folder name — the zip's top level has varied
+between releases), puts the module where PowerShell looks for it, and sets the
+reporting window and report directory in `PowerStruxLAConfig.txt`:
+
+| | |
+|---|---|
+| Module | `/opt/microsoft/powershell/7/Modules/ReportHTML/`, `root:root`, world-readable, nothing writable |
+| Reporting window | 8 days (`--days N`) — a weekly run then always overlaps the previous one, so no day falls between two reports |
+| Report directory | `/opt/_AuditFiles` (`--dir PATH`) |
+
+Then pick up the parts the pull skips until the tool exists:
+
+```bash
+sudo it-pull scripts     # desktop icon + weekly schedule
+sudo it-powerstrux       # run it once and read the report
+```
+
+`install` also searches attached media, so on an air-gapped box the zip can stay
+on the USB stick: `sudo it-powerstrux install --zip /media/<user>/<vol>/PowerStrux.zip`.
+
+**Re-running it is safe.** An existing `PowerStruxLAConfig.txt` is kept, because
+it is hand-tuned per site — that is the same reason the pull never writes it.
+`--force-config` replaces it with the vendor's. Any previous module directory is
+moved aside to `ReportHTML.bak-<timestamp>` rather than deleted.
+
+**It never invents a config key.** A key is edited only where it already exists
+in the vendor's file, so if a release renames one you get a clear "not found"
+plus a printout of the keys the file actually has — never a silently appended
+line the tool ignores, and never a mangled config an assessor reads months
+later. Name the right key yourself with `--days-key` / `--dir-key`, or set them
+once in `group_vars`.
+
+```bash
+sudo it-powerstrux config --days 8 --dir /opt/_AuditFiles
+sudo it-powerstrux config --days-key EventLogDays --days 8
+```
+
+> `it-powerstrux` itself is installed on **every** box, whether or not
+> PowerStrux is. It used to live inside the block gated on the tool being
+> present, so the command that installs PowerStrux was the one thing you could
+> not run — and "there is no `it-powerstrux` on this profile" looked like a
+> profile gate when it was a bootstrap ordering bug. What still waits for the
+> tool is the desktop icon, the schedule, and anything that runs it.
+
 ## 3.2d Send the report off the box (`it-powerstrux offload`)
 
 The audit is only half the job — until the report leaves the box, a reimage

@@ -11,6 +11,16 @@ powerstrux_enabled: true
 # Where the hand-installed PowerShell entry point lives.
 powerstrux_script: /opt/microsoft/powershell/7/Modules/ReportHTML/Initiate-PowerstruxLA.ps1
 powerstrux_audit_dir: /opt/_AuditFiles
+
+# Where `it-powerstrux install` looks for the vendor zip. The archive is NOT in
+# this repo and never will be -- it is vendor software. Stage it here (or on
+# attached media, which install also searches) and run the command.
+powerstrux_installer_dir: /opt/it/installers
+
+# The reporting window `install`/`config` write into PowerStruxLAConfig.txt.
+# 8 days, so a weekly run always overlaps the previous one and no day falls
+# between two reports.
+powerstrux_days: 8
 powerstrux_log_keep: 26          # ~6 months of weekly runs
 
 # A desktop icon so an auditor can double-click rather than use a shell.
