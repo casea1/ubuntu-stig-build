@@ -79,6 +79,10 @@ enabled_services() {
   jq_get "' '.join(sorted(s['name'] for s in d.get('services',[]) if s.get('status')=='enabled'))"
 }
 
+service_enabled() {   # $1 = service name
+  [ "$(jq_get "str(any(s.get('name')=='$1' and s.get('status')=='enabled' for s in d.get('services',[])))")" = "True" ]
+}
+
 # A token, from whichever of the three ways is convenient:
 #
 #   it-pro switch C1abc...        the token itself
@@ -266,9 +270,22 @@ cmd_switch() {
   store_token "$tok"
 
   # Re-enable exactly what was on before, and say plainly which did not return.
+  #
+  # ASK THE SERVICE, do not trust `pro enable`'s exit code. Attaching a full
+  # subscription AUTO-ENABLES the default services, so by the time this loop
+  # runs most of them are already on -- and `pro enable` exits non-zero for
+  # "already enabled". Reporting that as a failure told an operator that
+  # esm-apps, esm-infra and livepatch had not come back while the status table
+  # printed three lines later showed all three enabled. A compliance command
+  # that cries wolf is worse than one that says nothing.
   local s
   for s in $svcs; do
-    if pro enable "$s" --assume-yes >/dev/null 2>&1; then
+    if service_enabled "$s"; then
+      ok "$s enabled (the attach turned it on)"
+      continue
+    fi
+    pro enable "$s" --assume-yes >/dev/null 2>&1
+    if service_enabled "$s"; then
       ok "re-enabled $s"
     else
       bad "$s did NOT come back -- the new subscription may not entitle it"
