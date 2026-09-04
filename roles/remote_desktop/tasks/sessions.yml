@@ -110,10 +110,17 @@
 # the box is idle, so the deferred config actually lands rather than waiting for
 # a reboot nobody schedules.
 - name: "XRDP | Is an xrdp session running right now?"
+  # No `set -o pipefail`: ansible.builtin.shell runs under /bin/sh, which is
+  # dash on Ubuntu, and dash has no pipefail -- "Illegal option -o pipefail",
+  # rc 2, and the pull stops here. It bought nothing anyway; the `if` takes its
+  # status from the last grep, which is the question being asked.
   ansible.builtin.shell:
     cmd: |
-      set -o pipefail
-      ps -eo args= | grep -E '(^|/)Xorg :[0-9]+' | grep -q xrdp && echo live || echo idle
+      if ps -eo args= | grep -E '(^|/)Xorg :[0-9]+' | grep -q xrdp; then
+        echo live
+      else
+        echo idle
+      fi
   register: _rdp_live
   changed_when: false
   check_mode: false

@@ -17,9 +17,9 @@
 # `it-rdp restart` does it on demand. The setting itself is not urgent; the
 # broken login it would cause is.
 - name: restart xrdp-sesman
+  # No `set -o pipefail` -- /bin/sh is dash here and rejects it outright.
   ansible.builtin.shell:
     cmd: |
-      set -o pipefail
       if ps -eo args= | grep -E '(^|/)Xorg :[0-9]+' | grep -q xrdp; then
         : > /run/xrdp-sesman-restart-pending
         echo deferred
