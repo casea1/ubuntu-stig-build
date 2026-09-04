@@ -191,15 +191,26 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   the reports), because both mount with a credentials file. The remedy is
   `sec=krb5` after an AD join -- and for an unattended job with nobody logged
   in, a machine keytab and `kinit -k`, not a credentials file. Not built yet.
+  **GUEST/ANONYMOUS IS THE FIPS-VIABLE PATH BEFORE THE JOIN**, and it needs
+  `sec=none`: `guest` on its own only means "send no username or password",
+  the client still performs whatever session setup `sec=` asks for, and every
+  default in this repo said `sec=ntlmssp` -- so guest mode failed on FIPS for
+  the same reason a credentials mount did. Both offloads and `it-smb` now force
+  `sec=none` whenever auth is guest, stripping any `sec=` the options carry.
 
 ## Open threads
 
-- **The SMB offloads do not work on a FIPS box.** See the gotcha above. Both
-  `it-offload` and `it-powerstrux offload` authenticate with NTLM, which the
-  FIPS crypto API cannot do. `it-smb` grew a `--krb5` probe path; the offloads
-  still need the unattended half -- `it-domain join`, then `kinit -k` from the
-  machine keytab before the mount, `sec=krb5,cruid=0`. Until that exists, the
-  weekly evidence does not leave the box on any FIPS workstation.
+- **The SMB offloads need `sec=krb5` once the fleet is domain-joined.** Until
+  then the deployed space's file server is open to guests, and guest +
+  `sec=none` is what both offloads use there (`usg_audit_offload_smb_auth:
+  guest`, `it-powerstrux offload creds` -> guest). That is a working transport,
+  not a good one -- the evidence crosses the wire unauthenticated and
+  unencrypted, and anyone on that LAN can read the share. It is a POA&M item,
+  not a solved one. The AD join is weeks after deployment; when it lands, the
+  unattended half still has to be built: `kinit -k` from the machine keytab
+  before the mount, `sec=krb5,cruid=0`, and a keytab refresh that survives a
+  machine-password rotation. `it-smb test --krb5` already covers the
+  interactive case.
 
 - **Rotate the leaked credentials.** The old pgvector password, Open WebUI
   session key, and MLflow password were committed while the repo was public.

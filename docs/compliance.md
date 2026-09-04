@@ -270,7 +270,19 @@ two-copy workflow above.
 > with **ENOENT** — byte-for-byte the errno a *missing share* returns, which is
 > why this reads as a wrong share name or a typo'd password and is neither.
 >
-> **Both offloads mount with a credentials file, so both are affected**:
+> **Guest/anonymous is the usable path until the fleet is domain-joined**, and
+> it needs `sec=none` — `guest` alone still performs whatever session setup
+> `sec=` asks for, and every default here said `sec=ntlmssp`, so guest mode
+> failed on FIPS for exactly the same reason. Both offloads and `it-smb` now
+> force `sec=none` whenever auth is guest.
+>
+> That is a working transport and a **weak** one, and it belongs on the POA&M
+> rather than in the "solved" column: an anonymous SMB mount authenticates
+> nobody, so the evidence crosses the LAN unauthenticated, and anyone who can
+> reach the share can read every box's audit trail. Accept it only where the
+> file server is already open to anonymous users and the network is the control.
+>
+> **Both offloads mount with a credentials file by default, so both are affected**:
 > `it-offload` (the auditd trail — the AU-4 artifact) and
 > `it-powerstrux offload`. On a FIPS box neither can reach a Windows share
 > today. The remedy is Kerberos (`sec=krb5`), which needs the box joined to AD

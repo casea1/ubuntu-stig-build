@@ -81,6 +81,14 @@ usg_audit_offload_smb_enabled: false
 usg_audit_offload_smb_share: ""                                    # //server/share
 usg_audit_offload_smb_credentials: /etc/stig-build/audit-offload.cred
 usg_audit_offload_smb_options: "vers=3.1.1,sec=ntlmssp,uid=0,gid=0,file_mode=0640,dir_mode=0750"
+
+# How the weekly push authenticates: "creds" (a credentials file) or "guest"
+# (anonymous). GUEST IS THE ONLY ONE THAT WORKS ON A FIPS BOX until the fleet
+# is domain-joined: NTLMv2 needs HMAC-MD5 and FIPS removes MD5 from the kernel
+# crypto API, so a credentials mount dies with "Could not allocate shash TFM"
+# and ENOENT. When this is "guest" the script forces sec=none, because `guest`
+# alone still performs the sec= session setup the options ask for.
+usg_audit_offload_smb_auth: creds
 usg_audit_offload_smb_subdir: "{{ ansible_hostname | default('unknown') }}"
 
 usg_audit_privileged_commands_enabled: true

@@ -105,10 +105,24 @@ SMB_SHARE='{{ usg_audit_offload_smb_share }}'
 SMB_CRED='{{ usg_audit_offload_smb_credentials }}'
 SMB_OPTS='{{ usg_audit_offload_smb_options }}'
 SMB_SUB='{{ usg_audit_offload_smb_subdir }}'
+SMB_AUTH='{{ usg_audit_offload_smb_auth | default('creds') }}'
 MNT=/run/audit-offload.mnt
 
+# Guest is sec=none, overriding whatever SMB_OPTS carries.
+#
+# `guest` alone only means "send no username or password" -- the client still
+# performs the session setup sec= asks for, and the default is sec=ntlmssp. On
+# a FIPS box that cannot work: NTLMv2 needs HMAC-MD5, which FIPS removes from
+# the kernel crypto API. The mount fails with "Could not allocate shash TFM
+# 'hmac(md5)'" and ENOENT -- indistinguishable from a missing share.
+if [ "$SMB_AUTH" = guest ]; then
+  mount_opts="guest,sec=none,$(printf '%s' "$SMB_OPTS" | sed -E 's/(^|,)sec=[^,]*//g; s/^,//')"
+else
+  mount_opts="credentials=$SMB_CRED,$SMB_OPTS"
+fi
+
 push_failed=0
-if [ ! -r "$SMB_CRED" ]; then
+if [ "$SMB_AUTH" != guest ] && [ ! -r "$SMB_CRED" ]; then
   log "ERROR: no credentials file at $SMB_CRED -- push SKIPPED, local copy kept"
   push_failed=1
 elif ! command -v mount.cifs >/dev/null 2>&1; then
@@ -116,7 +130,7 @@ elif ! command -v mount.cifs >/dev/null 2>&1; then
   push_failed=1
 else
   mkdir -p "$MNT"
-  if mount -t cifs "$SMB_SHARE" "$MNT" -o "credentials=$SMB_CRED,$SMB_OPTS" 2>>"$LOG"; then
+  if mount -t cifs "$SMB_SHARE" "$MNT" -o "$mount_opts" 2>>"$LOG"; then
     dst="$MNT/$SMB_SUB"
     if mkdir -p "$dst" 2>>"$LOG"; then
       for f in "$DEST"/audit-"$host"-"$stamp".tar.gz "$DEST"/logs-"$host"-"$stamp".tar.gz; do

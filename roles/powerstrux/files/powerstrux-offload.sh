@@ -405,7 +405,15 @@ mount_share() {   # 0 = mounted at $MNT
   command -v mount.cifs >/dev/null 2>&1 || { log "ERROR: cifs-utils not installed"; return 1; }
   local opts="$SMB_OPTS"
   if [ "$SMB_AUTH" = guest ]; then
-    opts="guest,$opts"
+    # sec=none, overriding whatever SMB_OPTS carries. `guest` only means "send
+    # no username or password" -- the client still performs the session setup
+    # sec= asks for, and the default here is sec=ntlmssp. On a FIPS box that
+    # cannot work at all: NTLMv2 needs HMAC-MD5, FIPS removes MD5 from the
+    # kernel crypto API, and the mount fails with "Could not allocate shash TFM
+    # 'hmac(md5)'" and ENOENT -- the same errno a missing share returns, which
+    # is how this hides (dev-14, 2026-09-04). sec=none is an anonymous session
+    # setup with no NTLM response to compute.
+    opts="guest,sec=none,$(printf '%s' "$opts" | sed -E 's/(^|,)sec=[^,]*//g; s/^,//')"
   else
     [ -r "$SMB_CRED" ] || { log "ERROR: no credentials file at $SMB_CRED"; return 1; }
     opts="credentials=$SMB_CRED,$opts"
@@ -602,6 +610,11 @@ cmd_creds() {
     [ -f "$SMB_CRED" ] && { mv -f "$SMB_CRED" "$SMB_CRED.disabled"; warn "existing credentials moved to $SMB_CRED.disabled"; }
     warn "guest access set. No credentials will be sent."
     say  "  ${DIM}Most Windows shares refuse guest by default (SMB2+ signing/guest-auth policy).${R}"
+    if [ "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null || echo 0)" = 1 ]; then
+      say  "  ${DIM}On this FIPS box guest is the ONLY option that can work until the${R}"
+      say  "  ${DIM}fleet is domain-joined: NTLM needs HMAC-MD5 and FIPS has no MD5.${R}"
+      say  "  ${DIM}sec=none is forced for guest, so the mount never attempts NTLM.${R}"
+    fi
     say  "  ${DIM}Prove it: it-powerstrux offload test${R}"
     return 0
   fi

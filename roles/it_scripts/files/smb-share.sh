@@ -294,7 +294,16 @@ probe_unc() {   # $1 = //server/share  [--user U] [--domain D] [--guest] [--vers
     # between "works" and "no credentials available".
     opts="$opts,sec=krb5,cruid=${SUDO_UID:-0}"
   elif [ "$guest" -eq 1 ]; then
-    opts="$opts,guest"
+    # Guest means sec=none, NOT whatever sec= the option string carries.
+    #
+    # `guest` only says "send no username or password" -- the client still does
+    # the session setup that sec= asks for, and every default here said
+    # sec=ntlmssp. On a FIPS box that is fatal: NTLMv2 needs HMAC-MD5, FIPS
+    # removes MD5 from the kernel crypto API, and the mount dies with "Could
+    # not allocate shash TFM 'hmac(md5)'" and ENOENT, which reads as a missing
+    # share (dev-14, 2026-09-04). sec=none is an anonymous session setup with
+    # no NTLM response to compute, so no MD4 and no MD5.
+    opts="$opts,guest,sec=none"
   else
     { printf 'username=%s\n' "$user"
       printf 'password=%s\n' "$pass"
@@ -650,7 +659,14 @@ cmd_add() {
   if [ "$guest" -eq 1 ]; then
     # `guest` is username= with an empty password. No credentials file exists,
     # so there is nothing on disk to protect or rotate.
-    opts="guest,vers=$vers,uid=$uid,gid=$gid,file_mode=$fmode,dir_mode=$dmode,iocharset=utf8,_netdev,nofail"
+    #
+    # sec=none as well, and that part is load-bearing: `guest` alone still does
+    # the session setup sec= asks for, which defaults to NTLM. NTLMv2 needs
+    # HMAC-MD5 and a FIPS kernel has no MD5, so the mount dies with "Could not
+    # allocate shash TFM 'hmac(md5)'" and ENOENT -- the same errno a missing
+    # share returns, so it reads as a wrong share name (dev-14, 2026-09-04).
+    # sec=none is an anonymous setup with no NTLM response to compute.
+    opts="guest,sec=none,vers=$vers,uid=$uid,gid=$gid,file_mode=$fmode,dir_mode=$dmode,iocharset=utf8,_netdev,nofail"
   else
     opts="credentials=$cred,vers=$vers,uid=$uid,gid=$gid,file_mode=$fmode,dir_mode=$dmode,iocharset=utf8,_netdev,nofail"
   fi
