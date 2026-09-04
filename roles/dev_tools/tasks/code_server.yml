@@ -97,9 +97,17 @@
 - name: "CODE-SERVER | Which instances are enabled right now?"
   ansible.builtin.shell:
     cmd: |
-      systemctl list-unit-files 'code-server@*' --no-legend 2>/dev/null \
-        | awk '$2=="enabled"{print $1}' \
-        | sed 's/^code-server@//; s/\.service$//'
+      # NOT `list-unit-files 'code-server@*'`: that matches the TEMPLATE,
+      # code-server@.service, whose name contains no user -- so this produced
+      # an empty list and the cleanup below has been a no-op since it was
+      # written. Twelve failed instances per box survived every pull because
+      # nothing ever enumerated them.
+      {
+        systemctl list-units --all --plain --no-legend 'code-server@*.service' 2>/dev/null \
+          | awk '{print $1}'
+        ls /etc/systemd/system/*.wants/code-server@*.service 2>/dev/null \
+          | xargs -r -n1 basename
+      } | sed 's/^code-server@//; s/\.service$//' | grep -vE '^$' | sort -u
       exit 0
   register: _cs_enabled
   changed_when: false
@@ -111,17 +119,30 @@
     enabled: false
     state: stopped
   loop: "{{ _cs_enabled.stdout_lines | default([]) | difference(_cs_users) }}"
+  loop_control:
+    label: "{{ item }}"
+  failed_when: false
+
+# Disabling a unit does NOT clear its failed state. Twelve dead
+# code-server@<locked-user> units sat in `systemctl --failed` on every
+# development box -- the first thing anyone reviewing the machine looks at, and
+# an assessor among them. The service is correctly off; only the corpse was
+# left behind.
+- name: "CODE-SERVER | Clear the failed state of instances that should not run"
+  ansible.builtin.command: "systemctl reset-failed code-server@{{ item }}.service"
+  loop: "{{ _cs_enabled.stdout_lines | default([]) | difference(_cs_users) }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: false
   failed_when: false
 
 - name: "CODE-SERVER | Install it-codeserver"
   ansible.builtin.copy:
     src: code-server-status.sh
     dest: "{{ it_scripts_dir | default('/opt/it/scripts') }}/code-server-status.sh"
-  # root:%s, not root:root. A 0750 root:root script cannot be READ or
-  # executed by anyone but root, so the self-elevating first line never gets
-  # the chance to run -- `it-<name>` fails with Permission denied instead of
-  # prompting for sudo, and `it-help` lists it as "(cannot read its script)".
-  # Every it_scripts command uses this group; these did not.
+    # root:<admin group>, not root:root. A 0750 root:root script cannot be read
+    # or executed by anyone but root, so the self-elevating first line never
+    # runs -- the command fails with Permission denied instead of prompting.
     owner: root
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "0750"

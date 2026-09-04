@@ -956,6 +956,11 @@ local_users:
   - { name: zac_mccamant_adm, groups: [sudo] }
   - { name: zac_mccamant_aud, groups: [audit, sudo] }
   - { name: zac_mccamant_dta, groups: [dta] }
+  # Added 2026-09-04 from the pre-deployment baseline captures: both existed on
+  # one box each and in no group_vars, so a rebuild of dev-13 or dev-15 would
+  # have silently dropped a real person's account.
+  - { name: elie_sanestin_adm, groups: [sudo] }        # was on dev-13 only
+  - { name: luke_lambert,      groups: [] }            # was on dev-15 only; sentry comes from local_users_common_groups
 
 # Groups EVERY standing account above ALSO joins, merged into each account's own
 # `groups` list. All initial accounts get `sentry` (the shared /home/shared

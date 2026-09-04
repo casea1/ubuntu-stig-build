@@ -28,9 +28,21 @@ usage() { awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
 case "${1:-}" in -h|--help|help) usage; exit 0 ;; esac
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
-instances() {   # every enabled code-server@<user>
-  systemctl list-unit-files 'code-server@*' --no-legend 2>/dev/null \
-    | awk '$2=="enabled"{print $1}' | sed 's/^code-server@//; s/\.service$//' | sort
+instances() {   # every code-server@<user> this box knows about
+  # NOT `list-unit-files 'code-server@*'`. That matches the TEMPLATE --
+  # code-server@.service -- whose name has no user in it, so the sed produced an
+  # empty string, the loop skipped it, and the command reported "none enabled"
+  # on a box where an instance was running and listening on the LAN. A status
+  # command that says "nothing here" about a live service is worse than silence.
+  #
+  # Instances come from two places and both are needed: loaded units (running or
+  # failed) and the enablement symlinks (enabled but not started).
+  {
+    systemctl list-units --all --plain --no-legend 'code-server@*.service' 2>/dev/null \
+      | awk '{print $1}'
+    ls /etc/systemd/system/*.wants/code-server@*.service 2>/dev/null \
+      | xargs -r -n1 basename
+  } | sed 's/^code-server@//; s/\.service$//' | grep -vE '^$' | sort -u
 }
 
 conf_of() { local h; h=$(getent passwd "$1" | cut -d: -f6); printf '%s/.config/code-server/config.yaml' "$h"; }
