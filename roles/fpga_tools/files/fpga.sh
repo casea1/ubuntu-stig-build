@@ -176,6 +176,22 @@ cmd_status() {
     else
       warn "Libero            NOT installed at $LIBDIR"
     fi
+    # Shared IP vault. Wrong modes here do not stop Libero starting -- they
+    # stop the SECOND engineer downloading a core, days later.
+    if [ -d "$VAULT_DIR" ]; then
+      local vm vg
+      vm="$(stat -c '%a' "$VAULT_DIR" 2>/dev/null)"
+      vg="$(stat -c '%G' "$VAULT_DIR" 2>/dev/null)"
+      if [ "$vg" = "$ACCESS_GROUP" ] && [ "$(( 0$vm & 0020 ))" -ne 0 ]; then
+        ok "  IP vault         $VAULT_DIR ($vm root:$vg, shared)"
+      else
+        bad "  IP vault         $VAULT_DIR is $vm $(stat -c '%U:%G' "$VAULT_DIR" 2>/dev/null)"
+        say "                    ${DIM}$ACCESS_GROUP cannot write it, so only the person who${R}"
+        say "                    ${DIM}installed can download IP cores. fix: sudo it-fpga fixup${R}"
+      fi
+    else
+      warn "  IP vault         not at $VAULT_DIR -- each user has their own copy"
+    fi
   else
     say "  ${DIM}Microchip support is switched off (fpga_microchip_enabled).${R}"
   fi
@@ -480,6 +496,31 @@ cmd_fixup() {
   have_tree "$XROOT"  && check_parents "$XROOT"
   have_tree "$LIBDIR" && check_parents "$LIBDIR"
 
+  # `it-fpga install libero` handed the whole of $MCHP_ROOT to a person so a
+  # GUI installer could write it without root. Take it back -- otherwise the
+  # parent of a root-owned tree stays owned by whoever happened to install it.
+  if [ -d "$MCHP_ROOT" ]; then
+    chown root:root "$MCHP_ROOT" 2>/dev/null
+    chmod 0755 "$MCHP_ROOT" 2>/dev/null
+    ok "$MCHP_ROOT back to root:root 0755"
+  fi
+
+  # The IP vault is the one writable exception: Libero writes into it whenever
+  # anyone downloads or imports a core, and it is shared so a core is fetched
+  # once for the box. Left as the installer made it (0700, owned by the person
+  # who ran it, because the STIG sets umask 077) the first colleague to fetch
+  # an IP core fails -- and the error names Libero, not the permissions.
+  if [ -d "$VAULT_DIR" ]; then
+    chown -R "root:$ACCESS_GROUP" "$VAULT_DIR" 2>/dev/null
+    chmod -R g+rwX,o-rwx "$VAULT_DIR" 2>/dev/null
+    # setgid on every directory, so cores added later stay group-owned.
+    find "$VAULT_DIR" -type d -exec chmod g+s {} + 2>/dev/null
+    ok "IP vault $VAULT_DIR writable by $ACCESS_GROUP (setgid, shared)"
+  else
+    say "  ${DIM}no IP vault at $VAULT_DIR -- point Libero's common directory${R}"
+    say "  ${DIM}there at install time so cores are fetched once, not per user.${R}"
+  fi
+
   if have_tree "$LIBDIR"; then
     # Libero ships a RHEL libstdc++ OLDER than what Noble's libicuuc.so.74
     # needs, so libero_bin dies with GLIBCXX_3.4.30 not found. Removing the
@@ -651,6 +692,7 @@ Point at one:  sudo it-fpga install xilinx --bin /path/to/installer.bin"
 # put an unmaintained libpng in front of every program on the box.
 # ---------------------------------------------------------------------------
 COMPAT_DIR="$(conf_get COMPAT_DIR /opt/microchip/compat/lib)"
+VAULT_DIR="$(conf_get VAULT_DIR "$MCHP_ROOT/common")"
 LIBPNG15_URL="https://downloads.sourceforge.net/project/libpng/libpng15/1.5.30/libpng-1.5.30.tar.gz"
 
 compat_status() {
@@ -786,7 +828,7 @@ cmd_install_libero() {
   say "    ${B}env LD_LIBRARY_PATH=$COMPAT_DIR ${bin:-/path/to/Libero_SoC_*_lin.bin}${R}"
   say ""
   say "  Install directory : ${B}$LIBDIR${R}"
-  say "  Common directory  : ${B}$MCHP_ROOT${R}"
+  say "  Common IP vault   : ${B}$VAULT_DIR${R}   -- shared; not your home directory"
   say "  Installation type : ${B}Full${R}   -- and DECLINE its post-install script"
   say ""
   say "  When it finishes, take the tree back:"
@@ -795,6 +837,10 @@ cmd_install_libero() {
   say ""
   warn "until you run fixup, $MCHP_ROOT is writable by $who -- that is the point,"
   say  "  and it is also why fixup is not optional."
+  say ""
+  say "  ${DIM}The handover does not survive a pull: the role re-asserts root:root on${R}"
+  say "  ${DIM}$MCHP_ROOT every run. If the installer says \"No write permission for${R}"
+  say "  ${DIM}the selected directory\", a pull has been past -- run this again.${R}"
 }
 
 cmd_check() {

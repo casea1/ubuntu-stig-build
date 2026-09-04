@@ -364,6 +364,39 @@ against a vendor account, and Xilinx alone is ~150 GB. Bake them into the image.
 sudo it-fpga            # what is installed, licence, cables -- start here
 ```
 
+### What is manual, and what the pull does
+
+Everything below the line is done for you on every `ansible-pull`. Everything
+above it is a person, once per box (or once on the golden image).
+
+| Step | Xilinx | Libero |
+|---|---|---|
+| Stage the installer in `/opt/it/installers` | ✔ `.bin` | ✔ `.bin` (**not** the `.sh`) |
+| Build the compat libraries | — | ✔ `sudo it-fpga compat build` |
+| Hand the directory over | — | ✔ `sudo it-fpga install libero` |
+| Run the installer | ✔ `sudo it-fpga install xilinx` (batch, unattended) | ✔ GUI, **as yourself, no sudo** |
+| Take the tree back | ✔ `sudo it-fpga fixup` | ✔ `sudo it-fpga fixup` |
+| JTAG cable drivers (no cables plugged in) | ✔ path printed by `fixup` | — |
+| Point at the licence server | ✔ `sudo it-fpga license --server <port>@<host>` (both vendors at once) | ✔ same command |
+| ─────────── | ─────────── | ─────────── |
+| 24.04 dependencies, i386 multiarch | pull | pull |
+| ncurses-5 symlinks, `/usr/tmp` 1777, RHEL CA path | pull | pull |
+| udev rules for the programmer cables | pull | pull |
+| `/etc/profile.d` environment + `vivado`/`vitis`/`libero` commands | pull | pull |
+| App-grid tiles | pull | pull |
+| `root:sentry`, group read+execute on the tree | pull | pull |
+| Shared IP vault modes | — | pull |
+
+Two of the manual steps are easy to skip and both fail confusingly:
+`it-fpga compat build` is **per box** (the pull creates the directory empty), and
+`it-fpga fixup` is what makes the install usable by anyone other than the person
+who ran it. `sudo it-fpga status` reports the state of both.
+
+```bash
+sudo it-fpga status     # says which of the manual steps is still outstanding
+sudo it-fpga check      # ldd on vivado + Microchip's own checker, translated
+```
+
 ### Install once, image, deploy
 
 Do this on the golden box, not on twelve workstations. The web installers pull
@@ -376,8 +409,12 @@ dodge permission problems; that is single-machine advice. On a shared
 workstation it means every engineer installs their own 30+ GB copy and the
 second one to log in gets nothing.
 
-**Run both installers under `sudo`** so the tree ends up root-owned and the
-engineers who use it cannot modify it.
+**Xilinx runs under `sudo`; Libero must not.** Xilinx has a batch mode, so root
+never needs a display and the tree lands root-owned. Libero has no response file
+— its GUI has to run, and a GUI cannot run as root over RDP (see below).
+`sudo it-fpga install libero` hands the directory over for the install and
+`sudo it-fpga fixup` takes it back, which is how Libero still ends up
+root-owned without root ever drawing a window.
 
 > **If your versions differ from the defaults**, set them before the pull or the
 > environment scripts point at paths that do not exist:
@@ -447,9 +484,23 @@ is not the answer either: it opens your display to root for everything else too.
 sudo it-fpga install libero      # hands /opt/microchip to you, prints the command
 ```
 
-Then run what it prints, **as yourself, no sudo**, in your desktop session.
-Install to `/opt/microchip/Libero_SoC_2025.1`, common directory `/opt/microchip`,
-**Full** installation, and decline the post-install script it offers.
+Then run what it prints, **as yourself, no sudo**, in your desktop session:
+
+| Installer field | Value |
+|---|---|
+| Installation directory | `/opt/microchip/Libero_SoC_2025.1` |
+| Common IP vault | `/opt/microchip/common` |
+| Installation type | **Full** — and decline the post-install script it offers |
+
+Both fields matter. The installer defaults **both** to `~/microchip`, and the
+vault is the one people leave alone: left in a home directory, every engineer
+downloads their own copy of every IP core and none of them can see each other's.
+
+> **"No write permission for the selected directory."** The pull re-asserts
+> `root:root` on `/opt/microchip` every run, so an `ansible-pull` between
+> `it-fpga install libero` and the installer takes the handover back. Run
+> `sudo it-fpga install libero` again, then re-enter the path in the dialog so
+> it re-checks — it validates when the field loses focus, not on **Continue**.
 
 ```bash
 sudo it-fpga fixup               # takes the tree back
@@ -471,17 +522,23 @@ writable by you — which is the point, and also why it is not optional.
 > misbehaves, which is worse than failing at load.
 >
 > ```bash
-> sudo it-fpga compat build      # libpng15 from upstream source into
-> sudo it-fpga compat            # /opt/microchip/compat/lib -- private to Libero
+> sudo it-fpga compat build      # builds libpng15 from upstream source into
+>                                # /opt/microchip/compat/lib -- private to Libero
+> sudo it-fpga compat            # what is built, and what is still missing
 > ```
 >
-> To run the **installer** with it before the environment scripts exist:
+> **Per box.** The compat directory is created empty by the pull and populated
+> by this command, so a box that has never run it has an empty one and the
+> installer fails exactly as if nothing had been done.
+>
+> To run the **installer** with it, before the environment scripts exist:
 > ```bash
 > cd /opt/it/installers
-> sudo env LD_LIBRARY_PATH=/opt/microchip/compat/lib ./Libero_SoC_2025.1_online_lin.bin
+> env LD_LIBRARY_PATH=/opt/microchip/compat/lib ./Libero_SoC_2025.1_online_lin.bin
 > ```
-> `sudo env`, not `sudo -E`: sudo strips `LD_*` unconditionally, so `-E` looks
-> like it passes the variable and does not (trap 31).
+> `env VAR=...`, not `sudo -E`: sudo strips `LD_*` unconditionally, so `-E`
+> looks like it passes the variable and does not (trap 31). And no `sudo` at
+> all here — this is the GUI installer, which needs your X cookie.
 >
 > It goes in a directory only Libero sees, on its `LD_LIBRARY_PATH`. **Never a
 > symlink or a foreign `.deb` in `/usr/lib`** — that puts an unmaintained
@@ -573,11 +630,21 @@ sudo it-fpga fixup       # apply it now rather than waiting for a pull
 Change the group with `fpga_tools_access_group`, or set
 `fpga_tools_enforce_access: false` to manage the modes yourself.
 
-Nothing needs to be writable inside the trees. Vivado keeps per-user data in
-`~/.Xilinx`, both write projects wherever the user puts them, and FlexLM uses
-`/usr/tmp` (which the role creates `1777`, sticky, so it is shared safely).
-Libero's IP vault is per-user — set it in the GUI rather than pointing everyone
-at one inside the install tree.
+Nothing needs to be writable inside the install trees. Vivado keeps per-user
+data in `~/.Xilinx`, both write projects wherever the user puts them, and FlexLM
+uses `/usr/tmp` (which the role creates `1777`, sticky, so it is shared safely).
+
+**One exception: Libero's IP vault** (`/opt/microchip/common`, set at install
+time and changeable in Libero's settings). Libero writes into it whenever anyone
+downloads or imports an IP core, so it is `root:sentry` **2775** — group
+writable, setgid so a core one engineer adds stays group-owned and the next
+engineer can use it. It sits beside the install tree, not inside it, so the
+read-only pass never touches it. It is shared on purpose: a per-user vault means
+the same multi-gigabyte core downloaded once per engineer.
+
+```yaml
+fpga_libero_vault_dir: /opt/microchip/common    # defaults/main.yml
+```
 
 ### Never run the tools as root
 

@@ -27,6 +27,28 @@
     name: "{{ fpga_tools_access_group }}"
     state: present
 
+# The ONE writable exception. The install tree is read-only to the group, but
+# Libero's common IP vault is written at runtime -- engineers download and
+# import IP cores into it -- and it is deliberately SHARED so a core is fetched
+# once for the box rather than once per engineer. setgid keeps a core someone
+# adds owned by the access group, so the next person can use it.
+#
+# Not inside {{ fpga_libero_dir }}, so the recursive read-only pass below never
+# touches it. `it-fpga fixup` applies the same modes after an install, which is
+# where they would otherwise be lost: the installer runs as a person, under the
+# STIG's umask 077, so the vault it creates is 0700 and nobody else can even
+# read it.
+- name: "FPGA | Libero shared IP vault (group-writable, setgid)"
+  ansible.builtin.file:
+    path: "{{ fpga_libero_vault_dir }}"
+    state: directory
+    owner: root
+    group: "{{ fpga_tools_access_group }}"
+    mode: "2775"
+  when:
+    - fpga_microchip_enabled | bool
+    - fpga_tools_enforce_access | bool
+
 # One stat per tree. A correct box does no work at all; only a tree that is
 # actually wrong gets the recursive pass.
 - name: "FPGA | Can the group already use each tree?"

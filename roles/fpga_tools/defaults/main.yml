@@ -144,6 +144,15 @@ fpga_rhel_ca_symlink: true
 # Populate it with `it-fpga compat build` (see procedures 2.5).
 fpga_libero_compat_dir: /opt/microchip/compat/lib
 
+# Libero's common IP vault: downloaded and imported IP cores, several GB, shared
+# across Libero versions. SHARED, not per-user -- on a workstation with a dozen
+# engineers a per-user vault means a dozen copies of the same cores, and the
+# second person to want one downloads it again. It is the ONE directory under
+# /opt/microchip that has to be group-WRITABLE (setgid, so cores stay owned by
+# the access group), which is why `it-fpga fixup` treats it separately from the
+# read-only install tree.
+fpga_libero_vault_dir: "{{ fpga_microchip_root }}/common"
+
 # Libero 2025.1 ships a RHEL-targeted libstdc++ that is OLDER than the one
 # Noble's libicuuc.so.74 needs, so libero_bin dies with GLIBCXX_3.4.30 not
 # found. Deleting the bundled copy forces it onto the system library.
