@@ -1,0 +1,153 @@
+---
+# =============================================================================
+# usb_serial -- bind USB serial adapters whose IDs the kernel does not know.
+#
+# ftdi_sio drives any FTDI chip but only BINDS to IDs in its compiled-in table.
+# Sealevel ships FTDI parts under its own ID (0c52:e402 for the SeaI/O U-series,
+# per Sealevel's own Linux guide), so a SeaI/O-440U enumerates, appears in
+# `lsusb`, and produces no /dev/ttyUSB* at all. Nothing logs an error -- it
+# reads as a dead adapter.
+#
+# WHY A SERVICE AND NOT THE VENDOR'S UDEV RULE. Sealevel's guide does the
+# modprobe and the new_id write inside RUN+=. Writing new_id makes the kernel
+# re-probe and emit fresh uevents WHILE udev is processing the one that
+# triggered it, and udev kills a RUN that runs long. The rule here only tags the
+# device; a oneshot does the work, off the event path. It also runs at boot, so
+# the ID is in the driver's table before anything is plugged in -- the table
+# lives in the module and is lost on every reboot, which is why a one-off `echo`
+# works until the next boot and then silently stops.
+# =============================================================================
+
+- name: "USB-SERIAL | Adapters that need a driver binding"
+  when: usb_serial_enabled | default(true) | bool
+  block:
+
+    - name: "USB-SERIAL | Directories the script-shipping tasks write into"
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: root
+        group: "{{ item.group | default('root') }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /etc/stig-build, mode: "0700" }
+        - { path: "{{ it_scripts_dir | default('/opt/it/scripts') }}",
+            mode: "2750", group: "{{ ia_it_group | default('sudo') }}" }
+      loop_control:
+        label: "{{ item.path }}"
+      tags: [scripts]
+
+    # QUOTED, always. A USB ID looks like a number and YAML treats it as one:
+    # `0403` -- FTDI's own vendor ID -- is a LEADING-ZERO integer, so YAML 1.1
+    # reads it as OCTAL 259, and `1234` is plain decimal. Either renders a udev
+    # rule that matches nothing, with no error anywhere and an adapter that
+    # "still does not work" after the pull said it configured it. Fail here
+    # instead, where the message can say what to do.
+    - name: "USB-SERIAL | Every ID must be a quoted 4-digit hex string"
+      ansible.builtin.assert:
+        that:
+          - item.vendor is string
+          - item.product is string
+          - item.vendor is match('^[0-9a-fA-F]{4}$')
+          - item.product is match('^[0-9a-fA-F]{4}$')
+        fail_msg: >-
+          usb_serial_devices entry {{ item }} has an unquoted or malformed USB
+          ID. Quote them: vendor: "0403", not vendor: 0403 -- unquoted, YAML
+          reads a leading zero as octal (0403 becomes 259) and a plain digit
+          string as an integer, and the udev rule then matches nothing.
+        quiet: true
+      loop: "{{ usb_serial_devices }}"
+      loop_control:
+        label: "{{ item.name | default(item.vendor) }}"
+
+    - name: "USB-SERIAL | Configuration for it-serial"
+      ansible.builtin.template:
+        src: usb-serial.conf.j2
+        dest: /etc/stig-build/usb-serial.conf
+        owner: root
+        group: root
+        mode: "0644"
+      tags: [scripts]
+
+    - name: "USB-SERIAL | The group that may open the ports exists"
+      ansible.builtin.group:
+        name: "{{ usb_serial_group }}"
+        state: present
+
+    - name: "USB-SERIAL | udev rules"
+      ansible.builtin.template:
+        src: 71-usb-serial.rules.j2
+        dest: /etc/udev/rules.d/71-usb-serial.rules
+        owner: root
+        group: root
+        mode: "0644"
+      register: _usb_serial_rules
+
+    - name: "USB-SERIAL | Reload udev"
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - udevadm control --reload-rules
+        - udevadm trigger --subsystem-match=usb --action=add
+      changed_when: false
+      when: _usb_serial_rules is changed
+
+    # RemainAfterExit, because the work is a one-time table edit rather than a
+    # process to supervise: the unit then reads as active, and the udev rule
+    # pulling it in again on a re-plug is a no-op unless the module was
+    # reloaded.
+    - name: "USB-SERIAL | Bind service"
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/usb-serial-bind.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by the usb_serial role -- do not edit by hand.
+          [Unit]
+          Description=Add unrecognised USB serial IDs to their driver's table
+          Documentation=file:///etc/stig-build/usb-serial.conf
+          # The IDs live in the kernel module, so this has to run after every
+          # boot -- not once at install time.
+          After=systemd-udevd.service
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart={{ it_scripts_dir | default('/opt/it/scripts') }}/usb-serial.sh bind
+
+          [Install]
+          WantedBy=multi-user.target
+      register: _usb_serial_unit
+
+    - name: "USB-SERIAL | Enable the bind service"
+      ansible.builtin.systemd:
+        name: usb-serial-bind.service
+        enabled: true
+        state: started
+        daemon_reload: "{{ _usb_serial_unit is changed }}"
+
+    - name: "USB-SERIAL | Install it-serial"
+      ansible.builtin.copy:
+        src: usb-serial.sh
+        dest: "{{ it_scripts_dir | default('/opt/it/scripts') }}/usb-serial.sh"
+        owner: root
+        group: "{{ ia_it_group | default('sudo') }}"
+        mode: "0750"
+      tags: [scripts]
+
+    - name: "USB-SERIAL | Short command (it-serial)"
+      ansible.builtin.file:
+        src: "{{ it_scripts_dir | default('/opt/it/scripts') }}/usb-serial.sh"
+        dest: /usr/local/sbin/it-serial
+        state: link
+        force: true
+      tags: [scripts]
+
+    - name: "USB-SERIAL | What was configured"
+      ansible.builtin.debug:
+        msg: >-
+          {{ usb_serial_devices | length }} adapter ID(s) bound at boot and on
+          connect; ports are {{ usb_serial_group }}-writable, so a standard user
+          can open them with no extra step.
+          {{ usb_serial_devices | map(attribute='name') | join(', ') }}.
+          Check with `sudo it-serial`.

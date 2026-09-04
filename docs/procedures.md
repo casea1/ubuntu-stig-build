@@ -1224,6 +1224,59 @@ The record goes to `/opt/dta/logs`. Verdicts: `CLEAN`, `INFECTED`, `ENGINE-FAULT
 
 **`ENGINE-FAULT` means the scanner could not detect the EICAR test file** — the transfer was not scanned, whatever the file listing says. Fix the engine (§6.5) before proceeding.
 
+## 3.4b USB serial adapters the kernel does not recognise (Sealevel and friends)
+
+```bash
+sudo it-serial                 # plugged in? bound? usable by a normal user?
+```
+
+**The failure looks like dead hardware.** `ftdi_sio` drives any FTDI chip, but
+it only *binds* to vendor/product IDs compiled into its table. A vendor shipping
+an FTDI part under their own ID — Sealevel does — enumerates fine, appears in
+`lsusb`, and produces **no `/dev/ttyUSB*` at all**. Nothing logs an error. It
+reads as a bad adapter or a bad cable.
+
+The ID has to be added to the driver's table at run time:
+
+```
+modprobe ftdi_sio
+echo 0c52 e402 > /sys/bus/usb-serial/drivers/ftdi_sio/new_id
+```
+
+That table lives in the **module**, so it is lost on unload and on every reboot.
+Typed by hand it works until the next boot and then silently stops — which is
+worse than never working, because it looks solved. The role makes it survive:
+
+| | |
+|---|---|
+| `usb-serial-bind.service` | applies every configured ID at boot, before anything is plugged in |
+| `/etc/udev/rules.d/71-usb-serial.rules` | pulls that service in on connect (covers a module reload), and sets the port `0660 root:dialout` with a stable `/dev/serial/sealevel-440u` symlink |
+| `dialout` | every standing account is already in it, so a **standard user** can open the port with no extra step |
+
+> Sealevel's own guide does the `modprobe` and the `new_id` write inside udev's
+> `RUN+=`. This role does not: writing `new_id` makes the kernel re-probe and
+> emit fresh uevents *while udev is processing the one that triggered it*, and
+> udev kills a `RUN` that takes too long. The rule only tags the device; a
+> oneshot does the work, off the event path.
+
+Adding another adapter, without editing the repo:
+
+```bash
+lsusb                                  # find its <vid>:<pid>
+sudo it-serial add 0c52:e402           # bind now AND persist to /opt/it/site.yml
+sudo it-pull                           # render the udev rule
+```
+
+> **Quote the IDs** if you set `usb_serial_devices` by hand. `vendor: 0403` —
+> FTDI's own ID — is a leading-zero integer, so YAML reads it as **octal 259**;
+> `1234` is plain decimal. Either renders a rule that matches nothing, silently.
+> The role asserts on this and fails with that explanation rather than
+> configuring a rule that cannot work.
+
+If the adapter is invisible even to `lsusb`, it is USBGuard, not the driver —
+`it-serial` says so, and an FTDI-class device is authorised on connect under the
+current policy (vendor-specific), so this should be rare.
+
 ## 3.5 Enrol a USB device
 
 ```bash

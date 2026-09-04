@@ -1,0 +1,8 @@
+# /etc/stig-build/usb-serial.conf
+# Rendered by the usb_serial role. Read as data by it-serial -- one
+# "vendor product driver name" per line, so the command and the pull cannot
+# disagree about what is configured.
+# GROUP={{ usb_serial_group }}
+{% for d in usb_serial_devices %}
+{{ d.vendor }} {{ d.product }} {{ d.driver | default('ftdi_sio') }} {{ d.name | default(d.vendor ~ ':' ~ d.product) }}
+{% endfor %}

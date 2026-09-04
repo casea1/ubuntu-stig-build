@@ -1,0 +1,19 @@
+# Managed by the usb_serial role -- do not edit by hand.
+#
+# Two jobs, and they are separate rules on purpose.
+{% for d in usb_serial_devices %}
+
+# ---- {{ d.name }} ({{ d.vendor }}:{{ d.product }})
+# 1. Make {{ d.driver }} claim it. The ID is not in the driver's table, so
+#    without this the device enumerates and no tty is ever created.
+#    SYSTEMD_WANTS, not RUN+=: writing new_id makes the kernel re-probe and emit
+#    fresh uevents while udev is still processing this one, and udev kills a RUN
+#    that takes too long. Handing it to a service takes the work out of the
+#    event path entirely.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="{{ d.vendor }}", ATTR{idProduct}=="{{ d.product }}", TAG+="systemd", ENV{SYSTEMD_WANTS}+="usb-serial-bind.service"
+
+# 2. Let a standard user open the port once it exists. 0660 + group, never 0666:
+#    a world-writable device node is a finding, and every standing account is
+#    already in {{ usb_serial_group }}.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="{{ d.vendor }}", ATTRS{idProduct}=="{{ d.product }}", MODE="0660", GROUP="{{ usb_serial_group }}", SYMLINK+="serial/{{ d.link }}"
+{% endfor %}

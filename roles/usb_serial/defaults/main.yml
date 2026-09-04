@@ -1,0 +1,31 @@
+---
+# =============================================================================
+# usb_serial -- USB serial adapters whose IDs the kernel does not know.
+#
+# ftdi_sio drives any FTDI chip, but it only BINDS to vendor/product IDs in its
+# compiled-in table. A vendor who ships an FTDI part under their own ID -- which
+# Sealevel does -- enumerates, appears in `lsusb`, and produces no /dev/ttyUSB*
+# at all. Nothing reports an error; the port simply is not there, which reads as
+# a dead adapter or a dead cable.
+#
+# The fix is to add the ID to the driver's table at run time. That is what
+# `echo <vid> <pid> > /sys/bus/usb-serial/drivers/ftdi_sio/new_id` does, and it
+# is per boot -- the table is in the module, so it is lost on unload and on
+# reboot. Hence a service, not a one-off command an engineer runs.
+# =============================================================================
+usb_serial_enabled: true
+
+# Who may open the port. dialout by Ubuntu convention, and every standing
+# account is already in it (local_users_common_groups), so a standard user can
+# use the adapter without being added to anything.
+usb_serial_group: dialout
+
+# Adapters to bind. `driver` is the usb-serial driver whose table gets the ID.
+#
+# Sealevel's own Linux guide gives 0c52:e402 for the SeaI/O U-series (the
+# USB-to-RS-485 bridge the -440U presents), the modprobe, and the same new_id
+# write. Their published udev rule does both inside RUN+=; this role does not,
+# for the reason in tasks/main.yml.
+usb_serial_devices:
+  - { vendor: "0c52", product: "e402", driver: ftdi_sio,
+      name: "Sealevel SeaI/O-440U", link: "sealevel-440u" }

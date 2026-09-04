@@ -169,6 +169,13 @@
     # Vivado or Libero: those are interactive, authenticated and ~150 GB, so
     # they are baked into the image. Runs with dev_tools, before hardening,
     # because it needs apt and adds a foreign architecture.
+    # USB serial adapters the kernel does not recognise on its own -- Sealevel
+    # ships FTDI parts under its own ID, so ftdi_sio never binds and no tty
+    # appears. No role-level `packages` tag (trap 34): the script tasks are
+    # tagged `scripts` so a fix ships on a light pull.
+    - role: usb_serial              # bind unrecognised USB serial IDs (development only)
+      when: is_development and (usb_serial_enabled | default(true) | bool)
+
     - role: fpga_tools              # Vivado/Vitis + Libero SoC support (development only)
       # NO role-level `packages` tag. A role tag is inherited by every task in
       # the role, and --skip-tags BEATS a task's own tag -- so `tags: [packages]`
