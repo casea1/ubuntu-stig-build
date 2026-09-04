@@ -25,6 +25,10 @@
 #   it-rdp restart         restart xrdp + sesman, refusing while sessions are
 #                          live (that is what creates the orphans)
 #
+# A timer (xrdp-reap.timer) runs `sweep` every few minutes, so a user who hits
+# this gets their next login back without anyone being called. `status` says
+# whether it is running.
+#
 # The pull will not restart sesman under live sessions either -- it defers and
 # leaves /run/xrdp-sesman-restart-pending, which `status` reports.
 set -uo pipefail
@@ -173,6 +177,16 @@ cmd_status() {
   if [ "$(sed -nE 's/^[[:space:]]*DisconnectedTimeLimit[[:space:]]*=[[:space:]]*//p' "$SESMAN_INI" 2>/dev/null | tail -1)" = "0" ]; then
     warn "DisconnectedTimeLimit 0 means a disconnected session lives forever."
     say  "  ${DIM}Set dev_rdp_disconnected_time_limit and pull.${R}"
+  fi
+
+  head2 "Automatic reaping"
+  if systemctl is-active --quiet xrdp-reap.timer 2>/dev/null; then
+    ok "xrdp-reap.timer   running"
+    say "  ${DIM}$(systemctl list-timers --no-pager --no-legend xrdp-reap.timer 2>/dev/null \
+                    | awk '{print "next " $1, $2, $3 "  (" $4 " " $5 ")"}')${R}"
+  else
+    warn "xrdp-reap.timer   NOT running -- orphans sit until someone sweeps by hand"
+    say  "  ${DIM}dev_rdp_reap_enabled: true, then pull${R}"
   fi
 
   if [ -e "$PENDING" ]; then

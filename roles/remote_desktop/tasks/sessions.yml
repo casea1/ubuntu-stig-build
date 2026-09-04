@@ -134,6 +134,60 @@
     - _rdp_live.stdout | default('live') == 'idle'
     - _rdp_pending.stat.exists | default(false)
 
+# Fix 3b. A timer, because the ExecStartPre only fires when sesman restarts and
+# an orphan created at 17:00 otherwise sits until someone notices. A user who
+# hits this has no way to fix it themselves -- their login just closes -- and
+# "raise a ticket, an admin will run it-rdp sweep" is not an answer for a room
+# of engineers.
+#
+# Safe to run unattended for the same reason `sweep` is safe to run by hand: an
+# orphan is an xrdp X server whose process chain ends at init, so nothing can
+# be managing it and no live session can match. It exits 0 having done nothing
+# on a healthy box.
+- name: "XRDP | Periodic orphan sweep (unit)"
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/xrdp-reap.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible (remote_desktop role) -- do not edit by hand.
+      [Unit]
+      Description=Reap orphaned xrdp sessions that would block the next login
+      ConditionPathExists={{ it_scripts_dir | default('/opt/it/scripts') }}/rdp.sh
+
+      [Service]
+      Type=oneshot
+      ExecStart={{ it_scripts_dir | default('/opt/it/scripts') }}/rdp.sh sweep
+  register: _rdp_reap_unit
+
+- name: "XRDP | Periodic orphan sweep (timer)"
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/xrdp-reap.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible (remote_desktop role) -- do not edit by hand.
+      [Unit]
+      Description=Reap orphaned xrdp sessions every {{ dev_rdp_reap_interval }}
+
+      [Timer]
+      OnBootSec=2min
+      OnUnitActiveSec={{ dev_rdp_reap_interval }}
+      AccuracySec=30s
+
+      [Install]
+      WantedBy=timers.target
+  register: _rdp_reap_timer
+
+- name: "XRDP | Enable the sweep timer"
+  ansible.builtin.systemd:
+    name: xrdp-reap.timer
+    enabled: "{{ dev_rdp_reap_enabled | bool }}"
+    state: "{{ 'started' if (dev_rdp_reap_enabled | bool) else 'stopped' }}"
+    daemon_reload: "{{ (_rdp_reap_unit is changed) or (_rdp_reap_timer is changed) }}"
+
 # ---- the helper ------------------------------------------------------------
 # Tagged `scripts` so a fix to it-rdp reaches a box on a light pull.
 - name: "XRDP | Install it-rdp"

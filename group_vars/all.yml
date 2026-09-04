@@ -619,6 +619,14 @@ dev_rdp_disconnected_time_limit: 28800
 # different kind of bug report.
 dev_rdp_idle_time_limit: 0
 
+# Sweep orphaned sessions on a timer as well as when sesman starts. The timeout
+# above only reaches sessions sesman still TRACKS; one orphaned by a sesman
+# restart is invisible to it and no timeout will ever reap it. Without the
+# timer that orphan sits until an admin runs `it-rdp sweep` -- and the user who
+# hits it cannot fix it themselves, their login just closes again.
+dev_rdp_reap_enabled: true
+dev_rdp_reap_interval: 15min
+
 # ---- xrdp login-screen appearance -------------------------------------------
 # Skin the (stock, plain-grey) xrdp login box. Colors are 6-hex RGB WITHOUT a
 # leading '#' -- xrdp's own format. _bg_color is the area behind the box;

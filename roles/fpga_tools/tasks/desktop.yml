@@ -85,12 +85,18 @@
   ansible.builtin.template:
     src: fpga-launcher.j2
     dest: "/usr/local/bin/{{ item.cmd }}"
-  vars:
-    access_group: "{{ fpga_tools_access_group }}"
-    compat_dir: "{{ fpga_libero_compat_dir }}"
+    # These are MODULE arguments and were sitting in `vars:` below, where the
+    # template never used them -- so the mode was whatever root's umask was
+    # during that pull. Interactive `sudo it-pull` under the STIG's umask 077
+    # gives 0600; a timer-driven run gives 0644. Neither is executable, and the
+    # app-grid tile is still there, so it looks like a broken tile rather than
+    # a launcher nobody can run.
     owner: root
     group: root
     mode: "0755"
+  vars:
+    access_group: "{{ fpga_tools_access_group }}"
+    compat_dir: "{{ fpga_libero_compat_dir }}"
   loop: "{{ _fpga_apps | selectattr('present') | list }}"
   loop_control:
     label: "{{ item.cmd }}"
