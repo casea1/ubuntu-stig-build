@@ -103,6 +103,17 @@ case "${1:-help}" in
     printf 'implicit policy : %s\n' "$(awk -F= '/^ImplicitPolicyTarget/{print $2}' /etc/usbguard/usbguard-daemon.conf 2>/dev/null)"
     printf 'policy rules    : %s\n' "$(grep -cvE '^\s*(#|$)' "$RULES" 2>/dev/null || echo 0)"
     printf 'devices present : %s\n' "$(usbguard list-devices 2>/dev/null | wc -l)"
+
+    # Which classes still need a human. Read from the policy rather than
+    # restated here, so this cannot drift from what the daemon enforces.
+    cls=$(sed -nE 's/^allow with-interface none-of \{ (.*) \}.*/\1/p' "$RULES" 2>/dev/null | tail -1)
+    if [ -n "$cls" ]; then
+      printf 'needs enrolling : %s\n' "$cls"
+      echo   '                  Everything else -- serial adapters, hubs and docks, printers,'
+      echo   '                  audio, video, JTAG programmers -- is authorised on connect.'
+    else
+      printf 'needs enrolling : EVERY device (no class policy in %s)\n' "$RULES"
+    fi
     printf 'currently blocked: %s\n' "$(usbguard list-devices -b 2>/dev/null | wc -l)"
 
     # The question `it-usb blocked` cannot answer. A device USBGuard AUTHORISED

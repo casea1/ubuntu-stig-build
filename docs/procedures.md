@@ -1108,13 +1108,76 @@ sudo it-usb trust <id>          # allow this exact device across reboots
 
 USBGuard runs on every profile including EMI. The initial policy is generated from whatever was attached at build time, so the built-in keyboard is always authorised.
 
+### What needs enrolling, and what just works
+
+Three classes still need `sudo it-usb enroll` once, because they are the ones
+that can act on their own:
+
+| Class | Why |
+|---|---|
+| `08:*:*` mass storage | moves data on and off the box |
+| `03:*:*` HID | a BadUSB keystroke injector presents as a keyboard |
+| `e0:*:*` wireless controller | a radio can pair a keyboard |
+
+Everything else — USB-serial adapters, hubs and docks, printers, audio, video,
+cameras, and the JTAG programmers (which present as vendor-specific) — is
+authorised on connect. Before this, *every* device needed enrolling, which is a
+lot of friction for classes that cannot do the thing USBGuard defends against,
+and the predictable end state is somebody switching the daemon off.
+
+The rule is one line at the **end** of `/etc/usbguard/rules.conf`:
+
+```
+allow with-interface none-of { 08:*:* 03:*:* e0:*:* }
+```
+
+Three things about it are deliberate:
+
+- **`none-of`, so composite devices are judged by everything they present.** A
+  flash drive that also claims a HID interface is still caught. An allow-list
+  written the other way round would miss it.
+- **At the end of the file, because USBGuard is first-match-wins.** The
+  generated per-device rules sit above it, so the built-in keyboard and
+  trackpad match their own rule and are unaffected.
+- **An `allow`, never an explicit `block`.** `it-usb allow --permanent` appends
+  *below* this line; a HID device does not match it, so evaluation falls through
+  to the new rule and enrolment works. A `block with-interface { 03:*:* }` would
+  shadow every keyboard anyone ever enrols.
+
+Turn it off with `usbguard_class_policy_enabled: false` (the line is then removed
+from the policy, not just ignored), or change the list with
+`usbguard_manual_classes`.
+
 **USBGuard is the layer that governs non-storage devices.** Blacklisting the USB
 mass-storage drivers (`usb-storage` + `uas`, everywhere except the classified EMI
 laptop) stops USB *drives* only — dongles, serial/COM adapters, printers, HID and
 everything else still enumerate normally. What stops them is USBGuard's
-allow-list: anything not attached when the policy was generated is blocked until
-somebody enrols it. So on development and AI boxes, plan on `sudo it-usb enroll`
-for each licence dongle, USB-serial cable and KVM the first time it is plugged in.
+allow-list.
+
+### Who can actually use removable media
+
+Two independent layers, and it is worth being clear which does what:
+
+| Layer | What it decides | Where it applies |
+|---|---|---|
+| USBGuard | whether the kernel authorises the **device** at all — any class | every profile, EMI included |
+| `usb-storage` + `uas` blacklist | whether a USB **drive** can bind a driver, for everyone including root | everywhere `usb_storage_enabled` is false — development, ai, baseline, emi-unclass |
+| `dta` group (udev + udisks2 polkit) | which **accounts** may mount removable media | classified EMI only (`local_usb_transfer_enabled`) |
+
+So on the **development workstations** there is no dta gate because there is
+nothing to gate: USB mass storage is disabled outright, for standard users,
+admins and auditors alike. That is stricter than "only dta may mount", and
+`UBTU-24-300039` passes with no deviation to adjudicate.
+
+On the **classified EMI laptop** the picture is the one you described: the
+module is loaded, and the `dta` group is the only group that may mount. Standard
+users, admins and auditors cannot.
+
+If a development box ever genuinely needs removable media, set
+`usb_storage_enabled: true` **and** `local_usb_transfer_enabled: true` in that
+box's `/opt/it/site.yml` — the first loads the driver, the second creates the
+dta group and the mount policy. Expect `UBTU-24-300039` to open, with the
+adjudication rendering into the checklist.
 
 A device that is refused shows up in `sudo it-usb blocked` — that, not a broken
 cable, is the usual reason a new dongle "does nothing".

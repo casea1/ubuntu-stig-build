@@ -44,6 +44,45 @@
       register: _usbg_gen
       changed_when: _usbg_gen.rc == 0
 
+    # ---- the class policy --------------------------------------------------
+    # AT THE END OF THE FILE, and this is load-bearing. USBGuard is
+    # FIRST-MATCH-WINS, so:
+    #
+    #   * the generated per-device allows sit ABOVE it -- the built-in keyboard
+    #     and trackpad match their own rule first and are unaffected;
+    #   * `it-usb allow <id> --permanent` appends BELOW it, and a HID device
+    #     does not match this rule, so evaluation falls through to the new
+    #     allow and enrollment still works. Writing this as an explicit
+    #     `block ... { 03:*:* }` instead would shadow every keyboard anyone
+    #     ever enrolls -- the one class we deliberately kept manual.
+    #
+    # A device presenting a listed class matches nothing here and falls through
+    # to ImplicitPolicyTarget, which is `block`.
+    - name: "USBGUARD | Auto-allow every class except {{ usbguard_manual_classes | join(', ') }}"
+      ansible.builtin.blockinfile:
+        path: /etc/usbguard/rules.conf
+        marker: "# {mark} ANSIBLE MANAGED -- fpga/peripheral class policy"
+        insertafter: EOF
+        block: |
+          # Anything that presents none of these still needs `it-usb enroll`:
+          # mass storage moves data, HID can inject keystrokes, a radio can
+          # pair one. Everything else -- serial adapters, hubs and docks,
+          # printers, audio, video, JTAG programmers (vendor-specific) -- is
+          # authorised on connect.
+          allow with-interface none-of {{ '{' }} {{ usbguard_manual_classes | join(' ') }} {{ '}' }}
+      when: usbguard_class_policy_enabled | default(true) | bool
+      notify: restart usbguard
+
+    # Removed cleanly if the policy is switched off, rather than left behind to
+    # keep authorising devices after someone thought they had turned it off.
+    - name: "USBGUARD | Remove the class policy when it is switched off"
+      ansible.builtin.blockinfile:
+        path: /etc/usbguard/rules.conf
+        marker: "# {mark} ANSIBLE MANAGED -- fpga/peripheral class policy"
+        state: absent
+      when: not (usbguard_class_policy_enabled | default(true) | bool)
+      notify: restart usbguard
+
     - name: "USBGUARD | Lock down the policy file"
       ansible.builtin.file:
         path: /etc/usbguard/rules.conf

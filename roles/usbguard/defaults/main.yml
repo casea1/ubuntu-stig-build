@@ -9,3 +9,23 @@ usbguard_implicit_policy: block
 usbguard_present_device_policy: apply-policy
 usbguard_present_controller_policy: keep
 usbguard_inserted_device_policy: apply-policy
+
+# ---- Which classes need a human, and which just work -------------------------
+# Without this, EVERY device needs `it-usb enroll` once -- a USB-serial cable, a
+# dock, a JTAG programmer, a headset. That is a lot of friction for classes that
+# cannot do the thing USBGuard is defending against, and the predictable end
+# state is somebody disabling the daemon.
+#
+# So: auto-allow a device UNLESS it presents one of the classes below, which
+# still take a deliberate enrollment. Mass storage moves data; HID can inject
+# keystrokes (BadUSB presents as a keyboard); a radio can pair one. Those are
+# the three `it-usb list` already flags with "!".
+#
+# The rule is `none-of`, so a COMPOSITE device is judged by everything it
+# presents -- a flash drive that also claims a HID interface is still caught,
+# which an interface-class allow-list written the other way round would miss.
+usbguard_class_policy_enabled: true
+usbguard_manual_classes:
+  - "08:*:*"     # mass storage -- data exfiltration/ingress
+  - "03:*:*"     # HID -- keystroke injection (BadUSB)
+  - "e0:*:*"     # wireless controller -- a radio can pair a keyboard
