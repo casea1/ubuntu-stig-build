@@ -11,16 +11,22 @@
 #
 #   it-pro                   subscription, expiry, services  (the default)
 #   it-pro status            the same
-#   it-pro token <file>      store the token for future pulls and rebuilds,
+#   it-pro token <token>     store the token for future pulls and rebuilds,
 #                            WITHOUT touching the running attachment
-#   it-pro switch <file>     move this box to that token: detach, re-attach,
+#   it-pro switch <token>    move this box to that token: detach, re-attach,
 #                            re-enable the services it had, and store it
-#   it-pro attach [<file>]   attach an UNATTACHED box (the token file by default)
+#   it-pro attach [<token>]  attach an UNATTACHED box
 #   it-pro refresh           re-pull contract data from Canonical
 #
-# A token is a SECRET. It is read from a file, never typed as an argument --
-# a command line is visible in `ps` to every user on the box and lands in the
-# shell history of whoever ran it. `-` reads standard input.
+# <token> is the token itself, a FILE containing it, `-` for standard input, or
+# omitted for a prompt that is not echoed. An argument is classified by what it
+# is -- anything that exists as a file, or looks like a path, is read as one --
+# so a token and a filename cannot be confused.
+#
+# Passing the token as an argument puts it in `ps` for every user on the box
+# while the command runs, and in the shell history of whoever ran it. The
+# command says so once and gets on with it; omit the argument to be prompted
+# instead.
 set -uo pipefail
 
 TOKEN_FILE="${UBUNTU_PRO_TOKEN_FILE:-/etc/ubuntu-advantage/pro-token}"
@@ -73,16 +79,45 @@ enabled_services() {
   jq_get "' '.join(sorted(s['name'] for s in d.get('services',[]) if s.get('status')=='enabled'))"
 }
 
-read_token() {   # $1 = file or '-'
-  local f="$1" t
-  if [ "$f" = "-" ]; then
+# A token, from whichever of the three ways is convenient:
+#
+#   it-pro switch C1abc...        the token itself
+#   it-pro switch /path/to/file   a file containing it
+#   it-pro switch                 prompt, not echoed
+#   it-pro switch -               standard input
+#
+# An argument is classified by what it IS, not by a flag: anything that exists
+# as a file, or that looks like a path, is read as one. A Pro token is
+# alphanumeric with no slashes, so the two cannot be confused.
+read_token() {   # $1 = token, file, '-' , or empty to prompt
+  local a="${1:-}" t
+  if [ "$a" = "-" ]; then
     t="$(cat)"
+  elif [ -z "$a" ]; then
+    [ -t 0 ] || die "no token given and nothing on standard input"
+    # -s: not echoed, and not in the terminal's scrollback afterwards.
+    printf '  Ubuntu Pro token (not shown): ' >&2
+    read -rs t; printf '\n' >&2
+  elif [ -f "$a" ] || case "$a" in */*|./*|~*) true ;; *) false ;; esac; then
+    [ -r "$a" ] || die "cannot read $a"
+    t="$(cat "$a")"
   else
-    [ -r "$f" ] || die "cannot read $f"
-    t="$(cat "$f")"
+    t="$a"
+    # Said once, not laboured: an argument is visible in `ps` to every user on
+    # the box while the command runs, and it stays in the shell history of
+    # whoever ran it. That matters more here than usual -- this token attaches
+    # machines to your subscription.
+    # >&2, all of it. This function's STDOUT is the token: a warning printed to
+    # stdout is captured by the caller's $( ) and becomes part of the token,
+    # which then fails to attach for a reason nothing on screen explains.
+    {
+      warn "token given on the command line -- visible in \`ps\` and left in shell history"
+      say  "  ${DIM}clear it afterwards: history -d \$(history 1 | awk '{print \$1}')${R}"
+      say  "  ${DIM}or next time: sudo it-pro switch     (prompts, not echoed)${R}"
+    } >&2
   fi
   t="$(printf '%s' "$t" | tr -d '\r\n[:space:]')"
-  [ -n "$t" ] || die "no token in $f"
+  [ -n "$t" ] || die "empty token"
   printf '%s' "$t"
 }
 
@@ -105,7 +140,7 @@ cmd_status() {
       ok "a token IS on disk at $TOKEN_FILE"
       say "  ${B}sudo it-pro attach${R}   use it now"
     else
-      say "  ${B}sudo it-pro attach /path/to/token${R}"
+      say "  ${B}sudo it-pro attach${R}${DIM}   (or: it-pro attach <token>)${R}"
     fi
     say ""
     return 1
@@ -132,7 +167,7 @@ cmd_status() {
       warn "this looks like a FREE / trial subscription"
       say  "  ${DIM}It entitles USG and FIPS just like a paid one, so the box looks${R}"
       say  "  ${DIM}fine -- the limit bites later, on the machine count or at renewal.${R}"
-      say  "  ${B}sudo it-pro switch /path/to/real-token${R}"
+      say  "  ${B}sudo it-pro switch${R}${DIM}   (prompts for the real token)${R}"
       ;;
   esac
 
@@ -152,15 +187,16 @@ cmd_status() {
     say "  ${DIM}attached; ${R}${B}it-pro switch${R}${DIM} does that.${R}"
   else
     warn "no token at $TOKEN_FILE -- a rebuild of this box would NOT attach,"
-    say  "  ${DIM}and would come up unhardened with a POA&M. ${R}${B}sudo it-pro token <file>${R}"
+    say  "  ${DIM}and would come up unhardened with a POA&M. ${R}${B}sudo it-pro token${R}"
   fi
   say ""
 }
 
 cmd_token() {
   local f="${1:-}"
-  [ -n "$f" ] || die "usage: it-pro token <file>   (or - for stdin)"
-  store_token "$(read_token "$f")"
+  # No argument is not an error here -- it means "prompt me".
+  local t; t="$(read_token "$f")" || exit 1
+  store_token "$t"
   say ""
   say "  Nothing about the running attachment changed. To move THIS box:"
   say "    ${B}sudo it-pro switch $f${R}"
@@ -168,13 +204,16 @@ cmd_token() {
 }
 
 cmd_attach() {
-  local f="${1:-$TOKEN_FILE}" tok
+  # No argument: use the stored token if there is one (that is the common case
+  # on a box the pull could not attach), else prompt.
+  local f="${1:-}" tok
+  [ -n "$f" ] || { [ -r "$TOKEN_FILE" ] && f="$TOKEN_FILE"; }
   if attached; then
     bad "already attached -- attaching again does nothing."
-    say "  To move this box to a different subscription:  ${B}sudo it-pro switch <file>${R}"
+    say "  To move this box to a different subscription:  ${B}sudo it-pro switch${R}"
     return 1
   fi
-  tok="$(read_token "$f")"
+  tok="$(read_token "$f")" || exit 1
   head2 "Attaching"
   # The token must not reach the command line: `ps` shows it to every user.
   if printf '%s\n' "$tok" | pro attach --format json - >/dev/null 2>&1 \
@@ -191,8 +230,8 @@ cmd_attach() {
 
 cmd_switch() {
   local f="${1:-}" tok svcs
-  [ -n "$f" ] || die "usage: it-pro switch <file>   (or - for stdin)"
-  tok="$(read_token "$f")"
+  # No argument means prompt; read_token handles it.
+  tok="$(read_token "$f")" || exit 1
 
   head2 "Moving this box to a different Pro subscription"
   if ! attached; then

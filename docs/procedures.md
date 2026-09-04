@@ -1722,13 +1722,19 @@ trial stays on that trial through every future pull, silently.
 
 | Command | What it changes |
 |---|---|
-| `it-pro token <file>` | the stored token only — future pulls and rebuilds |
-| `it-pro switch <file>` | **this box**: detach, re-attach on the new token, re-enable its services, and store it |
-| `it-pro attach [<file>]` | an unattached box (uses the token file by default) |
+| `it-pro token <token>` | the stored token only — future pulls and rebuilds |
+| `it-pro switch <token>` | **this box**: detach, re-attach on the new token, re-enable its services, and store it |
+| `it-pro attach [<token>]` | an unattached box |
 
 ```bash
-sudo it-pro switch /path/to/real-token
+sudo it-pro switch C1abc...              # the token itself
+sudo it-pro switch                       # prompt, not echoed
+sudo it-pro switch /path/to/token-file   # a file containing it
 ```
+
+The argument is classified by what it **is** — anything that exists as a file,
+or looks like a path, is read as one — so a token and a filename cannot be
+confused. `-` reads standard input.
 
 > **`switch` detaches first, and detaching disables every Pro service** —
 > including FIPS and USG. They are re-enabled immediately afterwards, but in
@@ -1737,13 +1743,14 @@ sudo it-pro switch /path/to/real-token
 > a kernel. Do it on a box you can reboot, not mid-workday. It prints what is
 > enabled, requires a typed `YES`, and names anything that failed to return.
 
-Tokens are read from a **file**, never passed as an argument — a command line is
-visible in `ps` to every user on the box and lands in shell history. `-` reads
-standard input. The stored copy is written with `umask 077` so it is never
+A token passed as an argument is visible in `ps` to every user on the box while
+the command runs, and stays in the shell history of whoever ran it. The command
+says so once and continues — omit the argument to be prompted instead, which
+avoids both. The stored copy is written under `umask 077`, so it is never
 briefly world-readable.
 
 ```bash
-sudo it-pro token -            # paste it, then Ctrl-D
+sudo it-pro token              # store it for rebuilds, prompted
 sudo it-pro refresh            # re-pull contract data after a renewal
 ```
 
