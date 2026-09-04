@@ -35,6 +35,9 @@
 #                                exists, and a read-only mount that is undone
 #        --user U --domain D     credentials (prompted if not given)
 #        --guest                 try it anonymously
+#        --krb5                  use Kerberos (sec=krb5) instead of NTLM. On a
+#                                FIPS box this is the ONLY thing that can work:
+#                                NTLMv2 needs HMAC-MD5, which FIPS removes.
 #   it-smb mount NAME|--all
 #   it-smb umount NAME|--all
 #   it-smb creds NAME            set/replace this share's credentials
@@ -90,6 +93,24 @@ share_field() {  # name, key -> value from its .mount unit
 explain_cifs() {  # stderr-text, dmesg-text
   local out="$1$2"
   case "$out" in
+    # FIRST, because the kernel names this exactly and the generic errno
+    # branches below would otherwise claim it. NTLMv2 is built on HMAC-MD5;
+    # FIPS mode removes MD5 from the crypto API, so the cifs client cannot
+    # allocate the transform and fails the session setup with ENOENT -- which
+    # is byte-for-byte the errno a MISSING SHARE returns. Observed on dev-14:
+    # "Could not allocate shash TFM 'hmac(md5)'" then "Error -2 during NTLMSSP
+    # authentication", against a share that exists.
+    *"shash TFM"*|*"hmac(md5)"*|*"during NTLMSSP authentication"*)
+      bad "NTLM cannot work on this box: it is FIPS, and NTLMv2 needs HMAC-MD5."
+      say "    The kernel refused to allocate hmac(md5), so the session setup"
+      say "    failed with ENOENT -- the SAME errno a missing share returns."
+      say "    Nothing about the share name, the password or the domain is wrong."
+      say ""
+      say "    The answer is Kerberos, which needs the box joined to AD:"
+      say "      sudo it-domain preflight   then   sudo it-domain join"
+      say "      kinit <user>               get a ticket"
+      say "      it-smb test //SERVER/SHARE --krb5"
+      say "    Disabling FIPS is not an answer here." ;;
     *NT_STATUS_LOGON_FAILURE*|*"error(13)"*Session*|*STATUS_LOGON_FAILURE*)
       bad "Authentication failed -- the username, password or domain is wrong."
       say "    Check with: it-smb creds <name>" ;;
@@ -143,12 +164,13 @@ explain_cifs() {  # stderr-text, dmesg-text
 # ---------------------------------------------------------------------------
 probe_unc() {   # $1 = //server/share  [--user U] [--domain D] [--guest] [--vers V]
   local unc="$1"; shift
-  local user="" domain="" guest=0 vers="3.1.1" pass="" server share
+  local user="" domain="" guest=0 krb5=0 vers="3.1.1" pass="" server share
   while [ $# -gt 0 ]; do
     case "$1" in
       --user)   user="${2:?--user needs a name}"; shift 2 ;;
       --domain) domain="${2:?--domain needs a name}"; shift 2 ;;
       --guest)  guest=1; shift ;;
+      --krb5)   krb5=1; shift ;;
       --vers)   vers="${2:?--vers needs a dialect}"; shift 2 ;;
       *) die "unknown option: $1  (it-smb test //SERVER/SHARE [--user U] [--domain D] [--guest])" ;;
     esac
@@ -184,9 +206,29 @@ probe_unc() {   # $1 = //server/share  [--user U] [--domain D] [--guest] [--vers
     return 2
   fi
 
+  # Said BEFORE the attempt, not after: on a FIPS box an NTLM mount cannot
+  # succeed, and letting someone type a password first only teaches them to
+  # doubt the password.
+  if [ "$krb5" -eq 0 ] && [ "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null || echo 0)" = 1 ]; then
+    warn "FIPS is enabled -- an NTLM mount CANNOT succeed here (NTLMv2 needs HMAC-MD5)."
+    say  "    Expect \"Could not allocate shash TFM\" and ENOENT. Use --krb5 with a"
+    say  "    Kerberos ticket, on a box joined to AD (it-domain)."
+    say  ""
+  fi
+
   # Credentials. Asked for here rather than taken as an argument: a password on
   # a command line is in `ps` for every user on the box and in shell history.
-  if [ "$guest" -eq 0 ]; then
+  if [ "$krb5" -eq 1 ]; then
+    if command -v klist >/dev/null 2>&1 && klist -s 2>/dev/null; then
+      ok "Kerberos ticket present ($(klist 2>/dev/null | sed -n 's/^Default principal: //p'))"
+    else
+      bad "no Kerberos ticket -- run: kinit <user>"
+      say "    sec=krb5 uses the CALLING user's ticket cache, so root's sudo"
+      say "    session needs one too: sudo -E, or kinit as root."
+      return 2
+    fi
+    guest=1   # no credentials file is involved at all
+  elif [ "$guest" -eq 0 ]; then
     [ -n "$user" ] || { printf '  Username (DOMAIN\\user, or blank for guest): ' >&2; read -r user; }
     if [ -z "$user" ]; then
       guest=1
@@ -246,7 +288,12 @@ probe_unc() {   # $1 = //server/share  [--user U] [--domain D] [--guest] [--vers
   trap "umount '$tmpd' 2>/dev/null; rm -f '$credf'; rmdir '$tmpd' 2>/dev/null" EXIT INT TERM
 
   local opts="vers=$vers,ro"
-  if [ "$guest" -eq 1 ]; then
+  if [ "$krb5" -eq 1 ]; then
+    # cruid: which user's ticket cache to read. Under sudo the caller is root,
+    # whose cache is usually empty -- naming the real user is the difference
+    # between "works" and "no credentials available".
+    opts="$opts,sec=krb5,cruid=${SUDO_UID:-0}"
+  elif [ "$guest" -eq 1 ]; then
     opts="$opts,guest"
   else
     { printf 'username=%s\n' "$user"

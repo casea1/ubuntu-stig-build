@@ -256,6 +256,34 @@ two-copy workflow above.
 
 ### Getting evidence off the box: how the SMB offloads actually work
 
+> **BLOCKER on a FIPS box: NTLM cannot authenticate an SMB mount at all.**
+> Confirmed on dev-14, 2026-09-04, against a share that exists and credentials
+> that are correct:
+>
+> ```
+> CIFS: VFS: Could not allocate shash TFM 'hmac(md5)'
+> CIFS: VFS: Error -2 during NTLMSSP authentication
+> ```
+>
+> NTLMv2 is built on HMAC-MD5. FIPS mode removes MD5 from the kernel crypto API,
+> so the cifs client cannot allocate the transform and the session setup fails
+> with **ENOENT** — byte-for-byte the errno a *missing share* returns, which is
+> why this reads as a wrong share name or a typo'd password and is neither.
+>
+> **Both offloads mount with a credentials file, so both are affected**:
+> `it-offload` (the auditd trail — the AU-4 artifact) and
+> `it-powerstrux offload`. On a FIPS box neither can reach a Windows share
+> today. The remedy is Kerberos (`sec=krb5`), which needs the box joined to AD
+> and — for an unattended weekly job with no user logged in — a **machine
+> keytab** (`kinit -k` before the mount), not a credentials file. That work is
+> not done yet; see the open threads in `CLAUDE.md`.
+>
+> Disabling FIPS is not an answer: it is a STIG requirement here.
+>
+> Test it on any box with `sudo it-smb test //SERVER/SHARE` — the probe warns
+> before it tries, and names this exactly if it happens.
+
+
 Two jobs copy evidence to a file server — `it-offload` (the auditd trail) and
 `it-powerstrux offload` (the weekly PowerStrux report folder). They use the same
 mechanism, and this is what an assessor asking *"how does that reach the share,

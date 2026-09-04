@@ -179,7 +179,27 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   `KillDisconnected` is true -- the timeout alone does nothing, and it only ever
   reaches sessions sesman still knows about.
 
+- **On a FIPS box, an SMB mount with NTLM cannot work.** NTLMv2 is built on
+  HMAC-MD5; FIPS removes MD5 from the kernel crypto API, so the cifs client
+  cannot allocate the transform. Confirmed on dev-14 against a share that
+  exists with correct credentials: `Could not allocate shash TFM 'hmac(md5)'`
+  then `Error -2 during NTLMSSP authentication`. The session setup fails with
+  **ENOENT -- the same errno a MISSING SHARE returns** -- so it presents as a
+  wrong share name or a bad password and is neither. `it-smb test` warns before
+  it tries and names it if it happens. **Both offloads are affected**
+  (`it-offload` carries the AU-4 auditd trail; `it-powerstrux offload` carries
+  the reports), because both mount with a credentials file. The remedy is
+  `sec=krb5` after an AD join -- and for an unattended job with nobody logged
+  in, a machine keytab and `kinit -k`, not a credentials file. Not built yet.
+
 ## Open threads
+
+- **The SMB offloads do not work on a FIPS box.** See the gotcha above. Both
+  `it-offload` and `it-powerstrux offload` authenticate with NTLM, which the
+  FIPS crypto API cannot do. `it-smb` grew a `--krb5` probe path; the offloads
+  still need the unattended half -- `it-domain join`, then `kinit -k` from the
+  machine keytab before the mount, `sec=krb5,cruid=0`. Until that exists, the
+  weekly evidence does not leave the box on any FIPS workstation.
 
 - **Rotate the leaked credentials.** The old pgvector password, Open WebUI
   session key, and MLflow password were committed while the repo was public.
