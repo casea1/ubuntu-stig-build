@@ -165,6 +165,20 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   is N IDEs on the LAN with shell access as that user -- `127.0.0.1` takes them
   off it and the pull then removes the ufw range.
 
+- **Never restart `xrdp-sesman` on a live box.** Every session it is managing is
+  orphaned by the restart: the per-session processes are reparented to init and
+  keep running, and the new sesman comes back with an empty table. The next RDP
+  login by any of those users then dies a second after authentication --
+  `gnome-session-binary: WARNING: Session manager already running!`, because ONE
+  GNOME session per user is a hard limit and the orphan still owns
+  `org.gnome.SessionManager` on that user's bus. A pull changing `sesman.ini`
+  used to do exactly this to a room full of people. The handler now defers while
+  sessions are live and leaves `/run/xrdp-sesman-restart-pending`; sesman reaps
+  orphans on start (`it-rdp sweep` as `ExecStartPre`); `it-rdp status/sweep/reset`
+  is the operator side. `DisconnectedTimeLimit` is **ignored** unless
+  `KillDisconnected` is true -- the timeout alone does nothing, and it only ever
+  reaches sessions sesman still knows about.
+
 ## Open threads
 
 - **Rotate the leaked credentials.** The old pgvector password, Open WebUI

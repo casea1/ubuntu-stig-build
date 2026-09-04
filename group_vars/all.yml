@@ -596,6 +596,29 @@ dev_rdp_max_bpp: "24"
 # Set e.g. "rdpusers" to gate it; the role creates the group and adds the check.
 dev_rdp_allowed_group: ""
 
+# ---- xrdp session reaping ---------------------------------------------------
+# A session that is never cleaned up breaks the NEXT login by the same user:
+# gnome-session finds the old session manager still owning the user's D-Bus
+# name, refuses to start a second one and exits, and the RDP window closes a
+# second after authentication. One GNOME session per user is a hard limit.
+#
+# Seconds a DISCONNECTED session is kept before it is reaped. This is the
+# window in which closing the RDP window and reconnecting -- from another desk,
+# after a network blip -- gets your desktop back exactly as you left it, so it
+# is deliberately generous: 8 hours reaches what was abandoned overnight and
+# never a same-day reconnect. 0 disables reaping entirely (xrdp's default, and
+# how sessions came to sit for days).
+#
+# The role sets KillDisconnected alongside it, because xrdp IGNORES this value
+# unless that is true -- setting the timeout on its own does nothing at all.
+dev_rdp_disconnected_time_limit: 28800
+
+# Seconds of idleness before a CONNECTED session is disconnected. 0 = off, and
+# off is right here: the STIG's screen lock already covers an unattended
+# desktop, and dropping a session out from under someone mid-build is a
+# different kind of bug report.
+dev_rdp_idle_time_limit: 0
+
 # ---- xrdp login-screen appearance -------------------------------------------
 # Skin the (stock, plain-grey) xrdp login box. Colors are 6-hex RGB WITHOUT a
 # leading '#' -- xrdp's own format. _bg_color is the area behind the box;

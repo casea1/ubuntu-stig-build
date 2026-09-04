@@ -1,0 +1,154 @@
+---
+# =============================================================================
+# remote_desktop :: sessions.yml -- stop stale RDP sessions breaking the next
+# login.
+#
+# THE FAULT. You authenticate over RDP and the window closes a second later.
+# sesman logs "Window manager exited with non-zero exit code 1" and the user's
+# session log has:
+#
+#   gnome-session-binary: WARNING: Session manager already running!
+#
+# An earlier session for the same user is still running and was never reaped.
+# sesman sees /tmp/.X11-unix/X10 occupied, starts the new session on :11, and
+# gnome-session there finds the orphan still owning org.gnome.SessionManager on
+# that user's bus. One GNOME session per user is a hard limit, so it exits 1 and
+# xrdp drops the connection. Intermittent, because it only happens when an
+# orphan is present -- which is why it reads as a flaky RDP server.
+#
+# THREE CAUSES, THREE FIXES:
+#
+#  1. Restarting xrdp-sesman orphans every session it is managing -- the
+#     per-session processes are reparented to init and the new sesman starts
+#     with an empty table. This role used to do exactly that on any sesman.ini
+#     change, so a routine pull could break the next login for everyone who was
+#     on the box. The handler now refuses while sessions are live and leaves a
+#     marker instead.
+#  2. A session sesman still tracks is never timed out by default, so an
+#     abandoned one survives until reboot. KillDisconnected + a grace period
+#     bounds it.
+#  3. Sessions already orphaned are invisible to sesman and no timeout will
+#     ever reach them. They are reaped when sesman next starts, and on demand
+#     with `it-rdp sweep`.
+# =============================================================================
+
+# Directories the tasks below write into. Not left to implicit parent creation:
+# it_scripts owns /opt/it/scripts and may not have run yet on a --tags scripts
+# pull, and a systemd drop-in directory has to exist before the drop-in.
+- name: "XRDP | Directories the session tasks write into"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/systemd/system/xrdp-sesman.service.d, mode: "0755" }
+    - { path: "{{ it_scripts_dir | default('/opt/it/scripts') }}",
+        mode: "2750", group: "{{ ia_it_group | default('sudo') }}" }
+  loop_control:
+    label: "{{ item.path }}"
+  tags: [scripts]
+
+- name: "XRDP | Did a previous pull have to defer a sesman restart?"
+  ansible.builtin.stat:
+    path: /run/xrdp-sesman-restart-pending
+  register: _rdp_pending
+
+# Fix 2. DisconnectedTimeLimit is IGNORED unless KillDisconnected is true --
+# xrdp's own sesman.ini says so -- so setting the timeout alone does nothing.
+# Both, or neither.
+#
+# The grace period is why KillDisconnected on its own is not what we want:
+# closing the RDP window has to leave the desktop running long enough to come
+# back to it from another room, and only reap what was abandoned.
+- name: "XRDP | Reap sessions abandoned for {{ dev_rdp_disconnected_time_limit }}s"
+  community.general.ini_file:
+    path: /etc/xrdp/sesman.ini
+    section: Sessions
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    mode: "0644"
+  loop:
+    - { option: KillDisconnected,
+        value: "{{ 'true' if (dev_rdp_disconnected_time_limit | int) > 0 else 'false' }}" }
+    - { option: DisconnectedTimeLimit, value: "{{ dev_rdp_disconnected_time_limit }}" }
+    - { option: IdleTimeLimit,         value: "{{ dev_rdp_idle_time_limit }}" }
+  loop_control:
+    label: "{{ item.option }}={{ item.value }}"
+  notify: restart xrdp-sesman
+
+# Fix 3. Reap orphans whenever sesman starts.
+#
+# Safe by construction: an orphan is an xrdp X server whose process chain ends
+# at init, so nothing can be managing it. After a sesman restart that is every
+# session it had -- and reaping them is right, because none of them can ever be
+# reconnected to and each one blocks its owner's next login. "You were logged
+# out when the service restarted" beats "your next login fails and nobody can
+# say why".
+#
+# `-` prefix: a missing or failing sweep must never stop RDP coming up.
+- name: "XRDP | Reap orphaned sessions when sesman starts"
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/xrdp-sesman.service.d/10-reap-stale.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible (remote_desktop role) -- do not edit by hand.
+      # See roles/remote_desktop/tasks/sessions.yml.
+      [Service]
+      ExecStartPre=-{{ it_scripts_dir | default('/opt/it/scripts') }}/rdp.sh sweep
+  register: _rdp_dropin
+
+- name: "XRDP | Reload systemd for the drop-in"
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _rdp_dropin is changed
+
+# A pull that deferred a sesman restart leaves this behind. Clear it the moment
+# the box is idle, so the deferred config actually lands rather than waiting for
+# a reboot nobody schedules.
+- name: "XRDP | Is an xrdp session running right now?"
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      ps -eo args= | grep -E '(^|/)Xorg :[0-9]+' | grep -q xrdp && echo live || echo idle
+  register: _rdp_live
+  changed_when: false
+  check_mode: false
+
+- name: "XRDP | Apply a sesman restart a previous pull had to defer"
+  ansible.builtin.systemd:
+    name: xrdp-sesman
+    state: restarted
+  when:
+    - _rdp_live.stdout | default('live') == 'idle'
+    - _rdp_pending.stat.exists | default(false)
+
+- name: "XRDP | Clear the deferred-restart marker"
+  ansible.builtin.file:
+    path: /run/xrdp-sesman-restart-pending
+    state: absent
+  when:
+    - _rdp_live.stdout | default('live') == 'idle'
+    - _rdp_pending.stat.exists | default(false)
+
+# ---- the helper ------------------------------------------------------------
+# Tagged `scripts` so a fix to it-rdp reaches a box on a light pull.
+- name: "XRDP | Install it-rdp"
+  ansible.builtin.copy:
+    src: rdp.sh
+    dest: "{{ it_scripts_dir | default('/opt/it/scripts') }}/rdp.sh"
+    owner: root
+    group: root
+    mode: "0750"
+  tags: [scripts]
+
+- name: "XRDP | Short command (it-rdp)"
+  ansible.builtin.file:
+    src: "{{ it_scripts_dir | default('/opt/it/scripts') }}/rdp.sh"
+    dest: /usr/local/sbin/it-rdp
+    state: link
+    force: true
+  tags: [scripts]

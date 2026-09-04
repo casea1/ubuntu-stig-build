@@ -1,10 +1,43 @@
 ---
+# Restarting the xrdp FRONT END is safe: sesman owns the sessions, so a
+# reconnect finds them again.
 - name: restart xrdp
   ansible.builtin.systemd:
     name: xrdp
     state: restarted
 
+# Restarting SESMAN is not. Every session it is managing is orphaned by it: the
+# per-session processes are reparented to init and keep running, the new sesman
+# comes back with an empty table, and the next login by any of those users dies
+# with "Session manager already running!" a second after authentication. A
+# routine pull doing this to a room full of people is the bug, not the fix.
+#
+# So: restart only when the box is idle. Otherwise leave a marker -- the next
+# pull applies it the moment nobody is on, `it-rdp status` reports it, and
+# `it-rdp restart` does it on demand. The setting itself is not urgent; the
+# broken login it would cause is.
 - name: restart xrdp-sesman
-  ansible.builtin.systemd:
-    name: xrdp-sesman
-    state: restarted
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      if ps -eo args= | grep -E '(^|/)Xorg :[0-9]+' | grep -q xrdp; then
+        : > /run/xrdp-sesman-restart-pending
+        echo deferred
+      else
+        systemctl restart xrdp-sesman
+        rm -f /run/xrdp-sesman-restart-pending
+        echo restarted
+      fi
+  register: _rdp_sesman_restart
+  changed_when: "'restarted' in _rdp_sesman_restart.stdout"
+
+- name: warn that the sesman restart was deferred
+  ansible.builtin.debug:
+    msg: >-
+      xrdp-sesman was NOT restarted: sessions are live and restarting it would
+      orphan every one of them, breaking the next login for those users. The
+      new sesman.ini settings apply at the next reboot, at the next pull when
+      the box is idle, or with `sudo it-rdp restart` -- `sudo it-rdp status`
+      shows this is outstanding.
+  when: "'deferred' in (_rdp_sesman_restart.stdout | default(''))"
+  listen: restart xrdp-sesman

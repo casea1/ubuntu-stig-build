@@ -1350,6 +1350,70 @@ sudo it-set-classification UNCLASSIFIED
 sudo it-set-classification SECRET
 ```
 
+## 3.10 "RDP closes as soon as I authenticate"
+
+The login succeeds, the desktop never appears, and the window shuts a second
+later. Almost always a **stale session for the same user**, not a credential or
+network problem.
+
+```bash
+sudo it-rdp status      # live sessions, orphans, reaping settings
+sudo it-rdp sweep       # reap the orphans; live sessions untouched
+```
+
+`sweep` is safe to run with people working — an orphan is defined as an xrdp X
+server whose process chain ends at init, so nothing can be managing it. If that
+does not clear it, end everything for that user (**their desktop closes and
+unsaved work in it is lost**, so it asks first):
+
+```bash
+sudo it-rdp reset austin_case_adm
+```
+
+### Why it happens
+
+`gnome-session` refuses to start when the user already has a session manager
+running, and **one GNOME session per user is a hard limit**. So an earlier
+session that was never reaped — its `Xorg`, `xrdp-chansrv` and per-session
+`xrdp-sesman` still running — makes every later login fail. sesman sees
+`/tmp/.X11-unix/X10` occupied, starts the new session on `:11`, and gnome-session
+there exits 1:
+
+```
+gnome-session-binary: WARNING: Session manager already running!
+xrdp-sesman: [WARN] Window manager (pid 737111, display 11) exited with
+                    non-zero exit code 1
+```
+
+Those two lines together are the signature. Anything else — the consent banner,
+`gnome-initial-setup`, the keyring — is a different fault.
+
+### What stops it recurring
+
+| | |
+|---|---|
+| The pull will not restart `xrdp-sesman` while sessions are live | Restarting it orphans every session it holds. It defers, leaves `/run/xrdp-sesman-restart-pending`, and applies at the next reboot or the next pull on an idle box. `it-rdp status` reports it |
+| sesman reaps orphans when it starts | A systemd drop-in runs `it-rdp sweep` as `ExecStartPre` |
+| Abandoned sessions time out | `KillDisconnected=true` + `dev_rdp_disconnected_time_limit` (default 8 h) |
+
+The timeout only reaches sessions sesman still knows about, which is why the
+first two matter more than the third: a session orphaned by a sesman restart is
+invisible to sesman and no timeout will ever reach it.
+
+```yaml
+# /opt/it/site.yml, or group_vars for the fleet
+dev_rdp_disconnected_time_limit: 28800   # 0 disables reaping (xrdp's default)
+dev_rdp_idle_time_limit: 0               # off; the screen lock covers this
+```
+
+> **`DisconnectedTimeLimit` is ignored unless `KillDisconnected` is true** —
+> xrdp's own `sesman.ini` says so. Setting the timeout on its own does nothing,
+> which is why the role writes both.
+
+The grace period is deliberately generous: within it, closing the RDP window and
+reconnecting later gets your desktop back as you left it. Eight hours reaps what
+was abandoned overnight and never a same-day reconnect.
+
 ---
 
 # 4. Patching

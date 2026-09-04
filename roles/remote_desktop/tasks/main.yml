@@ -10,6 +10,9 @@
 #   xrdp.yml -- install + configure xrdp for GNOME-over-Xorg, with the Ubuntu
 #               24.04 gotchas handled (ssl-cert key access, colord polkit prompt),
 #               rate-limited on the host firewall
+#   sessions.yml -- session reaping + it-rdp. A session that was never cleaned
+#               up makes the NEXT login for that user fail immediately after
+#               authentication, which reads as a flaky RDP server.
 # =============================================================================
 
 - name: "Install the GNOME desktop environment"
@@ -18,4 +21,8 @@
 
 - name: "Install and configure xrdp (RDP into the GNOME GUI)"
   ansible.builtin.import_tasks: xrdp.yml
+  when: dev_rdp_enabled | default(true) | bool
+
+- name: "Session reaping, so a stale session cannot break the next login"
+  ansible.builtin.import_tasks: sessions.yml
   when: dev_rdp_enabled | default(true) | bool
