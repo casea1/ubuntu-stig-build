@@ -364,6 +364,16 @@ against a vendor account, and Xilinx alone is ~150 GB. Bake them into the image.
 sudo it-fpga            # what is installed, licence, cables -- start here
 ```
 
+> **The development profile is CPU-only.** Vivado, Vitis and Libero do not use a
+> GPU, and `xorgxrdp` is a software X server — an RDP session renders on the CPU
+> whatever card is fitted. A proprietary NVIDIA stack on one of these boxes is
+> patch surface with no benefit, and if it was installed by hand against a
+> `-generic` flavour it is not even loading (trap 39). Remove it:
+> ```bash
+> sudo apt purge '~nnvidia' && sudo apt autoremove
+> ```
+> The console falls back to nouveau, which is what was already driving it.
+
 ### What is manual, and what the pull does
 
 Everything below the line is done for you on every `ansible-pull`. Everything
