@@ -27,9 +27,9 @@
 #                              capture this box's install config so every other
 #                              box installs identically
 #   it-fpga desktop            import the VENDOR's own app tiles system-wide, so
-                             every user gets Libero SoC / FPExpress / SmartHLS
-                             / PFSoC MSS and not just whoever installed them
-  it-fpga cables             what is plugged in, and is it authorised
+#                              every user gets Libero SoC / FPExpress / SmartHLS
+#                              / PFSoC MSS and not just whoever installed them
+#   it-fpga cables             what is plugged in, and is it authorised
 #   it-fpga env                the environment a user gets, and how to load it
 #
 # A licence change is written to BOTH the live /etc/profile.d scripts (so a new
