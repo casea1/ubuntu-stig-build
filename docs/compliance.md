@@ -150,7 +150,7 @@ which reports the multiarch state alongside what it is there for.
 
 > **FIPS mode is currently NOT enabled on the 24.04 boxes. The cause is an upstream publication gap, confirmed 2026-09-08, and nothing on the box can close it.** `usg_enable_fips` stays `true` and `pro_attach` still attempts the enable; it fails, the box is warned, and the rest of the baseline applies.
 >
-> The `fips-updates` noble suite publishes `libgcrypt20 1.12.0-2ubuntu0.1~Fips1~rc11` — a major upstream bump from noble's own 1.10.3 — which requires `libgpg-error0 (>= 1.56)`. Noble ships **1.47**, and the FIPS suite does not publish `libgpg-error0` at all. Shown by asking apt for the FIPS libraries directly, with no metapackage in the way:
+> The `fips-updates` noble suite publishes `libgcrypt20 1.12.0-2ubuntu0.1~Fips1~rc11` — a major upstream bump from noble's own 1.10.3 — which requires `libgpg-error0 (>= 1.56)`. Noble ships **1.47**. **UNVERIFIED (2026-09-08): whether the FIPS suite publishes a newer `libgpg-error0` has NOT been checked** — all that is established is that apt selected noble's 1.47, i.e. no newer candidate was available *to that transaction*. If the suite does publish one, the reason it cannot be selected is very likely the same `Multi-Arch: same` i386 lock described below, one level deeper than `libgcrypt20`, in which case this is OUR conflict and not an upstream gap. Settle it with `apt-cache policy libgpg-error0` inside pro's retry window before opening any case. Shown by asking apt for the FIPS libraries directly, with no metapackage in the way:
 >
 > ```
 > apt-get -s install libgcrypt20=1.12.0-2ubuntu0.1~Fips1~rc11
