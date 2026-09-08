@@ -833,8 +833,23 @@ Point at one:  sudo it-fpga install xilinx --bin /path/to/installer.bin"
   if [ ! -x "$xdir/xsetup" ]; then
     say "  extracting the installer..."
     install -d -m 0755 "$INSTALLER_DIR"
-    "$bin" --noexec --keep --target "$xdir" >/dev/null 2>&1 \
-      || die "could not extract $bin"
+    # The .bin arrives from the vendor portal, is copied in over the DTA path,
+    # and lands mode 0660 -- NO execute bit on anyone. Running it then fails
+    # even as root: root bypasses read and write, but for EXEC the kernel still
+    # requires at least one x bit to be set. Make it executable rather than
+    # reporting a mystery. The directory is 2770 root:sudo, so this exposes
+    # nothing.
+    [ -x "$bin" ] || chmod a+rx "$bin" || die "cannot make $bin executable"
+    # Do NOT swallow the reason. This was >/dev/null 2>&1, so a failure -- for
+    # any cause, a truncated download included -- reached the operator as
+    # "could not extract" and nothing else.
+    local xerr
+    if ! xerr=$("$bin" --noexec --keep --target "$xdir" 2>&1); then
+      say ""
+      printf '%s\n' "$xerr" | tail -15
+      say ""
+      die "could not extract $bin (its own output is above)"
+    fi
   fi
   ok "installer ready at $xdir"
 
@@ -1008,6 +1023,13 @@ cmd_install_libero() {
   local bin
   bin=$(find "$INSTALLER_DIR" /media/*/* /mnt/* -maxdepth 2 -type f \
           -name 'Libero_SoC_*_lin.bin' 2>/dev/null | sort | tail -1)
+
+  # Same execute-bit trap as the Xilinx installer, one step later: this one is
+  # run BY THE ENGINEER, so it fails in their session with a bare "Permission
+  # denied" long after this command has exited and been forgotten.
+  if [ -n "$bin" ] && [ ! -x "$bin" ]; then
+    chmod a+rx "$bin" && ok "made $(basename "$bin") executable"
+  fi
 
   say ""
   say "  Now run it ${B}as yourself, no sudo${R}, in your desktop session:"
