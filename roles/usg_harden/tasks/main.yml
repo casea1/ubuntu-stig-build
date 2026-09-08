@@ -124,15 +124,18 @@
       register: _usg_enable
       when: "'usg' not in (_pro_enabled | default([]))"
       changed_when: "'Updating' in _usg_enable.stdout or 'Installing' in _usg_enable.stdout"
-      # Retried, because the observed failure on dev-16 was a TRANSPORT one:
-      #   An unexpected error occurred: The read operation timed out
-      # -- the client reaching contracts.canonical.com, not the entitlement
-      # (`pro status --all` showed usg ENTITLED). A single timeout otherwise
-      # costs the box its whole STIG profile until someone re-runs the pull.
+      # Retried, because the observed failure on dev-16 is TRANSPORT and
+      # INTERMITTENT, not entitlement (`pro status --all` shows usg ENTITLED on
+      # a full Pro subscription). `pro enable` calls contract.refresh first, and
+      # its POST to contracts.canonical.com/v1/contracts/.../context/machines
+      # hangs with the request sent and no response line -- 30s, then
+      # "The read operation timed out". A plain curl to the same host answers
+      # 200 in 0.3s, and an earlier POST in the same run succeeded after 10.6s,
+      # so retrying is the right lever. See trap 42.
       # Verified that `failed_when: false` still tolerates exhausted retries,
       # so this cannot reintroduce the abort it is layered on top of.
-      retries: 3
-      delay: 20
+      retries: 5
+      delay: 15
       until: _usg_enable.rc == 0
       # Not fatal: on releases where `usg` isn't a distinct pro service the enable
       # is a no-op error and the package installs straight from the attached repo.
@@ -207,8 +210,8 @@
       changed_when: _fips_enable.rc == 0 and 'is already enabled' not in _fips_enable.stdout
       failed_when: false
       # Same transport risk as the usg enable above; same tolerated retry.
-      retries: 3
-      delay: 20
+      retries: 5
+      delay: 15
       until: _fips_enable.rc == 0
 
     # Ask pro what is true now rather than trusting the rc above (trap 40), and
