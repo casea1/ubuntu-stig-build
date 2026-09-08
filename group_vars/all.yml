@@ -550,11 +550,21 @@ dev_code_server_port_span: 20         # how many ports the range covers
 # Empty string = the old behaviour, dev_tools_user only.
 dev_code_server_group: sentry
 
-# Accounts in that group that should NOT get one. Locked accounts are already
-# skipped by their shell (auto_audit), so this is for a login-capable account
-# you simply do not want serving an IDE -- the dta and audit accounts are in
-# `sentry` too, because every standing account is.
+# Accounts in that group that should NOT get one. Accounts that cannot log in
+# -- a nologin shell, or a LOCKED PASSWORD like auto_audit -- are skipped
+# automatically, so this is for a login-capable account you simply do not want
+# serving an IDE. The dta and audit accounts are in `sentry` too, because every
+# standing account is.
 dev_code_server_exclude: []
+
+# Start every configured instance at boot? NO by default.
+#
+# The unit is WantedBy=multi-user.target, so `true` means one node process per
+# entitled user launched at every boot, held for the box's whole uptime, each
+# with its own listening port. dev-16 came up with 11 before the engineers were
+# even all added. False configures each instance fully and starts none of them:
+# `sudo it-codeserver start <user>` when someone actually wants one.
+dev_code_server_start_at_boot: false
 
 # =============================================================================
 # REMOTE DESKTOP  (development profile -> remote_desktop role)

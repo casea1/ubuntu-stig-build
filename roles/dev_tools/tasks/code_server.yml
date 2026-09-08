@@ -59,12 +59,26 @@
         # cover, or on something else's.
         uid=$(id -u "$u" 2>/dev/null) || continue
         [ "$uid" -ge 1000 ] && [ "$uid" -lt 65534 ] || continue
-        # An account that cannot log in does not need a browser IDE. auto_audit
-        # is in this group (every standing account joins it) and is deliberately
-        # locked -- starting a service for it would be a listening port nobody
-        # can use, on a box that is counting listening ports.
+        # An account that cannot log in does not need a browser IDE.
+        #
+        # TWO checks, because the shell alone is not one. This used to test the
+        # shell only, with a comment claiming that skipped auto_audit -- and it
+        # never did: auto_audit is created with a LOCKED PASSWORD and a perfectly
+        # normal shell, so it sailed through and dev-16 came up with an instance
+        # for it (11 users, including the auditor accounts). Those are the units
+        # failing on the boot splash: a service for an account nobody can log in
+        # as, on a box that is counting listening ports.
+        #
+        # `passwd -S` field 2 is P (usable), L (locked) or NP (no password).
+        # A human account that has not had its password set yet is L too, and
+        # skipping it is right -- the next pull picks it up once an admin sets
+        # one, so this heals itself.
         case "$(getent passwd "$u" | cut -d: -f7)" in
           */nologin|*/false|"") continue ;;
+        esac
+        case "$(passwd -S "$u" 2>/dev/null | awk '{print $2}')" in
+          P) ;;
+          *) continue ;;
         esac
         # Optional per-site exclusions, e.g. the dta and audit accounts, which
         # are in the group too.

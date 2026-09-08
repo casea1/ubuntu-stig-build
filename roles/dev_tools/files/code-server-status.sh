@@ -9,12 +9,21 @@
 #   it-codeserver              who is running, on what, and whether it is up
 #   it-codeserver password <user>   show that user's password (root only)
 #   it-codeserver url <user>        the URL to hand them
+#   it-codeserver start <user>      start one -- they are NOT started at boot
+#   it-codeserver stop <user>       stop one
 #   it-codeserver restart <user>    after a config change
 #   it-codeserver log <user> [N]    last N journal lines (default 40)
 #
+# NOT STARTED AT BOOT. The pull configures every entitled account's instance
+# and starts none of them (dev_code_server_start_at_boot). One node process and
+# one listening port per user, for the box's whole uptime, is not something to
+# hand out by default -- and instances for accounts that cannot log in were
+# failing on the boot splash.
+#
 # Entitlement is group membership (dev_code_server_group, `sentry` by default),
 # applied by the pull -- add someone to the group and pull, do not enable the
-# unit by hand or the next pull will not know about them.
+# unit by hand or the next pull will not know about them. An account with a
+# LOCKED PASSWORD is skipped: it cannot log in, so it cannot use an IDE.
 set -uo pipefail
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -108,6 +117,19 @@ case "${1:-status}" in
     say "  ${DIM}URL: $(url_for "$2")${R}"; say "" ;;
   url)
     [ -n "${2:-}" ] || die "usage: it-codeserver url <user>"; url_for "$2"; echo ;;
+  start)
+    # Instances are configured by the pull but NOT started at boot
+    # (dev_code_server_start_at_boot), so this is how someone gets one.
+    [ -n "${2:-}" ] || die "usage: it-codeserver start <user>"
+    [ -r "/etc/code-server/$2.password" ] \
+      || die "no instance configured for $2 -- is the account in the entitled group, unlocked, and has the pull run?"
+    systemctl start "code-server@$2" || die "code-server@$2 failed to start -- see: it-codeserver log $2"
+    say "started code-server@$2   ${DIM}$(url_for "$2")${R}"
+    say "  ${DIM}Not enabled at boot: it stops on reboot. 'systemctl enable' it for one${R}"
+    say "  ${DIM}box, or set dev_code_server_start_at_boot for the fleet.${R}" ;;
+  stop)
+    [ -n "${2:-}" ] || die "usage: it-codeserver stop <user>"
+    systemctl stop "code-server@$2" && echo "stopped code-server@$2" ;;
   restart)
     [ -n "${2:-}" ] || die "usage: it-codeserver restart <user>"
     systemctl restart "code-server@$2" && echo "restarted code-server@$2" ;;
