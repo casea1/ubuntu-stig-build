@@ -5,6 +5,7 @@ Two checks, both learned the same way -- from a box, not from a review:
 
   1. A role that WRITES into a shared directory must also CREATE it.
   2. A systemd unit's ExecStart must not name a script the role installs LATER.
+  3. A role must not RUN a command that only a LATER role in local.yml installs.
 
 WHY THIS EXISTS. dev_tools copies it-vscode into /opt/it/scripts, but the role
 that creates that directory -- it_scripts -- runs ~115 lines later in local.yml.
@@ -166,8 +167,94 @@ def check_exec_order(role_name, task_files):
     return rc
 
 
+def role_order(playbook="local.yml"):
+    """Role names in the order local.yml runs them."""
+    try:
+        with open(playbook) as fh:
+            plays = yaml.safe_load(fh)
+    except (OSError, yaml.YAMLError):
+        return []
+    order = []
+    for play in plays or []:
+        for entry in (play.get("roles") or []):
+            name = entry.get("role") if isinstance(entry, dict) else entry
+            if isinstance(name, str) and name not in order:
+                order.append(name)
+    return order
+
+
+def run_paths(task):
+    """Absolute paths a command:/shell: task executes."""
+    found = []
+    for module, args in task.items():
+        if not module.endswith(("command", "shell")):
+            continue
+        raw = args.get("cmd") if isinstance(args, dict) else args
+        if isinstance(args, dict) and raw is None:
+            raw = args.get("_raw_params")
+        if not isinstance(raw, str):
+            continue
+        first = raw.strip().split()[0] if raw.strip() else ""
+        if first.startswith("/"):
+            found.append(first)
+    return found
+
+
+def provided_links(role_dir):
+    """Commands a role installs through a LOOP over its defaults.
+
+    it_scripts -- the role that installs most of the it-* commands -- creates
+    them with `dest: /usr/local/sbin/{{ item.link }}` over a list built in
+    defaults/main.yml. That path is unresolvable as a literal, so without this
+    the cross-role check saw it_scripts as providing NOTHING and passed by
+    being blind rather than by being satisfied.
+    """
+    found = set()
+    for name in ("defaults", "vars"):
+        for path in glob.glob(os.path.join(role_dir, name, "*.yml")):
+            try:
+                with open(path) as fh:
+                    data = yaml.safe_load(fh)
+            except (OSError, yaml.YAMLError):
+                continue
+            for value in (data or {}).values():
+                if not isinstance(value, list):
+                    continue
+                for entry in value:
+                    if isinstance(entry, dict) and isinstance(entry.get("link"), str):
+                        found.add("/usr/local/sbin/" + entry["link"])
+    return found
+
+
+def check_cross_role(provides, consumes, order):
+    """A role must not run a command a LATER role installs.
+
+    This is the check that would have caught dev-16's first failure without a
+    box having to find it. Paths nothing in this repo installs are system
+    binaries and are ignored.
+    """
+    rc = 0
+    position = {name: i for i, name in enumerate(order)}
+    for role, wanted in sorted(consumes.items()):
+        if role not in position:
+            continue
+        for path in sorted(wanted):
+            owners = [r for r, paths in provides.items() if path in paths]
+            if not owners or role in owners:
+                continue                      # system binary, or self-provided
+            first = min((position.get(r, len(order)) for r in owners))
+            if first > position[role]:
+                late = [r for r in owners if position.get(r) == first]
+                print(f"{role}: runs {path}, which {late[0]} installs -- "
+                      f"and {late[0]} runs LATER in local.yml")
+                rc = 1
+    return rc
+
+
 def main():
     rc = 0
+    provides, consumes = {}, {}
+    order = role_order()
     for role in sorted(glob.glob("roles/*/")):
         name = os.path.basename(role.rstrip("/"))
         written, created = set(), set()
@@ -188,6 +275,19 @@ def main():
                 else:
                     written.update(paths_for(task, ("dest", "path")))
 
+        provides[name] = (set(created) | {d for d in written if d}
+                          | provided_links(role))
+        consumes[name] = set()
+        for path in task_files:
+            try:
+                with open(path) as fh:
+                    tasks = list(walk(yaml.safe_load(fh)))
+            except yaml.YAMLError:
+                continue
+            for task in tasks:
+                consumes[name].update(run_paths(task))
+                consumes[name].update(exec_paths(task))
+
         for shared in SHARED:
             # A file written INTO the shared dir (or a subdirectory of it).
             if not any(p.startswith(shared + "/") for p in written):
@@ -197,9 +297,12 @@ def main():
             print(f"{name}: writes into {shared} but never creates it")
             rc = 1
 
+    rc |= check_cross_role(provides, consumes, order)
+
     if rc == 0:
         print("OK: shared dirs created before use; no unit runs a script "
-              "its role installs later")
+              "its role installs later; no role runs a command a later "
+              "role installs")
     return rc
 
 
