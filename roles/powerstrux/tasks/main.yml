@@ -135,6 +135,19 @@
         # has to take effect immediately, without waiting for a pull. It writes
         # BOTH this file and /opt/it/site.yml, which is what this template
         # renders from -- so an on-box change and a pull agree.
+        # /etc/stig-build is created here rather than left to whichever role
+        # ran first. It holds generated secrets, so it needs its own explicit
+        # 0700 root:root -- and today this role only works because it_scripts
+        # happens to run earlier in local.yml. That kind of implicit ordering
+        # is what left dev-16 unhardened. tools/check-managed-dirs.py enforces it.
+        - name: "POWERSTRUX | Directories the offload tasks write into"
+          ansible.builtin.file:
+            path: /etc/stig-build
+            state: directory
+            owner: root
+            group: root
+            mode: "0700"
+
         - name: "POWERSTRUX | Offload configuration"
           ansible.builtin.template:
             src: powerstrux-offload.conf.j2

@@ -2,6 +2,23 @@
 # Developer tooling. Runs AFTER app_config and BEFORE hardening (usg_harden) — it needs
 # internet and must finish before hardening locks down /tmp / PAM / network.
 
+# dev_tools ships it-vscode and it-codeserver into /opt/it/scripts, but the role
+# that CREATES that directory (it_scripts) runs much later in local.yml. On a
+# first build the copy therefore failed outright -- "Destination directory
+# /opt/it/scripts does not exist" -- and because the play stops on the first
+# failure, every role after dev_tools (fpga_tools, remote_desktop, usg_harden,
+# usg_remediate, usbguard, powerstrux, it_scripts) never ran: the box was left
+# UNHARDENED. Create it here, with the same owner/group/mode it_scripts uses, so
+# both roles converge on one answer instead of fighting over it each pull.
+- name: "DEV-TOOLS | Directories the script-shipping tasks write into"
+  ansible.builtin.file:
+    path: "{{ it_scripts_dir | default('/opt/it/scripts') }}"
+    state: directory
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "2750"
+  tags: [scripts]
+
 - name: Install developer toolchains (compilers, SDKs, Docker)
   ansible.builtin.import_tasks: toolchains.yml
 
