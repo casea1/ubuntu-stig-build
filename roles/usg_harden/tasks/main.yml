@@ -159,30 +159,16 @@
       ansible.builtin.set_fact:
         _usg_installed: "{{ _usg_bin.rc == 0 }}"
 
-    - name: "USG | Enable FIPS (fips-updates) -- swaps the kernel, needs a reboot"
-      ansible.builtin.command: pro enable fips-updates --assume-yes
-      register: _fips_enable
-      when:
-        - usg_enable_fips | default(false) | bool
-        - "'fips-updates' not in (_pro_enabled | default([]))"
-      changed_when: _fips_enable.rc == 0 and 'is already enabled' not in _fips_enable.stdout
-      failed_when:
-        - _fips_enable.rc != 0
-        - "'is already enabled' not in (_fips_enable.stdout + _fips_enable.stderr)"
-
-        # `is not skipped` matters here: when fips-updates was already on, the
-    # enable above does not run, and a skipped registered variable has no rc at
-    # all -- so testing .rc would throw, and treating it as changed would demand
-    # a reboot on every pull forever.
-    - name: "USG | FIPS enabled -> reboot required"
-      ansible.builtin.set_fact:
-        usg_reboot_required: true
-      when:
-        - usg_enable_fips | default(false) | bool
-        - _fips_enable is defined
-        - _fips_enable is not skipped
-        - _fips_enable.rc | default(1) == 0
-
+    # NOT fatal, for the third time in this role and for the same reason. On
+    # dev-16 this returned rc=1 with
+    #   Failed running command 'apt-get install ... ubuntu-fips' [exit(100)].
+    #   Message: E: Unable to correct problems, you have held broken packages.
+    # -- an apt dependency-resolution failure INSIDE pro, on a box where the
+    # Pro repo had been configured and its lists fetched successfully. That
+    # aborted the play at usg_harden and cost the box usg_remediate, usbguard,
+    # powerstrux and it_scripts: no STIG remediation and no it-* tools, because
+    # one kernel package would not resolve. A box without FIPS is a POA&M item;
+    # a box without hardening is a different problem entirely.
     # Loud, and it carries the reason. `pro enable usg` is tolerated above, so
     # without this its output is discarded and the operator is left with apt's
     # "no package" -- the symptom, never the cause.
@@ -201,6 +187,67 @@
           Check on the box with `pro status` (does the contract carry usg?),
           then `sudo pro enable usg` and `apt-cache policy usg`.
       when: not (_usg_installed | bool)
+
+    - name: "USG | Enable FIPS (fips-updates) -- swaps the kernel, needs a reboot"
+      ansible.builtin.command: pro enable fips-updates --assume-yes
+      register: _fips_enable
+      when:
+        - usg_enable_fips | default(false) | bool
+        - "'fips-updates' not in (_pro_enabled | default([]))"
+      changed_when: _fips_enable.rc == 0 and 'is already enabled' not in _fips_enable.stdout
+      failed_when: false
+
+    # Ask pro what is true now rather than trusting the rc above (trap 40), and
+    # because `failed_when: false` makes that rc meaningless anyway.
+    - name: "USG | Re-read Pro status after the FIPS attempt"
+      ansible.builtin.command: pro status --format json
+      register: _pro_status_fips
+      when:
+        - usg_enable_fips | default(false) | bool
+        - _fips_enable is defined
+        - _fips_enable is not skipped
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: "USG | Is fips-updates enabled now?"
+      ansible.builtin.set_fact:
+        _fips_enabled_now: >-
+          {{ ('fips-updates' in (_pro_enabled | default([])))
+             or ((_pro_status_fips is defined and _pro_status_fips is not skipped
+                  and _pro_status_fips.rc | default(1) == 0
+                  and (_pro_status_fips.stdout | default('') | length) > 0)
+                 and ('fips-updates' in ((_pro_status_fips.stdout | from_json).services | default([])
+                                         | selectattr('status', 'equalto', 'enabled')
+                                         | map(attribute='name') | list))) }}
+
+    # Only when the enable actually ran AND actually took. Demanding a reboot
+    # after a FIPS enable that failed would send an operator to reboot a box
+    # into the kernel it already had, looking for a change that never happened.
+    - name: "USG | FIPS enabled -> reboot required"
+      ansible.builtin.set_fact:
+        usg_reboot_required: true
+      when:
+        - usg_enable_fips | default(false) | bool
+        - _fips_enable is defined
+        - _fips_enable is not skipped
+        - _fips_enabled_now | default(false) | bool
+
+    - name: "USG | POA&M WARNING -- FIPS requested but NOT enabled"
+      ansible.builtin.debug:
+        msg: >-
+          `pro enable fips-updates` did not succeed, so this box is NOT running
+          in FIPS mode. Track as a POA&M. The rest of the baseline still
+          applies. pro said:
+          {{ ((_fips_enable.stdout | default('')) ~ ' ' ~ (_fips_enable.stderr | default(''))) | trim }}
+          Diagnose on the box with `apt-get -s install ubuntu-fips` (the
+          simulate names the unsatisfiable dependency; `apt-cache policy` does
+          not -- see trap 27), `apt-mark showhold` and `uname -r`.
+      when:
+        - usg_enable_fips | default(false) | bool
+        - _fips_enable is defined
+        - _fips_enable is not skipped
+        - not (_fips_enabled_now | default(false) | bool)
 
     - name: "USG | Apply the STIG profile (needs the usg binary)"
       ansible.builtin.import_tasks: apply.yml
