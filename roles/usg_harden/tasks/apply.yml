@@ -171,8 +171,22 @@
   register: _usg_stamp
   failed_when: false
 
+# `usg fix` INSTALLS PACKAGES -- postfix, aide, chrony and more are STIG rules,
+# and each one runs a maintainer script. This runs under stig-build.service with
+# no terminal, so a debconf prompt has nothing to draw on and nobody to answer
+# it, and needrestart's "which services should be restarted?" is the same trap.
+# Either one stops an unattended build dead with no error and no output -- the
+# worst failure mode there is, because a hang looks exactly like slow work.
+#
+# NEEDRESTART_MODE is `l` (list), NOT `a` (automatically restart). Letting it
+# restart services unattended would let it restart xrdp-sesman, which orphans
+# every live RDP session on the box -- see the sesman note in CLAUDE.md. Listing
+# is enough: the role already requires a reboot after a fix.
 - name: "USG | Apply `usg fix {{ usg_profile }}` (disruptive; reboot after)"
   ansible.builtin.command: "usg fix {{ _usg_target }}"
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+    NEEDRESTART_MODE: l
   register: _usg_fix
   changed_when: _usg_fix.rc == 0
   when:
@@ -246,6 +260,9 @@
   # (no output-path flags in the stock CLI). We run it plainly for maximum
   # version compatibility, then copy the artifacts into the collection dir.
   ansible.builtin.command: "usg audit {{ _usg_target }}"
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+    NEEDRESTART_MODE: l
   register: _usg_audit
   changed_when: false
   # A non-zero rc here just means "some rules failed" or a version quirk --
