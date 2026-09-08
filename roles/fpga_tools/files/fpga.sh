@@ -144,6 +144,13 @@ env_set() {   # $1 = file, $2 = variable, $3 = value ("" removes it)
 # ---------------------------------------------------------------------------
 have_tree() { [ -d "$1" ] && [ -n "$(ls -A "$1" 2>/dev/null)" ]; }
 
+# In FIPS mode i386 multiarch is deliberately absent, not broken: fips-updates
+# is amd64-only and the crypto libraries are Multi-Arch:same, so one i386 copy
+# makes the FIPS libraries uninstallable. The pull skips i386 on such a box, so
+# reporting its absence as a fault would send someone to "fix" the thing that
+# is keeping FIPS working. See trap 43.
+fips_on() { [ "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null || echo 0)" = "1" ]; }
+
 cmd_status() {
   head2 "FPGA toolchains -- $(hostname -s)"
 
@@ -250,9 +257,14 @@ cmd_status() {
   fi
   [ -L /etc/pki/tls/certs/ca-bundle.crt ] && ok "RHEL CA path      linked" \
     || warn "RHEL CA path      missing -- Libero cannot verify TLS"
-  dpkg --print-foreign-architectures 2>/dev/null | grep -qx i386 \
-    && ok "i386 multiarch    enabled" \
-    || bad "i386 multiarch    NOT enabled -- the 32-bit vendor components will not load"
+  if dpkg --print-foreign-architectures 2>/dev/null | grep -qx i386; then
+    ok "i386 multiarch    enabled"
+  elif fips_on; then
+    ok "i386 multiarch    off (correct: this box is in FIPS mode)"
+    say "  ${DIM}                  32-bit vendor components will not load here.${R}"
+  else
+    bad "i386 multiarch    NOT enabled -- the 32-bit vendor components will not load"
+  fi
 
   # ---- licence
   head2 "Licence"
@@ -1191,7 +1203,13 @@ cmd_check() {
   # some vendor dependencies cannot be installed at all -- the pull says so
   # once, and this says so whenever anyone asks.
   head2 "32-bit dependencies"
-  if ! dpkg --print-foreign-architectures 2>/dev/null | grep -qx i386; then
+  if ! dpkg --print-foreign-architectures 2>/dev/null | grep -qx i386 && fips_on; then
+    ok "i386 multiarch is off because this box is in FIPS mode -- correct."
+    say "  ${DIM}Vivado's cable drivers and parts of Libero/Synplify are 32-bit and${R}"
+    say "  ${DIM}will NOT load. A box is a FIPS workstation or a 32-bit FPGA one.${R}"
+    say "  ${DIM}To make it the latter: usg_enable_fips:false in /opt/it/site.yml,${R}"
+    say "  ${DIM}\`sudo pro disable fips-updates\`, then \`sudo it-pull full\`.${R}"
+  elif ! dpkg --print-foreign-architectures 2>/dev/null | grep -qx i386; then
     bad "i386 multiarch is not enabled -- run: sudo it-pull full"
   else
     local want missing=0 p c
