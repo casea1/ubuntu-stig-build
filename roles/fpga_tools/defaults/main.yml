@@ -228,6 +228,13 @@ fpga_packages_xilinx:
 # uninstallable name fails the WHOLE transaction and would take the 64-bit half
 # down with it. What was skipped is reported by the pull and by `it-fpga check`.
 # Do not "fix" a missing one by pinning a version or pulling a foreign .deb.
+# Master switch for the i386 half. Leave true: the role ALSO skips i386
+# automatically whenever the box is in FIPS mode, because the two cannot
+# coexist (fips-updates is amd64-only and the crypto libraries are
+# Multi-Arch:same -- see trap 43). Set false to keep i386 off a box that is
+# not in FIPS mode but has no use for the 32-bit vendor components.
+fpga_i386_enabled: true
+
 fpga_packages_i386:
   - lib32stdc++6
   - libc6:i386

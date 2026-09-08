@@ -31,9 +31,51 @@
                                  # and the task below would act on no answer
       tags: [packages]
 
+    # NOT on a FIPS box, and this is load-bearing rather than tidy.
+    #
+    # `fips-updates` is published amd64-ONLY, and libgpg-error0, libgcrypt20
+    # and libgnutls30t64 are all `Multi-Arch: same` -- their amd64 and i386
+    # copies must hold one version. So a single i386 copy of any of them pins
+    # the amd64 copy to the archive version, the FIPS libraries become
+    # uninstallable, and `pro enable fips-updates` fails with unmet
+    # dependencies that name none of this. That cost days on dev-16 and dev-17
+    # (trap 43); the box only took FIPS after every i386 package was purged.
+    #
+    # Read from the running kernel, not from usg_enable_fips: what matters is
+    # whether this box IS in FIPS mode, not whether we asked for it.
+    - name: "FPGA | Is this box in FIPS mode?"
+      ansible.builtin.slurp:
+        src: /proc/sys/crypto/fips_enabled
+      register: _fpga_fips_raw
+      failed_when: false
+      check_mode: false
+      tags: [packages]
+
+    - name: "FPGA | Record FIPS state"
+      ansible.builtin.set_fact:
+        _fpga_fips_on: "{{ (_fpga_fips_raw.content | default('') | b64decode | trim) == '1' }}"
+      tags: [packages]
+
+    - name: "FPGA | i386 multiarch SKIPPED -- this box is in FIPS mode"
+      ansible.builtin.debug:
+        msg: >-
+          i386 multiarch is not enabled on a FIPS box: an i386 copy of
+          libgpg-error0/libgcrypt20/libgnutls30t64 pins its amd64 twin to the
+          archive version and makes the FIPS libraries uninstallable, because
+          those are Multi-Arch:same and fips-updates is amd64-only. The 32-bit
+          halves of Vivado and Libero will not run here. A box can be a FIPS
+          workstation or a 32-bit FPGA workstation -- to make this one the
+          latter, set usg_enable_fips:false in /opt/it/site.yml, disable
+          fips-updates, and re-run. See trap 43.
+      when: _fpga_fips_on | bool
+      tags: [packages]
+
     - name: "FPGA | Enable i386 multiarch (32-bit vendor components)"
       ansible.builtin.command: dpkg --add-architecture i386
-      when: "'i386' not in _fpga_arches.stdout_lines"
+      when:
+        - not (_fpga_fips_on | bool)
+        - fpga_i386_enabled | default(true) | bool
+        - "'i386' not in _fpga_arches.stdout_lines"
       register: _fpga_arch_added
       tags: [packages]
 
@@ -85,6 +127,13 @@
       changed_when: false
       check_mode: false          # a read-only probe; in check mode the task
                                  # below would otherwise act on no answer
+      # Same gate as the multiarch enable above. Probing is harmless, but with
+      # no i386 architecture every simulate fails and the "could not install"
+      # report below would name the whole list on a box where that is expected
+      # and correct, not a fault.
+      when:
+        - not (_fpga_fips_on | bool)
+        - fpga_i386_enabled | default(true) | bool
       tags: [packages]
 
     - name: "FPGA | Vendor dependencies, 32-bit (what this release publishes)"
