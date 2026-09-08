@@ -15,102 +15,19 @@
 # A REBOOT is required after a fix / FIPS enable for all controls to take effect.
 # =============================================================================
 
-- name: "USG | Ensure the Ubuntu Pro client is installed"
-  ansible.builtin.apt:
-    name: ubuntu-pro-client
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
-
-# ---- Resolve the Pro token (secret; out-of-band) ---------------------------
-- name: "USG | Look for an out-of-band Pro token file"
-  ansible.builtin.slurp:
-    src: "{{ ubuntu_pro_token_file }}"
-  register: _pro_token_slurp
-  failed_when: false
-  when: (ubuntu_pro_token | default('') | length) == 0
-
-- name: "USG | Resolve the effective Pro token"
-  ansible.builtin.set_fact:
-    _pro_token: >-
-      {{ ubuntu_pro_token if (ubuntu_pro_token | default('') | length) > 0
-         else ((_pro_token_slurp.content | b64decode | trim)
-               if (_pro_token_slurp is defined and _pro_token_slurp.get('content')) else '') }}
-  no_log: true
-
-# ---- Attach ----------------------------------------------------------------
-- name: "USG | Check whether this box is already Pro-attached"
-  ansible.builtin.command: pro status --format json
-  register: _pro_status_raw
-  changed_when: false
-  check_mode: false      # read-only probe: must run in --check too
-  failed_when: false
-
-- name: "USG | Determine current attach state"
-  ansible.builtin.set_fact:
-    _pro_attached: >-
-      {{ ((_pro_status_raw.stdout | from_json).attached | default(false))
-         if (_pro_status_raw.rc == 0 and (_pro_status_raw.stdout | default('') | length) > 0)
-         else false }}
-
-- name: "USG | Attach to Ubuntu Pro (uses the resolved token)"
-  ansible.builtin.command: "pro attach {{ _pro_token }}"
-  when:
-    - not _pro_attached
-    - (_pro_token | length) > 0
-  register: _pro_attach
-  no_log: true
-  changed_when: _pro_attach.rc == 0
-  # Safe-by-default: a bad token / network error becomes a POA&M skip (below),
-  # not a hard build abort.
-  failed_when: false
-
-# Re-read the real attach state instead of trusting the attach rc / first parse.
-# This is robust to an already-attached box (attach skipped) AND to any quirk in
-# the initial status parse: _usg_active reflects what `pro` actually reports now.
-- name: "USG | Re-check attach state after the attach attempt"
-  ansible.builtin.command: pro status --format json
-  register: _pro_status_final
-  changed_when: false
-  check_mode: false      # read-only probe: must run in --check too
-  failed_when: false
-
-- name: "USG | Mark USG active based on the authoritative post-attach status"
-  ansible.builtin.set_fact:
-    _usg_active: >-
-      {{ ((_pro_status_final.stdout | from_json).attached | default(false))
-         if (_pro_status_final.rc == 0 and (_pro_status_final.stdout | default('') | length) > 0)
-         else false }}
-
-# Which Pro services are ALREADY on. Read from the status document we just
-# fetched, because `pro enable <x>` on a service that is already enabled is not
-# free: it contacts contracts.canonical.com first ("One moment, checking your
-# subscription first") and can fail there for reasons that have nothing to do
-# with the service. On dev-15 that was
-#   An unexpected error occurred: [CRYPTO] unknown error (_ssl.c:3026)
-# -- a TLS failure inside the pro client on a FIPS kernel -- and it stopped the
-# whole pull at usg_harden, leaving everything after it unrun, on a box where
-# fips-updates was ALREADY ENABLED and nothing needed doing.
-#
-# The old guard tolerated "is already enabled" in pro's own output, which only
-# helps when pro gets far enough to say it. Ask the box, not the command.
-- name: "USG | Which Pro services are already enabled"
-  ansible.builtin.set_fact:
-    _pro_enabled: >-
-      {{ ((_pro_status_final.stdout | from_json).services | default([])
-          | selectattr('status', 'equalto', 'enabled')
-          | map(attribute='name') | list)
-         if (_pro_status_final.rc == 0 and (_pro_status_final.stdout | default('') | length) > 0)
-         else [] }}
-
-- name: "USG | POA&M WARNING -- not Pro-attached, skipping USG hardening"
-  ansible.builtin.debug:
-    msg: >-
-      Ubuntu Pro is NOT attached and no token was supplied
-      (ubuntu_pro_token / {{ ubuntu_pro_token_file }}). USG DISA-STIG hardening is
-      SKIPPED -- track as a POA&M. Provide a token (bootstrap.sh prompt, or the
-      out-of-band file) and re-run to harden this box.
-  when: not (_usg_active | default(false) | bool)
+# Attach + FIPS live in pro_attach, which local.yml ALSO runs early (before
+# fpga_tools brings up i386 multiarch -- see that role). Included here so this
+# role still works standalone and so the facts it sets (_usg_active,
+# _pro_enabled) are defined however usg_harden is reached. Idempotent: the
+# second pass skips both the attach and the enable.
+- name: "USG | Ubuntu Pro attach + FIPS (shared with the early pro_attach run)"
+  ansible.builtin.include_role:
+    name: pro_attach
+  # Only when the early run did not happen. Without this the include re-runs
+  # the FIPS enable, and on a box where FIPS cannot install that is five more
+  # attempts 15s apart -- minutes of a build spent failing at something already
+  # reported. The facts survive from the early run, which is all this needs.
+  when: _usg_active is not defined
 
 # =============================================================================
 # Everything below only runs when the box is Pro-attached.
@@ -200,73 +117,6 @@
           Check on the box with `pro status` (does the contract carry usg?),
           then `sudo pro enable usg` and `apt-cache policy usg`.
       when: not (_usg_installed | bool)
-
-    - name: "USG | Enable FIPS (fips-updates) -- swaps the kernel, needs a reboot"
-      ansible.builtin.command: pro enable fips-updates --assume-yes
-      register: _fips_enable
-      when:
-        - usg_enable_fips | default(false) | bool
-        - "'fips-updates' not in (_pro_enabled | default([]))"
-      changed_when: _fips_enable.rc == 0 and 'is already enabled' not in _fips_enable.stdout
-      failed_when: false
-      # Same transport risk as the usg enable above; same tolerated retry.
-      retries: 5
-      delay: 15
-      until: _fips_enable.rc == 0
-
-    # Ask pro what is true now rather than trusting the rc above (trap 40), and
-    # because `failed_when: false` makes that rc meaningless anyway.
-    - name: "USG | Re-read Pro status after the FIPS attempt"
-      ansible.builtin.command: pro status --format json
-      register: _pro_status_fips
-      when:
-        - usg_enable_fips | default(false) | bool
-        - _fips_enable is defined
-        - _fips_enable is not skipped
-      changed_when: false
-      failed_when: false
-      check_mode: false
-
-    - name: "USG | Is fips-updates enabled now?"
-      ansible.builtin.set_fact:
-        _fips_enabled_now: >-
-          {{ ('fips-updates' in (_pro_enabled | default([])))
-             or ((_pro_status_fips is defined and _pro_status_fips is not skipped
-                  and _pro_status_fips.rc | default(1) == 0
-                  and (_pro_status_fips.stdout | default('') | length) > 0)
-                 and ('fips-updates' in ((_pro_status_fips.stdout | from_json).services | default([])
-                                         | selectattr('status', 'equalto', 'enabled')
-                                         | map(attribute='name') | list))) }}
-
-    # Only when the enable actually ran AND actually took. Demanding a reboot
-    # after a FIPS enable that failed would send an operator to reboot a box
-    # into the kernel it already had, looking for a change that never happened.
-    - name: "USG | FIPS enabled -> reboot required"
-      ansible.builtin.set_fact:
-        usg_reboot_required: true
-      when:
-        - usg_enable_fips | default(false) | bool
-        - _fips_enable is defined
-        - _fips_enable is not skipped
-        - _fips_enabled_now | default(false) | bool
-
-    - name: "USG | POA&M WARNING -- FIPS requested but NOT enabled"
-      ansible.builtin.debug:
-        msg: >-
-          `pro enable fips-updates` did not succeed, so this box is NOT running
-          in FIPS mode. Track as a POA&M. The rest of the baseline still
-          applies. pro said:
-          {{ ((_fips_enable.stdout | default('')) ~ ' ' ~ (_fips_enable.stderr | default(''))) | trim }}
-          Diagnose in **/var/log/ubuntu-advantage.log**, which is the only
-          place the unmet dependency is written. Do NOT reach for
-          `apt-get -s install ubuntu-fips`: pro REMOVES the fips-updates repo
-          again when the install fails, so afterwards apt reports the package
-          as simply not existing and hides the real conflict.
-      when:
-        - usg_enable_fips | default(false) | bool
-        - _fips_enable is defined
-        - _fips_enable is not skipped
-        - not (_fips_enabled_now | default(false) | bool)
 
     - name: "USG | Apply the STIG profile (needs the usg binary)"
       ansible.builtin.import_tasks: apply.yml

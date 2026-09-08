@@ -161,6 +161,13 @@
       when:
         - is_development or is_emi or is_ai
         - clamav_container_enabled | default(true) | bool
+    # BEFORE fpga_tools, which turns on i386 multiarch. libgcrypt20 is
+    # Multi-Arch: same and the fips-updates suite is amd64-only, so once an
+    # i386 copy exists apt can no longer move the amd64 one to the FIPS
+    # version and `pro enable fips-updates` becomes unsatisfiable. usg_harden
+    # includes this same role later; the second pass is a no-op.
+    - role: pro_attach              # Ubuntu Pro attach + FIPS enable, before i386 multiarch exists
+
     - role: dev_tools               # compilers/SDKs, /opt/eng-venv, VS Code extensions, docker.io (development + emi)
       tags: [packages]
       when: is_development or is_emi
