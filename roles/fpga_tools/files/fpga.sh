@@ -818,6 +818,34 @@ Point at one:  sudo it-fpga install xilinx --bin /path/to/installer.bin"
   printf '  %-12s %s\n' "free space" "$(df -h "${dfp:-/}" 2>/dev/null | awk 'NR==2{print $4" on "$6}')"
   say ""
 
+  # The WEB installer cannot download anything until an AMD account token
+  # exists, and it discovers that four seconds into a job the operator was just
+  # told would run for an hour:
+  #   ERROR - Before being able to download and install you must generate an
+  #           authentication token using the xsetup -b AuthTokenGen command.
+  # Catch it here instead. Told apart by size: the web installer is a few
+  # hundred MB, the Single File Download is tens of GB and needs no token.
+  # The token lives in $HOME/.Xilinx, and the install runs as root under
+  # systemd-run, so it is ROOT's copy that has to exist -- generating it as
+  # yourself leaves it where the installer will not look.
+  local xbin_mb xtoken=/root/.Xilinx/wi_authentication_key
+  xbin_mb=$(( $(stat -c %s "$bin" 2>/dev/null || echo 0) / 1048576 ))
+  if [ "$xbin_mb" -lt 2048 ] && [ ! -s "$xtoken" ]; then
+    bad "this is the WEB installer (${xbin_mb} MB) and root has no AMD auth token"
+    say ""
+    say "  It downloads during the install and refuses to start without one."
+    say "  Generate it once, as root, with your AMD account:"
+    say ""
+    say "    ${B}sudo $INSTALLER_DIR/xsetup/xsetup -b AuthTokenGen${R}"
+    say ""
+    say "  ${DIM}Writes $xtoken. Then re-run this command.${R}"
+    say ""
+    say "  ${DIM}An AIR-GAPPED box cannot use this installer at all -- it needs the${R}"
+    say "  ${DIM}internet while it runs. Use the Single File Download (SFD): tens of${R}"
+    say "  ${DIM}GB, self-contained, no token, no network.${R}"
+    return 1
+  fi
+
   if have_tree "$XROOT"; then
     warn "$XROOT already has something in it ($(du -sh "$XROOT" 2>/dev/null | cut -f1))"
     say  "  The installer may refuse, or resume. Remove it first for a clean run."
