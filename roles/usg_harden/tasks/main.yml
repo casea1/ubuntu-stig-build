@@ -257,9 +257,11 @@
           in FIPS mode. Track as a POA&M. The rest of the baseline still
           applies. pro said:
           {{ ((_fips_enable.stdout | default('')) ~ ' ' ~ (_fips_enable.stderr | default(''))) | trim }}
-          Diagnose on the box with `apt-get -s install ubuntu-fips` (the
-          simulate names the unsatisfiable dependency; `apt-cache policy` does
-          not -- see trap 27), `apt-mark showhold` and `uname -r`.
+          Diagnose in **/var/log/ubuntu-advantage.log**, which is the only
+          place the unmet dependency is written. Do NOT reach for
+          `apt-get -s install ubuntu-fips`: pro REMOVES the fips-updates repo
+          again when the install fails, so afterwards apt reports the package
+          as simply not existing and hides the real conflict.
       when:
         - usg_enable_fips | default(false) | bool
         - _fips_enable is defined
