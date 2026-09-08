@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""A role that WRITES into a shared directory must also CREATE it.
+"""Ordering faults inside an Ansible role that only a FIRST build can expose.
+
+Two checks, both learned the same way -- from a box, not from a review:
+
+  1. A role that WRITES into a shared directory must also CREATE it.
+  2. A systemd unit's ExecStart must not name a script the role installs LATER.
 
 WHY THIS EXISTS. dev_tools copies it-vscode into /opt/it/scripts, but the role
 that creates that directory -- it_scripts -- runs ~115 lines later in local.yml.
@@ -10,11 +15,22 @@ every role after dev_tools was skipped -- the box came up UNHARDENED.
 fpga_tools, usb_serial and remote_desktop each had the same bug and were each
 found the same way, one box at a time. This finds the next one first.
 
-Ansible's `copy` does not create a missing parent directory, so this is a hard
-failure rather than a style point. YAML is parsed rather than grepped because
-the create-the-directory tasks here are loops of inline dicts and the paths are
-Jinja expressions -- both of which defeated a regex version of this check.
+Check 2 is the same bug one layer down. usb_serial wrote
+usb-serial-bind.service, told systemd to start it, and installed the
+usb-serial.sh its ExecStart names three tasks later. On dev-16 that was
+203/EXEC -- and again the play stopped and the box went unhardened. And again
+an existing box could not show it: the script was already there from the
+previous pull.
+
+The shared lesson is that a first build exercises ordering no later pull ever
+will, so "it worked on the fleet" says nothing about it.
+
+Ansible's `copy` does not create a missing parent directory, so check 1 is a
+hard failure rather than a style point. YAML is parsed rather than grepped
+because the create-the-directory tasks are loops of inline dicts and the paths
+are Jinja expressions -- both of which defeated a regex version of this check.
 """
+import re
 import sys, glob, os, yaml
 
 # Shared directories that a LATER role owns. Writing here means creating here.
@@ -88,13 +104,77 @@ def creates_dir(task):
     return False
 
 
+def exec_paths(task):
+    """Scripts an inline systemd unit's ExecStart= lines name."""
+    found = []
+    for module, args in task.items():
+        if not isinstance(args, dict):
+            continue
+        body = args.get("content")
+        if not isinstance(body, str) or "ExecStart" not in body:
+            continue
+        # A unit that guards itself is not a fault, and reporting it anyway is
+        # how a checker earns its reputation for crying wolf (trap 38).
+        # `ExecStart=-` and `ExecStartPre=-` tell systemd to ignore a failure;
+        # ConditionPathExists= skips the unit entirely when the file is absent.
+        if "ConditionPathExists=" in body:
+            continue
+        for line in body.splitlines():
+            match = re.match(r"\s*ExecStart=(?!-)(.+)$", line)
+            if not match:
+                continue
+            # The whole remainder, resolved BEFORE splitting: a Jinja path
+            # contains spaces ("{{ it_scripts_dir | default(...) }}/x.sh"), so
+            # taking the first token first captures "{{" and finds nothing --
+            # which is exactly how the first version of this check passed a
+            # file that had the bug in it.
+            resolved = literal(match.group(1))
+            if resolved and resolved.split():
+                found.append(resolved.split()[0])
+    return found
+
+
+def check_exec_order(role_name, task_files):
+    """A unit must not run a script its own role installs later in the file.
+
+    Only compared WITHIN one tasks file, where the order is unambiguous.
+    Across files the order comes from main.yml's imports, and guessing at it
+    would produce the false positives that get a checker ignored.
+    """
+    rc = 0
+    for path in task_files:
+        try:
+            with open(path) as fh:
+                tasks = list(walk(yaml.safe_load(fh)))
+        except yaml.YAMLError:
+            continue        # check 1 already reported the parse failure
+
+        installed = {}      # script path -> index of the task installing it
+        for index, task in enumerate(tasks):
+            for dest in paths_for(task, ("dest",)):
+                if not creates_dir(task):
+                    installed.setdefault(dest, index)
+
+        for index, task in enumerate(tasks):
+            for script in exec_paths(task):
+                if script not in installed or installed[script] <= index:
+                    continue
+                print(f"{role_name}: {os.path.basename(path)} defines a unit "
+                      f"running {script} at task {index + 1}, but installs it "
+                      f"at task {installed[script] + 1}")
+                rc = 1
+    return rc
+
+
 def main():
     rc = 0
     for role in sorted(glob.glob("roles/*/")):
         name = os.path.basename(role.rstrip("/"))
         written, created = set(), set()
-        for path in glob.glob(os.path.join(role, "tasks", "**", "*.yml"),
-                              recursive=True):
+        task_files = sorted(glob.glob(os.path.join(role, "tasks", "**", "*.yml"),
+                                      recursive=True))
+        rc |= check_exec_order(name, task_files)
+        for path in task_files:
             try:
                 with open(path) as fh:
                     tasks = yaml.safe_load(fh)
@@ -118,7 +198,8 @@ def main():
             rc = 1
 
     if rc == 0:
-        print("OK: every role that writes into a shared dir creates it first")
+        print("OK: shared dirs created before use; no unit runs a script "
+              "its role installs later")
     return rc
 
 

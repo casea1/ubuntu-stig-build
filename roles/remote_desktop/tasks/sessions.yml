@@ -87,6 +87,31 @@
 # out when the service restarted" beats "your next login fails and nobody can
 # say why".
 #
+# ---- the helper ------------------------------------------------------------
+# Tagged `scripts` so a fix to it-rdp reaches a box on a light pull.
+- name: "XRDP | Install it-rdp"
+  ansible.builtin.copy:
+    src: rdp.sh
+    dest: "{{ it_scripts_dir | default('/opt/it/scripts') }}/rdp.sh"
+  # root:%s, not root:root. A 0750 root:root script cannot be READ or
+  # executed by anyone but root, so the self-elevating first line never gets
+  # the chance to run -- `it-<name>` fails with Permission denied instead of
+  # prompting for sudo, and `it-help` lists it as "(cannot read its script)".
+  # Every it_scripts command uses this group; these did not.
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "0750"
+  tags: [scripts]
+
+- name: "XRDP | Short command (it-rdp)"
+  ansible.builtin.file:
+    src: "{{ it_scripts_dir | default('/opt/it/scripts') }}/rdp.sh"
+    dest: /usr/local/sbin/it-rdp
+    state: link
+    force: true
+  tags: [scripts]
+
+# ---- the units that run it -------------------------------------------------
 # `-` prefix: a missing or failing sweep must never stop RDP coming up.
 - name: "XRDP | Reap orphaned sessions when sesman starts"
   ansible.builtin.copy:
@@ -195,26 +220,3 @@
     state: "{{ 'started' if (dev_rdp_reap_enabled | bool) else 'stopped' }}"
     daemon_reload: "{{ (_rdp_reap_unit is changed) or (_rdp_reap_timer is changed) }}"
 
-# ---- the helper ------------------------------------------------------------
-# Tagged `scripts` so a fix to it-rdp reaches a box on a light pull.
-- name: "XRDP | Install it-rdp"
-  ansible.builtin.copy:
-    src: rdp.sh
-    dest: "{{ it_scripts_dir | default('/opt/it/scripts') }}/rdp.sh"
-  # root:%s, not root:root. A 0750 root:root script cannot be READ or
-  # executed by anyone but root, so the self-elevating first line never gets
-  # the chance to run -- `it-<name>` fails with Permission denied instead of
-  # prompting for sudo, and `it-help` lists it as "(cannot read its script)".
-  # Every it_scripts command uses this group; these did not.
-    owner: root
-    group: "{{ ia_it_group | default('sudo') }}"
-    mode: "0750"
-  tags: [scripts]
-
-- name: "XRDP | Short command (it-rdp)"
-  ansible.builtin.file:
-    src: "{{ it_scripts_dir | default('/opt/it/scripts') }}/rdp.sh"
-    dest: /usr/local/sbin/it-rdp
-    state: link
-    force: true
-  tags: [scripts]

@@ -91,6 +91,29 @@
       changed_when: false
       when: _usb_serial_rules is changed
 
+    # BEFORE the unit that runs it. usb-serial-bind.service names this script in
+    # ExecStart, so installing it afterwards meant that on a FIRST build systemd
+    # was asked to start a unit pointing at a file that did not exist yet: 203/EXEC,
+    # a failed task, and -- because a play stops at the first failure -- no
+    # hardening at all on the box (dev-16). An existing box hid it completely:
+    # the script was already there from the previous pull.
+    - name: "USB-SERIAL | Install it-serial"
+      ansible.builtin.copy:
+        src: usb-serial.sh
+        dest: "{{ it_scripts_dir | default('/opt/it/scripts') }}/usb-serial.sh"
+        owner: root
+        group: "{{ ia_it_group | default('sudo') }}"
+        mode: "0750"
+      tags: [scripts]
+
+    - name: "USB-SERIAL | Short command (it-serial)"
+      ansible.builtin.file:
+        src: "{{ it_scripts_dir | default('/opt/it/scripts') }}/usb-serial.sh"
+        dest: /usr/local/sbin/it-serial
+        state: link
+        force: true
+      tags: [scripts]
+
     # RemainAfterExit, because the work is a one-time table edit rather than a
     # process to supervise: the unit then reads as active, and the udev rule
     # pulling it in again on a re-plug is a no-op unless the module was
@@ -119,29 +142,41 @@
           WantedBy=multi-user.target
       register: _usb_serial_unit
 
+    # NOT fatal if the start fails. Binding a serial adapter is peripheral;
+    # hardening is not. A failure here used to abort the play and leave every
+    # later role -- usg_harden, usg_remediate, usbguard, powerstrux -- unrun, so
+    # the cost of a dead adapter was an UNHARDENED box. It stays enabled either
+    # way and the next task says plainly that it did not start, which is louder
+    # than a role name in a PLAY RECAP.
     - name: "USB-SERIAL | Enable the bind service"
       ansible.builtin.systemd:
         name: usb-serial-bind.service
         enabled: true
         state: started
         daemon_reload: "{{ _usb_serial_unit is changed }}"
+      failed_when: false
 
-    - name: "USB-SERIAL | Install it-serial"
-      ansible.builtin.copy:
-        src: usb-serial.sh
-        dest: "{{ it_scripts_dir | default('/opt/it/scripts') }}/usb-serial.sh"
-        owner: root
-        group: "{{ ia_it_group | default('sudo') }}"
-        mode: "0750"
-      tags: [scripts]
+    # Asked of systemd rather than read off the previous task's result. With
+    # failed_when:false that result reports success no matter what happened, and
+    # trap 40's lesson applies: ask the system what is true, do not parse the
+    # command's complaint. RemainAfterExit=yes means a oneshot that did its work
+    # reads `active`.
+    - name: "USB-SERIAL | Did the bind service actually come up?"
+      ansible.builtin.command: systemctl is-active usb-serial-bind.service
+      register: _usb_serial_active
+      changed_when: false
+      failed_when: false
+      check_mode: false
 
-    - name: "USB-SERIAL | Short command (it-serial)"
-      ansible.builtin.file:
-        src: "{{ it_scripts_dir | default('/opt/it/scripts') }}/usb-serial.sh"
-        dest: /usr/local/sbin/it-serial
-        state: link
-        force: true
-      tags: [scripts]
+    - name: "USB-SERIAL | WARNING -- the bind service did not start"
+      ansible.builtin.debug:
+        msg: >-
+          usb-serial-bind.service is {{ _usb_serial_active.stdout | default('unknown') }},
+          not active: the configured adapter IDs are NOT in the driver's table,
+          so no /dev/ttyUSB* will appear for them. Nothing else in this baseline
+          is affected. Diagnose with `systemctl status usb-serial-bind.service`
+          and `sudo it-serial`.
+      when: (_usb_serial_active.stdout | default('')) | trim != 'active'
 
     - name: "USB-SERIAL | What was configured"
       ansible.builtin.debug:
