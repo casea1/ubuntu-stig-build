@@ -148,20 +148,23 @@ which reports the multiarch state alongside what it is there for.
 | **Password hashing rounds** (`accounts_password_pam_unix_rounds_password_auth`, UBTU-24-400220) | Now **on** (`usg_fix_pam_rounds: true`), writing the benchmark's `rounds=100000`. Worth understanding before you trust it: the value is an SHA-512 iteration count, but Ubuntu 24.04 hashes with **yescrypt**, whose cost parameter accepts only 1–11. Measured against libcrypt directly, `crypt_gensalt("$y$", N)` **returns NULL** for both 5000 and 100000 — it does not clamp. The `rounds=5000` on these boxes came from the pre-USG ansible-lockdown role (`pam_unix_rounds: 5000`, still in `group_vars` as a dead legacy variable), not from `usg fix`. Either way 100000 is not a new risk; both are equally out of range. The open question is what pam_unix does with an out-of-range value, and it is bigger than the finding: if it passes the value straight through, `passwd` is already broken on every hardened box. Verify once with a throwaway account (see `usg_fix_pam_rounds` in the role defaults) |
 | **Full-disk encryption** (`Encrypt Partitions`) | bake LUKS into the Ubuntu autoinstall (pre-install; see [procedures.md §1.2](procedures.md#12-install-ubuntu-2404)) |
 
-> **FIPS mode is currently NOT enabled on the 24.04 boxes. The cause is an upstream publication gap, confirmed 2026-09-08, and nothing on the box can close it.** `usg_enable_fips` stays `true` and `pro_attach` still attempts the enable; it fails, the box is warned, and the rest of the baseline applies.
+> **FIPS mode: the blocker is ours, not Canonical's, and it is i386 multiarch. Confirmed 2026-09-08.** Nothing upstream is broken and no box needs reimaging.
 >
-> The `fips-updates` noble suite publishes `libgcrypt20 1.12.0-2ubuntu0.1~Fips1~rc11` — a major upstream bump from noble's own 1.10.3 — which requires `libgpg-error0 (>= 1.56)`. Noble ships **1.47**. **UNVERIFIED (2026-09-08): whether the FIPS suite publishes a newer `libgpg-error0` has NOT been checked** — all that is established is that apt selected noble's 1.47, i.e. no newer candidate was available *to that transaction*. If the suite does publish one, the reason it cannot be selected is very likely the same `Multi-Arch: same` i386 lock described below, one level deeper than `libgcrypt20`, in which case this is OUR conflict and not an upstream gap. Settle it with `apt-cache policy libgpg-error0` inside pro's retry window before opening any case. Shown by asking apt for the FIPS libraries directly, with no metapackage in the way:
+> `fips-updates` is published **amd64-only**. `libgpg-error0` is `Multi-Arch: same`, so its amd64 and i386 copies must hold the same version. `fpga_tools` (development profile) enables i386 multiarch, which brings in `libgpg-error0:i386` at noble's 1.47. From then on the amd64 copy cannot move to the suite's 1.58-2, so the FIPS `libgcrypt20 1.12.0` (which needs `>= 1.56`) cannot install, so `ubuntu-fips-userspace` reports unmet dependencies. `libgnutls30t64` fails identically through its own i386 sibling.
 >
 > ```
-> apt-get -s install libgcrypt20=1.12.0-2ubuntu0.1~Fips1~rc11
->   libgcrypt20 : Depends: libgpg-error0 (>= 1.56) but 1.47-3build2.1 is to be installed
+> apt-cache policy libgpg-error0
+>   Installed: 1.47-3build2.1
+>   Candidate: 1.58-2
+>      1.58-2  1001  https://esm.ubuntu.com/fips-updates/ubuntu noble-updates/main amd64
+> dpkg -l | grep libgpg-error0
+>   ii  libgpg-error0:amd64  1.47-3build2.1
+>   ii  libgpg-error0:i386   1.47-3build2.1        <-- the lock
 > ```
 >
-> **This is why boxes built a few weeks earlier are FIPS-enabled and new ones cannot be.** Canonical's tracker lists noble at `~Fips1~rc7`, which is 1.10.3-based and satisfied by noble's own `libgpg-error0`; the suite has since moved to the 1.12.0-based `~rc11`. Machines that enabled FIPS before that republish are unaffected and stay compliant. It is a calendar difference, not a configuration difference — **the earlier boxes were not built differently and these do not need reimaging.**
+> **The fix is ordering, and it is in place:** `pro_attach` enables FIPS before `fpga_tools` turns on i386, so a box built from scratch on the current baseline takes FIPS. dev-13/14/15 have FIPS for the same reason — they were built before the i386 work existed. No carve-out was ever made for them; it was sequence.
 >
-> **Action:** raise with Canonical (paid contract). The report is one line — `libgcrypt20 1.12.0-2ubuntu0.1~Fips1~rc11` in `fips-updates`/noble depends on `libgpg-error0 (>= 1.56)`, which that suite does not publish — plus the `x-trace-id` values from `/var/log/ubuntu-advantage.log`. Until it is fixed, FIPS is an open POA&M on any box built after the republish.
->
-> **Queued behind it, on the development profile only:** `libgcrypt20` is `Multi-Arch: same` and the FIPS suite is amd64-only, while `fpga_tools` brings in `libgcrypt20:i386` (via `libsystemd0:i386`, itself pulled by the Vivado/Libero 32-bit set). When Canonical fixes `libgpg-error0`, that becomes the next blocker. `pro_attach` already runs the enable before `fpga_tools` so a fresh build takes FIPS first, but an engineering workstation still cannot hold both the FIPS libraries and the 32-bit vendor stack indefinitely — that will be an architecture decision (which boxes need FIPS, which need FPGA tooling), not a defect.
+> **The standing consequence:** an engineering workstation can hold the FIPS libraries **or** the 32-bit vendor stack, not both. Once FIPS is installed on amd64 there is no i386 build at the matching version, and `libgpg-error0:i386` underpins `libgcrypt20:i386` → `libsystemd0:i386` → the GTK2/CUPS/Avahi set the Vivado and Libero 32-bit components use. That is an architecture decision per box, not a defect: FPGA workstation or FIPS workstation.
 >
 >
 > **GPUs + FIPS:** Canonical's prebuilt NVIDIA modules are kernel-flavour-locked, so the FIPS kernel swap would break `nvidia-smi`. On the `ai` profile the **`gpu_fips_module`** role stages the matching `linux-modules-nvidia-*-fips` module (from the `fips-updates` repo) in the same run, so the GPU comes back automatically on the single FIPS reboot. No manual DKMS/driver rebuild.
