@@ -184,11 +184,15 @@
       in FIPS mode. Track as a POA&M. The rest of the baseline still
       applies. pro said:
       {{ ((_fips_enable.stdout | default('')) ~ ' ' ~ (_fips_enable.stderr | default(''))) | trim }}
-      Diagnose in **/var/log/ubuntu-advantage.log**, which is the only
-      place the unmet dependency is written. Do NOT reach for
-      `apt-get -s install ubuntu-fips`: pro REMOVES the fips-updates repo
-      again when the install fails, so afterwards apt reports the package
-      as simply not existing and hides the real conflict.
+      On noble this is EXPECTED as of 2026-09-08 and the cause is upstream:
+      ubuntu-fips-userspace 1.4.0~rc13 depends on libgnutls30, a name that has
+      not existed since noble's time_t rename -- and the FIPS suite itself
+      ships libgnutls30t64 at the exact version asked for. Nothing on this box
+      fixes that. It is a POA&M and a Canonical case; see trap 43.
+      Diagnosing a DIFFERENT failure: the reason is written only to
+      /var/log/ubuntu-advantage.log, and `apt-get -s install ubuntu-fips`
+      afterwards tells you nothing because pro deletes the repo when the
+      install fails. Query apt during its retry window instead (trap 43).
   when:
     - usg_enable_fips | default(false) | bool
     - _fips_enable is defined
