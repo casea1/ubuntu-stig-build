@@ -1,0 +1,446 @@
+<title>Workstation Imaging Traveler</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1c1c1c; --muted:#5a5a5a;
+  --line:#c8c8c8; --pre-bg:#f4f4f4; --warn:#8c1d18; --link:#1a4f8a;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#181a1b; --fg:#e6e6e6; --muted:#a0a0a0;
+    --line:#3a3d3f; --pre-bg:#101213; --warn:#e79a94; --link:#7fb2e5;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#181a1b; --fg:#e6e6e6; --muted:#a0a0a0;
+  --line:#3a3d3f; --pre-bg:#101213; --warn:#e79a94; --link:#7fb2e5;
+}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:Arial,Helvetica,sans-serif;
+  font-size:15px; line-height:1.55;
+  margin:0; padding:1.75rem 1.25rem 4rem;
+}
+#article{max-width:46rem;margin:0 auto}
+h1{font-size:1.75rem;line-height:1.2;margin:0 0 .4rem}
+h2{font-size:1.2rem;margin:2rem 0 .5rem;padding-bottom:.25rem;border-bottom:1px solid var(--line)}
+h3{font-size:1.02rem;margin:1.4rem 0 .35rem}
+p{margin:.5rem 0}
+ol,ul{margin:.5rem 0;padding-left:1.6rem}
+li{margin:.3rem 0}
+li > ul, li > ol{margin:.25rem 0}
+pre{
+  background:var(--pre-bg); border:1px solid var(--line);
+  font-family:Consolas,"Courier New",monospace; font-size:.85rem;
+  padding:.6rem .75rem; margin:.5rem 0; overflow-x:auto; white-space:pre;
+}
+code{font-family:Consolas,"Courier New",monospace;font-size:.9em}
+table{border-collapse:collapse;margin:.6rem 0;width:100%}
+th,td{border:1px solid var(--line);padding:.4rem .55rem;text-align:left;font-size:.92rem;vertical-align:top}
+th{background:var(--pre-bg);font-weight:bold}
+hr{border:0;border-top:1px solid var(--line);margin:1.5rem 0}
+.warn{color:var(--warn)}
+#tools{max-width:46rem;margin:2.5rem auto 0;padding-top:1rem;border-top:1px solid var(--line)}
+#tools p{font-size:.85rem;color:var(--muted)}
+#tools button{font:inherit;font-size:.85rem;padding:.35rem .7rem;cursor:pointer;
+  background:var(--pre-bg);color:var(--fg);border:1px solid var(--line)}
+#tools button:hover{border-color:var(--fg)}
+#tools button:focus-visible{outline:2px solid var(--link);outline-offset:2px}
+#src{width:100%;height:14rem;margin-top:.6rem;font-family:Consolas,"Courier New",monospace;
+  font-size:.75rem;background:var(--pre-bg);color:var(--fg);border:1px solid var(--line);padding:.5rem}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div id="article">
+
+<h1>Workstation Imaging Guide — Ubuntu 24.04 STIG Build</h1>
+
+<p><strong>Audience:</strong> Desktop support technicians. No Linux experience required.<br>
+<strong>Time:</strong> 2–3 hours, most of it unattended. Add about an hour per FPGA toolchain.</p>
+
+<p>Sections A through E apply to <strong>every</strong> machine. Section F applies only to
+engineering workstations that need the FPGA tools. Follow the steps in order and do not
+skip any. If a step fails, check <strong>Common Issues</strong> at the end, then escalate.</p>
+
+<h2>Which Profile Am I Building?</h2>
+
+<p>Confirm the profile with the requester before you start. It changes one command
+and whether you do Section F.</p>
+
+<table>
+  <tr><th>Profile</th><th>Used for</th><th>Build command in step 13</th><th>Section F (FPGA)</th></tr>
+  <tr><td><strong>development</strong></td><td>Engineering workstations</td><td><code>| sudo bash</code></td><td><strong>Yes</strong></td></tr>
+  <tr><td><strong>emi</strong></td><td>EMI, classified-capable</td><td><code>| sudo PROFILE=emi bash</code></td><td>No</td></tr>
+  <tr><td><strong>emi-unclass</strong></td><td>EMI, unclassified only</td><td><code>| sudo PROFILE=emi-unclass bash</code></td><td>No</td></tr>
+  <tr><td><strong>ai</strong></td><td>AI servers (Ubuntu Server, not Desktop)</td><td><code>| sudo PROFILE=ai bash</code></td><td>No</td></tr>
+  <tr><td><strong>baseline</strong></td><td>Hardening a machine that already exists</td><td><code>| sudo PROFILE=baseline bash</code></td><td>No</td></tr>
+</table>
+
+<h2>Before You Start</h2>
+
+<ul>
+  <li>Ubuntu <strong>24.04 Desktop</strong> USB installer — or <strong>24.04 Server</strong> for the <code>ai</code> profile</li>
+  <li><strong>Ubuntu Pro token</strong></li>
+  <li>A <strong>LUKS passphrase</strong> for this machine</li>
+  <li>The assigned <strong>hostname</strong></li>
+  <li>The <strong>profile</strong> from the table above</li>
+</ul>
+
+<hr>
+
+<h2>A. Firmware Settings</h2>
+
+<ol>
+  <li>Power on the machine and enter BIOS / UEFI setup.</li>
+  <li>Set boot mode to <strong>UEFI</strong>. Do not use Legacy or CSM.</li>
+  <li>Set <strong>Secure Boot</strong> to <strong>ON</strong>.</li>
+  <li>Move the USB drive to the top of the boot order, then save and exit.</li>
+</ol>
+
+<h2>B. Install Ubuntu</h2>
+
+<ol start="5">
+  <li>Boot from the USB drive and select <strong>Install Ubuntu</strong>.</li>
+  <li>At Installation type, select <strong>Erase disk and use LVM</strong>, then tick
+      <strong>Encrypt the new Ubuntu installation</strong>.</li>
+  <li>Enter the LUKS passphrase.
+    <p class="warn"><strong>WARNING:</strong> Record the passphrase before continuing. It is
+    the only way to recover this disk and it cannot be reset later.</p></li>
+  <li>Set the account name to <code>overlord</code>, exactly. Lower case, no spaces.
+    <ul>
+      <li>This is the account the build tools expect. A different name sends this
+          machine's permissions to an account nobody can sign into.</li>
+      <li>Do not use a personal account name here.</li>
+    </ul></li>
+  <li>Set the computer name to the assigned hostname. Do not leave it as <code>ubuntu</code>.</li>
+  <li>Complete the installation, remove the USB drive, reboot, and sign in as
+      <code>overlord</code>.</li>
+  <li>Connect the machine to the network. Leave it connected until Section D is complete.</li>
+</ol>
+
+<h2>C. Run the Build</h2>
+
+<ol start="12">
+  <li>Open a terminal and install the lab certificate:
+<pre>sudo curl -fsSLo /usr/local/share/ca-certificates/lab-root-ca.crt \
+  http://git.asplab.com/lab-root-ca.crt
+
+sudo update-ca-certificates</pre></li>
+
+  <li>Start the build. Use the command for this machine's profile from the table above.
+      The <code>development</code> profile is shown here:
+<pre>curl -fsSL https://git.asplab.com/ASPLAB/ubuntu-stig-build/raw/branch/main/bootstrap.sh | sudo bash</pre></li>
+
+  <li>When prompted, paste the <strong>Ubuntu Pro token</strong>. Nothing appears on
+      screen while you type. This is expected.</li>
+
+  <li>When prompted, enter the <strong>LUKS passphrase</strong>, so the disk unlocks
+      automatically at boot.</li>
+
+  <li>Monitor the build. It runs a long time and goes quiet for long stretches.
+      That is not a failure.
+<pre>sudo journalctl -u stig-build -f</pre></li>
+
+  <li>Wait until the build reports <code>active (exited)</code>:
+<pre>systemctl status stig-build</pre></li>
+</ol>
+
+<h2>D. Verify Sign-In, Then Reboot</h2>
+
+<p class="warn"><strong>WARNING:</strong> Do not skip step 18. The build rewrites the sign-in
+configuration. If sign-in is broken and the machine is rebooted, it must be rebuilt from
+a USB drive.</p>
+
+<ol start="18">
+  <li>Leave your current terminal <strong>open</strong>. Open a <strong>second</strong>
+      terminal window and run both commands:
+<pre>sudo -v
+
+sudo pam-auth-check</pre>
+    <ul>
+      <li><strong>Both succeed:</strong> continue to step 19.</li>
+      <li><strong>Either fails:</strong> stop and escalate. Do not reboot.</li>
+    </ul></li>
+
+  <li>Reboot the machine:
+<pre>sudo reboot</pre></li>
+
+  <li>Sign in again. The sign-in screen displays the DCSA banner.</li>
+</ol>
+
+<h2>E. Verify Hardening</h2>
+
+<p>This is the part of imaging that matters. A machine that boots is not a machine that
+is hardened. Work through every check below and do not release the machine until each
+one passes.</p>
+
+<h3>E1. Overall status</h3>
+
+<ol start="21">
+  <li>Run the status overview:
+<pre>sudo it-status</pre></li>
+
+  <li>Confirm FIPS mode is active:
+<pre>uname -r
+
+cat /proc/sys/crypto/fips_enabled</pre>
+    <ul>
+      <li><code>uname -r</code> must end in <code>-fips</code></li>
+      <li>The second command must return <code>1</code></li>
+      <li>If either is wrong, see <strong>FIPS did not enable</strong> in Common Issues</li>
+    </ul></li>
+</ol>
+
+<h3>E2. The organisation checklist</h3>
+
+<ol start="23">
+  <li>Run the checklist. It prints one line per item.
+<pre>sudo it-checklist</pre></li>
+
+  <li>Read every line. Items marked <code>FAIL</code> must be resolved or recorded before
+      the machine is released.
+    <ul>
+      <li>Item 6 checks the audit rules actually loaded into the kernel, which is a
+          common silent failure. It must not report a fault.</li>
+      <li>An item that says a manual step is outstanding (GRUB password, licence server)
+          is expected at this stage — note it and continue.</li>
+    </ul></li>
+</ol>
+
+<h3>E3. The compliance scan</h3>
+
+<ol start="25">
+  <li>Run a full OpenSCAP scan against the DISA STIG profile. This takes several minutes.
+<pre>sudo it-oscap</pre>
+    <ul>
+      <li>An exit code of <code>2</code> is normal. It means the scan ran and some rules
+          failed, which is expected on any real system.</li>
+    </ul></li>
+
+  <li>Confirm the scan wrote its results:
+<pre>ls -l /opt/ia/oscap/manual/</pre></li>
+
+  <li>Generate the STIG checklist from that scan, for the compliance record:
+<pre>sudo it-ckl</pre></li>
+
+  <li>Confirm the checklist file was produced:
+<pre>ls -l /opt/ia/stig/checklists/</pre></li>
+
+  <li>Copy the reports off the machine while it is still on the network. They are in
+      <code>/opt/ia/</code>.
+    <ul>
+      <li><code>/opt/ia/usg/</code> — the USG audit report</li>
+      <li><code>/opt/ia/oscap/</code> — the OpenSCAP scan results</li>
+      <li><code>/opt/ia/stig/checklists/</code> — the STIG checklist</li>
+    </ul></li>
+</ol>
+
+<h3>E4. Sign-in check</h3>
+
+<ol start="30">
+  <li>Confirm the DCSA banner appears at the sign-in screen and that <code>overlord</code>
+      can sign in after a reboot.</li>
+</ol>
+
+<p>Account passwords for engineers and auditors are <strong>not</strong> set during imaging.
+They are set at deployment, using the deployment checklist.</p>
+
+<h3>E5. Record the machine on the HW/SW list</h3>
+
+<ol start="31">
+  <li>Generate the inventory, then open it:
+<pre>sudo it-inventory
+
+cat /opt/it/inventory-$(hostname -s).txt</pre></li>
+
+  <li>Copy these onto the HW/SW list:
+    <ul>
+      <li><strong>Service tag</strong> — under <em>System</em>. This is the serial on the
+          sticker; on Dell it is the service tag.</li>
+      <li><strong>Disk serial numbers</strong> — under <em>Storage</em>, the
+          <code>SERIAL</code> column. Record one row per drive with its model and size.
+          If the machine has more than one drive, record all of them.</li>
+      <li>The hostname and MAC address, if your list has columns for them.</li>
+    </ul>
+    <p>Re-run <code>sudo it-inventory</code> after the last reboot. The file it writes is
+    what an assessor is shown, and it is what checklist item 16 looks for.</p></li>
+</ol>
+
+<hr>
+
+<h2>F. FPGA Toolchains — <code>development</code> Profile Only</h2>
+
+<p>Skip this entire section for <code>emi</code>, <code>emi-unclass</code>, <code>ai</code>
+and <code>baseline</code> machines. They do not use these tools.</p>
+
+<h3>F1. Copy the installers</h3>
+
+<ol start="33">
+  <li>From a Windows machine in the lab, open <strong>WinSCP</strong> and connect to this
+      workstation over SFTP, signing in as <code>overlord</code>.</li>
+  <li>Copy the Xilinx and Libero installers from the file server directly into:
+<pre>/opt/it/installers/</pre>
+    <ul>
+      <li>If WinSCP reports a permission error writing there, see
+          <strong>Cannot write to /opt/it/installers</strong> in Common Issues.</li>
+      <li>Use the <strong>offline</strong> installers. The web installers download during
+          setup and will not work on a deployed machine.</li>
+    </ul></li>
+  <li>Make the installers runnable:
+<pre>sudo chmod a+rx /opt/it/installers/*.bin</pre></li>
+</ol>
+
+<h3>F2. Xilinx (Vivado)</h3>
+
+<ol start="36">
+  <li>If you are using the web installer, generate the AMD token first. It needs an AMD
+      account and internet, and must be run with <code>sudo</code>:
+<pre>sudo /opt/it/installers/xsetup/xsetup -b AuthTokenGen</pre>
+    <ul><li>Skip this step when using the offline installer.</li></ul></li>
+
+  <li>Start the installation. It runs about an hour.
+<pre>sudo it-fpga install xilinx
+
+sudo journalctl -u xilinx-install -f</pre></li>
+</ol>
+
+<h3>F3. Libero</h3>
+
+<ol start="38">
+  <li>Prepare the install. It prints the exact command to run next. Use that command.
+<pre>sudo it-fpga install libero</pre>
+    <ul>
+      <li>The first time this runs on a machine it builds a library Libero needs and
+          Ubuntu does not ship, which takes a minute and <strong>needs the network</strong>.
+          Do this before the machine leaves the lab.</li>
+    </ul></li>
+
+  <li>Run the printed command <strong>as your own user, without sudo</strong>. Under
+      <code>sudo</code> the installer cannot open a window and fails.</li>
+
+  <li>In the installer, set:
+    <ul>
+      <li>Install directory: <code>/opt/microchip/Libero_SoC_2025.1</code></li>
+      <li>Common IP vault: <code>/opt/microchip/common</code></li>
+      <li>Installation type: <strong>Full</strong></li>
+      <li><strong>Decline</strong> the post-installation script when offered</li>
+    </ul></li>
+
+  <li>When it finishes, return ownership of the folder:
+<pre>sudo it-fpga fixup</pre></li>
+</ol>
+
+<h3>F4. Finish the toolchains</h3>
+
+<ol start="42">
+  <li>Configure the licence server:
+<pre>sudo it-fpga license --server 1702@licsrv</pre></li>
+
+  <li>Connect each programmer cable and authorise it:
+<pre>sudo it-usb enroll</pre></li>
+
+  <li>Run the final toolchain check. All items must report OK.
+<pre>sudo it-fpga status</pre></li>
+</ol>
+
+<hr>
+
+<h2>Common Issues</h2>
+
+<h3>The build failed and stopped part way</h3>
+<p>Read the last 40 lines of the log and escalate with them. The machine is not
+usable until the build completes.</p>
+<pre>sudo journalctl -u stig-build -n 40 --no-pager</pre>
+
+<h3>FIPS did not enable</h3>
+<p><code>uname -r</code> does not end in <code>-fips</code>, or
+<code>/proc/sys/crypto/fips_enabled</code> is <code>0</code>. Check whether the FIPS
+service is on:</p>
+<pre>pro status | grep fips</pre>
+<p>If it is not enabled, try again — this step sometimes times out reaching Canonical:</p>
+<pre>sudo pro enable fips-updates</pre>
+<p>Reboot afterwards. If it fails repeatedly, escalate; do not release the machine.</p>
+
+<h3>Cannot write to /opt/it/installers over WinSCP</h3>
+<p>That folder is restricted to administrators. Confirm you are signed in as
+<code>overlord</code> and not a personal account. If it still fails, create a folder in
+your home directory, upload there, then move the files:</p>
+<pre>sudo mv ~/Libero*.bin ~/FPGAs*.bin /opt/it/installers/</pre>
+
+<h3>"could not extract" when installing Xilinx</h3>
+<p>The installer file has no execute permission. Fix it and run the install again:</p>
+<pre>sudo chmod a+rx /opt/it/installers/*.bin</pre>
+
+<h3>Libero installer says "could not connect to display"</h3>
+<p>It was started with <code>sudo</code>. Run the command exactly as
+<code>sudo it-fpga install libero</code> printed it, as your own user, with no
+<code>sudo</code> in front.</p>
+
+<h3>Libero says "No write permission for the selected directory"</h3>
+<p>The build has run since you prepared the folder and took ownership back. Prepare it
+again, then restart the installer:</p>
+<pre>sudo it-fpga install libero</pre>
+
+<h3>Sign-in is slow, the screen is black, or the machine boots slowly</h3>
+<p>These usually share one cause and one fix. Run the repair tool, which reports first
+and changes nothing until you tell it to:</p>
+<pre>sudo it-repair
+
+sudo it-repair fix</pre>
+<p>Then sign out and back in. Reboot to see the boot-time change.</p>
+<p>If a session is still stuck at a black screen afterwards, sign in over SSH from
+another machine and reset that user's session:</p>
+<pre>sudo it-rdp status
+
+sudo it-rdp reset overlord</pre>
+<p class="warn">Do not restart the remote desktop service. It disconnects everyone on
+the machine and breaks their next sign-in.</p>
+
+<h3>Libero will not start: "libpng15.so.15: cannot open shared object file"</h3>
+<p>The library Libero needs was never built on this machine — normally
+<code>sudo it-fpga install libero</code> does it, but that step needs the network. Build
+it while the machine is still on the lab network:</p>
+<pre>sudo it-fpga compat build</pre>
+
+<h3>An engineer asks how to open their browser IDE</h3>
+<p>They do it themselves, with no admin help. Tell them to click
+<strong>IDE (in a browser)</strong> in the applications list, or run:</p>
+<pre>my-ide</pre>
+<p>It shows their address and password. It runs while they are signed in and stops when
+they sign out, which is intended. There is nothing to set up during imaging.</p>
+
+<h3>A programmer cable is plugged in but not detected</h3>
+<p>USB devices are blocked until authorised. Enrol the cable:</p>
+<pre>sudo it-usb enroll</pre>
+
+<h3>A config file prompt appears during updates</h3>
+<p>Choose <strong>N</strong> — keep the currently-installed version. The build's own
+configuration must be preserved.</p>
+
+</div>
+
+<div id="tools">
+  <p>Plain HTML — headings, lists, tables and code blocks only, with nothing the
+  ServiceNow editor will strip. Paste into a Knowledge article by copying the article
+  text above, or open the editor's source view and paste the markup below.</p>
+  <button type="button" id="show">Show HTML source for ServiceNow</button>
+  <textarea id="src" readonly hidden aria-label="Article HTML source"></textarea>
+</div>
+
+<script>
+(function(){
+  var btn = document.getElementById('show');
+  var box = document.getElementById('src');
+  btn.addEventListener('click', function(){
+    if (box.hidden) {
+      box.value = document.getElementById('article').innerHTML.trim();
+      box.hidden = false;
+      box.focus();
+      box.select();
+      btn.textContent = 'Hide HTML source';
+    } else {
+      box.hidden = true;
+      btn.textContent = 'Show HTML source for ServiceNow';
+    }
+  });
+})();
+</script>

@@ -41,8 +41,14 @@ Every step to take one machine from a USB stick to a working, hardened
 workstation. No background — the sections after this one explain the why.
 
 **Have ready:** Ubuntu 24.04 Desktop USB · Ubuntu Pro token · a LUKS passphrase
-(write it down, it is the only disk recovery key) · the Xilinx and Libero
-installers on a second USB · the hostname for this machine.
+(write it down, it is the only disk recovery key) · the hostname for this
+machine · the Xilinx and Libero installers, copied in over WinSCP at step 23.
+
+> **The technician-facing version of this checklist** — profile-split, with the
+> hardening verification written out and a common-issues section — is
+> `tools/kb/imaging-guide.html`, for pasting into a ServiceNow Knowledge
+> article. Keep the two in step: this section is the source, that file is what
+> the service desk reads.
 
 ### A. Firmware
 
@@ -56,9 +62,12 @@ installers on a second USB · the hostname for this machine.
 5. Boot the USB, choose **Install Ubuntu**.
 6. Installation type: **Erase disk and use LVM**, and tick **Encrypt the new Ubuntu installation**.
 7. Enter the LUKS passphrase. **Write it down now.**
-8. Admin account name: **`austin_case_adm`** — exactly this, or the build gives your groups to a different account.
+8. Admin account name: **`overlord`** — exactly this, lower case. It is
+   `dev_tools_user`, the account the build treats as the OS-install admin;
+   naming a person here gives that machine's tooling to an account the build
+   does not expect. Do not use a personal account name.
 9. Computer name: the hostname for this machine. Never `ubuntu`.
-10. Finish, remove the USB, reboot, log in as `austin_case_adm`.
+10. Finish, remove the USB, reboot, log in as `overlord`.
 11. Connect to the network and leave it connected until step 22.
 
 ### C. Build
@@ -133,7 +142,13 @@ Repeat for every `_adm`, `_aud` and `_dta` account this machine needs.
 
 ### F. Xilinx (Vivado)
 
-23. Copy the installer to `/opt/it/installers/` from the second USB.
+23. Copy the installers into `/opt/it/installers/` — WinSCP over SFTP from the
+    file server, signed in as `overlord`. Use the **offline** installers; the web
+    ones download during setup and will not work on a deployed machine. Then:
+
+```bash
+sudo chmod a+rx /opt/it/installers/*.bin
+```
 24. Generate the AMD token (needs an AMD account, and internet):
 
 ```bash
