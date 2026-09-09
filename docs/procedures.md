@@ -755,9 +755,15 @@ writable by you — which is the point, and also why it is not optional.
 > sudo it-fpga compat            # what is built, and what is still missing
 > ```
 >
-> **Per box.** The compat directory is created empty by the pull and populated
-> by this command, so a box that has never run it has an empty one and the
-> installer fails exactly as if nothing had been done.
+> **Per box, and `install libero` now does it for you.** The compat directory is
+> created *empty* by the pull, so on a box that has never built them the
+> installer dies at load with no window and nothing to read. Since the installer
+> binary needs libpng15 itself — not just the tools it installs — `sudo it-fpga
+> install libero` builds them first and only then prints the command to run.
+> The two above are the manual path, and what to run if the build fails.
+>
+> It needs `gcc`/`make` and a download. **Air-gapped:** carry
+> `libpng-1.5.30.tar.gz` in, and see `it-fpga compat build --source`.
 >
 > To run the **installer** with it, before the environment scripts exist:
 > ```bash

@@ -257,6 +257,12 @@ cmd_status() {
   fi
   [ -L /etc/pki/tls/certs/ca-bundle.crt ] && ok "RHEL CA path      linked" \
     || warn "RHEL CA path      missing -- Libero cannot verify TLS"
+  if [ -e "$COMPAT_DIR/libpng15.so.15" ]; then
+    ok "libpng15          built"
+  else
+    warn "libpng15          missing -- the Libero INSTALLER will not start, nor will Libero"
+    say  "                    sudo it-fpga compat build"
+  fi
   if dpkg --print-foreign-architectures 2>/dev/null | grep -qx i386; then
     ok "i386 multiarch    enabled"
   elif fips_on; then
@@ -1042,6 +1048,19 @@ cmd_install_libero() {
   say "  cookie for your session. That is the \"could not connect to display\""
   say "  you get from sudo, and xhost +SI:localuser:root is not the answer."
   say ""
+
+  # The INSTALLER ITSELF is linked against libpng15, not just the installed
+  # tools. With an empty compat directory it dies at load -- "libpng15.so.15:
+  # cannot open shared object file" -- before any window appears, and the
+  # engineer is left staring at a command this script told them to run. We are
+  # root here and the build needs root, so build it now rather than print a
+  # line that cannot work.
+  if [ ! -e "$COMPAT_DIR/libpng15.so.15" ]; then
+    warn "the compat libraries are not built yet -- the installer cannot start without them"
+    say ""
+    compat_build || die "build them first, then run this again: sudo it-fpga compat build"
+    head2 "Back to the Libero install for $who"
+  fi
 
   install -d -m 0755 "$MCHP_ROOT" 2>/dev/null || true
   chown -R "$who" "$MCHP_ROOT" 2>/dev/null \
