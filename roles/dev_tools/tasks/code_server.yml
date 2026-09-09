@@ -229,6 +229,56 @@
 # The sudoers grant this replaced is REMOVED, not merely unused. `systemctl
 # --user` needs no privilege, so nothing has to be granted -- and a live sudo
 # rule that no longer has a purpose is exactly the finding an assessor writes up.
+# ---------------------------------------------------------------------------
+# THE ENGINEER'S FRONT DOOR. `it-codeserver` is an admin tool and reads like
+# one; nobody should have to type it, or know what code-server is, to open an
+# editor. `my-ide` and a tile in the applications grid are the whole interface
+# for the people who actually use it -- start it, open it, show the password.
+# ---------------------------------------------------------------------------
+- name: "CODE-SERVER | my-ide (what an engineer runs)"
+  ansible.builtin.copy:
+    src: my-ide.sh
+    # /usr/local/BIN, not sbin: this is not an administrative command, and bin
+    # is on every user's PATH without argument.
+    dest: /usr/local/bin/my-ide
+    owner: root
+    group: root
+    mode: "0755"
+  when: dev_code_server_enabled | default(false) | bool
+  tags: [scripts]
+
+- name: "CODE-SERVER | The IDE tile in the applications grid"
+  ansible.builtin.copy:
+    src: my-ide.desktop
+    dest: /usr/share/applications/my-ide.desktop
+    owner: root
+    group: root
+    mode: "0644"
+  register: _cs_tile
+  when: dev_code_server_enabled | default(false) | bool
+  tags: [scripts]
+
+# GNOME reads the desktop DATABASE, not the directory: without this the tile
+# can stay missing until the next reboot.
+- name: "CODE-SERVER | Refresh the desktop database"
+  ansible.builtin.command: update-desktop-database /usr/share/applications
+  changed_when: false
+  failed_when: false
+  when: _cs_tile is defined and _cs_tile is changed
+  tags: [scripts]
+
+# copy only ever creates (trap 3): a box where code-server was turned off keeps
+# offering a tile that starts nothing.
+- name: "CODE-SERVER | Take the engineer's front door away when it is disabled"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /usr/local/bin/my-ide
+    - /usr/share/applications/my-ide.desktop
+  when: not (dev_code_server_enabled | default(false) | bool)
+  tags: [scripts]
+
 - name: "CODE-SERVER | Remove the old sudo grant (a user service needs none)"
   ansible.builtin.file:
     path: "/etc/sudoers.d/60-{{ dev_code_server_group }}-codeserver"

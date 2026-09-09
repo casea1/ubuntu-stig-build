@@ -1777,19 +1777,35 @@ Derived from the UID, not from a position in a list, so removing one engineer
 does not move everyone else's port. With the defaults, uid 1000 → 8080, 1001 →
 8081, and so on.
 
-**What you hand an engineer.** No sudo, no admin, no ticket:
+**What you hand an engineer: nothing.** There is an **IDE (in a browser)** tile
+in the applications grid. Clicking it starts their instance and opens it — that
+is the whole workflow, and it is all most people ever need.
+
+For anyone who prefers a shell, the command is `my-ide` — no sudo, no admin, and
+nothing named after the IT department:
 
 ```bash
-it-codeserver mine                    # my URL, my password, is it running
-it-codeserver mine start              # start it
-it-codeserver mine stop
-it-codeserver mine enable             # ...and start it whenever I log in
-it-codeserver mine log
+my-ide                # start it if needed, then open it
+my-ide stop
+my-ide status         # running? on this machine? from another PC?
+my-ide password
+my-ide remote         # the address to use from a Windows PC on the LAN
+my-ide always         # ...and start it every time I log in
 ```
 
+`it-codeserver` still exists and is unchanged, but it is an **admin** tool and
+reads like one. Nobody should have to type it, or know what "code-server" is, to
+open an editor.
+
+> **The tile opens `https://localhost:<port>`, and that matters.** The
+> certificate code-server generates is issued to *localhost*, so reaching it by
+> that name is also what stops the browser warning. `my-ide remote` gives the IP
+> form for another PC, and says to expect the warning there.
+
 **It is a systemd _user_ service**, so it is genuinely theirs — `systemctl
---user` needs no privilege, which is why none is granted. `mine` takes no
-username: it acts on whoever is calling.
+--user` needs no privilege, which is why none is granted. Underneath, `my-ide`
+and `it-codeserver mine` drive the same unit; `mine` takes no username and acts
+on whoever is calling.
 
 This is what makes "nothing at boot" and "engineers help themselves"
 compatible, and they were not before. As a **system** unit the instance could
