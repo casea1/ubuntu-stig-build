@@ -29,6 +29,7 @@
   environment:
     HOME: /root
 
+  tags: [packages]
 - name: "CODE-SERVER | Password store (root-only)"
   ansible.builtin.file:
     path: /etc/code-server
@@ -161,6 +162,7 @@
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "0750"
 
+  tags: [scripts]
 - name: "CODE-SERVER | Short command (it-codeserver)"
   ansible.builtin.file:
     src: "{{ it_scripts_dir | default('/opt/it/scripts') }}/code-server-status.sh"
@@ -168,6 +170,7 @@
     state: link
     force: true
 
+  tags: [scripts]
 - name: "CODE-SERVER | Where things are"
   ansible.builtin.debug:
     msg: >-

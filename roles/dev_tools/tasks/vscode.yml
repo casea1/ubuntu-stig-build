@@ -40,6 +40,7 @@
     - _vsc_install.rc != 0
     - "'already installed' not in (_vsc_install.stdout | default(''))"
 
+  tags: [packages]
 - name: "VSCODE | Readable by everyone (the store is shared, not per-user)"
   ansible.builtin.file:
     path: "{{ vscode_shared_extensions_dir }}"
@@ -123,6 +124,7 @@
     group: "{{ ia_it_group | default('sudo') }}"
     mode: "0750"
 
+  tags: [scripts]
 - name: "VSCODE | Short command (it-vscode)"
   ansible.builtin.file:
     src: "{{ it_scripts_dir | default('/opt/it/scripts') }}/vscode-extensions.sh"
@@ -130,7 +132,12 @@
     state: link
     force: true
 
+  tags: [scripts]
 - name: "VSCODE | Link the shared set into every existing account"
   ansible.builtin.command:
     cmd: /usr/local/sbin/it-vscode link --all --quiet
   changed_when: false
+  # `scripts`, NOT `packages`: this is the task that repairs root-owned
+  # ~/.local and ~/.vscode on every account (trap 44). It has to reach a box on
+  # a light pull, which is the pull people actually run.
+  tags: [scripts]

@@ -174,7 +174,13 @@
     - role: pro_attach              # Ubuntu Pro attach + FIPS enable, before i386 multiarch exists
 
     - role: dev_tools               # compilers/SDKs, /opt/eng-venv, VS Code extensions, docker.io (development + emi)
-      tags: [packages]
+      # NO role-level `packages` tag (trap 34). A role tag is inherited by every
+      # task in the role and --skip-tags BEATS a task's own tag, so this made
+      # `it-pull light` skip the WHOLE role -- including the it-vscode and
+      # it-codeserver installs and the `it-vscode link --all` that repairs
+      # root-owned home directories. A fix could only ship on a full pull, which
+      # is exactly what happened on dev-16. The heavy halves carry the tag
+      # themselves now; see tasks/main.yml.
       when: is_development or is_emi
     # FPGA vendor toolchain SCAFFOLDING -- deps, i386 multiarch, udev, the
     # system-wide environment and the licence server. It does NOT install
