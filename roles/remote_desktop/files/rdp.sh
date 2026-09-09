@@ -100,6 +100,22 @@ xrdp_xservers() {
 # one either spares an orphan or kills a working desktop. Observed on dev-13:
 # the running sesman was PID 277906 while an orphaned session's was 182320,
 # both PPID 1, and only systemd can say which is which.
+# `ps -o etime=` prints [[DD-]hh:]mm:ss, so a 36-minute session reads "36:22"
+# and a 36-HOUR one reads "1-12:22:14". Those are one glance apart and the
+# short form has already been misread as hours during an incident, which sent
+# the diagnosis after a stale session that did not exist. Print the unit.
+fmt_age() {   # $1 = pid -> "36m 22s"
+  local secs d h m
+  secs="$(ps -o etimes= -p "$1" 2>/dev/null | tr -d ' ')"
+  case "$secs" in ''|*[!0-9]*) printf 'unknown'; return ;; esac
+  d=$(( secs / 86400 )); h=$(( (secs % 86400) / 3600 ))
+  m=$(( (secs % 3600) / 60 )); s=$(( secs % 60 ))
+  if   [ "$d" -gt 0 ]; then printf '%dd %dh %dm' "$d" "$h" "$m"
+  elif [ "$h" -gt 0 ]; then printf '%dh %dm' "$h" "$m"
+  else                      printf '%dm %ds' "$m" "$s"
+  fi
+}
+
 MAIN_SESMAN=""
 main_sesman() {
   [ -n "$MAIN_SESMAN" ] && { printf '%s' "$MAIN_SESMAN"; return; }
@@ -187,7 +203,7 @@ cmd_status() {
   while read -r disp pid ppid user; do
     [ -n "$disp" ] || continue
     any=1
-    age="$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ')"
+    age="$(fmt_age "$pid")"
     if is_orphan "$pid" "$ppid"; then
       orph=$((orph + 1))
       bad ":$disp  $user  pid $pid  up $age  ORPHANED (nothing is managing it)"
@@ -293,7 +309,7 @@ cmd_reset() {
   while read -r disp pid ppid u; do
     [ "$u" = "$user" ] || continue
     found=1
-    say "  :$disp  pid $pid  up $(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ')"
+    say "  :$disp  pid $pid  up $(fmt_age "$pid")"
   done < <(xrdp_xservers)
   [ "$found" -eq 1 ] || say "  ${DIM}no X server for $user -- clearing logind and sockets anyway${R}"
 
