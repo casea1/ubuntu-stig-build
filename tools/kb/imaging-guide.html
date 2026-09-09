@@ -1,3 +1,21 @@
+<!doctype html>
+<!--
+  GR imaging guide. Source of truth for the steps is docs/procedures.md 1.0.
+
+  This file is a COMPLETE document so it renders correctly when opened straight
+  from disk. Without the doctype a browser opens it in quirks mode, which is how
+  it was shipped before and why local copies did not match the published page.
+
+  Published as an Artifact by stripping the wrapper, since that service supplies
+  its own <head>:
+    sed -e '/^<!doctype/,/^<title>/{/^<title>/!d}' -e '/^<\/head>$/d' \
+        -e '/^<body>$/d' -e '/^<\/body>$/d' -e '/^<\/html>$/d' \
+        tools/kb/imaging-guide.html > fragment.html
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GR - Ubuntu 24.04 Imaging Guide</title>
 <style>
 /* Light only, deliberately. This page is pasted into a ServiceNow Knowledge
@@ -59,6 +77,9 @@ hr{border:0;border-top:1px solid var(--line);margin:1.5rem 0}
   font-size:.75rem;background:var(--pre-bg);color:var(--fg);border:1px solid var(--line);padding:.5rem}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
+</head>
+<body>
+
 
 <div id="article" style="padding:0 4%;">
 
@@ -525,3 +546,6 @@ configuration must be preserved.</p>
   });
 })();
 </script>
+
+</body>
+</html>
