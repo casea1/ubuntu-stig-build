@@ -97,6 +97,9 @@
     direction: outgoing
     policy: allow
 
+# `limit` is right ONLY for single-connection protocols -- SSH, RDP. It drops a
+# source after 6 connections in 30 seconds, which any HTTP service exceeds on
+# its first real page load. Do not add a web port to stig_firewall_limit_ports.
 - name: "FW | Rate-limit each configured inbound service (+ RDP)"
   community.general.ufw:
     rule: limit
@@ -109,15 +112,34 @@
   loop_control:
     label: "{{ item.port }}/{{ item.proto | default('tcp') }}"
 
-# A RANGE, not one port: code-server is single-user per instance, so every
-# engineer has their own, and the port is derived from their UID. The span is
-# dev_code_server_port_span -- keep it tight, it is what is reachable on the LAN.
-- name: "FW | Open code-server ({{ dev_code_server_port | default(8080) }}:{{ (dev_code_server_port | default(8080) | int) + (dev_code_server_port_span | default(20) | int) - 1 }}/tcp, rate-limited) when enabled"
+# THIS WAS `limit` AND IT BROKE THE SERVICE. Confirmed on dev-18: the login page
+# is a couple of requests and loads, then the editor behind it opens dozens of
+# connections at once, ufw drops the source, and every request after the
+# password times out. [UFW LIMIT BLOCK] ... DPT=8080 in the kernel log, from the
+# engineer's own PC. Rate-limiting is for SSH-shaped protocols; the protection a
+# LAN-exposed IDE actually needs is a source restriction, so that is what
+# dev_code_server_allow_from is for.
+#
+# The old rule has to be DELETED, not just superseded: ufw evaluates in order,
+# and a LIMIT sitting ahead of the new ALLOW still wins.
+- name: "FW | Remove the old rate-limited code-server rule (it blocked the editor)"
   community.general.ufw:
     rule: limit
     port: "{{ dev_code_server_port | default(8080) | int }}:{{ (dev_code_server_port | default(8080) | int) + (dev_code_server_port_span | default(20) | int) - 1 }}"
     proto: tcp
-    comment: "code-server, one port per user (rate-limited)"
+    delete: true
+  failed_when: false
+
+# A RANGE, not one port: code-server is single-user per instance, so every
+# engineer has their own, and the port is derived from their UID. The span is
+# dev_code_server_port_span -- keep it tight, it is what is reachable on the LAN.
+- name: "FW | Open code-server ({{ dev_code_server_port | default(8080) }}:{{ (dev_code_server_port | default(8080) | int) + (dev_code_server_port_span | default(20) | int) - 1 }}/tcp) when enabled"
+  community.general.ufw:
+    rule: allow
+    port: "{{ dev_code_server_port | default(8080) | int }}:{{ (dev_code_server_port | default(8080) | int) + (dev_code_server_port_span | default(20) | int) - 1 }}"
+    proto: tcp
+    from_ip: "{{ dev_code_server_allow_from | default('any', true) }}"
+    comment: "code-server, one port per user"
   when:
     - dev_code_server_enabled | default(false) | bool
     - dev_code_server_bind_addr | default('0.0.0.0') != '127.0.0.1'
@@ -126,24 +148,44 @@
 # previous build has to go or it outlives the reason it existed.
 - name: "FW | Close code-server when it is loopback-only"
   community.general.ufw:
-    rule: limit
-    port: "{{ dev_code_server_port | default(8080) | string }}"
+    rule: "{{ item.rule }}"
+    port: "{{ item.port }}"
     proto: tcp
     delete: true
   failed_when: false
+  # Both shapes and both widths: a box built before this change carries a LIMIT,
+  # one built after carries an ALLOW, and older builds used a single port rather
+  # than the range. Any of them left behind outlives the reason it existed.
+  loop:
+    - { rule: limit, port: "{{ dev_code_server_port | default(8080) | string }}" }
+    - { rule: allow, port: "{{ dev_code_server_port | default(8080) | string }}" }
+    - { rule: limit, port: "{{ dev_code_server_port | default(8080) | int }}:{{ (dev_code_server_port | default(8080) | int) + (dev_code_server_port_span | default(20) | int) - 1 }}" }
+    - { rule: allow, port: "{{ dev_code_server_port | default(8080) | int }}:{{ (dev_code_server_port | default(8080) | int) + (dev_code_server_port_span | default(20) | int) - 1 }}" }
+  loop_control:
+    label: "{{ item.rule }} {{ item.port }}"
   when:
     - dev_code_server_enabled | default(false) | bool
     - dev_code_server_bind_addr | default('0.0.0.0') == '127.0.0.1'
 
-- name: "FW | Open Cockpit ({{ cockpit_port | default(9090) }}/tcp, rate-limited) when enabled"
-  # Privileged management surface (root-capable). Rate-limited; restrict it to an
-  # admin subnet by setting cockpit_allow_from (else it's opened to any source).
+# Cockpit is a web console and had the identical fault: `limit` would drop the
+# browser partway through loading it. Same remedy -- allow the port, restrict
+# the source. Here the source restriction matters more than anywhere else on the
+# box, because this surface is root-capable.
+- name: "FW | Remove the old rate-limited Cockpit rule (it blocked the console)"
   community.general.ufw:
     rule: limit
     port: "{{ cockpit_port | default(9090) | string }}"
     proto: tcp
+    delete: true
+  failed_when: false
+
+- name: "FW | Open Cockpit ({{ cockpit_port | default(9090) }}/tcp) when enabled"
+  community.general.ufw:
+    rule: allow
+    port: "{{ cockpit_port | default(9090) | string }}"
+    proto: tcp
     from_ip: "{{ cockpit_allow_from | default('any', true) }}"
-    comment: "Cockpit web console (rate-limited)"
+    comment: "Cockpit web console"
   when: cockpit_enabled | default(true) | bool
 
 - name: "FW | Enable ufw and persist across reboot"

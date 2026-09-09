@@ -551,6 +551,12 @@ dev_code_server_port_span: 20         # how many ports the range covers
 # joins (it also owns /home/shared) -- so `it-adduser` gives a new engineer one
 # without a further step, and removing them from the group takes it away.
 # Empty string = the old behaviour, dev_tools_user only.
+# Who may reach the IDE ports. 'any' keeps them open to the whole LAN, which is
+# what they were. A subnet or a single address here is the real protection --
+# the ufw rule used to be `limit`, which cannot protect a web service (it drops
+# a browser mid-page-load: see reference.md trap 12b) and only broke it.
+dev_code_server_allow_from: any
+
 dev_code_server_group: sentry
 
 # Accounts in that group that should NOT get one. Accounts that cannot log in

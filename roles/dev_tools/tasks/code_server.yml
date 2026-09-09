@@ -151,6 +151,12 @@
   changed_when: false
   failed_when: false
 
+- name: "CODE-SERVER | Is the short command still the old symlink?"
+  ansible.builtin.stat:
+    path: /usr/local/sbin/it-codeserver
+  register: _cs_link_stat
+  tags: [scripts]
+
 - name: "CODE-SERVER | Install it-codeserver"
   ansible.builtin.copy:
     src: code-server-status.sh
@@ -163,14 +169,66 @@
     mode: "0750"
 
   tags: [scripts]
-- name: "CODE-SERVER | Short command (it-codeserver)"
+# A REAL FILE, not a symlink into /opt/it. That directory is 2770 root:sudo, so
+# an engineer cannot traverse it: stat() on the link target fails with EACCES,
+# bash skips the PATH entry, and the shell says "command not found" for a
+# command they are explicitly meant to run (the same trap as it_scripts_public).
+# `it-codeserver mine` is the ONLY way an engineer can find their port and
+# password or start their instance, so it has to be reachable by them.
+- name: "CODE-SERVER | Drop the old symlink before placing the real file"
   ansible.builtin.file:
-    src: "{{ it_scripts_dir | default('/opt/it/scripts') }}/code-server-status.sh"
-    dest: /usr/local/sbin/it-codeserver
-    state: link
-    force: true
-
+    path: /usr/local/sbin/it-codeserver
+    state: absent
+  when: (_cs_link_stat.stat.islnk | default(false)) | bool
   tags: [scripts]
+
+- name: "CODE-SERVER | Short command (it-codeserver)"
+  ansible.builtin.copy:
+    src: code-server-status.sh
+    dest: /usr/local/sbin/it-codeserver
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [scripts]
+# ---------------------------------------------------------------------------
+# Instances are not started at boot, so without this an engineer simply cannot
+# use the IDE they are entitled to: the unit is a SYSTEM unit, starting it needs
+# root, and they are not admins.
+#
+# The grant names `mine` and nothing else. `mine` derives the account from the
+# CALLER inside the script and takes no username argument, so a member of the
+# group can start, stop and restart their own instance and has no way to name
+# somebody else's -- which would run a server as that person, on their port,
+# behind their password.
+#
+# Deliberately NOT NOPASSWD, matching the it-repo grant: the STIG requires sudo
+# to authenticate, and this belongs in /var/log/sudo.log with a name against it.
+- name: "CODE-SERVER | Let the {{ dev_code_server_group }} group run their own instance"
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/60-{{ dev_code_server_group }}-codeserver"
+    owner: root
+    group: root
+    mode: "0440"
+    content: |
+      ## Managed by ansible (dev_tools/code_server.yml) -- do not edit by hand.
+      ## `mine` acts on the calling account only; it accepts no username.
+      %{{ dev_code_server_group }} ALL=(root) /usr/local/sbin/it-codeserver mine, \
+                          /usr/local/sbin/it-codeserver mine start, \
+                          /usr/local/sbin/it-codeserver mine stop, \
+                          /usr/local/sbin/it-codeserver mine restart
+    validate: "visudo -cf %s"      # a malformed drop-in costs EVERYONE sudo
+  when: dev_code_server_enabled | default(false) | bool
+  tags: [scripts]
+
+# Ansible only ever creates: a box where code-server was turned off keeps the
+# grant forever unless it is taken away here.
+- name: "CODE-SERVER | Remove that grant when code-server is not enabled"
+  ansible.builtin.file:
+    path: "/etc/sudoers.d/60-{{ dev_code_server_group }}-codeserver"
+    state: absent
+  when: not (dev_code_server_enabled | default(false) | bool)
+  tags: [scripts]
+
 - name: "CODE-SERVER | Where things are"
   ansible.builtin.debug:
     msg: >-

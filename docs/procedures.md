@@ -1777,6 +1777,31 @@ Derived from the UID, not from a position in a list, so removing one engineer
 does not move everyone else's port. With the defaults, uid 1000 → 8080, 1001 →
 8081, and so on.
 
+**What you hand an engineer.** Instances are configured by the pull and *not*
+started at boot, so this is the whole of what they need — no admin, no ticket:
+
+```bash
+it-codeserver mine                    # my URL, my password, is it running
+sudo it-codeserver mine start         # start it (again after every reboot)
+sudo it-codeserver mine stop
+sudo it-codeserver mine restart
+```
+
+`mine` takes **no username** — it acts on whoever is calling. That is what makes
+it safe to grant the entitled group sudo on, and the grant
+(`/etc/sudoers.d/60-<group>-codeserver`) names those four forms and nothing
+else. Naming a user is an admin action, because starting somebody else's
+instance runs a server *as them*, on their port, behind their password. The
+read-only `it-codeserver mine` needs no sudo at all.
+
+> The command is installed as a **real file** in `/usr/local/sbin`, not a
+> symlink into `/opt/it/scripts`. That directory is `2770 root:sudo`, so an
+> engineer cannot traverse it: `stat()` on the target fails with `EACCES`, bash
+> skips the PATH entry, and the shell reports *"command not found"* for a
+> command they are meant to run. Same trap as `it_scripts_public`.
+
+**The admin view**, over the whole box:
+
 ```bash
 sudo it-codeserver                    # who, on what port, and is it up
 sudo it-codeserver password <user>    # their password (generated, root-only)
@@ -1784,6 +1809,10 @@ sudo it-codeserver url <user>
 sudo it-codeserver restart <user>
 sudo it-codeserver log <user> 100
 ```
+
+The URL printed is the box's **IP**, not its hostname. On a lab LAN with no DNS
+record for `dev-18`, a browser given the hostname reports *"dev-18 took too long
+to respond"* and it reads as the service being down.
 
 **Entitlement is group membership.** Anyone in `dev_code_server_group`
 (`sentry` by default — the group every standing account joins) gets an

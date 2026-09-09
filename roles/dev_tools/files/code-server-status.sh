@@ -6,6 +6,19 @@
 # not from a position in a list, so it is stable for a person: removing someone
 # from the group does not move everyone else.
 #
+# FOR AN ENGINEER -- your own instance, no admin needed:
+#
+#   it-codeserver mine              your URL, your password, is it running
+#   sudo it-codeserver mine start   start it (they are NOT started at boot)
+#   sudo it-codeserver mine stop
+#   sudo it-codeserver mine restart
+#
+# `mine` takes no username: it acts on whoever is calling. That is what makes
+# it safe to grant the whole entitled group sudo on, and why the grant names
+# these exact forms.
+#
+# FOR AN ADMIN -- the whole box:
+#
 #   it-codeserver              who is running, on what, and whether it is up
 #   it-codeserver password <user>   show that user's password (root only)
 #   it-codeserver url <user>        the URL to hand them
@@ -37,7 +50,25 @@ bad()   { printf '  %sFAIL%s %s\n' "$RED" "$R" "$*"; }
 usage() { awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"; }
 
 case "${1:-}" in -h|--help|help) usage; exit 0 ;; esac
-[ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
+
+# `mine` is the ENGINEER's half of this command and the read-only form of it
+# must work with no privilege at all: instances do not start at boot, so an
+# engineer who cannot run this has no way to find their own port, password or
+# state. Everything else still elevates.
+_needs_root=1
+if [ "${1:-}" = mine ]; then
+  case "${2:-}" in ""|status) _needs_root=0 ;; esac
+fi
+[ "$_needs_root" = 0 ] || [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
+
+# Who "mine" means. Under sudo the caller is SUDO_USER; run directly it is
+# whoever is logged in. Never root -- root has no code-server instance, and
+# silently operating on an account called "root" would be worse than refusing.
+whoami_real() {
+  local me="${SUDO_USER:-$(id -un)}"
+  [ "$me" = root ] && die "run this as yourself, not as root -- 'it-codeserver status' lists everyone"
+  printf '%s' "$me"
+}
 
 instances() {   # every code-server@<user> this box knows about
   # NOT `list-unit-files 'code-server@*'`. That matches the TEMPLATE --
@@ -174,8 +205,74 @@ url_for() {
   printf 'https://%s:%s/' "$host" "$port"
 }
 
+# ---------------------------------------------------------------------------
+# THE ENGINEER'S VIEW. Everything above is written for an admin looking at the
+# whole box. An engineer needs four things about their OWN account -- is it
+# running, what is the URL, what is the password, how do I start it -- and has
+# no sudo for the fleet view. `mine` takes no username argument on purpose:
+# that is what makes the sudoers grant safe to give the whole group, since the
+# account is derived here from who is calling rather than from an argument.
+# ---------------------------------------------------------------------------
+cmd_mine() {
+  local me url state pw conf
+  # `|| exit` is load-bearing: die() inside a command substitution exits the
+  # SUBSHELL, so without this a refusal would print its message and then carry
+  # on with an empty username.
+  me="$(whoami_real)" || exit 1
+  conf="$(conf_of "$me")"
+  [ -r "$conf" ] || die "no code-server configured for $me -- ask an admin: you may not be in the entitled group"
+
+  url="$(url_for "$me")"
+  state="$(systemctl is-active "code-server@$me" 2>/dev/null || echo inactive)"
+  # The password is in the user's OWN 0600 config, so reading it needs no
+  # privilege. /etc/code-server/<user>.password is the root-only copy and is
+  # only reachable on the elevated path.
+  pw="$(sed -nE 's/^password:[[:space:]]*//p' "$conf" 2>/dev/null | tail -1)"
+  [ -n "$pw" ] || { [ -r "/etc/code-server/$me.password" ] && pw="$(cat "/etc/code-server/$me.password")"; }
+
+  head2 "code-server for $me"
+  printf '  %-10s %s\n' "state" "$([ "$state" = active ] && printf '%s%s%s' "$GRN" "$state" "$R" || printf '%s%s%s' "$RED" "$state" "$R")"
+  printf '  %-10s %s\n' "url" "$url"
+  printf '  %-10s %s\n' "password" "${pw:-<not readable -- see ~/.config/code-server/config.yaml>}"
+  say ""
+  if [ "$state" = active ]; then
+    say "  ${DIM}Open the URL above. Your browser will warn about the certificate --${R}"
+    say "  ${DIM}it is self-signed by this box. Accept it and log in with the password.${R}"
+  else
+    say "  ${YEL}Not running.${R} Start it with:"
+    say ""
+    say "      ${B}sudo it-codeserver mine start${R}"
+    say ""
+    say "  ${DIM}It does not start at boot, so run that again after a reboot.${R}"
+  fi
+  say ""
+}
+
+cmd_mine_action() {   # $1 = start|stop|restart
+  local me action="$1"
+  # Split from the declaration on purpose: `local me=$(...)` takes the exit
+  # status of `local`, which is always 0, so a refusal could not stop it.
+  me="$(whoami_real)" || exit 1
+  [ -r "/etc/code-server/$me.password" ] \
+    || die "no instance configured for $me -- are you in the entitled group, and has a pull run?"
+  systemctl "$action" "code-server@$me" \
+    || die "code-server@$me failed to $action -- an admin can read: it-codeserver log $me"
+  case "$action" in
+    start)   say "started code-server@$me   ${DIM}$(url_for "$me")${R}"
+             say "  ${DIM}Not enabled at boot -- start it again after a reboot.${R}" ;;
+    stop)    say "stopped code-server@$me" ;;
+    restart) say "restarted code-server@$me   ${DIM}$(url_for "$me")${R}" ;;
+  esac
+}
+
 case "${1:-status}" in
   ""|status) cmd_status ;;
+  mine)
+    case "${2:-status}" in
+      status|"")            cmd_mine ;;
+      start|stop|restart)   cmd_mine_action "$2" ;;
+      *) die "usage: it-codeserver mine [start|stop|restart]" ;;
+    esac ;;
   password|passwd)
     [ -n "${2:-}" ] || die "usage: it-codeserver password <user>"
     f="/etc/code-server/$2.password"
