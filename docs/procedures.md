@@ -178,7 +178,28 @@ sudo it-fpga license --server 1702@licsrv
 sudo it-usb enroll
 ```
 
-32. Final check — everything should read OK:
+32. Record the machine on the HW/SW list. Generate the inventory, then read
+    the two values off it:
+
+```bash
+sudo it-inventory
+cat /opt/it/inventory-$(hostname -s).txt
+```
+
+    Copy onto the HW/SW list:
+
+    a. **Service tag** — under *System*. The serial on the sticker; on Dell
+       this is the service tag.
+    b. **Disk serial numbers** — under *Storage*, the `SERIAL` column. Record
+       one per drive, including the model and size beside it. On a machine
+       with more than one drive, all of them.
+    c. The hostname and the MAC address, if your list has columns for them.
+
+    Re-run `sudo it-inventory` after the final reboot — it is also what
+    `it-checklist` item 16 looks for, and the file it writes is what an
+    assessor is shown.
+
+33. Final check — everything should read OK:
 
 ```bash
 sudo it-fpga status
@@ -2584,6 +2605,15 @@ one archive.
    tar czf baseline.git.tar.gz baseline.git
    sha256sum baseline.git.tar.gz
    ```
+
+   > **From a Windows lab PC, double-click `make-baseline.bat` instead.** Copy
+   > `tools/ssd/make-baseline.bat` from this repo onto the removable SSD once;
+   > from then on, plugging the SSD into a networked lab PC and running it
+   > leaves a current `baseline.git.tar.gz` beside it, replacing the previous
+   > one, plus a `.sha256` for step 3. It works from whatever drive letter the
+   > SSD gets, refuses to overwrite a good archive if anything fails, and
+   > checks the clone really is this baseline before packing — so a wrong
+   > repository is caught in the lab rather than in front of a fielded box.
 
 2. **Copy `baseline.git.tar.gz` to the box** — WinSCP (SFTP, port 22) from the file server,
    into your own home directory. You cannot write `/opt` over SFTP: the STIG `umask 077`
