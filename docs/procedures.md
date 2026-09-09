@@ -23,6 +23,7 @@ It reads the commands from what is actually installed, so an EMI laptop lists `i
 
 | | |
 |---|---|
+| **[1.0 Imaging checklist](#10-imaging-checklist-follow-in-order)** | the whole build as numbered steps, no background |
 | **[1. Build a box](#1-build-a-box)** | fresh install → hardened, from nothing |
 | **[2. Deploy a box](#2-deploy-a-box)** | passwords, GRUB, going classified, air-gapping |
 | **[3. Routine operations](#3-routine-operations)** | health, checklists, scans, transfers, USB |
@@ -33,6 +34,160 @@ It reads the commands from what is actually installed, so an EMI laptop lists `i
 ---
 
 # 1. Build a box
+
+## 1.0 Imaging checklist (follow in order)
+
+Every step to take one machine from a USB stick to a working, hardened
+workstation. No background — the sections after this one explain the why.
+
+**Have ready:** Ubuntu 24.04 Desktop USB · Ubuntu Pro token · a LUKS passphrase
+(write it down, it is the only disk recovery key) · the Xilinx and Libero
+installers on a second USB · the hostname for this machine.
+
+### A. Firmware
+
+1. Power on, enter BIOS/UEFI setup.
+2. **Boot mode: UEFI** (not Legacy/CSM).
+3. **Secure Boot: ON.**
+4. Set boot order to the USB stick. Save and exit.
+
+### B. Install Ubuntu
+
+5. Boot the USB, choose **Install Ubuntu**.
+6. Installation type: **Erase disk and use LVM**, and tick **Encrypt the new Ubuntu installation**.
+7. Enter the LUKS passphrase. **Write it down now.**
+8. Admin account name: **`austin_case_adm`** — exactly this, or the build gives your groups to a different account.
+9. Computer name: the hostname for this machine. Never `ubuntu`.
+10. Finish, remove the USB, reboot, log in as `austin_case_adm`.
+11. Connect to the network and leave it connected until step 22.
+
+### C. Build
+
+12. Open a terminal. Trust the lab CA:
+
+```bash
+sudo curl -fsSLo /usr/local/share/ca-certificates/lab-root-ca.crt \
+  http://git.asplab.com/lab-root-ca.crt
+sudo update-ca-certificates
+```
+
+13. Start the build:
+
+```bash
+curl -fsSL https://git.asplab.com/ASPLAB/ubuntu-stig-build/raw/branch/main/bootstrap.sh \
+  | sudo bash
+```
+
+14. Paste the **Ubuntu Pro token** when asked (nothing appears as you type).
+15. Enter the **LUKS passphrase** when asked, to enable TPM auto-unlock.
+16. Watch it. This takes a long time; a quiet log is normal.
+
+```bash
+sudo journalctl -u stig-build -f
+```
+
+17. Wait for `stig-build` to report `active (exited)`:
+
+```bash
+systemctl status stig-build
+```
+
+### D. Check before rebooting
+
+> Do not skip. If login is broken and you reboot, recovery needs a live USB.
+
+18. Leave your terminal **open**. Open a **second** terminal and run both:
+
+```bash
+sudo -v
+sudo pam-auth-check
+```
+
+19. Both must pass. If either fails, stop and escalate — do not reboot.
+
+20. Reboot:
+
+```bash
+sudo reboot
+```
+
+21. Log back in. You should see the DCSA banner at the login screen. Confirm:
+
+```bash
+sudo it-status
+uname -r                              # ends in -fips
+cat /proc/sys/crypto/fips_enabled     # 1
+```
+
+### E. Accounts
+
+22. Set a password for each account that will be used on this machine:
+
+```bash
+sudo passwd overlord
+sudo passwd adam_kabat_adm
+```
+
+Repeat for every `_adm`, `_aud` and `_dta` account this machine needs.
+`sudo it-adduser` adds anyone not already listed.
+
+### F. Xilinx (Vivado)
+
+23. Copy the installer to `/opt/it/installers/` from the second USB.
+24. Generate the AMD token (needs an AMD account, and internet):
+
+```bash
+sudo /opt/it/installers/xsetup/xsetup -b AuthTokenGen
+```
+
+25. Start the install. It runs about an hour:
+
+```bash
+sudo it-fpga install xilinx
+sudo journalctl -u xilinx-install -f
+```
+
+### G. Libero
+
+26. Prepare, then follow what it prints:
+
+```bash
+sudo it-fpga install libero
+```
+
+27. Run the installer **as yourself, without sudo**, using the exact command it printed.
+28. In the installer: install to `/opt/microchip/Libero_SoC_2025.1`, IP vault
+    `/opt/microchip/common`, type **Full**, and **decline** the post-install script.
+29. When it finishes:
+
+```bash
+sudo it-fpga fixup
+```
+
+### H. Finish
+
+30. Point at the licence server:
+
+```bash
+sudo it-fpga license --server 1702@licsrv
+```
+
+31. Plug in each programmer cable and authorise it:
+
+```bash
+sudo it-usb enroll
+```
+
+32. Final check — everything should read OK:
+
+```bash
+sudo it-fpga status
+sudo it-checklist
+```
+
+**If a step fails, stop and escalate. Do not skip a step to keep going.**
+
+---
 
 ## 1.1 Decide these first — they cannot be changed later
 
