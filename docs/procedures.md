@@ -452,6 +452,50 @@ sudo passwd zac_mccamant_adm    # ... and _aud, _dta
 
 Ten accounts, listed in `local_users` in `group_vars/all.yml`.
 
+## 2.1b Set the address, DNS and time source before the box moves
+
+Stage this in the lab, so the machine is on the right subnet the moment it is
+plugged in at the other site. `it-net` writes the config and applies nothing
+until you say so — `netplan apply` on the interface you are connected over
+drops the session.
+
+```bash
+sudo it-net                       # what is set now, and where each piece comes from
+
+sudo it-net ip 10.0.5.11/24 --gateway 10.0.5.1 --dns 10.0.5.2,10.0.5.3 --search asplab.local
+sudo it-net ntp 10.0.5.2
+```
+
+Then apply. Over SSH use `netplan try`, which rolls itself back if the link
+goes away:
+
+```bash
+sudo netplan try                  # safe over SSH
+sudo it-net apply                 # immediate; asks first
+```
+
+Other forms:
+
+| Command | Effect |
+|---|---|
+| `it-net dns 10.0.5.2 --search asplab.local` | nameservers only; keeps the current address |
+| `it-net dhcp` | back to DHCP on the default-route interface |
+| `it-net ip ... --iface ens4f0np0` | a box with several NICs — pick one explicitly |
+
+**What survives a pull.** `/etc/netplan/99-it-net.yaml` is ours and no role
+touches it. NTP is different: `usg_remediate` rewrites `chrony.conf` from
+`usg_chrony_servers` on every run, so `it-net ntp` writes **both** the live
+`chrony.conf` and `usg_chrony_servers` in `/opt/it/site.yml`. Set the time
+source any other way and the next pull reverts it.
+
+**Resolver `options` cannot go in netplan.** Netplan has no field for them. Under
+NetworkManager set them on the connection instead — `it-net status` says so when
+it finds any in `resolv.conf`:
+
+```bash
+nmcli con mod <name> ipv4.dns-options 'timeout:2,attempts:3'
+```
+
 ## 2.2 Set the GRUB bootloader password
 
 Closes the only remaining `high` finding. This matters more than the severity suggests: LUKS is TPM-sealed to PCR 7, which does **not** measure the kernel command line — so without a GRUB password, physical access means a root shell on decrypted data.

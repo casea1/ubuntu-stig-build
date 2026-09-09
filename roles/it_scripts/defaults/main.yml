@@ -42,6 +42,9 @@ it_scripts_common:
   - { file: help.sh,               link: it-help }
   # Second: how the box gets updated at all. Light by default -- see it-pull help.
   - { file: pull.sh,               link: it-pull }
+  # Address, DNS and time source. Needed BEFORE a box is carried into the
+  # deployed space, so it comes up on the right subnet already.
+  - { file: network.sh,            link: it-net }
   - { file: status.sh,             link: it-status }
   - { file: status-host.sh,        link: it-host }
   - { file: status-luks.sh,        link: it-luks }
