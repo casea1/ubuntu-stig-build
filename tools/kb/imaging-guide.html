@@ -1,18 +1,13 @@
 <title>Workstation Imaging Traveler</title>
 <style>
+/* Light only, deliberately. This page is pasted into a ServiceNow Knowledge
+   article, which is a light surface: following the reader's OS theme put dark
+   article text on a light KB page. Every color is stated here rather than
+   inherited, so the page holds wherever it is rendered. */
 :root{
+  color-scheme: light;
   --bg:#ffffff; --fg:#1c1c1c; --muted:#5a5a5a;
   --line:#c8c8c8; --pre-bg:#f4f4f4; --warn:#8c1d18; --link:#1a4f8a;
-}
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){
-    --bg:#181a1b; --fg:#e6e6e6; --muted:#a0a0a0;
-    --line:#3a3d3f; --pre-bg:#101213; --warn:#e79a94; --link:#7fb2e5;
-  }
-}
-:root[data-theme="dark"]{
-  --bg:#181a1b; --fg:#e6e6e6; --muted:#a0a0a0;
-  --line:#3a3d3f; --pre-bg:#101213; --warn:#e79a94; --link:#7fb2e5;
 }
 body{
   background:var(--bg); color:var(--fg);
@@ -52,7 +47,7 @@ hr{border:0;border-top:1px solid var(--line);margin:1.5rem 0}
 
 <div id="article">
 
-<h1>Workstation Imaging Guide — Ubuntu 24.04 STIG Build</h1>
+<h1>Workstation Imaging Guide: Ubuntu 24.04 STIG Build</h1>
 
 <p><strong>Audience:</strong> Desktop support technicians. No Linux experience required.<br>
 <strong>Time:</strong> 2–3 hours, most of it unattended. Add about an hour per FPGA toolchain.</p>
@@ -67,7 +62,7 @@ skip any. If a step fails, check <strong>Common Issues</strong> at the end, then
 and whether you do Section F.</p>
 
 <table>
-  <tr><th>Profile</th><th>Used for</th><th>Build command in step 13</th><th>Section F (FPGA)</th></tr>
+  <tr><th>Profile</th><th>Used for</th><th>Build command in step 15</th><th>Section F (FPGA)</th></tr>
   <tr><td><strong>development</strong></td><td>Engineering workstations</td><td><code>| sudo bash</code></td><td><strong>Yes</strong></td></tr>
   <tr><td><strong>emi</strong></td><td>EMI, classified-capable</td><td><code>| sudo PROFILE=emi bash</code></td><td>No</td></tr>
   <tr><td><strong>emi-unclass</strong></td><td>EMI, unclassified only</td><td><code>| sudo PROFILE=emi-unclass bash</code></td><td>No</td></tr>
@@ -78,7 +73,7 @@ and whether you do Section F.</p>
 <h2>Before You Start</h2>
 
 <ul>
-  <li>Ubuntu <strong>24.04 Desktop</strong> USB installer — or <strong>24.04 Server</strong> for the <code>ai</code> profile</li>
+  <li>Ubuntu <strong>24.04 Desktop</strong> USB installer, or <strong>24.04 Server</strong> for the <code>ai</code> profile</li>
   <li><strong>Ubuntu Pro token</strong></li>
   <li>A <strong>LUKS passphrase</strong> for this machine</li>
   <li>The assigned <strong>hostname</strong></li>
@@ -93,18 +88,49 @@ and whether you do Section F.</p>
   <li>Power on the machine and enter BIOS / UEFI setup.</li>
   <li>Set boot mode to <strong>UEFI</strong>. Do not use Legacy or CSM.</li>
   <li>Set <strong>Secure Boot</strong> to <strong>ON</strong>.</li>
+  <li>Disable <strong>deep sleep</strong> (S3 / "Suspend to RAM"). Depending on the
+      vendor this is <em>Block Sleep</em>, <em>Deep Sleep Control</em>, or a
+      <em>Sleep Mode</em> set to <em>Windows/S0ix</em> rather than <em>S3</em>.
+    <ul>
+      <li>A machine that suspends to RAM holds the disk encryption key in memory
+          while it sits there, and this build is set up to lock and unlock at boot,
+          not across a suspend.</li>
+    </ul></li>
+  <li>Set a <strong>BIOS/UEFI administrator password</strong> and record it on the
+      build sheet.
+    <ul>
+      <li>Use the standard temporary imaging password. Like every credential set
+          during imaging, it is replaced at deployment.</li>
+      <li>Without it, anyone can re-enable deep sleep, turn off Secure Boot, or
+          change the boot order and start the machine from their own USB drive.</li>
+    </ul></li>
   <li>Move the USB drive to the top of the boot order, then save and exit.</li>
 </ol>
 
+<p><strong>Everything you set during imaging is temporary.</strong> The BIOS password,
+the LUKS passphrase, and the <code>overlord</code> account password are all replaced at
+deployment. Record them on the build sheet and hand it over with the machine.</p>
+
 <h2>B. Install Ubuntu</h2>
 
-<ol start="5">
+<ol start="7">
   <li>Boot from the USB drive and select <strong>Install Ubuntu</strong>.</li>
   <li>At Installation type, select <strong>Erase disk and use LVM</strong>, then tick
       <strong>Encrypt the new Ubuntu installation</strong>.</li>
-  <li>Enter the LUKS passphrase.
-    <p class="warn"><strong>WARNING:</strong> Record the passphrase before continuing. It is
-    the only way to recover this disk and it cannot be reset later.</p></li>
+  <li>Enter the LUKS passphrase. Use the temporary imaging passphrase and write it
+      on the build sheet.
+    <ul>
+      <li>It is changed at deployment with <code>sudo it-luks-passwd</code>, which asks
+          for the current passphrase and then the new one. The TPM auto-unlock keyslot
+          is separate and is not disturbed, so the machine keeps unlocking itself at
+          boot.</li>
+      <li><code>it-luks-rebind</code> is for a different fault, a stale TPM binding
+          after Secure Boot or firmware changed. It is not needed after a passphrase
+          change.</li>
+    </ul>
+    <p class="warn"><strong>WARNING:</strong> Losing the passphrase while the TPM binding
+    is also gone leaves the disk unrecoverable. Either one alone is survivable, but do
+    not leave this step without the passphrase written down.</p></li>
   <li>Set the account name to <code>overlord</code>, exactly. Lower case, no spaces.
     <ul>
       <li>This is the account the build tools expect. A different name sends this
@@ -119,7 +145,7 @@ and whether you do Section F.</p>
 
 <h2>C. Run the Build</h2>
 
-<ol start="12">
+<ol start="14">
   <li>Open a terminal and install the lab certificate:
 <pre>sudo curl -fsSLo /usr/local/share/ca-certificates/lab-root-ca.crt \
   http://git.asplab.com/lab-root-ca.crt
@@ -146,18 +172,18 @@ sudo update-ca-certificates</pre></li>
 
 <h2>D. Verify Sign-In, Then Reboot</h2>
 
-<p class="warn"><strong>WARNING:</strong> Do not skip step 18. The build rewrites the sign-in
+<p class="warn"><strong>WARNING:</strong> Do not skip step 20. The build rewrites the sign-in
 configuration. If sign-in is broken and the machine is rebooted, it must be rebuilt from
 a USB drive.</p>
 
-<ol start="18">
+<ol start="20">
   <li>Leave your current terminal <strong>open</strong>. Open a <strong>second</strong>
       terminal window and run both commands:
 <pre>sudo -v
 
 sudo pam-auth-check</pre>
     <ul>
-      <li><strong>Both succeed:</strong> continue to step 19.</li>
+      <li><strong>Both succeed:</strong> continue to step 21.</li>
       <li><strong>Either fails:</strong> stop and escalate. Do not reboot.</li>
     </ul></li>
 
@@ -175,7 +201,7 @@ one passes.</p>
 
 <h3>E1. Overall status</h3>
 
-<ol start="21">
+<ol start="23">
   <li>Run the status overview:
 <pre>sudo it-status</pre></li>
 
@@ -190,9 +216,9 @@ cat /proc/sys/crypto/fips_enabled</pre>
     </ul></li>
 </ol>
 
-<h3>E2. The organisation checklist</h3>
+<h3>E2. The organization checklist</h3>
 
-<ol start="23">
+<ol start="25">
   <li>Run the checklist. It prints one line per item.
 <pre>sudo it-checklist</pre></li>
 
@@ -201,14 +227,14 @@ cat /proc/sys/crypto/fips_enabled</pre>
     <ul>
       <li>Item 6 checks the audit rules actually loaded into the kernel, which is a
           common silent failure. It must not report a fault.</li>
-      <li>An item that says a manual step is outstanding (GRUB password, licence server)
-          is expected at this stage — note it and continue.</li>
+      <li>An item that says a manual step is outstanding (GRUB password, license server)
+          is expected at this stage. Note it and continue.</li>
     </ul></li>
 </ol>
 
 <h3>E3. The compliance scan</h3>
 
-<ol start="25">
+<ol start="27">
   <li>Run a full OpenSCAP scan against the DISA STIG profile. This takes several minutes.
 <pre>sudo it-oscap</pre>
     <ul>
@@ -228,15 +254,15 @@ cat /proc/sys/crypto/fips_enabled</pre>
   <li>Copy the reports off the machine while it is still on the network. They are in
       <code>/opt/ia/</code>.
     <ul>
-      <li><code>/opt/ia/usg/</code> — the USG audit report</li>
-      <li><code>/opt/ia/oscap/</code> — the OpenSCAP scan results</li>
-      <li><code>/opt/ia/stig/checklists/</code> — the STIG checklist</li>
+      <li><code>/opt/ia/usg/</code>: the USG audit report</li>
+      <li><code>/opt/ia/oscap/</code>: the OpenSCAP scan results</li>
+      <li><code>/opt/ia/stig/checklists/</code>: the STIG checklist</li>
     </ul></li>
 </ol>
 
 <h3>E4. Sign-in check</h3>
 
-<ol start="30">
+<ol start="32">
   <li>Confirm the DCSA banner appears at the sign-in screen and that <code>overlord</code>
       can sign in after a reboot.</li>
 </ol>
@@ -246,7 +272,7 @@ They are set at deployment, using the deployment checklist.</p>
 
 <h3>E5. Record the machine on the HW/SW list</h3>
 
-<ol start="31">
+<ol start="33">
   <li>Generate the inventory, then open it:
 <pre>sudo it-inventory
 
@@ -254,9 +280,9 @@ cat /opt/it/inventory-$(hostname -s).txt</pre></li>
 
   <li>Copy these onto the HW/SW list:
     <ul>
-      <li><strong>Service tag</strong> — under <em>System</em>. This is the serial on the
+      <li><strong>Service tag</strong>, under <em>System</em>. This is the serial on the
           sticker; on Dell it is the service tag.</li>
-      <li><strong>Disk serial numbers</strong> — under <em>Storage</em>, the
+      <li><strong>Disk serial numbers</strong>, under <em>Storage</em>, the
           <code>SERIAL</code> column. Record one row per drive with its model and size.
           If the machine has more than one drive, record all of them.</li>
       <li>The hostname and MAC address, if your list has columns for them.</li>
@@ -267,14 +293,14 @@ cat /opt/it/inventory-$(hostname -s).txt</pre></li>
 
 <hr>
 
-<h2>F. FPGA Toolchains — <code>development</code> Profile Only</h2>
+<h2>F. FPGA Toolchains: <code>development</code> Profile Only</h2>
 
 <p>Skip this entire section for <code>emi</code>, <code>emi-unclass</code>, <code>ai</code>
 and <code>baseline</code> machines. They do not use these tools.</p>
 
 <h3>F1. Copy the installers</h3>
 
-<ol start="33">
+<ol start="35">
   <li>From a Windows machine in the lab, open <strong>WinSCP</strong> and connect to this
       workstation over SFTP, signing in as <code>overlord</code>.</li>
   <li>Copy the Xilinx and Libero installers from the file server directly into:
@@ -291,7 +317,7 @@ and <code>baseline</code> machines. They do not use these tools.</p>
 
 <h3>F2. Xilinx (Vivado)</h3>
 
-<ol start="36">
+<ol start="38">
   <li>If you are using the web installer, generate the AMD token first. It needs an AMD
       account and internet, and must be run with <code>sudo</code>:
 <pre>sudo /opt/it/installers/xsetup/xsetup -b AuthTokenGen</pre>
@@ -305,7 +331,7 @@ sudo journalctl -u xilinx-install -f</pre></li>
 
 <h3>F3. Libero</h3>
 
-<ol start="38">
+<ol start="40">
   <li>Prepare the install. It prints the exact command to run next. Use that command.
 <pre>sudo it-fpga install libero</pre>
     <ul>
@@ -331,11 +357,11 @@ sudo journalctl -u xilinx-install -f</pre></li>
 
 <h3>F4. Finish the toolchains</h3>
 
-<ol start="42">
-  <li>Configure the licence server:
+<ol start="44">
+  <li>Configure the license server:
 <pre>sudo it-fpga license --server 1702@licsrv</pre></li>
 
-  <li>Connect each programmer cable and authorise it:
+  <li>Connect each programmer cable and authorize it:
 <pre>sudo it-usb enroll</pre></li>
 
   <li>Run the final toolchain check. All items must report OK.
@@ -356,7 +382,7 @@ usable until the build completes.</p>
 <code>/proc/sys/crypto/fips_enabled</code> is <code>0</code>. Check whether the FIPS
 service is on:</p>
 <pre>pro status | grep fips</pre>
-<p>If it is not enabled, try again — this step sometimes times out reaching Canonical:</p>
+<p>If it is not enabled, try again. This step sometimes times out reaching Canonical:</p>
 <pre>sudo pro enable fips-updates</pre>
 <p>Reboot afterwards. If it fails repeatedly, escalate; do not release the machine.</p>
 
@@ -396,7 +422,7 @@ sudo it-rdp reset overlord</pre>
 the machine and breaks their next sign-in.</p>
 
 <h3>Libero will not start: "libpng15.so.15: cannot open shared object file"</h3>
-<p>The library Libero needs was never built on this machine — normally
+<p>The library Libero needs was never built on this machine. Normally
 <code>sudo it-fpga install libero</code> does it, but that step needs the network. Build
 it while the machine is still on the lab network:</p>
 <pre>sudo it-fpga compat build</pre>
@@ -409,17 +435,17 @@ it while the machine is still on the lab network:</p>
 they sign out, which is intended. There is nothing to set up during imaging.</p>
 
 <h3>A programmer cable is plugged in but not detected</h3>
-<p>USB devices are blocked until authorised. Enrol the cable:</p>
+<p>USB devices are blocked until authorized. Enrol the cable:</p>
 <pre>sudo it-usb enroll</pre>
 
 <h3>A config file prompt appears during updates</h3>
-<p>Choose <strong>N</strong> — keep the currently-installed version. The build's own
+<p>Choose <strong>N</strong>, which keeps the currently-installed version. The build's own
 configuration must be preserved.</p>
 
 </div>
 
 <div id="tools">
-  <p>Plain HTML — headings, lists, tables and code blocks only, with nothing the
+  <p>Plain HTML: headings, lists, tables and code blocks only, with nothing the
   ServiceNow editor will strip. Paste into a Knowledge article by copying the article
   text above, or open the editor's source view and paste the markup below.</p>
   <button type="button" id="show">Show HTML source for ServiceNow</button>

@@ -55,24 +55,39 @@ machine · the Xilinx and Libero installers, copied in over WinSCP at step 23.
 1. Power on, enter BIOS/UEFI setup.
 2. **Boot mode: UEFI** (not Legacy/CSM).
 3. **Secure Boot: ON.**
-4. Set boot order to the USB stick. Save and exit.
+4. **Disable deep sleep** (S3 / suspend-to-RAM). Vendors name it *Block Sleep*,
+   *Deep Sleep Control*, or a *Sleep Mode* set to *Windows/S0ix* rather than
+   *S3*. A machine that suspends to RAM keeps the disk key in memory while it
+   sits there, and this build locks and unlocks at boot rather than across a
+   suspend.
+5. **Set a BIOS/UEFI administrator password** and record it on the build sheet.
+   Without it, anyone can re-enable deep sleep, turn off Secure Boot, or boot
+   the machine from their own USB.
+6. Set boot order to the USB stick. Save and exit.
 
 ### B. Install Ubuntu
 
-5. Boot the USB, choose **Install Ubuntu**.
-6. Installation type: **Erase disk and use LVM**, and tick **Encrypt the new Ubuntu installation**.
-7. Enter the LUKS passphrase. **Write it down now.**
-8. Admin account name: **`overlord`** — exactly this, lower case. It is
+7. Boot the USB, choose **Install Ubuntu**.
+8. Installation type: **Erase disk and use LVM**, and tick **Encrypt the new Ubuntu installation**.
+9. Enter the LUKS passphrase. Use the temporary imaging passphrase and write it
+   on the build sheet. It is rotated at deployment with `sudo it-luks-passwd`,
+   which asks for the current one and then the new one; LUKS keyslots are
+   independent, so the TPM auto-unlock slot is untouched and the box keeps
+   unlocking itself at boot. (`it-luks-rebind` is for a *stale TPM binding*
+   after Secure Boot or firmware moved PCR 7, and is not needed after a
+   passphrase change.) **Losing the passphrase with the TPM binding also gone
+   is unrecoverable** — either one alone is survivable.
+10. Admin account name: **`overlord`** — exactly this, lower case. It is
    `dev_tools_user`, the account the build treats as the OS-install admin;
    naming a person here gives that machine's tooling to an account the build
    does not expect. Do not use a personal account name.
-9. Computer name: the hostname for this machine. Never `ubuntu`.
-10. Finish, remove the USB, reboot, log in as `overlord`.
-11. Connect to the network and leave it connected until step 22.
+11. Computer name: the hostname for this machine. Never `ubuntu`.
+12. Finish, remove the USB, reboot, log in as `overlord`.
+13. Connect to the network and leave it connected until section D is complete.
 
 ### C. Build
 
-12. Open a terminal. Trust the lab CA:
+14. Open a terminal. Trust the lab CA:
 
 ```bash
 sudo curl -fsSLo /usr/local/share/ca-certificates/lab-root-ca.crt \
@@ -80,22 +95,22 @@ sudo curl -fsSLo /usr/local/share/ca-certificates/lab-root-ca.crt \
 sudo update-ca-certificates
 ```
 
-13. Start the build:
+15. Start the build:
 
 ```bash
 curl -fsSL https://git.asplab.com/ASPLAB/ubuntu-stig-build/raw/branch/main/bootstrap.sh \
   | sudo bash
 ```
 
-14. Paste the **Ubuntu Pro token** when asked (nothing appears as you type).
-15. Enter the **LUKS passphrase** when asked, to enable TPM auto-unlock.
-16. Watch it. This takes a long time; a quiet log is normal.
+16. Paste the **Ubuntu Pro token** when asked (nothing appears as you type).
+17. Enter the **LUKS passphrase** when asked, to enable TPM auto-unlock.
+18. Watch it. This takes a long time; a quiet log is normal.
 
 ```bash
 sudo journalctl -u stig-build -f
 ```
 
-17. Wait for `stig-build` to report `active (exited)`:
+19. Wait for `stig-build` to report `active (exited)`:
 
 ```bash
 systemctl status stig-build
@@ -105,22 +120,22 @@ systemctl status stig-build
 
 > Do not skip. If login is broken and you reboot, recovery needs a live USB.
 
-18. Leave your terminal **open**. Open a **second** terminal and run both:
+20. Leave your terminal **open**. Open a **second** terminal and run both:
 
 ```bash
 sudo -v
 sudo pam-auth-check
 ```
 
-19. Both must pass. If either fails, stop and escalate — do not reboot.
+21. Both must pass. If either fails, stop and escalate — do not reboot.
 
-20. Reboot:
+22. Reboot:
 
 ```bash
 sudo reboot
 ```
 
-21. Log back in. You should see the DCSA banner at the login screen. Confirm:
+23. Log back in. You should see the DCSA banner at the login screen. Confirm:
 
 ```bash
 sudo it-status
@@ -130,7 +145,7 @@ cat /proc/sys/crypto/fips_enabled     # 1
 
 ### E. Accounts
 
-22. Set a password for each account that will be used on this machine:
+24. Set a password for each account that will be used on this machine:
 
 ```bash
 sudo passwd overlord
@@ -142,20 +157,20 @@ Repeat for every `_adm`, `_aud` and `_dta` account this machine needs.
 
 ### F. Xilinx (Vivado)
 
-23. Copy the installers into `/opt/it/installers/` — WinSCP over SFTP from the
+25. Copy the installers into `/opt/it/installers/` — WinSCP over SFTP from the
     file server, signed in as `overlord`. Use the **offline** installers; the web
     ones download during setup and will not work on a deployed machine. Then:
 
 ```bash
 sudo chmod a+rx /opt/it/installers/*.bin
 ```
-24. Generate the AMD token (needs an AMD account, and internet):
+26. Generate the AMD token (needs an AMD account, and internet):
 
 ```bash
 sudo /opt/it/installers/xsetup/xsetup -b AuthTokenGen
 ```
 
-25. Start the install. It runs about an hour:
+27. Start the install. It runs about an hour:
 
 ```bash
 sudo it-fpga install xilinx
@@ -164,16 +179,16 @@ sudo journalctl -u xilinx-install -f
 
 ### G. Libero
 
-26. Prepare, then follow what it prints:
+28. Prepare, then follow what it prints:
 
 ```bash
 sudo it-fpga install libero
 ```
 
-27. Run the installer **as yourself, without sudo**, using the exact command it printed.
-28. In the installer: install to `/opt/microchip/Libero_SoC_2025.1`, IP vault
+29. Run the installer **as yourself, without sudo**, using the exact command it printed.
+30. In the installer: install to `/opt/microchip/Libero_SoC_2025.1`, IP vault
     `/opt/microchip/common`, type **Full**, and **decline** the post-install script.
-29. When it finishes:
+31. When it finishes:
 
 ```bash
 sudo it-fpga fixup
@@ -181,19 +196,19 @@ sudo it-fpga fixup
 
 ### H. Finish
 
-30. Point at the licence server:
+32. Point at the license server:
 
 ```bash
 sudo it-fpga license --server 1702@licsrv
 ```
 
-31. Plug in each programmer cable and authorise it:
+33. Plug in each programmer cable and authorize it:
 
 ```bash
 sudo it-usb enroll
 ```
 
-32. Record the machine on the HW/SW list. Generate the inventory, then read
+34. Record the machine on the HW/SW list. Generate the inventory, then read
     the two values off it:
 
 ```bash
@@ -214,7 +229,7 @@ cat /opt/it/inventory-$(hostname -s).txt
     `it-checklist` item 16 looks for, and the file it writes is what an
     assessor is shown.
 
-33. Final check — everything should read OK:
+35. Final check — everything should read OK:
 
 ```bash
 sudo it-fpga status
@@ -398,7 +413,7 @@ manual command is now just `sudo it-pull`. `it-pull ai` is the deliberate opt-in
 in `scap_scan` — plus a checklist build, every time. Evidence now comes from a box's
 **first build**, the **weekly `oscap-scan.timer`**, and **`sudo it-stig run`** on demand.
 That is `usg_audit_on_pull` / `scap_scan_on_pull` in `group_vars/all.yml` (`build` by
-default, `always` restores the old behaviour), so a plain `ansible-pull` gets the same
+default, `always` restores the old behavior), so a plain `ansible-pull` gets the same
 treatment; `it-pull full` passes `always`.
 
 > **`it-pull check` is not a reliable preview, and `status` is.** Ansible's check
@@ -591,12 +606,12 @@ In this order:
 
 The baseline installs **everything around** Vivado/Vitis and Libero SoC — the
 24.04-correct dependencies, i386 multiarch, the compat shims, udev rules for the
-programmer cables, the system-wide environment, and the licence server. It does
+programmer cables, the system-wide environment, and the license server. It does
 **not** install the toolchains themselves: both are interactive, authenticate
 against a vendor account, and Xilinx alone is ~150 GB. Bake them into the image.
 
 ```bash
-sudo it-fpga            # what is installed, licence, cables -- start here
+sudo it-fpga            # what is installed, license, cables -- start here
 ```
 
 > **The development profile is CPU-only.** Vivado, Vitis and Libero do not use a
@@ -622,7 +637,7 @@ above it is a person, once per box (or once on the golden image).
 | Run the installer | ✔ `sudo it-fpga install xilinx` (batch, unattended) | ✔ GUI, **as yourself, no sudo** |
 | Take the tree back | ✔ `sudo it-fpga fixup` | ✔ `sudo it-fpga fixup` |
 | JTAG cable drivers (no cables plugged in) | ✔ path printed by `fixup` | — |
-| Point at the licence server | ✔ `sudo it-fpga license --server <port>@<host>` (both vendors at once) | ✔ same command |
+| Point at the license server | ✔ `sudo it-fpga license --server <port>@<host>` (both vendors at once) | ✔ same command |
 | ─────────── | ─────────── | ─────────── |
 | 24.04 dependencies, i386 multiarch | pull | pull |
 | ncurses-5 symlinks, `/usr/tmp` 1777, RHEL CA path | pull | pull |
@@ -839,12 +854,12 @@ ships.
 The Xilinx JTAG cable drivers must be installed with **no cables plugged in**,
 so `fixup` prints the command rather than running it.
 
-### The licence server
+### The license server
 
 Point every workstation at the FlexLM server; nothing is per-box, there is no
 MAC to register and no `License.dat` on disk:
 
-### Which licence am I actually on?
+### Which license am I actually on?
 
 ```bash
 sudo it-fpga license --check
@@ -852,7 +867,7 @@ sudo it-fpga license --check
 
 `it-fpga license` prints what the box is **pointed at**. That is a different
 question from what it is **checking out**, and the gap is where an evaluation
-licence hides: a trial `.lic` left in `~/.Xilinx` or beside the install is read
+license hides: a trial `.lic` left in `~/.Xilinx` or beside the install is read
 by the tools whether or not anything here mentions it, so a box can be
 configured for the real server and still be building against a trial that
 expires on a Friday.
@@ -870,13 +885,13 @@ any `~/.Xilinx` — and prints each feature with its expiry:
   FAIL Vivado EXPIRED 31-dec-2024
 ```
 
-A **dated** feature is normally an evaluation licence; a purchased one is
+A **dated** feature is normally an evaluation license; a purchased one is
 usually permanent. Anything already expired or expiring within 60 days is
-flagged, and a licence file the tools will read but that this box was never
+flagged, and a license file the tools will read but that this box was never
 configured to use is called out — that is how a trial keeps being used after the
-real licence is in place.
+real license is in place.
 
-### Moving from a trial to the real licence
+### Moving from a trial to the real license
 
 ```bash
 sudo it-fpga license --server 1702@licsrv                    # Microchip + Xilinx
@@ -896,13 +911,13 @@ That writes **both** `/etc/profile.d/*.sh` (a new shell has it at once) **and**
 `fpga_license_microchip` / `fpga_license_xilinx` in `group_vars` instead to make
 it the fleet default and skip the per-box step entirely.
 
-`it-fpga status` probes the port and says so when it is unreachable. **A licence
+`it-fpga status` probes the port and says so when it is unreachable. **A license
 variable pointing at a host nobody can talk to looks identical to a correct one
 until someone builds.**
 
 > **FlexLM needs two ports open, not one.** `lmgrd` listens on the port you
 > configured; the *vendor daemon* (`snpslmd`, `xilinxd`) gets a **random** port
-> unless it is pinned in the licence file on the server. If the port below is
+> unless it is pinned in the license file on the server. If the port below is
 > open and checkout still fails, that is why — pin it server-side with a `PORT=`
 > on the `DAEMON` line.
 
@@ -922,7 +937,7 @@ on the port, and the `lsof -i :1702` dance those guides then tell you to do.
 
 `root` owns the trees; **members of `sentry` may read and execute them; nobody
 else can read them at all**. That gives every engineer the full toolchain —
-Vivado, Vitis, Libero, Synplify, the programmers, licence checkout — while
+Vivado, Vitis, Libero, Synplify, the programmers, license checkout — while
 nobody can modify a shared install.
 
 Every standing account joins `sentry` (it also owns `/home/shared`), so a new
@@ -1071,7 +1086,7 @@ and has broken unrelated system tools that way.
 sudo it-fpga cables       # what is plugged in, and whether it can be reached
 ```
 
-> **The udev rule is not enough on its own.** USBGuard authorises a device
+> **The udev rule is not enough on its own.** USBGuard authorizes a device
 > before udev ever names it, so a JTAG cable is blocked no matter what the rule
 > says. Enrol each one once — `sudo it-usb enroll`, then re-plug. Same workflow
 > as the dongles and COM adapters. `sudo it-usb blocked` shows what is being
@@ -1104,7 +1119,7 @@ whether the component you actually need works without it.
 
 ### Before you trust it
 
-Prove a full flow on the golden box — synthesis, licence checkout, and
+Prove a full flow on the golden box — synthesis, license checkout, and
 programming a real device — before cutting the image. **These boxes run a FIPS
 kernel and both toolchains bundle their own crypto.** This fleet has been bitten
 by that twice: vLLM and Docling abort at startup without a FIPS provider, and
@@ -1482,9 +1497,9 @@ sudo it-vulnscan --show     # read the newest
 
 Reports append to `/opt/ia/vulnscans/<host>-vuln-scan-MM-DD-YYYY.txt`. Exit is non-zero when a `vuln` script flagged something or the AV scan found/faulted.
 
-Scans loopback by default. `--target` exists for a deliberate, authorised scope.
+Scans loopback by default. `--target` exists for a deliberate, authorized scope.
 
-**nmap cannot run on the FIPS host — it runs in a container instead.** The host nmap initialises OpenSSL at startup, the FIPS provider offers it no usable cipher suite, and it quits before probing anything:
+**nmap cannot run on the FIPS host — it runs in a container instead.** The host nmap initializes OpenSSL at startup, the FIPS provider offers it no usable cipher suite, and it quits before probing anything:
 
 ```
 OpenSSL failed to create a new SSL_CTX: error:0A0000A1:SSL routines::library has no ciphers
@@ -1566,7 +1581,7 @@ The record goes to `/opt/dta/logs`. Verdicts: `CLEAN`, `INFECTED`, `ENGINE-FAULT
 
 **`ENGINE-FAULT` means the scanner could not detect the EICAR test file** — the transfer was not scanned, whatever the file listing says. Fix the engine (§6.5) before proceeding.
 
-## 3.4b USB serial adapters the kernel does not recognise (Sealevel and friends)
+## 3.4b USB serial adapters the kernel does not recognize (Sealevel and friends)
 
 ```bash
 sudo it-serial                 # plugged in? bound? usable by a normal user?
@@ -1616,7 +1631,7 @@ sudo it-pull                           # render the udev rule
 > configuring a rule that cannot work.
 
 If the adapter is invisible even to `lsusb`, it is USBGuard, not the driver —
-`it-serial` says so, and an FTDI-class device is authorised on connect under the
+`it-serial` says so, and an FTDI-class device is authorized on connect under the
 current policy (vendor-specific), so this should be rare.
 
 ## 3.5 Enrol a USB device
@@ -1630,7 +1645,7 @@ sudo it-usb allow <id> --permanent
 sudo it-usb trust <id>          # allow this exact device across reboots
 ```
 
-USBGuard runs on every profile including EMI. The initial policy is generated from whatever was attached at build time, so the built-in keyboard is always authorised.
+USBGuard runs on every profile including EMI. The initial policy is generated from whatever was attached at build time, so the built-in keyboard is always authorized.
 
 ### What needs enrolling, and what just works
 
@@ -1645,7 +1660,7 @@ that can act on their own:
 
 Everything else — USB-serial adapters, hubs and docks, printers, audio, video,
 cameras, and the JTAG programmers (which present as vendor-specific) — is
-authorised on connect. Before this, *every* device needed enrolling, which is a
+authorized on connect. Before this, *every* device needed enrolling, which is a
 lot of friction for classes that cannot do the thing USBGuard defends against,
 and the predictable end state is somebody switching the daemon off.
 
@@ -1684,7 +1699,7 @@ Two independent layers, and it is worth being clear which does what:
 
 | Layer | What it decides | Where it applies |
 |---|---|---|
-| USBGuard | whether the kernel authorises the **device** at all — any class | every profile, EMI included |
+| USBGuard | whether the kernel authorizes the **device** at all — any class | every profile, EMI included |
 | `usb-storage` + `uas` blacklist | whether a USB **drive** can bind a driver, for everyone including root | everywhere `usb_storage_enabled` is false — development, ai, baseline, emi-unclass |
 | `dta` group (udev + udisks2 polkit) | which **accounts** may mount removable media | classified EMI only (`local_usb_transfer_enabled`) |
 
@@ -1708,7 +1723,7 @@ cable, is the usual reason a new dongle "does nothing".
 
 ### "USBGuard allowed it and it still isn't there"
 
-`blocked` cannot answer this one. A device USBGuard **authorised** still does
+`blocked` cannot answer this one. A device USBGuard **authorized** still does
 nothing if no driver can claim it — and a USB stick *or a USB DVD/CD reader*
 needs `usb-storage` (plus `uas` on USB3), which is blacklisted wherever
 `usb_storage_enabled` is false. The device enumerates, `dmesg` says `authorized
@@ -2477,7 +2492,7 @@ so a UNC pasted from Windows works as-is.
 out and passed to `mount.cifs` as a separate `domain=` field. It has to be
 separate — a backslash inside `username=` is read literally by some servers and
 stripped by others, which is why `DOMAIN\user` "sometimes works", the least
-useful behaviour available.
+useful behavior available.
 
 **`mount error(2)` means the share name does not exist on that server** — not a
 credential problem. cifs returns the same `NT_STATUS_BAD_NETWORK_NAME` whether
@@ -2547,7 +2562,7 @@ Kept separate on purpose: the AU-4 artifact an assessor opens should hold the au
 
 Never in the repo. `it-offload creds` prompts twice with the input masked and writes `/etc/stig-build/audit-offload.cred` as `0600 root:root`. The pull also warns if the push is enabled and that file is missing, rather than letting the first failure be a silent cron job a week later.
 
-### Two behaviours worth knowing
+### Two behaviors worth knowing
 
 **The local copy is always kept**, including when the push succeeds. A share that is unreachable, full or misconfigured must never be why an audit trail went missing — the push is a copy, and its failure is loud (logged, non-zero exit so cron reports it) but never destructive.
 

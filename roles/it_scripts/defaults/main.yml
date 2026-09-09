@@ -53,6 +53,9 @@ it_scripts_common:
   - { file: status-host.sh,        link: it-host }
   - { file: status-luks.sh,        link: it-luks }
   - { file: luks-rebind.sh,        link: it-luks-rebind }
+  # The imaging passphrase is temporary. This is how it is rotated at
+  # deployment, without disturbing the TPM auto-unlock slot.
+  - { file: luks-passwd.sh,        link: it-luks-passwd }
   - { file: set-classification.sh, link: it-set-classification }
   - { file: oscap-scan.sh,         link: it-oscap }
   - { file: audit-offload.sh,      link: it-offload }
