@@ -124,6 +124,11 @@
     # -------------------------------------------------------------------------
     - role: local_accounts          # org users/groups, ACL'd shared folders, USB->dta policy
       when: local_accounts_enabled | default(true)
+    # Before anything that will want the network later, and cheap: it only
+    # reads networkctl and flips one mask. Costs ~2 minutes off every boot on
+    # the desktop profiles -- see the role for why it is conditional.
+    - role: network_online         # stop systemd-networkd-wait-online hanging where it owns no links
+
     - role: managed_dirs            # /opt/ia (USG report drop) + /opt/it, admin-only (sudo group)
       when: managed_dirs_enabled | default(true)
     - role: cockpit                 # web server-management console (9090); firewall opened post-USG

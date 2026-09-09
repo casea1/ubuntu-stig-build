@@ -202,6 +202,16 @@ The fix is ordering, and `pro_attach` already does it: enable FIPS before `fpga_
 The fix is two functions, because there are two problems. `mkdir_owned` walks the path and chowns only the directories it actually creates, returning early on any that exists so nothing pre-existing is touched. `fix_home_ancestors` repairs the boxes already damaged -- inside the user's own home only, only where the owner is wrong, ownership only. The pull runs `it-vscode link --all` every time, so an existing box repairs itself on the next pull.
 **Worth generalising: any `install -d`, `mkdir -p` or Ansible `file:` that creates a path under someone's home creates its parents as root.** Ansible's `file:` module has exactly the same behaviour -- `owner:` applies to `path`, not to the parents it implicitly creates. Check the ancestors, not just the thing you meant to make.
 
+**45. Two minutes of every boot went to a wait-online that was waiting for nothing.** dev-16, `systemd-analyze blame`:
+```
+2min 309ms systemd-networkd-wait-online.service
+   5.988s NetworkManager-wait-online.service
+```
+and `networkctl list` showed all ten links **`unmanaged`**. NetworkManager is the netplan renderer on the desktop profiles, so `systemd-networkd` owns nothing -- but its wait-online is enabled by default, waits for links it does not manage, and times out at 120s on every boot. `NetworkManager-wait-online` had already satisfied `network-online.target` six seconds in, so the two minutes bought exactly nothing.
+**Do not simply disable the wait.** Real units order behind `network-online.target` here: the SMB audit offload mount, the PowerStrux offload and the FPGA licence daemon. Remove it and those start before the network is up. The `network_online` role masks only the wait-online that has nothing to wait for, and only when the other one is enabled to take over.
+**The condition is read from the box, never inferred from the profile.** An `ai` node on Ubuntu Server has networkd as its renderer, where this unit is the one doing the real work -- masking it there would leave `network-online.target` with no provider and hang everything ordered behind it instead. The role counts managed links with `networkctl list` and unmasks again if that ever changes, so a rebuild onto a different renderer self-corrects. A failed probe means no change.
+Boxes with several NICs make this worse but are not the cause: dev-16 has nine, one routable. Where networkd genuinely IS the renderer, the equivalent fix is `--any` in a drop-in, since wait-online otherwise waits for ALL managed links and one unplugged port holds up the boot.
+
 **15. Pre-USG leftovers.** Two separate outages traced to files the current baseline neither writes nor removes, left by the old ansible-lockdown role (`/etc/audit/rules.d/stig.rules`, and `pam_faillock` lines in `common-auth` with `pam_unix`'s jump offset never recalculated). Assume there are others on any box built before the USG switch.
 
 ---

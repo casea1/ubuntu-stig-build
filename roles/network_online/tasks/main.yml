@@ -1,0 +1,78 @@
+---
+# =============================================================================
+# network_online -- make network-online.target resolve promptly, without
+# removing the guarantee anything depends on.
+#
+# THE FAULT. On dev-16, `systemd-analyze blame`:
+#
+#   2min 309ms systemd-networkd-wait-online.service
+#      5.988s NetworkManager-wait-online.service
+#
+# and `networkctl list` showed all ten links `unmanaged`. NetworkManager is the
+# netplan renderer on the desktop profiles, so systemd-networkd manages nothing
+# -- but its wait-online is enabled, waits for links it does not own, and times
+# out at the default 120s on EVERY boot. NetworkManager-wait-online had already
+# satisfied network-online.target six seconds in.
+#
+# WHY NOT JUST DISABLE THE WAIT. Real units order behind network-online.target
+# here -- the SMB audit offload mount, the PowerStrux offload, and the FPGA
+# licence daemon. Remove the wait and those start before the network is up and
+# fail. So this masks only the wait-online that has nothing to wait FOR, and
+# only where the other one is present to take over.
+#
+# The condition is read from the box, not assumed from the profile: an `ai` node
+# on Ubuntu Server has networkd as its renderer, where this unit is the one
+# doing the real work and masking it would break the target outright.
+# =============================================================================
+
+- name: "NET-ONLINE | How many links does systemd-networkd actually manage?"
+  ansible.builtin.shell:
+    cmd: |
+      networkctl list --no-legend 2>/dev/null | awk '$5 != "unmanaged" && $5 != "pending"' | wc -l
+  register: _net_managed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "NET-ONLINE | Is NetworkManager the one providing network-online.target?"
+  ansible.builtin.command: systemctl is-enabled NetworkManager-wait-online.service
+  register: _net_nm_wait
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "NET-ONLINE | Decide"
+  ansible.builtin.set_fact:
+    # Mask only when BOTH are true: networkd owns no links, and NetworkManager's
+    # wait-online is enabled to provide the target instead. Either alone is not
+    # enough to make it safe.
+    _net_mask_networkd_wait: >-
+      {{ ((_net_managed.stdout | default('1') | trim | int) == 0)
+         and ((_net_nm_wait.stdout | default('') | trim) in ['enabled', 'enabled-runtime']) }}
+
+- name: "NET-ONLINE | Mask systemd-networkd-wait-online (it manages no links here)"
+  ansible.builtin.systemd:
+    name: systemd-networkd-wait-online.service
+    masked: true
+    enabled: false
+  when: _net_mask_networkd_wait | bool
+
+# Self-correcting: if this box is ever renumbered onto networkd -- a rebuild as
+# the `ai` profile, say -- the mask has to come off or network-online.target
+# loses its only provider and every unit ordered behind it hangs instead.
+- name: "NET-ONLINE | Unmask it again if networkd has taken over the links"
+  ansible.builtin.systemd:
+    name: systemd-networkd-wait-online.service
+    masked: false
+  when: not (_net_mask_networkd_wait | bool)
+
+- name: "NET-ONLINE | Result"
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'systemd-networkd-wait-online is MASKED: it manages 0 links and
+          NetworkManager-wait-online provides network-online.target. That is
+          ~2 minutes off every boot.'
+         if _net_mask_networkd_wait | bool
+         else 'systemd-networkd manages ' ~ (_net_managed.stdout | default('?') | trim) ~
+              ' link(s); leaving systemd-networkd-wait-online alone. It is what
+              provides network-online.target on this box.' }}
