@@ -9,15 +9,17 @@
   --bg:#ffffff; --fg:#1c1c1c; --muted:#5a5a5a;
   --line:#c8c8c8; --pre-bg:#f4f4f4; --warn:#8c1d18; --link:#1a4f8a;
 }
-/* Tight, because this markup is pasted INTO a ServiceNow Knowledge article,
-   which supplies its own page frame. A comfortable reading gutter and a 46rem
-   measure are right for a standalone page and wrong inside another one: they
-   read as a narrow, oddly indented column sitting in the KB's own padding. */
+/* This markup is pasted INTO a ServiceNow Knowledge article, which supplies
+   its own page frame. So: a small gutter, and NO max-width. The 46rem reading
+   measure this started with is right for a standalone page and wrong inside
+   another one, where it stacks with the KB's own padding and reads as a narrow
+   indented column. Removing the gutter entirely went too far the other way and
+   left the text against the edge. */
 body{
   background:var(--bg); color:var(--fg);
   font-family:Arial,Helvetica,sans-serif;
   font-size:15px; line-height:1.5;
-  margin:0; padding:.5rem .75rem 1.5rem;
+  margin:0; padding:1rem 1.5rem 2rem;
 }
 #article{max-width:none;margin:0}
 h1{font-size:1.6rem;line-height:1.25;margin:0 0 .35rem}
@@ -38,7 +40,7 @@ th,td{border:1px solid var(--line);padding:.4rem .55rem;text-align:left;font-siz
 th{background:var(--pre-bg);font-weight:bold}
 hr{border:0;border-top:1px solid var(--line);margin:1.5rem 0}
 .warn{color:var(--warn)}
-#tools{max-width:none;margin:2rem 0 0;padding-top:.75rem;border-top:1px solid var(--line)}
+#tools{max-width:none;margin:2rem 0 0;padding-top:1rem;border-top:1px solid var(--line)}
 #tools p{font-size:.85rem;color:var(--muted)}
 #tools button{font:inherit;font-size:.85rem;padding:.35rem .7rem;cursor:pointer;
   background:var(--pre-bg);color:var(--fg);border:1px solid var(--line)}
