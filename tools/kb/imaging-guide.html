@@ -24,7 +24,11 @@ body{
   font-family:Arial,Helvetica,sans-serif;
   font-size:15px; line-height:1.5;
   margin:0;
-  padding:1.5rem clamp(1.25rem, 7%, 6rem) 2.5rem;
+  /* No side padding here. The gutter is an INLINE style on #article instead,
+     because that is the element whose markup gets pasted into ServiceNow: a
+     rule in this stylesheet is left behind by the copy and can never affect the
+     KB article, which is why three rounds of changing it here did nothing. */
+  padding:1rem 0 2rem;
 }
 #article{max-width:none;margin:0}
 h1{font-size:1.6rem;line-height:1.25;margin:0 0 .35rem}
@@ -56,7 +60,7 @@ hr{border:0;border-top:1px solid var(--line);margin:1.5rem 0}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 
-<div id="article">
+<div id="article" style="padding:0 4%;">
 
 <h1>GR - Ubuntu 24.04 Imaging Guide</h1>
 
@@ -493,9 +497,10 @@ configuration must be preserved.</p>
 <div id="tools">
   <p>Plain HTML: headings, lists, tables and code blocks only, with nothing the
   ServiceNow editor will strip. <strong>Use the button below</strong> and paste that
-  markup into the editor's source view. It is the article markup on its own, with none
-  of this page's styling, so the KB article keeps ServiceNow's own margins and width.
-  Copying the rendered text above instead brings this page's layout with it.</p>
+  markup into the editor's source view.</p>
+  <p><strong>Re-paste it after any change to this page.</strong> What is in ServiceNow
+  is a copy taken at the time you pasted it; updating this page does not reach back
+  into the article.</p>
   <button type="button" id="show">Show HTML source for ServiceNow</button>
   <textarea id="src" readonly hidden aria-label="Article HTML source"></textarea>
 </div>
@@ -506,7 +511,9 @@ configuration must be preserved.</p>
   var box = document.getElementById('src');
   btn.addEventListener('click', function(){
     if (box.hidden) {
-      box.value = document.getElementById('article').innerHTML.trim();
+      // outerHTML, not innerHTML: the gutter lives as an inline style on the
+      // wrapper, and innerHTML leaves the wrapper (and the gutter) behind.
+      box.value = document.getElementById('article').outerHTML.trim();
       box.hidden = false;
       box.focus();
       box.select();
