@@ -9,19 +9,24 @@
   --bg:#ffffff; --fg:#1c1c1c; --muted:#5a5a5a;
   --line:#c8c8c8; --pre-bg:#f4f4f4; --warn:#8c1d18; --link:#1a4f8a;
 }
-/* Width was settled by trying it in ServiceNow, not by picking a nice measure.
-   The 46rem this started with is right for a standalone page and far too narrow
-   inside a KB article, where it stacks with ServiceNow's own padding; removing
-   the cap entirely ran the text to the edges. 64rem centred, with a 2rem
-   gutter, sits between the two: wide enough not to read as an indented column,
-   and it still leaves air at the sides. */
+/* The gutter is PADDING, not a max-width. A max-width does nothing until the
+   container is wider than the cap, and neither the ServiceNow content area nor
+   an embedded preview usually is -- so capping the measure changed nothing
+   visible and only looked like it should. A percentage gutter is proportional
+   and therefore always applies; clamped so it cannot collapse on a phone or run
+   away on a wide monitor.
+
+   The measure itself is deliberately uncapped. 46rem, a reading measure for a
+   standalone page, reads as a narrow indented column once ServiceNow's own
+   padding is added to it. */
 body{
   background:var(--bg); color:var(--fg);
   font-family:Arial,Helvetica,sans-serif;
   font-size:15px; line-height:1.5;
-  margin:0; padding:1.5rem 2rem 2.5rem;
+  margin:0;
+  padding:1.5rem clamp(1.25rem, 7%, 6rem) 2.5rem;
 }
-#article{max-width:64rem;margin:0 auto}
+#article{max-width:none;margin:0}
 h1{font-size:1.6rem;line-height:1.25;margin:0 0 .35rem}
 h2{font-size:1.15rem;margin:1.25rem 0 .4rem;padding-bottom:.2rem;border-bottom:1px solid var(--line)}
 h3{font-size:1rem;margin:.9rem 0 .3rem}
@@ -40,7 +45,7 @@ th,td{border:1px solid var(--line);padding:.4rem .55rem;text-align:left;font-siz
 th{background:var(--pre-bg);font-weight:bold}
 hr{border:0;border-top:1px solid var(--line);margin:1.5rem 0}
 .warn{color:var(--warn)}
-#tools{max-width:64rem;margin:2rem auto 0;padding-top:1rem;border-top:1px solid var(--line)}
+#tools{max-width:none;margin:2rem 0 0;padding-top:1rem;border-top:1px solid var(--line)}
 #tools p{font-size:.85rem;color:var(--muted)}
 #tools button{font:inherit;font-size:.85rem;padding:.35rem .7rem;cursor:pointer;
   background:var(--pre-bg);color:var(--fg);border:1px solid var(--line)}
