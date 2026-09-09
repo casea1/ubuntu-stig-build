@@ -9,24 +9,28 @@
   --bg:#ffffff; --fg:#1c1c1c; --muted:#5a5a5a;
   --line:#c8c8c8; --pre-bg:#f4f4f4; --warn:#8c1d18; --link:#1a4f8a;
 }
+/* Tight, because this markup is pasted INTO a ServiceNow Knowledge article,
+   which supplies its own page frame. A comfortable reading gutter and a 46rem
+   measure are right for a standalone page and wrong inside another one: they
+   read as a narrow, oddly indented column sitting in the KB's own padding. */
 body{
   background:var(--bg); color:var(--fg);
   font-family:Arial,Helvetica,sans-serif;
-  font-size:15px; line-height:1.55;
-  margin:0; padding:1.75rem 1.25rem 4rem;
+  font-size:15px; line-height:1.5;
+  margin:0; padding:.5rem .75rem 1.5rem;
 }
-#article{max-width:46rem;margin:0 auto}
-h1{font-size:1.75rem;line-height:1.2;margin:0 0 .4rem}
-h2{font-size:1.2rem;margin:2rem 0 .5rem;padding-bottom:.25rem;border-bottom:1px solid var(--line)}
-h3{font-size:1.02rem;margin:1.4rem 0 .35rem}
-p{margin:.5rem 0}
-ol,ul{margin:.5rem 0;padding-left:1.6rem}
-li{margin:.3rem 0}
-li > ul, li > ol{margin:.25rem 0}
+#article{max-width:none;margin:0}
+h1{font-size:1.6rem;line-height:1.25;margin:0 0 .35rem}
+h2{font-size:1.15rem;margin:1.25rem 0 .4rem;padding-bottom:.2rem;border-bottom:1px solid var(--line)}
+h3{font-size:1rem;margin:.9rem 0 .3rem}
+p{margin:.4rem 0}
+ol,ul{margin:.4rem 0;padding-left:1.35rem}
+li{margin:.25rem 0}
+li > ul, li > ol{margin:.2rem 0}
 pre{
   background:var(--pre-bg); border:1px solid var(--line);
   font-family:Consolas,"Courier New",monospace; font-size:.85rem;
-  padding:.6rem .75rem; margin:.5rem 0; overflow-x:auto; white-space:pre;
+  padding:.5rem .6rem; margin:.4rem 0; overflow-x:auto; white-space:pre;
 }
 code{font-family:Consolas,"Courier New",monospace;font-size:.9em}
 table{border-collapse:collapse;margin:.6rem 0;width:100%}
@@ -34,7 +38,7 @@ th,td{border:1px solid var(--line);padding:.4rem .55rem;text-align:left;font-siz
 th{background:var(--pre-bg);font-weight:bold}
 hr{border:0;border-top:1px solid var(--line);margin:1.5rem 0}
 .warn{color:var(--warn)}
-#tools{max-width:46rem;margin:2.5rem auto 0;padding-top:1rem;border-top:1px solid var(--line)}
+#tools{max-width:none;margin:2rem 0 0;padding-top:.75rem;border-top:1px solid var(--line)}
 #tools p{font-size:.85rem;color:var(--muted)}
 #tools button{font:inherit;font-size:.85rem;padding:.35rem .7rem;cursor:pointer;
   background:var(--pre-bg);color:var(--fg);border:1px solid var(--line)}
@@ -481,8 +485,10 @@ configuration must be preserved.</p>
 
 <div id="tools">
   <p>Plain HTML: headings, lists, tables and code blocks only, with nothing the
-  ServiceNow editor will strip. Paste into a Knowledge article by copying the article
-  text above, or open the editor's source view and paste the markup below.</p>
+  ServiceNow editor will strip. <strong>Use the button below</strong> and paste that
+  markup into the editor's source view. It is the article markup on its own, with none
+  of this page's styling, so the KB article keeps ServiceNow's own margins and width.
+  Copying the rendered text above instead brings this page's layout with it.</p>
   <button type="button" id="show">Show HTML source for ServiceNow</button>
   <textarea id="src" readonly hidden aria-label="Article HTML source"></textarea>
 </div>
