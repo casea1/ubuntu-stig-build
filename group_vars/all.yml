@@ -566,14 +566,22 @@ dev_code_server_group: sentry
 # standing account is.
 dev_code_server_exclude: []
 
-# Start every configured instance at boot? NO by default.
+# Who may have their IDE running while they are NOT logged in.
 #
-# The unit is WantedBy=multi-user.target, so `true` means one node process per
-# entitled user launched at every boot, held for the box's whole uptime, each
-# with its own listening port. dev-16 came up with 11 before the engineers were
-# even all added. False configures each instance fully and starts none of them:
-# `sudo it-codeserver start <user>` when someone actually wants one.
-dev_code_server_start_at_boot: false
+# The instance is a systemd USER service, so ordinarily it exists only inside
+# its owner's session: nothing at boot, and the engineer starts it themselves
+# with `it-codeserver mine start` -- no sudo, because it is their own service.
+# That is the whole design, and this list is the deliberate exception to it.
+#
+# Naming someone here enables lingering for them: their user manager runs from
+# boot, so their instance comes back after a reboot and stays up when they log
+# out. That is one node process and one listening port held for the box's whole
+# uptime -- which is what the old boot-start default did for EVERYONE, and why
+# dev-16 came up with 11 of them. Name people who have actually asked.
+#
+# `it-codeserver linger <user> on` does the same thing for one box; put them
+# here as well or the next pull turns it back off.
+dev_code_server_linger_users: []
 
 # =============================================================================
 # REMOTE DESKTOP  (development profile -> remote_desktop role)

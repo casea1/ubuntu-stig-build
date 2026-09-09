@@ -99,6 +99,25 @@
   ansible.builtin.set_fact:
     _cs_users: "{{ _cs_probe.stdout_lines | default([]) }}"
 
+# The unit every engineer runs. A USER unit: it lives under their own
+# `systemd --user`, so starting it needs no root, no sudoers grant and no
+# admin -- and because lingering is off, nothing exists at boot.
+- name: "CODE-SERVER | The per-user systemd unit"
+  ansible.builtin.copy:
+    src: code-server-user.service
+    dest: /etc/systemd/user/code-server.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: _cs_unit
+  tags: [scripts]
+
+- name: "CODE-SERVER | Reload systemd so the user unit is visible"
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _cs_unit is changed
+  tags: [scripts]
+
 - name: "CODE-SERVER | Configure and enable an instance per user"
   ansible.builtin.include_tasks: code_server_user.yml
   loop: "{{ _cs_users }}"
@@ -128,12 +147,16 @@
   changed_when: false
   check_mode: false
 
-- name: "CODE-SERVER | Stop instances for users who are no longer entitled"
+# Every system instance now, not only the ex-members'. The instance moved to a
+# user unit, so ANY surviving code-server@<user> is a second copy racing the
+# first for the same port -- and it is the one that starts at boot, which is
+# what this change exists to stop.
+- name: "CODE-SERVER | Stop and disable every old system instance"
   ansible.builtin.systemd:
     name: "code-server@{{ item }}"
     enabled: false
     state: stopped
-  loop: "{{ _cs_enabled.stdout_lines | default([]) | difference(_cs_users) }}"
+  loop: "{{ _cs_enabled.stdout_lines | default([]) }}"
   loop_control:
     label: "{{ item }}"
   failed_when: false
@@ -145,7 +168,7 @@
 # left behind.
 - name: "CODE-SERVER | Clear the failed state of instances that should not run"
   ansible.builtin.command: "systemctl reset-failed code-server@{{ item }}.service"
-  loop: "{{ _cs_enabled.stdout_lines | default([]) | difference(_cs_users) }}"
+  loop: "{{ _cs_enabled.stdout_lines | default([]) }}"
   loop_control:
     label: "{{ item }}"
   changed_when: false
@@ -203,30 +226,13 @@
 #
 # Deliberately NOT NOPASSWD, matching the it-repo grant: the STIG requires sudo
 # to authenticate, and this belongs in /var/log/sudo.log with a name against it.
-- name: "CODE-SERVER | Let the {{ dev_code_server_group }} group run their own instance"
-  ansible.builtin.copy:
-    dest: "/etc/sudoers.d/60-{{ dev_code_server_group }}-codeserver"
-    owner: root
-    group: root
-    mode: "0440"
-    content: |
-      ## Managed by ansible (dev_tools/code_server.yml) -- do not edit by hand.
-      ## `mine` acts on the calling account only; it accepts no username.
-      %{{ dev_code_server_group }} ALL=(root) /usr/local/sbin/it-codeserver mine, \
-                          /usr/local/sbin/it-codeserver mine start, \
-                          /usr/local/sbin/it-codeserver mine stop, \
-                          /usr/local/sbin/it-codeserver mine restart
-    validate: "visudo -cf %s"      # a malformed drop-in costs EVERYONE sudo
-  when: dev_code_server_enabled | default(false) | bool
-  tags: [scripts]
-
-# Ansible only ever creates: a box where code-server was turned off keeps the
-# grant forever unless it is taken away here.
-- name: "CODE-SERVER | Remove that grant when code-server is not enabled"
+# The sudoers grant this replaced is REMOVED, not merely unused. `systemctl
+# --user` needs no privilege, so nothing has to be granted -- and a live sudo
+# rule that no longer has a purpose is exactly the finding an assessor writes up.
+- name: "CODE-SERVER | Remove the old sudo grant (a user service needs none)"
   ansible.builtin.file:
     path: "/etc/sudoers.d/60-{{ dev_code_server_group }}-codeserver"
     state: absent
-  when: not (dev_code_server_enabled | default(false) | bool)
   tags: [scripts]
 
 - name: "CODE-SERVER | Where things are"

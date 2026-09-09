@@ -6,32 +6,42 @@
 # not from a position in a list, so it is stable for a person: removing someone
 # from the group does not move everyone else.
 #
-# FOR AN ENGINEER -- your own instance, no admin needed:
+# FOR AN ENGINEER -- your own instance. NO SUDO, no admin, no ticket:
 #
 #   it-codeserver mine              your URL, your password, is it running
-#   sudo it-codeserver mine start   start it (they are NOT started at boot)
-#   sudo it-codeserver mine stop
-#   sudo it-codeserver mine restart
+#   it-codeserver mine start        start it
+#   it-codeserver mine stop
+#   it-codeserver mine restart
+#   it-codeserver mine enable       start it whenever I log in
+#   it-codeserver mine disable
+#   it-codeserver mine log [N]
 #
-# `mine` takes no username: it acts on whoever is calling. That is what makes
-# it safe to grant the whole entitled group sudo on, and why the grant names
-# these exact forms.
+# It is a systemd USER service, so it is yours to start and stop -- there is
+# nothing to grant and nothing to ask for. `mine` takes no username: it acts on
+# whoever is calling.
 #
 # FOR AN ADMIN -- the whole box:
 #
 #   it-codeserver              who is running, on what, and whether it is up
 #   it-codeserver password <user>   show that user's password (root only)
 #   it-codeserver url <user>        the URL to hand them
-#   it-codeserver start <user>      start one -- they are NOT started at boot
+#   it-codeserver start <user>      start one in that user's own manager
 #   it-codeserver stop <user>       stop one
 #   it-codeserver restart <user>    after a config change
+#   it-codeserver linger <user> on  let their IDE run while they are logged out
 #   it-codeserver log <user> [N]    last N journal lines (default 40)
 #
-# NOT STARTED AT BOOT. The pull configures every entitled account's instance
-# and starts none of them (dev_code_server_start_at_boot). One node process and
-# one listening port per user, for the box's whole uptime, is not something to
-# hand out by default -- and instances for accounts that cannot log in were
-# failing on the boot splash.
+# NOTHING STARTS AT BOOT, AND NOTHING NEEDS ROOT. Those used to pull against
+# each other: the instance was a SYSTEM unit, so it either ran for everybody
+# from boot -- N node processes and N listening ports for the box's whole
+# uptime, including accounts that can never log in -- or it stayed off and an
+# engineer had no way to start their own.
+#
+# A systemd USER service settles both. It exists only inside its owner's
+# session, so there is nothing at boot, and it is theirs to start, so there is
+# no sudo and no grant. Lingering is what would put one back at boot, and it is
+# off unless an admin turns it on for a named person
+# (dev_code_server_linger_users, or `it-codeserver linger <user> on`).
 #
 # Entitlement is group membership (dev_code_server_group, `sentry` by default),
 # applied by the pull -- add someone to the group and pull, do not enable the
@@ -51,44 +61,72 @@ usage() { awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
 
 case "${1:-}" in -h|--help|help) usage; exit 0 ;; esac
 
-# `mine` is the ENGINEER's half of this command and the read-only form of it
-# must work with no privilege at all: instances do not start at boot, so an
-# engineer who cannot run this has no way to find their own port, password or
-# state. Everything else still elevates.
+# `mine` is the ENGINEER's half of this command and NONE of it elevates. The
+# instance is a systemd USER service, so starting and stopping it is something
+# the account can already do for itself -- that is the point of the design, and
+# it is why there is no sudoers grant to go with it.
 _needs_root=1
-if [ "${1:-}" = mine ]; then
-  case "${2:-}" in ""|status) _needs_root=0 ;; esac
-fi
+[ "${1:-}" = mine ] && _needs_root=0
 [ "$_needs_root" = 0 ] || [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
-# Who "mine" means. Under sudo the caller is SUDO_USER; run directly it is
-# whoever is logged in. Never root -- root has no code-server instance, and
-# silently operating on an account called "root" would be worse than refusing.
+# Who "mine" means. Run directly it is whoever is logged in; SUDO_USER is still
+# honoured for anyone who types sudo out of habit. Never root -- root has no
+# instance, and silently acting on an account called "root" is worse than
+# refusing.
 whoami_real() {
   local me="${SUDO_USER:-$(id -un)}"
-  [ "$me" = root ] && die "run this as yourself, not as root -- 'it-codeserver status' lists everyone"
+  [ "$me" = root ] && die "run this as yourself, not with sudo -- your instance is your own (it-codeserver status lists everyone)"
   printf '%s' "$me"
 }
 
-instances() {   # every code-server@<user> this box knows about
-  # NOT `list-unit-files 'code-server@*'`. That matches the TEMPLATE --
-  # code-server@.service -- whose name has no user in it, so the sed produced an
-  # empty string, the loop skipped it, and the command reported "none enabled"
-  # on a box where an instance was running and listening on the LAN. A status
-  # command that says "nothing here" about a live service is worse than silence.
-  #
-  # Instances come from two places and both are needed: loaded units (running or
-  # failed) and the enablement symlinks (enabled but not started).
-  {
-    systemctl list-units --all --plain --no-legend 'code-server@*.service' 2>/dev/null \
-      | awk '{print $1}'
-    ls /etc/systemd/system/*.wants/code-server@*.service 2>/dev/null \
-      | xargs -r -n1 basename
-  } | sed 's/^code-server@//; s/\.service$//' | grep -vE '^$' | sort -u
+# `systemctl --user` needs a running user manager, which means a real login
+# session. Someone who arrives by `su -` or a bare `sudo -u` has no session
+# bus, and systemctl's own error ("Failed to connect to bus") sends people
+# looking for a broken service instead of a missing session.
+user_bus_ok() {
+  [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -S "${XDG_RUNTIME_DIR}/bus" ]
 }
 
 conf_of() { local h; h=$(getent passwd "$1" | cut -d: -f6); printf '%s/.config/code-server/config.yaml' "$h"; }
 bind_of() { sed -nE 's/^bind-addr:[[:space:]]*//p' "$(conf_of "$1")" 2>/dev/null | tail -1; }
+
+instances() {   # every account this box has configured an instance for
+  # Entitlement used to be read from system units. There are none now -- the
+  # instance is a user service -- so the thing that says "this person has one"
+  # is the config the pull wrote for them. Old code-server@<user> units are
+  # still listed so a box mid-migration shows them and the pull can clear them.
+  {
+    getent passwd | awk -F: '$3 >= 1000 && $3 < 65000 {print $1}' | while read -r n; do
+      [ -r "$(conf_of "$n")" ] && printf '%s\n' "$n"
+    done
+    systemctl list-units --all --plain --no-legend 'code-server@*.service' 2>/dev/null \
+      | awk '{print $1}' | sed 's/^code-server@//; s/\.service$//'
+  } | grep -vE '^$' | sort -u
+}
+
+# What a user's own manager says about their instance. Needs the user manager
+# to exist, which without lingering means they are logged in -- so "inactive"
+# here legitimately means "nobody is using it", not "it is broken".
+user_state() {   # $1 = user
+  sctl1 systemctl --user --machine="$1@.host" is-active code-server.service
+}
+
+# systemctl's is-active/is-enabled PRINT their answer and also exit non-zero
+# for every state but the good one. `$(cmd || echo inactive)` therefore yields
+# TWO lines on a box where the unit exists and is simply stopped -- which is the
+# normal case this command is for. Take the first line and ignore the status.
+sctl1() {   # $@ = systemctl args -> one word, never empty
+  local out
+  out="$("$@" 2>/dev/null | head -1)"
+  printf '%s' "${out:-unknown}"
+}
+
+lingers() {   # $1 = user -> "yes"/"no"
+  case "$(loginctl show-user "$1" -p Linger --value 2>/dev/null)" in
+    yes) printf 'yes' ;; *) printf 'no' ;;
+  esac
+}
+
 
 # The ports these instances are actually configured for, as an alternation:
 # "8080|8083". Used to ask what is listening and to find the ufw rule.
@@ -124,16 +162,16 @@ cmd_status() {
   head2 "code-server -- $(hostname -s)"
   command -v code-server >/dev/null 2>&1 || die "code-server is not installed"
 
-  printf '  %-24s %-22s %-10s %s\n' USER "BIND" STATE URL
+  printf '  %-20s %-20s %-9s %-7s %s\n' USER "BIND" STATE LINGER URL
   printf '  %s\n' "$(printf '%.0s-' $(seq 1 88))"
   while IFS= read -r u; do
     [ -n "$u" ] || continue
     n=$((n + 1))
     bind="$(bind_of "$u")"
-    state="$(systemctl is-active "code-server@$u" 2>/dev/null || echo inactive)"
-    printf '  %-24s %-22s %s%-10s%s %s\n' "$u" "${bind:-?}" \
+    state="$(user_state "$u")"
+    printf '  %-20s %-20s %s%-9s%s %-7s %s\n' "$u" "${bind:-?}" \
       "$([ "$state" = active ] && printf '%s' "$GRN" || printf '%s' "$RED")" "$state" "$R" \
-      "$(url_for "$u")"
+      "$(lingers "$u")" "$(url_for "$u")"
   done < <(instances)
   [ "$n" -eq 0 ] && say "  ${DIM}none enabled -- add someone to the entitlement group and run a pull${R}"
 
@@ -223,7 +261,7 @@ cmd_mine() {
   [ -r "$conf" ] || die "no code-server configured for $me -- ask an admin: you may not be in the entitled group"
 
   url="$(url_for "$me")"
-  state="$(systemctl is-active "code-server@$me" 2>/dev/null || echo inactive)"
+  state="$(sctl1 systemctl --user is-active code-server.service)"
   # The password is in the user's OWN 0600 config, so reading it needs no
   # privilege. /etc/code-server/<user>.password is the root-only copy and is
   # only reachable on the elevated path.
@@ -234,34 +272,62 @@ cmd_mine() {
   printf '  %-10s %s\n' "state" "$([ "$state" = active ] && printf '%s%s%s' "$GRN" "$state" "$R" || printf '%s%s%s' "$RED" "$state" "$R")"
   printf '  %-10s %s\n' "url" "$url"
   printf '  %-10s %s\n' "password" "${pw:-<not readable -- see ~/.config/code-server/config.yaml>}"
+  # Only meaningful where there is a manager to ask; otherwise it reports
+  # "not-found" about a unit that is installed and fine.
+  user_bus_ok && printf '  %-10s %s\n' "at login" \
+    "$(sctl1 systemctl --user is-enabled code-server.service)"
   say ""
+  if ! user_bus_ok; then
+    say "  ${YEL}No user session here.${R} systemctl --user needs a real login --"
+    say "  ${DIM}log in over RDP or SSH as yourself rather than using su/sudo -u.${R}"
+    say ""
+    return 0
+  fi
   if [ "$state" = active ]; then
     say "  ${DIM}Open the URL above. Your browser will warn about the certificate --${R}"
     say "  ${DIM}it is self-signed by this box. Accept it and log in with the password.${R}"
+    say ""
+    say "  ${DIM}Stop it when you are done:  it-codeserver mine stop${R}"
   else
     say "  ${YEL}Not running.${R} Start it with:"
     say ""
-    say "      ${B}sudo it-codeserver mine start${R}"
+    say "      ${B}it-codeserver mine start${R}     ${DIM}(no sudo -- it is your own service)${R}"
     say ""
-    say "  ${DIM}It does not start at boot, so run that again after a reboot.${R}"
+    say "  ${DIM}Or have it start whenever you log in:  it-codeserver mine enable${R}"
+    say "  ${DIM}It never starts at boot; it runs while you are logged in.${R}"
   fi
   say ""
 }
 
-cmd_mine_action() {   # $1 = start|stop|restart
+cmd_mine_action() {   # $1 = start|stop|restart|enable|disable
   local me action="$1"
   # Split from the declaration on purpose: `local me=$(...)` takes the exit
   # status of `local`, which is always 0, so a refusal could not stop it.
   me="$(whoami_real)" || exit 1
-  [ -r "/etc/code-server/$me.password" ] \
-    || die "no instance configured for $me -- are you in the entitled group, and has a pull run?"
-  systemctl "$action" "code-server@$me" \
-    || die "code-server@$me failed to $action -- an admin can read: it-codeserver log $me"
+  [ -r "$(conf_of "$me")" ] \
+    || die "no code-server configured for $me -- you may not be in the entitled group"
+  user_bus_ok \
+    || die "no user session: systemctl --user has no bus here. Log in over RDP or SSH as yourself, not via su or sudo -u."
+
   case "$action" in
-    start)   say "started code-server@$me   ${DIM}$(url_for "$me")${R}"
-             say "  ${DIM}Not enabled at boot -- start it again after a reboot.${R}" ;;
-    stop)    say "stopped code-server@$me" ;;
-    restart) say "restarted code-server@$me   ${DIM}$(url_for "$me")${R}" ;;
+    enable)  systemctl --user enable --now code-server.service \
+               || die "could not enable it -- see: journalctl --user -u code-server -n 40"
+             say "code-server will start whenever you log in   ${DIM}$(url_for "$me")${R}"
+             say "  ${DIM}Still never at boot: it runs while you have a session.${R}"
+             return 0 ;;
+    disable) systemctl --user disable --now code-server.service >/dev/null 2>&1
+             say "code-server will no longer start when you log in"
+             return 0 ;;
+  esac
+
+  systemctl --user "$action" code-server.service \
+    || die "code-server failed to $action -- see: journalctl --user -u code-server -n 40"
+  case "$action" in
+    start)   say "started   ${DIM}$(url_for "$me")${R}"
+             say "  ${DIM}It runs while you are logged in. 'it-codeserver mine enable' to${R}"
+             say "  ${DIM}have it start with every session.${R}" ;;
+    stop)    say "stopped" ;;
+    restart) say "restarted   ${DIM}$(url_for "$me")${R}" ;;
   esac
 }
 
@@ -269,9 +335,10 @@ case "${1:-status}" in
   ""|status) cmd_status ;;
   mine)
     case "${2:-status}" in
-      status|"")            cmd_mine ;;
-      start|stop|restart)   cmd_mine_action "$2" ;;
-      *) die "usage: it-codeserver mine [start|stop|restart]" ;;
+      status|"")                            cmd_mine ;;
+      start|stop|restart|enable|disable)    cmd_mine_action "$2" ;;
+      log) journalctl --user -u code-server.service -n "${3:-40}" --no-pager ;;
+      *) die "usage: it-codeserver mine [start|stop|restart|enable|disable|log]" ;;
     esac ;;
   password|passwd)
     [ -n "${2:-}" ] || die "usage: it-codeserver password <user>"
@@ -283,24 +350,32 @@ case "${1:-status}" in
     say "  ${DIM}URL: $(url_for "$2")${R}"; say "" ;;
   url)
     [ -n "${2:-}" ] || die "usage: it-codeserver url <user>"; url_for "$2"; echo ;;
-  start)
-    # Instances are configured by the pull but NOT started at boot
-    # (dev_code_server_start_at_boot), so this is how someone gets one.
-    [ -n "${2:-}" ] || die "usage: it-codeserver start <user>"
-    [ -r "/etc/code-server/$2.password" ] \
+  # These reach into the named user's OWN manager. They exist for an admin
+  # helping someone, not as the normal route -- the normal route is that the
+  # engineer runs `it-codeserver mine start` and needs nobody.
+  start|stop|restart)
+    [ -n "${2:-}" ] || die "usage: it-codeserver $1 <user>   (or, as yourself: it-codeserver mine $1)"
+    [ -r "$(conf_of "$2")" ] \
       || die "no instance configured for $2 -- is the account in the entitled group, unlocked, and has the pull run?"
-    systemctl start "code-server@$2" || die "code-server@$2 failed to start -- see: it-codeserver log $2"
-    say "started code-server@$2   ${DIM}$(url_for "$2")${R}"
-    say "  ${DIM}Not enabled at boot: it stops on reboot. 'systemctl enable' it for one${R}"
-    say "  ${DIM}box, or set dev_code_server_start_at_boot for the fleet.${R}" ;;
-  stop)
-    [ -n "${2:-}" ] || die "usage: it-codeserver stop <user>"
-    systemctl stop "code-server@$2" && echo "stopped code-server@$2" ;;
-  restart)
-    [ -n "${2:-}" ] || die "usage: it-codeserver restart <user>"
-    systemctl restart "code-server@$2" && echo "restarted code-server@$2" ;;
+    systemctl --user --machine="$2@.host" "$1" code-server.service \
+      || die "could not $1 it for $2. Without lingering their manager only exists while they are logged in -- see: it-codeserver linger $2 on"
+    say "${1}ed code-server for $2   ${DIM}$(url_for "$2")${R}" ;;
+  # Whether this person's IDE may run while they are NOT logged in. Off for
+  # everyone by default: that is what keeps instances off the boot entirely.
+  # Persist it in site.yml too, or the next pull turns it back off.
+  linger)
+    [ -n "${2:-}" ] || die "usage: it-codeserver linger <user> [on|off]"
+    case "${3:-show}" in
+      show) printf '%s lingering: %s\n' "$2" "$(lingers "$2")" ;;
+      on)   loginctl enable-linger "$2" && say "$2 lingers: their IDE can run while they are logged out"
+            say "  ${DIM}Add them to dev_code_server_linger_users in /opt/it/site.yml or the${R}"
+            say "  ${DIM}next pull will turn it off again.${R}" ;;
+      off)  loginctl disable-linger "$2" && say "$2 no longer lingers -- their IDE stops when they log out" ;;
+      *) die "usage: it-codeserver linger <user> [on|off]" ;;
+    esac ;;
   log)
     [ -n "${2:-}" ] || die "usage: it-codeserver log <user> [N]"
-    journalctl -u "code-server@$2" -n "${3:-40}" --no-pager ;;
+    journalctl _SYSTEMD_USER_UNIT=code-server.service _UID="$(id -u "$2")" \
+      -n "${3:-40}" --no-pager ;;
   *) die "unknown command: $1  (try: it-codeserver --help)" ;;
 esac

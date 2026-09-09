@@ -52,39 +52,46 @@
 # listening ports for the whole uptime of a box, on a profile whose firewall
 # notes already call the range "N IDEs on the LAN".
 #
-# With this false the instance is fully CONFIGURED -- password, port, config
-# file -- and simply not started until someone asks for it
-# (`sudo it-codeserver start <user>`).
-- name: "CODE-SERVER | {{ cs_user }} | Enable and start at boot"
-  ansible.builtin.systemd:
-    name: "code-server@{{ cs_user }}"
-    enabled: true
-    state: "{{ 'restarted' if _cs_conf is changed else 'started' }}"
-    daemon_reload: true
-  when: dev_code_server_start_at_boot | default(false) | bool
-
-- name: "CODE-SERVER | {{ cs_user }} | On demand only -- do not start at boot"
+# The instance is a USER service now (see files/code-server-user.service), so
+# there is no system unit to enable and nothing for the pull to start. The
+# engineer starts their own with `it-codeserver mine start`, which needs no
+# root. What the pull still has to do is take away the SYSTEM unit an earlier
+# build enabled for them, or it keeps starting a second copy at every boot --
+# on the same port, so one of the two loses the bind and fails.
+- name: "CODE-SERVER | {{ cs_user }} | Retire the old system unit"
   ansible.builtin.systemd:
     name: "code-server@{{ cs_user }}"
     enabled: false
+    state: stopped
     daemon_reload: true
-  when: not (dev_code_server_start_at_boot | default(false) | bool)
+  failed_when: false
 
-# A running instance still has to pick up a config change. Asked of systemd
-# rather than assumed, so this never STARTS one that was deliberately stopped.
-- name: "CODE-SERVER | {{ cs_user }} | Is an instance running right now?"
-  ansible.builtin.command: "systemctl is-active code-server@{{ cs_user }}.service"
-  register: _cs_active
+- name: "CODE-SERVER | {{ cs_user }} | Clear its failed state if it left one"
+  ansible.builtin.command: "systemctl reset-failed code-server@{{ cs_user }}.service"
   changed_when: false
   failed_when: false
-  check_mode: false
-  when: not (dev_code_server_start_at_boot | default(false) | bool)
 
-- name: "CODE-SERVER | {{ cs_user }} | Restart the running instance for its new config"
-  ansible.builtin.systemd:
-    name: "code-server@{{ cs_user }}"
-    state: restarted
-  when:
-    - not (dev_code_server_start_at_boot | default(false) | bool)
-    - _cs_conf is changed
-    - (_cs_active.stdout | default('') | trim) == 'active'
+# Lingering is what decides whether this person's IDE can run while they are
+# not logged in. Off is the default and the reason nothing starts at boot; it
+# is turned on per person, deliberately, by naming them in
+# dev_code_server_linger_users.
+- name: "CODE-SERVER | {{ cs_user }} | Linger (IDE reachable while logged out)"
+  ansible.builtin.command:
+    cmd: >-
+      loginctl {{ 'enable-linger' if cs_user in (dev_code_server_linger_users | default([]))
+                  else 'disable-linger' }} {{ cs_user }}
+  register: _cs_linger
+  changed_when: false
+  failed_when: false
+
+# A user who lingers gets their instance back after a reboot only if the unit
+# is ENABLED in their own manager. Enabling it for someone who does not linger
+# would be harmless but misleading -- it would start at their next login, which
+# is not what naming them here asks for.
+- name: "CODE-SERVER | {{ cs_user }} | Start it in their own manager when they linger"
+  ansible.builtin.command:
+    cmd: "systemctl --user --machine={{ cs_user }}@.host enable --now code-server.service"
+  register: _cs_user_enable
+  changed_when: "'Created symlink' in (_cs_user_enable.stderr | default(''))"
+  failed_when: false
+  when: cs_user in (dev_code_server_linger_users | default([]))

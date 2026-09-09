@@ -179,9 +179,11 @@ check_net() {
 }
 
 # ---------------------------------------------------------------------------
-# 3. code-server at boot. One node process per entitled engineer, started
-# whether or not anyone uses it. Configured but on demand is the baseline
-# default (dev_code_server_start_at_boot); an older box has them enabled.
+# 3. Leftover code-server SYSTEM units. The instance is a systemd USER service
+# now, started by its owner and gone when they log out. Any surviving
+# code-server@<user> system unit is the old model: it starts at boot, for
+# everybody, and races the user's own copy for the same port. Removing it is
+# the migration, and it is safe -- the user service replaces it entirely.
 # ---------------------------------------------------------------------------
 check_codeserver() {
   head2 "code-server instances"
@@ -191,16 +193,19 @@ check_codeserver() {
     u="$(basename "$f")"; u="${u#code-server@}"; u="${u%.service}"
     n=$((n + 1))
     if fixing; then
-      systemctl disable --now "code-server@$u.service" >/dev/null 2>&1 \
-        && did "$u: on demand now (start it with: it-codeserver start $u)"
+      systemctl disable --now "code-server@$u.service" >/dev/null 2>&1
+      systemctl reset-failed "code-server@$u.service" >/dev/null 2>&1
+      did "$u: old system unit retired (they start their own: it-codeserver mine start)"
     else
-      warn "$u: starts at boot"
+      warn "$u: old system unit still starts at boot"
       flag
     fi
   done
-  [ "$n" = 0 ] && ok "none start at boot"
+  [ "$n" = 0 ] && ok "no system units left -- instances are per-user services"
   [ "$n" -gt 0 ] && [ "$MODE" = check ] && \
-    note "$n instance(s). They stay fully configured -- only the boot start goes."
+    note "$n leftover unit(s). The config and password are untouched; only the"
+  [ "$n" -gt 0 ] && [ "$MODE" = check ] && \
+    note "boot-start goes, and the engineer starts their own without sudo."
   return 0
 }
 

@@ -1777,22 +1777,28 @@ Derived from the UID, not from a position in a list, so removing one engineer
 does not move everyone else's port. With the defaults, uid 1000 → 8080, 1001 →
 8081, and so on.
 
-**What you hand an engineer.** Instances are configured by the pull and *not*
-started at boot, so this is the whole of what they need — no admin, no ticket:
+**What you hand an engineer.** No sudo, no admin, no ticket:
 
 ```bash
 it-codeserver mine                    # my URL, my password, is it running
-sudo it-codeserver mine start         # start it (again after every reboot)
-sudo it-codeserver mine stop
-sudo it-codeserver mine restart
+it-codeserver mine start              # start it
+it-codeserver mine stop
+it-codeserver mine enable             # ...and start it whenever I log in
+it-codeserver mine log
 ```
 
-`mine` takes **no username** — it acts on whoever is calling. That is what makes
-it safe to grant the entitled group sudo on, and the grant
-(`/etc/sudoers.d/60-<group>-codeserver`) names those four forms and nothing
-else. Naming a user is an admin action, because starting somebody else's
-instance runs a server *as them*, on their port, behind their password. The
-read-only `it-codeserver mine` needs no sudo at all.
+**It is a systemd _user_ service**, so it is genuinely theirs — `systemctl
+--user` needs no privilege, which is why none is granted. `mine` takes no
+username: it acts on whoever is calling.
+
+This is what makes "nothing at boot" and "engineers help themselves"
+compatible, and they were not before. As a **system** unit the instance could
+only be started by root, so there were two bad choices: enable it for everyone
+and get one node process and one listening port per entitled account for the
+box's whole uptime — dev-16 came up with 11, several for accounts that can
+never log in — or leave it disabled and make every engineer ask an admin. A
+user service exists only inside its owner's session, so there is nothing at
+boot and nothing to grant.
 
 > The command is installed as a **real file** in `/usr/local/sbin`, not a
 > symlink into `/opt/it/scripts`. That directory is `2770 root:sudo`, so an
@@ -1800,15 +1806,46 @@ read-only `it-codeserver mine` needs no sudo at all.
 > skips the PATH entry, and the shell reports *"command not found"* for a
 > command they are meant to run. Same trap as `it_scripts_public`.
 
+**The instance stops when its owner logs out.** That is the design, not a
+fault: no session, no service, nothing held overnight. For someone who needs
+their IDE reachable while they are *not* logged in, enable **lingering** for
+them — deliberately, per person:
+
+```bash
+sudo it-codeserver linger <user> on     # this box
+```
+
+```yaml
+# /opt/it/site.yml -- or the next pull turns it back off
+dev_code_server_linger_users: [jane_doe]
+```
+
+Lingering runs that person's user manager from boot, so their instance comes
+back after a reboot and stays up when they log out — one node process and one
+port held for the box's whole uptime. That is exactly what the old boot-start
+default did for *everybody*. Name people who have actually asked.
+
+> **`systemctl --user` needs a real login session.** Someone who arrives by
+> `su -` or `sudo -u` has no session bus, and systemd's own error
+> (*"Failed to connect to bus"*) sends people hunting a broken service instead
+> of a missing session. `it-codeserver mine` says so instead.
+
 **The admin view**, over the whole box:
 
 ```bash
-sudo it-codeserver                    # who, on what port, and is it up
+sudo it-codeserver                    # who, on what port, up, and lingering
 sudo it-codeserver password <user>    # their password (generated, root-only)
 sudo it-codeserver url <user>
-sudo it-codeserver restart <user>
+sudo it-codeserver restart <user>     # reaches into that user's own manager
+sudo it-codeserver linger <user> on
 sudo it-codeserver log <user> 100
 ```
+
+The `start`/`stop`/`restart` forms act on the named user's own manager and are
+for helping someone, not the normal route — the normal route is that they run
+`it-codeserver mine start` and need nobody. Without lingering their manager
+only exists while they are logged in, so those forms fail for a user who is
+not; the error says so.
 
 The URL printed is the box's **IP**, not its hostname. On a lab LAN with no DNS
 record for `dev-18`, a browser given the hostname reports *"dev-18 took too long
