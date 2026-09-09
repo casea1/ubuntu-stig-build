@@ -45,6 +45,10 @@ it_scripts_common:
   # Address, DNS and time source. Needed BEFORE a box is carried into the
   # deployed space, so it comes up on the right subnet already.
   - { file: network.sh,            link: it-net }
+  # The faults that make a hardened box slow or stop a session starting, in one
+  # command. Deliberately self-contained: a fielded box that cannot take a whole
+  # baseline can still take this one file.
+  - { file: repair.sh,             link: it-repair }
   - { file: status.sh,             link: it-status }
   - { file: status-host.sh,        link: it-host }
   - { file: status-luks.sh,        link: it-luks }

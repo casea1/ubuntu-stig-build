@@ -1126,6 +1126,40 @@ sudo it-inventory     # hardware/serials/listening ports -> /opt/it/inventory-<h
 
 **`sudo it-checklist --fix`** adds a section after the table telling you how to close every FAIL, and what each MANUAL item needs from a human. It **prints steps and changes nothing** — several of the remedies restart auth or the firewall, which is not a decision a status command should make on its own.
 
+## 3.1b The box is slow, or a session will not start (`it-repair`)
+
+Everything in this section was a hand-run remedy first. They are together
+because they present as the same complaint — *"RDP takes forever"*, *"it sits on
+a black screen"*, *"boot hangs for two minutes"* — and the cause is usually not
+the one being blamed.
+
+```bash
+sudo it-repair                 # report only, changes nothing
+sudo it-repair fix             # apply
+sudo it-repair fix --only home # just one; --list names them
+```
+
+Exit status is 0 when nothing is left to fix, so it can be run from a check.
+
+| Check | What it is |
+|---|---|
+| `home` | **The black screen.** Root-owned `~/.local`, `~/.config`, `~/.Xauthority` and friends — `install -d a/b/c` owns only the LEAF, so a root-run helper leaves the parents to root (trap 44). GNOME then cannot write its own state, the session hangs on a black screen with an X cursor, and apport puts a `PermissionError` dialog in front of the user. Nothing in a home is legitimately root-owned here, so the sweep is the check |
+| `net` | **Two minutes of every boot.** `systemd-networkd-wait-online` waits 120 s for links NetworkManager owns (trap 45). Masked only when networkd manages **0** links *and* `NetworkManager-wait-online` is enabled to provide the target — and unmasked again if that ever reverses |
+| `codeserver` | One node process per entitled engineer at boot. They stay configured; only the boot start goes |
+| `rdp` | Orphaned sessions, via `it-rdp sweep`. **Never** restart `xrdp-sesman` to clear these |
+| `tiles` | Duplicate FPGA app-grid entries, via `it-fpga desktop` |
+| `units` | Failed units. `code-server@<locked user>` is known noise and is reset; anything else is reported and left alone |
+| `crash` | Queued apport reports — the dialog at login — and `whoopsie`, which reports to Canonical |
+| `boot` `disk` `audit` | **Read-only.** Slowest units, filesystems over 80 %, and the kernel audit-rule count (a `1` there is trap 13 — diagnose with `it-checklist`) |
+
+> **It is deliberately self-contained.** It reads no config and calls nothing
+> else from this repo, so a fielded box that cannot take a whole baseline can
+> still take this one file: copy it to `/usr/local/sbin/it-repair`,
+> `chmod 0755`, run it. See §4.4d for carrying the whole baseline instead.
+
+After a `fix`: log out and back in for the session repairs, reboot to see the
+boot-time change.
+
 ## 3.2 Produce compliance evidence
 
 ```bash
