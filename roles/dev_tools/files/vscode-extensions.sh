@@ -55,14 +55,57 @@ ext_dirs_for() {   # $1 = user -> the dirs to populate, one per line
   printf '%s/.local/share/code-server/extensions\n' "$h"
 }
 
+# `install -d -o USER path/a/b/c` gives the owner and mode to the LEAF ONLY.
+# Every parent it has to create gets root and the caller's umask. Run as root --
+# which is how the pull runs this -- that left
+#
+#   drwxr-xr-x root root  ~/.local
+#   drwxr-xr-x root root  ~/.local/share
+#   drwxr-xr-x root root  ~/.vscode
+#
+# on every account on every development box. A root-owned ~/.local/share is not
+# cosmetic: the user cannot create anything inside it, so ibus-table cannot make
+# its own directory, crashes at every login, and the GNOME session stalls waiting
+# on the input method. That is the "RDP takes forever to open" report -- ours,
+# not xrdp's. Found on dev-18, 2026-09-09.
+#
+# Two functions, because there are two problems: stop creating it, and repair
+# the boxes that already have it.
+
+# Create $1 and any missing ancestors, each owned by $2:$3. Returns immediately
+# on a directory that already exists, so nothing pre-existing is re-owned.
+mkdir_owned() {   # $1 dir  $2 user  $3 group
+  local d="$1" u="$2" g="$3"
+  [ -d "$d" ] && return 0
+  case "$d" in /|""|.) return 1 ;; esac
+  mkdir_owned "$(dirname "$d")" "$u" "$g" || return 1
+  mkdir -m 0700 "$d" 2>/dev/null || return 1
+  chown "$u:$g" "$d"
+}
+
+# Repair ancestors an earlier run created as root. Inside the user's own home
+# only, only where the owner is actually wrong, and ownership only -- the modes
+# are conventional and are not this script's to decide.
+fix_home_ancestors() {   # $1 user  $2 home  $3 group
+  local u="$1" h="$2" g="$3" d
+  for d in "$h/.vscode" "$h/.local" "$h/.local/share" "$h/.local/share/code-server"; do
+    [ -d "$d" ] || continue
+    [ "$(stat -c %U "$d" 2>/dev/null)" = "$u" ] && continue
+    chown "$u:$g" "$d" && warn "$u: repaired root-owned ${d#"$h"/}"
+  done
+}
+
 link_user() {   # $1 = user
   local u="$1" d e n=0 h
   h="$(home_of "$u")"
   [ -n "$h" ] && [ -d "$h" ] || { warn "$u: no home directory, skipped"; return 0; }
   [ -d "$SHARED" ] || die "no shared store at $SHARED -- run an ansible-pull"
 
+  local grp; grp="$(id -gn "$u")"
+  fix_home_ancestors "$u" "$h" "$grp"
+
   while IFS= read -r d; do
-    install -d -m 0700 -o "$u" -g "$(id -gn "$u")" "$d" 2>/dev/null || continue
+    mkdir_owned "$d" "$u" "$grp" || continue
     while IFS= read -r e; do
       [ -n "$e" ] || continue
       # A REAL directory here is the user's own copy of that extension --
@@ -93,11 +136,14 @@ unlink_user() {
 }
 
 copy_user() {
-  local u="$1" d sz
+  local u="$1" d sz h grp
+  h="$(home_of "$u")"
+  grp="$(id -gn "$u")"
   sz=$(du -sh "$SHARED" 2>/dev/null | cut -f1)
   warn "this makes a PRIVATE copy of $sz for $u -- links cost bytes and this does not"
+  [ -n "$h" ] && fix_home_ancestors "$u" "$h" "$grp"
   while IFS= read -r d; do
-    install -d -m 0700 -o "$u" -g "$(id -gn "$u")" "$d" 2>/dev/null || continue
+    mkdir_owned "$d" "$u" "$grp" || continue
     # Dereference the links this user already has, so the copy is real.
     cp -rL "$SHARED"/. "$d/" 2>/dev/null || true
     chown -R "$u:$(id -gn "$u")" "$d"
