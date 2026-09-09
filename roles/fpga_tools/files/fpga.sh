@@ -1121,6 +1121,11 @@ cmd_install_libero() {
 # ---------------------------------------------------------------------------
 IMPORT_PREFIX=/usr/share/applications/fpga-vendor-
 WRAP_PREFIX=/usr/local/bin/fpga-vendor-
+# Where the per-user originals are kept once they have been imported. They are
+# MOVED here, not deleted: this command rebuilds its tiles from scratch on every
+# run, and a Libero tile only ever exists in the installing user's home -- so
+# deleting the source meant the second run removed a tile the first one made.
+STASH_DIR=/var/lib/it-fpga/vendor-desktops
 
 # Where an installer might have left them: the vendor trees themselves, and the
 # per-user directories of anyone who has run one.
@@ -1132,7 +1137,31 @@ vendor_desktops() {
   for d in /root/.local/share/applications /home/*/.local/share/applications; do
     [ -d "$d" ] && find "$d" -maxdepth 1 -type f -name '*.desktop' 2>/dev/null
   done
+  [ -d "$STASH_DIR" ] && find "$STASH_DIR" -maxdepth 2 -type f -name '*.desktop' 2>/dev/null
+  return 0
 }
+
+# Binaries the pull's own generic tiles already cover. A vendor tile pointing at
+# the SAME program is the duplicate people see in the app grid -- one "Libero
+# SoC" from the pull, another imported from the installer's own file.
+covered_bins() {
+  local c b
+  for c in vivado vitis libero; do
+    # Keyed on the TILE, not the launcher. /usr/local/bin/<cmd> is written
+    # whether or not fpga_desktop_entries is on, so reading it alone would
+    # claim coverage that is not in the app grid -- and the vendor tile we
+    # skipped on that basis would have been the only one left.
+    [ -e "/usr/share/applications/fpga-$c.desktop" ] || continue
+    b="$(sed -nE 's/^BIN="?([^"]+)"?$/\1/p' "/usr/local/bin/$c" 2>/dev/null | head -1)"
+    [ -n "$b" ] && { readlink -f "$b" 2>/dev/null || printf '%s\n' "$b"; }
+  done
+}
+
+# Accumulated across one `it-fpga desktop` run, so the same program imported
+# from two places -- the vendor tree AND the copy the installer left in a home
+# -- becomes one tile instead of two.
+SEEN_BINS=""
+SEEN_NAMES=""
 
 # First value of a key, ignoring the localised variants (Name[de] and friends).
 dget() { sed -nE "s/^$2=(.*)$/\1/p" "$1" 2>/dev/null | head -1; }
@@ -1156,6 +1185,19 @@ import_one() {   # $1 = a vendor .desktop -> 0 if imported
     *) return 1 ;;
   esac
   [ -e "$bin" ] || return 1
+
+  # Already covered -- by a pull tile, or by an earlier file in this same run.
+  # Return 2 rather than 1: this is a duplicate, not a file we failed to read,
+  # and the caller still has to deal with the private copy it came from.
+  local rbin lname
+  rbin="$(readlink -f "$bin" 2>/dev/null || printf '%s' "$bin")"
+  lname="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
+  printf '%s\n' "$SEEN_BINS"  | grep -qxF "$rbin"  && return 2
+  printf '%s\n' "$SEEN_NAMES" | grep -qxF "$lname" && return 2
+  SEEN_BINS="$SEEN_BINS
+$rbin"
+  SEEN_NAMES="$SEEN_NAMES
+$lname"
 
   icon="$(dget "$f" Icon)"
   comment="$(dget "$f" Comment)"
@@ -1223,17 +1265,48 @@ cmd_desktop() {
   say "  The installers write these into the installing user's home, so only"
   say "  that account sees them. Imported here for every member of $ACCESS_GROUP."
   say ""
-  local f n=0
+
+  # Rebuilt from scratch every run rather than added to. Slugs are derived from
+  # the vendor's own filename, so a reinstall under a new version number used to
+  # leave the old tile beside the new one and nothing removed it -- prune_imports
+  # only catches a tile whose PROGRAM is gone, which after an in-place upgrade it
+  # is not. Everything here is regenerated below from what is on disk.
+  rm -f "$IMPORT_PREFIX"*.desktop "$WRAP_PREFIX"*
+
+  local f n=0 dup=0 rc
+  SEEN_BINS="$(covered_bins)"
+  SEEN_NAMES=""
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    import_one "$f" && n=$((n + 1))
-  done < <(vendor_desktops | sort -u)
+    import_one "$f"; rc=$?
+    [ "$rc" = 0 ] && n=$((n + 1))
+    [ "$rc" = 2 ] && dup=$((dup + 1))
+
+    # The copy in someone's home is the OTHER half of the duplicate: GNOME shows
+    # a per-user tile and a system-wide one side by side, because it keys on the
+    # filename and these two never match. Now that the tool is covered
+    # system-wide -- imported just now, or already by a pull tile -- the private
+    # copy is redundant. Only ever a file this run positively identified as a
+    # vendor launcher: its Exec had to resolve inside a vendor tree to get here.
+    if [ "$rc" = 0 ] || [ "$rc" = 2 ]; then
+      case "$f" in
+        /home/*/.local/share/applications/*|/root/.local/share/applications/*)
+          local owner; owner="$(basename "${f%/.local/*}")"
+          if install -D -m 0644 "$f" "$STASH_DIR/$owner/$(basename "$f")" 2>/dev/null; then
+            rm -f "$f"
+            say "      ${DIM}took the private copy out of $owner's home (kept in $STASH_DIR)${R}"
+          fi ;;
+      esac
+    fi
+  done < <(vendor_desktops | awk '!seen[$0]++')
+
   [ "$n" -eq 0 ] && warn "no vendor .desktop files found under $XROOT, $MCHP_ROOT or any home"
   prune_imports
   # GNOME reads the desktop DATABASE, not the directory.
   update-desktop-database /usr/share/applications 2>/dev/null || true
   say ""
   [ "$n" -gt 0 ] && say "  ${DIM}$n tile(s). They appear for every user -- no re-login needed.${R}"
+  [ "$dup" -gt 0 ] && say "  ${DIM}$dup duplicate(s) skipped -- already covered by another tile.${R}"
   say ""
 }
 

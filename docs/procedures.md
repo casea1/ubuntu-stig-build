@@ -982,6 +982,30 @@ imported — that filter is what stops it hoovering up whatever else is in
 somebody's home — and an import whose program later disappears is removed rather
 than left in the app grid pointing at nothing.
 
+**Duplicates in the app grid** — two *Libero SoC* tiles, or the same tool twice
+after an upgrade — are what this command exists to prevent, and it used to cause
+them instead. Three things overlap: the pull's own generic tile, the vendor's
+copy inside the tree, and the vendor's copy in the installing user's home. All
+three can point at the same binary.
+
+```bash
+sudo it-fpga desktop     # now also the way to CLEAN UP existing duplicates
+```
+
+It rebuilds the imported set from scratch each run (a version bump changes the
+slug, so the old tile used to sit beside the new one and nothing removed it),
+imports **one** tile per program — skipping anything a pull tile already covers —
+and **moves** the private copy out of the user's home to
+`/var/lib/it-fpga/vendor-desktops/<user>/`. Moved, not deleted: the command
+regenerates from its sources every run, so deleting them made a second run remove
+tiles the first one created. To put someone's originals back, copy them from
+there.
+
+Coverage is keyed on the pull tile being *present*, not on the launcher existing
+— with `fpga_desktop_entries: false` the launchers are still written, and reading
+those instead would skip the vendor tile as "already covered" when it was the
+only one left.
+
 If a tile is missing after an install, the pull has not run since:
 
 ```bash
