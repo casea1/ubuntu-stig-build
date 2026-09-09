@@ -32,6 +32,8 @@ else B=""; DIM=""; GRN=""; YEL=""; RED=""; R=""; fi
 say()   { printf '%s\n' "$*"; }
 head2() { printf '\n%s%s%s\n' "$B" "$*" "$R"; }
 die()   { printf '%s%s%s\n' "$RED" "$*" "$R" >&2; exit 1; }
+warn()  { printf '  %sWARN%s %s\n' "$YEL" "$R" "$*"; }
+bad()   { printf '  %sFAIL%s %s\n' "$RED" "$R" "$*"; }
 usage() { awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"; }
 
 case "${1:-}" in -h|--help|help) usage; exit 0 ;; esac
@@ -57,8 +59,37 @@ instances() {   # every code-server@<user> this box knows about
 conf_of() { local h; h=$(getent passwd "$1" | cut -d: -f6); printf '%s/.config/code-server/config.yaml' "$h"; }
 bind_of() { sed -nE 's/^bind-addr:[[:space:]]*//p' "$(conf_of "$1")" 2>/dev/null | tail -1; }
 
+# The ports these instances are actually configured for, as an alternation:
+# "8080|8083". Used to ask what is listening and to find the ufw rule.
+cs_ports() {
+  local u b
+  while IFS= read -r u; do
+    [ -n "$u" ] || continue
+    b="$(bind_of "$u")"; [ -n "$b" ] && printf '%s\n' "${b##*:}"
+  done < <(instances) | sort -u | paste -sd'|'
+}
+
+# Does a ufw LIMIT rule cover any of these ports? The rule is written as a
+# RANGE (8080:8099/tcp), so a plain string match on one user's port misses it
+# for everyone except the one whose port happens to start the range.
+ufw_limits() {   # $1 = "8080|8083"
+  ufw status 2>/dev/null | awk -v list="$1" '
+    $2 == "LIMIT" {
+      spec = $1; sub(/\/(tcp|udp)$/, "", spec)
+      n = split(list, want, "|")
+      if (spec ~ /:/) {
+        split(spec, r, ":")
+        for (i = 1; i <= n; i++)
+          if (want[i]+0 >= r[1]+0 && want[i]+0 <= r[2]+0) { print spec; exit }
+      } else {
+        for (i = 1; i <= n; i++) if (want[i]+0 == spec+0) { print spec; exit }
+      }
+    }' | grep -q .
+}
+
 cmd_status() {
-  local u bind state n=0
+  local u bind state n=0 ports
+  ports="$(cs_ports)"
   head2 "code-server -- $(hostname -s)"
   command -v code-server >/dev/null 2>&1 || die "code-server is not installed"
 
@@ -80,18 +111,56 @@ cmd_status() {
   say "  ${DIM}Show one:  sudo it-codeserver password <user>${R}"
 
   # The thing worth noticing on a hardened box: what is actually listening.
+  #
+  # "(nothing, or ss is unavailable)" used to cover both, and they need
+  # completely different answers -- one is a broken service, the other is a
+  # missing tool. Worse, it filtered on the PROCESS name, so an instance
+  # listening under any comm but node/code-server read as nothing listening at
+  # all. Filter on the PORTS these instances are configured for instead.
   head2 "Listening"
-  ss -ltnp 2>/dev/null | grep -i 'code-server\|node' | sed 's/^/  /' \
-    || say "  ${DIM}(nothing, or ss is unavailable)${R}"
+  if ! command -v ss >/dev/null 2>&1; then
+    warn "ss is not installed (iproute2) -- cannot tell what is bound"
+  else
+    local listening=""
+    [ -n "$ports" ] && listening="$(ss -ltnH 2>/dev/null | awk -v p="^($ports)$" '{n=$4; sub(/.*:/,"",n); if (n ~ p) print}')"
+    if [ -n "$listening" ]; then
+      ss -ltnp 2>/dev/null | awk -v p="($ports)" 'NR==1 || $4 ~ ":"p"$"' | sed 's/^/  /'
+    else
+      bad "nothing is listening on ${ports:-the configured port(s)}"
+      say "  ${DIM}A unit can be 'active' and still not be bound -- read its log:${R}"
+      say "  ${DIM}  sudo it-codeserver log <user>${R}"
+    fi
+  fi
   say ""
   case "$(bind_of "$(instances | head -1)")" in
     127.0.0.1:*) say "  ${DIM}Loopback-only: reach it from the RDP desktop's browser, or over an${R}"
                  say "  ${DIM}SSH tunnel:  ssh -L 8080:127.0.0.1:<port> <box>${R}" ;;
     0.0.0.0:*|*) printf '  %sThese are on the LAN%s, one port per user, password-authed over\n' "$YEL" "$R"
-                 say "  self-signed TLS. ufw rate-limits the range. Set"
-                 say "  dev_code_server_bind_addr: 127.0.0.1 to take them off the LAN." ;;
+                 say "  self-signed TLS. Set dev_code_server_bind_addr: 127.0.0.1 to"
+                 say "  take them off the LAN."
+                 say ""
+                 say "  ${DIM}Reaching one from a Windows PC: use the URL above (an IP). The${R}"
+                 say "  ${DIM}hostname only works where something publishes a DNS record for${R}"
+                 say "  ${DIM}it. Expect a certificate warning -- the cert is self-signed.${R}"
+                 if [ -n "$ports" ] && ufw_limits "$ports"; then
+                   say ""
+                   warn "the ufw rule for these ports is LIMIT, not ALLOW"
+                   say "  ${DIM}ufw limit drops a source after 6 connections in 30s. A login page${R}"
+                   say "  ${DIM}is a couple of requests; the editor that loads after it is dozens${R}"
+                   say "  ${DIM}at once, so the first real page load trips it and everything after${R}"
+                   say "  ${DIM}times out. Confirm:  sudo journalctl -kf | grep 'UFW LIMIT BLOCK'${R}"
+                 fi ;;
   esac
   say ""
+}
+
+# The address a CLIENT can actually reach. Printing the hostname was wrong for
+# the case this tool exists to serve: an engineer on a Windows PC on the lab
+# LAN, where nothing publishes a DNS record for `dev-18`. Chrome then reports
+# "dev-18 took too long to respond" and it reads as the service being down when
+# it is the NAME that never resolved. The IP always works.
+lan_ip() {
+  ip -4 route get 1.1.1.1 2>/dev/null | sed -nE 's/.* src ([0-9.]+).*/\1/p' | head -1
 }
 
 url_for() {
@@ -100,7 +169,7 @@ url_for() {
   [ -n "$port" ] || { printf '%s' "-"; return; }
   case "$bind" in
     127.0.0.1:*) host=localhost ;;
-    *) host="$(hostname -f 2>/dev/null || hostname)" ;;
+    *) host="$(lan_ip)"; [ -n "$host" ] || host="$(hostname -f 2>/dev/null || hostname)" ;;
   esac
   printf 'https://%s:%s/' "$host" "$port"
 }
