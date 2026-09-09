@@ -67,13 +67,17 @@ th,td{border:1px solid var(--line);padding:.4rem .55rem;text-align:left;font-siz
 th{background:var(--pre-bg);font-weight:bold}
 hr{border:0;border-top:1px solid var(--line);margin:1.5rem 0}
 .warn{color:var(--warn)}
+.seam{margin:2rem 0;padding:.4rem 0;border-top:2px dashed var(--line);
+  border-bottom:2px dashed var(--line);text-align:center;
+  font-size:.8rem;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
 #tools{max-width:none;margin:2rem 0 0;padding-top:1rem;border-top:1px solid var(--line)}
 #tools p{font-size:.85rem;color:var(--muted)}
 #tools button{font:inherit;font-size:.85rem;padding:.35rem .7rem;cursor:pointer;
   background:var(--pre-bg);color:var(--fg);border:1px solid var(--line)}
 #tools button:hover{border-color:var(--fg)}
 #tools button:focus-visible{outline:2px solid var(--link);outline-offset:2px}
-#src{width:100%;height:14rem;margin-top:.6rem;font-family:Consolas,"Courier New",monospace;
+#tools .grab{margin-top:.9rem}
+#tools textarea{width:100%;height:11rem;margin-top:.6rem;font-family:Consolas,"Courier New",monospace;
   font-size:.75rem;background:var(--pre-bg);color:var(--fg);border:1px solid var(--line);padding:.5rem}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
@@ -81,7 +85,9 @@ hr{border:0;border-top:1px solid var(--line);margin:1.5rem 0}
 <body>
 
 
-<div id="article" style="padding:0 4%;">
+<div id="article">
+
+<div id="intro" style="padding:0 4%;">
 
 <h1>GR - Ubuntu 24.04 Imaging Guide</h1>
 
@@ -125,7 +131,11 @@ Server installer has no desktop and nothing in the build adds one.</p>
   <li>The <strong>profile</strong> from the table above</li>
 </ul>
 
-<hr>
+</div><!-- /intro -->
+
+<p class="seam">End of the Introduction field. Everything below goes in Instructions.</p>
+
+<div id="instructions" style="padding:0 4%;">
 
 <h2>A. Firmware Settings</h2>
 
@@ -513,36 +523,50 @@ they sign out, which is intended. There is nothing to set up during imaging.</p>
 <p>Choose <strong>N</strong>, which keeps the currently-installed version. The build's own
 configuration must be preserved.</p>
 
+</div><!-- /instructions -->
+
 </div>
 
 <div id="tools">
   <p>Plain HTML: headings, lists, tables and code blocks only, with nothing the
-  ServiceNow editor will strip. <strong>Use the button below</strong> and paste that
-  markup into the editor's source view.</p>
-  <p><strong>Re-paste it after any change to this page.</strong> What is in ServiceNow
-  is a copy taken at the time you pasted it; updating this page does not reach back
-  into the article.</p>
-  <button type="button" id="show">Show HTML source for ServiceNow</button>
-  <textarea id="src" readonly hidden aria-label="Article HTML source"></textarea>
+  ServiceNow editor will strip. Take each block with its button and paste it into
+  that field's <strong>source view</strong>.</p>
+  <p><strong>Re-paste after any change to this page.</strong> What is in ServiceNow
+  is a copy taken when you pasted it; updating this page does not reach back into
+  the article.</p>
+
+  <div class="grab">
+    <button type="button" data-target="intro">Show Introduction HTML</button>
+    <textarea readonly hidden aria-label="Introduction HTML source"></textarea>
+  </div>
+
+  <div class="grab">
+    <button type="button" data-target="instructions">Show Instructions HTML</button>
+    <textarea readonly hidden aria-label="Instructions HTML source"></textarea>
+  </div>
 </div>
 
 <script>
-(function(){
-  var btn = document.getElementById('show');
-  var box = document.getElementById('src');
-  btn.addEventListener('click', function(){
-    if (box.hidden) {
-      // outerHTML, not innerHTML: the gutter lives as an inline style on the
-      // wrapper, and innerHTML leaves the wrapper (and the gutter) behind.
-      box.value = document.getElementById('article').outerHTML.trim();
-      box.hidden = false;
-      box.focus();
-      box.select();
-      btn.textContent = 'Hide HTML source';
-    } else {
-      box.hidden = true;
-      btn.textContent = 'Show HTML source for ServiceNow';
-    }
+(function () {
+  // outerHTML, not innerHTML: the gutter is an inline style on each wrapper,
+  // and innerHTML would leave the wrapper -- and the gutter -- behind.
+  document.querySelectorAll('#tools .grab').forEach(function (grab) {
+    var btn = grab.querySelector('button');
+    var box = grab.querySelector('textarea');
+    var name = btn.dataset.target;
+    var label = name.charAt(0).toUpperCase() + name.slice(1);
+    btn.addEventListener('click', function () {
+      if (box.hidden) {
+        box.value = document.getElementById(name).outerHTML.trim();
+        box.hidden = false;
+        box.focus();
+        box.select();
+        btn.textContent = 'Hide ' + label + ' HTML';
+      } else {
+        box.hidden = true;
+        btn.textContent = 'Show ' + label + ' HTML';
+      }
+    });
   });
 })();
 </script>
