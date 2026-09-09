@@ -2542,7 +2542,7 @@ whenever there is something new to carry; the mirror is replaced each time.
 |---|---|
 | **It checks what it found** | a repository is only accepted if its `main` branch actually contains `local.yml` and `roles/it_scripts`. A directory named `ubuntu-stig-build.git` proves nothing, and adopting the wrong clone means running someone else's playbook as root |
 | **It shows what is coming** | the commits between what this box runs and what the media holds, before anything changes |
-| **It makes you type `YES`** | the next pull executes that repository as root. This is the only moment to look |
+| **It makes you type `YES`** | the next pull executes that repository as root. This is the only moment to look. `--yes` substitutes for that keystroke when a person is not there — see below |
 | **Admin only** | deliberately **not** in the `dta` sudoers grant that covers `it-repo load` |
 | **Reversible** | delete the `REPO_URL` line from `/etc/stig-build/pull.conf` and the box goes back to the network |
 
@@ -2595,6 +2595,46 @@ one archive.
 baseline and shows you the commits, but it cannot tell you whether the archive is the one
 you built — the next pull runs it as root. On EMI this route does not exist at all: there
 is no path onto the box from a network that is not in the space.
+
+### Pushing a baseline over SSH (`--yes`)
+
+The typed `YES` is there because the next pull runs the adopted repository as
+root. It is also the one thing that cannot happen when the ADM-Toolkit pushes a
+baseline to several workstations over SSH with `stdin` closed — so `load` grew a
+flag rather than leaving people to fake a human with `ssh -tt` and a written
+`YES\n`, which defeats the check by impersonating the person it exists to ask,
+breaks silently if the prompt text changes, and fills the captured log with TTY
+echo.
+
+```bash
+sudo it-pull load /opt/it/baseline-stage/baseline.git --yes
+sudo IT_PULL_ASSUME_YES=1 it-pull load        # same thing, via the environment
+sudo it-pull                                   # then a normal pull
+```
+
+**`--yes` skips the confirmation and nothing else.** The repository is still
+verified by content, an invalid one is still refused with the same message and
+the same exit status, and the mirror swap, root ownership, permissions, the
+`HEAD` fixup and the 0600 `pull.conf` write all happen exactly as they do for a
+person. A caller can only tell adopted from refused by the exit code — which is
+what makes it safe to script.
+
+It covers **both** routes: an explicit PATH and the auto-detect scan of attached
+media, which share one confirmation.
+
+Every adoption is logged to syslog (tag `it-pull`, facility `authpriv`), and one
+made with `--yes` records that confirmation was bypassed and by whom:
+
+```
+it-pull: baseline adopted WITHOUT interactive confirmation (--yes) by austin_case_adm: /mnt/usb/baseline.git -> /srv/baseline.git
+```
+
+> A person at a terminal is unaffected. `sudo it-pull load /mnt/usb/baseline.git`
+> still prompts and still needs `YES` typed.
+
+> **Checking whether a box supports it yet:** `it-pull load --help` lists the
+> flag. A box on an older baseline does not, which is how a caller can decide
+> per box.
 
 `sudo it-pull status` afterwards shows `repo : /srv/baseline.git`, which is how you tell a
 box is on carried media rather than the network.

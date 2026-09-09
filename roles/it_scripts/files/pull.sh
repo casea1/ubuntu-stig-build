@@ -21,6 +21,9 @@
 #   it-pull load [PATH]  AIR-GAPPED: adopt a baseline repo carried in on media.
 #                        Mirrors it to /srv/baseline.git and points this box at
 #                        it, so `it-pull` works with no network. Auto-detects.
+#                        Asks you to type YES first. `--yes` skips that ONE
+#                        step for automation over SSH with no tty -- nothing
+#                        else is skipped. `it-pull load --help` has the detail.
 #
 # NEITHER `light` NOR `full` TOUCHES DOCKER. The ai-runtime and ai-gpu tags are
 # skipped by both, so an AI node can take STIG, audit and script updates with
@@ -495,8 +498,50 @@ describe_repo() {   # $1 = git dir -> one line about its head
   git -C "$1" log -1 --format='%h  %ad  %s' --date=short "$BR" 2>/dev/null | cut -c1-90
 }
 
+load_usage() {
+  cat <<'USAGE'
+it-pull load [PATH] [--yes]
+
+Adopt a baseline repo carried in on media (or handed over by any other means)
+and point this box at it, so `it-pull` works with no network.
+
+  PATH        a `git clone --mirror` of this baseline. Omit it to scan
+              attached media and use the first one found.
+  --yes, -y   skip the typed confirmation. For automation only -- see below.
+
+Without --yes this asks you to type YES, because the next pull runs the
+adopted repository as root and this is the only moment to look at it.
+
+--yes substitutes for that keystroke and for NOTHING ELSE. The repository is
+still validated the same way (a git repo whose branch carries local.yml and
+roles/it_scripts), an invalid one is still refused with the same message and
+the same exit status, and the mirror, ownership, permissions and pull.conf
+write are all unchanged. A caller can only tell adopted from refused by the
+exit code, which is the point.
+
+Equivalent to --yes:  IT_PULL_ASSUME_YES=1 it-pull load /path/to/baseline.git
+
+Every adoption is logged to syslog (tag: it-pull), and one made with --yes
+says so and names the invoking user, so an automated adoption is
+distinguishable from a human one in the audit trail.
+USAGE
+}
+
 cmd_load() {
-  local src="${1:-}" cands mp n=0 pick
+  local src="" cands mp n=0 pick assume_yes="${IT_PULL_ASSUME_YES:-0}"
+
+  # --yes may appear before or after PATH; a caller scripting this should not
+  # have to care which.
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -y|--yes)  assume_yes=1; shift ;;
+      -h|--help) load_usage; return 0 ;;
+      --)        shift; break ;;
+      -*)        die "unknown option for load: $1  (try: it-pull load --help)" ;;
+      *)         [ -n "$src" ] && die "load takes one PATH, and got two: $src and $1"
+                 src="$1"; shift ;;
+    esac
+  done
 
   command -v git >/dev/null 2>&1 || die "git is not installed"
 
@@ -559,12 +604,28 @@ Or point at one directly:  sudo it-pull load /path/to/baseline.git"
     fi
   fi
 
-  if [ -t 0 ]; then
+  # This gate is reached by BOTH routes -- an explicit PATH and the media scan
+  # above -- so --yes covers the auto-detected case too.
+  #
+  # It substitutes for the typed YES and for nothing else: every check, the
+  # mirror, the ownership and the pull.conf write below are unchanged, and an
+  # invalid repo was already refused further up with the same message and
+  # status it has always had.
+  if [ "$assume_yes" = 1 ]; then
+    printf '\n  %s--yes given: confirmation skipped by %s%s\n' \
+      "$Y" "${SUDO_USER:-$(id -un)}" "$R"
+    logger -t it-pull -p authpriv.notice \
+      "baseline adopted WITHOUT interactive confirmation (--yes) by ${SUDO_USER:-$(id -un)}: $pick -> $BASELINE_MIRROR" \
+      2>/dev/null || true
+  elif [ -t 0 ]; then
     printf '\n  The next pull runs this repository as root. Type YES to adopt it: '
     local a; read -r a
     [ "$a" = YES ] || die "not confirmed -- nothing was changed"
+    logger -t it-pull -p authpriv.notice \
+      "baseline adopted after interactive confirmation by ${SUDO_USER:-$(id -un)}: $pick -> $BASELINE_MIRROR" \
+      2>/dev/null || true
   else
-    die "no terminal to confirm on -- run it interactively"
+    die "no terminal to confirm on -- run it interactively (or pass --yes)"
   fi
 
   head2_load "Mirroring"
@@ -625,9 +686,14 @@ case "${1:-light}" in
   scripts)           do_run scripts ;;
   ai)                do_run ai ;;
   check|dry|dry-run) do_run check ;;
-  load|adopt)        shift; cmd_load "${1:-}" ;;
+  # "$@", not "${1:-}": that passed only the first remaining word, so
+  # `it-pull load /mnt/usb/baseline.git --yes` silently dropped the flag.
+  load|adopt)        shift; cmd_load "$@" ;;
   status)            do_status ;;
   log|logs)          do_log ;;
-  help|-h|--help)    sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//' ;;
+  # The header block, however long it grows. A line range here goes stale the
+  # moment anyone edits the comment above it, which is how `load --yes` could
+  # have shipped without appearing in help at all.
+  help|-h|--help)    awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1{exit}' "$0" ;;
   *) echo "unknown: $1  (try: it-pull help)" >&2; exit 2 ;;
 esac
