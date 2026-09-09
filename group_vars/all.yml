@@ -110,7 +110,7 @@ disk_root_lv: ubuntu-lv
 # STIG restricts raw packet capture to authorized users. These users get added
 # to the 'wireshark' group instead of running dumpcap as root.
 wireshark_users:
-  - austin_case_adm        # real local admin account on the imaged box
+  - "{{ dev_tools_user }}"   # the OS-install admin account
 
 # ---- Editor of choice ------------------------------------------------------
 # vscode pulls from Microsoft's apt repo (needs internet at build time).
@@ -482,7 +482,10 @@ ssg_release_base: "https://github.com/ComplianceAsCode/content/releases/download
 # DEVELOPER TOOLING (dev_tools role; full package/extension lists live in
 # roles/dev_tools/defaults/main.yml)
 # =============================================================================
-dev_tools_user: austin_case_adm        # owns VS Code extensions + docker group
+dev_tools_user: overlord               # the OS-install account; owns VS Code
+                                       # extensions + docker group. Created by the
+                                       # Ubuntu installer, NOT by this playbook --
+                                       # see local_users below before changing it.
 # GNOME's first-login wizard ("Welcome!", language, keyboard, online accounts).
 # Suppressed: these accounts are provisioned by it-adduser and the image already
 # sets language, keyboard and timezone, so the wizard asks an engineer to
@@ -977,9 +980,14 @@ local_groups:
 # no-empty-password control. Supplementary groups are set DECLARATIVELY (the
 # listed set is authoritative; the implicit per-user primary group is added by
 # useradd). "sudo" group membership grants full sudo via Ubuntu's stock
-# %sudo rule. (The installer account austin_case_adm is intentionally NOT listed.)
+# %sudo rule. (The installer account -- dev_tools_user -- is intentionally NOT listed.)
+# NOTE: `dev_tools_user` (the account the Ubuntu installer creates, `overlord`)
+# must NEVER appear in this list. Accounts here are created with
+# `append: false`, which makes the declared group set AUTHORITATIVE -- on an
+# account the installer already made, that strips adm/cdrom/lpadmin and
+# whatever else Ubuntu gave it. The installer account is handled instead by
+# local_operator_accounts below, which APPENDS and never creates.
 local_users:
-  - { name: overlord,         groups: [sudo] }            # break-glass super admin
   - { name: austin_case_dta,  groups: [dta] }
   - { name: adam_kabat_adm,   groups: [sudo] }
   - { name: adam_kabat_aud,   groups: [audit, sudo] }
@@ -1095,7 +1103,7 @@ usb_storage_block_modules:
 # a 'vagrant' user with a known password, NOPASSWD sudo (/etc/sudoers.d/vagrant),
 # and a public "insecure" SSH key -- a STIG finding the build does not create but
 # should clean up. Removal is idempotent (a no-op if the account is absent).
-# Do NOT list your operator account (austin_case_adm) or any local_users entry.
+# Do NOT list your operator account (dev_tools_user) or any local_users entry.
 purge_default_accounts:
   - vagrant
   # - ubuntu     # uncomment if your base image's cloud-init 'ubuntu' user is unwanted
