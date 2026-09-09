@@ -40,7 +40,8 @@ It reads the commands from what is actually installed, so an EMI laptop lists `i
 Every step to take one machine from a USB stick to a working, hardened
 workstation. No background — the sections after this one explain the why.
 
-**Have ready:** Ubuntu 24.04 Desktop USB · Ubuntu Pro token · a LUKS passphrase
+**Have ready:** the right Ubuntu 24.04 USB (**Server** for `development` and `ai`;
+**Desktop** for `emi` and `emi-unclass`) · Ubuntu Pro token · a LUKS passphrase
 (write it down, it is the only disk recovery key) · the hostname for this
 machine · the Xilinx and Libero installers, copied in over WinSCP at step 23.
 
@@ -67,8 +68,20 @@ machine · the Xilinx and Libero installers, copied in over WinSCP at step 23.
 
 ### B. Install Ubuntu
 
-7. Boot the USB, choose **Install Ubuntu**.
-8. Installation type: **Erase disk and use LVM**, and tick **Encrypt the new Ubuntu installation**.
+> **Server or Desktop?** `remote_desktop` runs `when: is_development`, and it installs
+> GNOME, GDM and xrdp and switches to `graphical.target` — so a **Server** base ends up
+> with a full GUI on `development`. On `emi`/`emi-unclass` that role never runs and
+> nothing else installs a desktop, so those two need the **Desktop** installer. `ai` is
+> headless Server. An EMI box built from the Server ISO has no desktop and no step in
+> the build adds one.
+
+7. Boot the USB and start the install. On Server take the network offer; the box needs
+   it in section C.
+8. Set up the disk. Different wording, same result — one encrypted LVM disk:
+   - **Server:** *Guided storage configuration* → *Use an entire disk*, tick *Set up
+     this disk as an LVM group* and *Encrypt the LVM group with LUKS*.
+   - **Desktop:** *Installation type* → *Erase disk and use LVM*, tick *Encrypt the new
+     Ubuntu installation*.
 9. Enter the LUKS passphrase. Use the temporary imaging passphrase and write it
    on the build sheet. It is rotated at deployment with `sudo it-luks-passwd`,
    which asks for the current one and then the new one; LUKS keyslots are
@@ -81,8 +94,11 @@ machine · the Xilinx and Libero installers, copied in over WinSCP at step 23.
    `dev_tools_user`, the account the build treats as the OS-install admin;
    naming a person here gives that machine's tooling to an account the build
    does not expect. Do not use a personal account name.
-11. Computer name: the hostname for this machine. Never `ubuntu`.
-12. Finish, remove the USB, reboot, log in as `overlord`.
+11. Computer name: the hostname for this machine (Server calls it *your server's
+    name*). Never `ubuntu`. On Server, accept the **OpenSSH server** offer — it is how
+    you reach the box, and what WinSCP connects to at step 25.
+12. Finish, remove the USB, reboot, log in as `overlord`. A Server build lands at a
+    text console with no desktop; that is correct here, section C installs it.
 13. Connect to the network and leave it connected until section D is complete.
 
 ### C. Build

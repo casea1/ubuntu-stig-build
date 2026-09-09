@@ -62,18 +62,27 @@ skip any. If a step fails, check <strong>Common Issues</strong> at the end, then
 and whether you do Section F.</p>
 
 <table>
-  <tr><th>Profile</th><th>Used for</th><th>Build command in step 15</th><th>Section F (FPGA)</th></tr>
-  <tr><td><strong>development</strong></td><td>Engineering workstations</td><td><code>| sudo bash</code></td><td><strong>Yes</strong></td></tr>
-  <tr><td><strong>emi</strong></td><td>EMI, classified-capable</td><td><code>| sudo PROFILE=emi bash</code></td><td>No</td></tr>
-  <tr><td><strong>emi-unclass</strong></td><td>EMI, unclassified only</td><td><code>| sudo PROFILE=emi-unclass bash</code></td><td>No</td></tr>
-  <tr><td><strong>ai</strong></td><td>AI servers (Ubuntu Server, not Desktop)</td><td><code>| sudo PROFILE=ai bash</code></td><td>No</td></tr>
-  <tr><td><strong>baseline</strong></td><td>Hardening a machine that already exists</td><td><code>| sudo PROFILE=baseline bash</code></td><td>No</td></tr>
+  <tr><th>Profile</th><th>Used for</th><th>USB installer</th><th>Build command in step 15</th><th>Section F (FPGA)</th></tr>
+  <tr><td><strong>development</strong></td><td>Engineering workstations</td><td><strong>Server</strong></td><td><code>| sudo bash</code></td><td><strong>Yes</strong></td></tr>
+  <tr><td><strong>emi</strong></td><td>EMI, classified-capable</td><td><strong>Desktop</strong></td><td><code>| sudo PROFILE=emi bash</code></td><td>No</td></tr>
+  <tr><td><strong>emi-unclass</strong></td><td>EMI, unclassified only</td><td><strong>Desktop</strong></td><td><code>| sudo PROFILE=emi-unclass bash</code></td><td>No</td></tr>
+  <tr><td><strong>ai</strong></td><td>AI servers</td><td><strong>Server</strong></td><td><code>| sudo PROFILE=ai bash</code></td><td>No</td></tr>
+  <tr><td><strong>baseline</strong></td><td>Hardening a machine that already exists</td><td>n/a, already installed</td><td><code>| sudo PROFILE=baseline bash</code></td><td>No</td></tr>
 </table>
+
+<p><strong>Use Ubuntu Server for everything except the two EMI profiles.</strong> On
+<code>development</code> the build installs the graphical desktop and the remote desktop
+server itself, so a Server base ends up with a full GUI. The EMI profiles do not install
+a desktop, so those two need the Desktop installer, which already has one.</p>
+
+<p class="warn">Getting this wrong is not a small thing. An EMI machine built from the
+Server installer has no desktop and nothing in the build adds one.</p>
 
 <h2>Before You Start</h2>
 
 <ul>
-  <li>Ubuntu <strong>24.04 Desktop</strong> USB installer, or <strong>24.04 Server</strong> for the <code>ai</code> profile</li>
+  <li>Ubuntu <strong>24.04</strong> USB installer, <strong>Server or Desktop</strong>
+      according to the profile table above</li>
   <li><strong>Ubuntu Pro token</strong></li>
   <li>A <strong>LUKS passphrase</strong> for this machine</li>
   <li>The assigned <strong>hostname</strong></li>
@@ -114,9 +123,23 @@ deployment. Record them on the build sheet and hand it over with the machine.</p
 <h2>B. Install Ubuntu</h2>
 
 <ol start="7">
-  <li>Boot from the USB drive and select <strong>Install Ubuntu</strong>.</li>
-  <li>At Installation type, select <strong>Erase disk and use LVM</strong>, then tick
-      <strong>Encrypt the new Ubuntu installation</strong>.</li>
+  <li>Boot from the USB drive and start the installation.
+    <ul>
+      <li><strong>Server:</strong> choose <em>Try or Install Ubuntu Server</em>, then
+          accept the defaults through language, keyboard and network. Take the network
+          offer, the machine needs it in Section C.</li>
+      <li><strong>Desktop:</strong> choose <em>Install Ubuntu</em>.</li>
+    </ul></li>
+  <li>Set up the disk. <strong>The wording differs between the two installers, the
+      result is the same:</strong> one encrypted LVM disk.
+    <ul>
+      <li><strong>Server:</strong> at <em>Guided storage configuration</em> choose
+          <em>Use an entire disk</em>, then tick <em>Set up this disk as an LVM group</em>
+          and <em>Encrypt the LVM group with LUKS</em>.</li>
+      <li><strong>Desktop:</strong> at <em>Installation type</em> choose
+          <em>Erase disk and use LVM</em>, then tick
+          <em>Encrypt the new Ubuntu installation</em>.</li>
+    </ul></li>
   <li>Enter the LUKS passphrase. Use the temporary imaging passphrase and write it
       on the build sheet.
     <ul>
@@ -132,14 +155,26 @@ deployment. Record them on the build sheet and hand it over with the machine.</p
     is also gone leaves the disk unrecoverable. Either one alone is survivable, but do
     not leave this step without the passphrase written down.</p></li>
   <li>Set the account name to <code>overlord</code>, exactly. Lower case, no spaces.
+      The Server installer calls this <em>your username</em>, the Desktop installer
+      calls it <em>your name</em>.
     <ul>
       <li>This is the account the build tools expect. A different name sends this
           machine's permissions to an account nobody can sign into.</li>
       <li>Do not use a personal account name here.</li>
     </ul></li>
-  <li>Set the computer name to the assigned hostname. Do not leave it as <code>ubuntu</code>.</li>
+  <li>Set the computer name to the assigned hostname. The Server installer calls this
+      <em>your server's name</em>. Do not leave it as <code>ubuntu</code>.
+    <ul>
+      <li><strong>Server only:</strong> when it offers to install the OpenSSH server,
+          say yes. It is how you reach the machine from the lab, and it is what WinSCP
+          connects to in Section F.</li>
+    </ul></li>
   <li>Complete the installation, remove the USB drive, reboot, and sign in as
-      <code>overlord</code>.</li>
+      <code>overlord</code>.
+    <ul>
+      <li>A Server build signs in at a text console, with no desktop. That is correct
+          at this point. The build installs the desktop in Section C.</li>
+    </ul></li>
   <li>Connect the machine to the network. Leave it connected until Section D is complete.</li>
 </ol>
 
