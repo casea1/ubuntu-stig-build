@@ -2425,6 +2425,47 @@ whenever there is something new to carry; the mirror is replaced each time.
 > unsigned apt repo the DTA already loads, the grant can be widened — it is a policy call,
 > not a technical one.
 
+### No USB? Copy it over the network instead
+
+Boxes in the lab are reachable over SSH before they are fielded, and a bare repo is
+thousands of small files — SFTP does a round trip per file and can drop the modes. Send
+one archive.
+
+1. **On a connected box**, make the clone and pack it:
+
+   ```bash
+   git clone --mirror https://git.asplab.com/ASPLAB/ubuntu-stig-build.git baseline.git
+   tar czf baseline.git.tar.gz baseline.git
+   sha256sum baseline.git.tar.gz
+   ```
+
+2. **Copy `baseline.git.tar.gz` to the box** — WinSCP (SFTP, port 22) from the file server,
+   into your own home directory. You cannot write `/opt` over SFTP: the STIG `umask 077`
+   and the directory modes stop it, and you should not be logging in as root.
+
+3. **On the box**, check it arrived intact, then unpack it somewhere root owns:
+
+   ```bash
+   sha256sum ~/baseline.git.tar.gz          # must match step 1
+   sudo install -d -m 0700 /opt/it/baseline-stage
+   sudo tar xzf ~/baseline.git.tar.gz -C /opt/it/baseline-stage
+   sudo it-pull load /opt/it/baseline-stage/baseline.git
+   sudo it-pull
+   ```
+
+4. **Delete both copies** when the load reports OK — `it-pull` reads
+   `/srv/baseline.git` from here on and the staged one is only confusing:
+
+   ```bash
+   rm ~/baseline.git.tar.gz
+   sudo rm -rf /opt/it/baseline-stage
+   ```
+
+**Compare the hash, and do it on the box.** `it-pull load` verifies the repo is *this*
+baseline and shows you the commits, but it cannot tell you whether the archive is the one
+you built — the next pull runs it as root. On EMI this route does not exist at all: there
+is no path onto the box from a network that is not in the space.
+
 `sudo it-pull status` afterwards shows `repo : /srv/baseline.git`, which is how you tell a
 box is on carried media rather than the network.
 
