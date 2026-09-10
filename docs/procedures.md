@@ -1246,7 +1246,7 @@ Exit status is 0 when nothing is left to fix, so it can be run from a check.
 | `rdp` | Orphaned sessions, via `it-rdp sweep`. **Never** restart `xrdp-sesman` to clear these |
 | `tiles` | Duplicate FPGA app-grid entries, via `it-fpga desktop` |
 | `units` | Failed units. `code-server@<locked user>` is known noise and is reset; anything else is reported and left alone |
-| `slow` | **Why the desktop is slow, measured rather than guessed.** Times a lookup of the box's own hostname and of a name that cannot exist; on a deployed box an unanswered resolver costs seconds *per lookup*, uncached, on a path every app takes. Also reports NetworkManager's connectivity probe (off-network it can only time out) and, per logged-in user, whether `xdg-desktop-portal` is running and `XDG_CURRENT_DESKTOP` is set -- a missing portal makes every GTK app wait out a ~25 s D-Bus timeout before it opens |
+| `slow` | **Why the desktop is slow, measured rather than guessed.** Start here: on a deployed box the answer is nearly always the resolver, and the dead portal it reports is a *consequence* of that, not a separate fault. Times a lookup of the box's own hostname and of a name that cannot exist; on a deployed box an unanswered resolver costs seconds *per lookup*, uncached, on a path every app takes. Also reports NetworkManager's connectivity probe (off-network it can only time out) and, per logged-in user, whether `xdg-desktop-portal` is running and `XDG_CURRENT_DESKTOP` is set -- a missing portal makes every GTK app wait out a ~25 s D-Bus timeout before it opens |
 | `sshclient` | `/etc/ssh/ssh_config.d/*.conf` that only root can read. `ssh` reads them as the calling user, so a `0600` drop-in from `usg fix` breaks outbound SSH for everyone except the admin testing it |
 | `crash` | Queued apport reports — the dialog at login — and `whoopsie`, which reports to Canonical |
 | `boot` `disk` `audit` | **Read-only.** Slowest units, filesystems over 80 %, and the kernel audit-rule count (a `1` there is trap 13 — diagnose with `it-checklist`) |
@@ -1939,6 +1939,12 @@ Lingering runs that person's user manager from boot, so their instance comes
 back after a reboot and stays up when they log out — one node process and one
 port held for the box's whole uptime. That is exactly what the old boot-start
 default did for *everybody*. Name people who have actually asked.
+
+> **The session environment is not the cure for a slow desktop.** That was
+> tried, on a theory that turned out to be false -- an xrdp session does export
+> `XDG_CURRENT_DESKTOP`, verified on a lab box carrying none of the drop-in.
+> The portal/ibus/keyring failures are downstream of stalled DNS and NSS
+> lookups; fix those. See reference.md trap 12e.
 
 > **`systemctl --user` needs a real login session.** Someone who arrives by
 > `su -` or `sudo -u` has no session bus, and systemd's own error

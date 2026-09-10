@@ -136,13 +136,24 @@ sudo python3 -c 'import yaml; yaml.safe_load(open("/opt/it/site.yml")); print("o
 
 Related messages, so the text tells you which fault you have: a bare `---` after line 1 gives *"expected a single document in the stream"*; a line starting with `%` gives *"...but found '<scalar>'"*; a tab gives *"while scanning for the next token"*.
 
-**12e. A slow desktop on a deployed box is usually WAITING, not working.** Two causes, both invisible, both presenting as "Settings takes forever to open but eventually does".
+**12e. A slow desktop on a deployed box is WAITING on the network, and the desktop services that appear broken are downstream of that.**
 
-**Unanswered DNS.** A fielded box keeps the resolvers it was given in the lab and cannot reach them. Every `gethostbyname()` then blocks for the resolver timeout and nothing caches a failure, so the cost is paid per lookup, by sudo, GNOME, D-Bus and X alike. The worst case is the box's **own hostname**: with no `/etc/hosts` entry it goes to DNS like anything else. `network_online` now writes a `127.0.1.1` line, and turns off NetworkManager's connectivity probe, which off-network can only time out and keeps the network state churning while it does.
+Everything an app does at startup that touches a name or a user goes through the resolver and NSS. On a fielded box both can hang: the resolvers it was given in the lab are unreachable, and `sss` in `nsswitch.conf` with a dead sssd stalls every `getpwnam()` (trap 12f). Nothing caches a failure, so the cost is per lookup, paid by sudo, PAM, GNOME, D-Bus and X alike.
 
-**A dead desktop portal.** `xdg-desktop-portal`, ibus and gnome-keyring are systemd **user** services and need `DISPLAY`, `XAUTHORITY` and `XDG_CURRENT_DESKTOP` in the user manager's environment. A GDM login exports those; **an xrdp session does not**. The portal then cannot choose a backend and fails, and every GTK app blocks on a ~25 s D-Bus activation timeout before falling back and opening anyway. The give-away cluster in the journal is `Failed to start xdg-desktop-portal.service`, `Failed to start org.freedesktop.IBus.session.GNOME.service`, and `Gkr-pam: unable to locate daemon control file` -- three symptoms, one cause. `remote_desktop` ships `/etc/X11/Xsession.d/56it-session-env`, which fills in the desktop identity and runs `dbus-update-activation-environment --systemd`. A drop-in, not a patched `startwm.sh`: that file belongs to the xrdp package and an edit is lost on upgrade, silently.
+**The desktop user services then fail as a CONSEQUENCE.** `xdg-desktop-portal`, `ibus` and `gnome-keyring` are systemd user services with start timeouts; a startup lookup that hangs gets them killed, and the journal fills with `Failed to start xdg-desktop-portal.service`, `Failed to start org.freedesktop.IBus.session.GNOME.service` and `Gkr-pam: unable to locate daemon control file`. That trio looks like a broken session and is not one. It then **compounds**: with the portal dead, every GTK app additionally waits out a ~25 s D-Bus activation timeout before falling back and opening anyway.
 
-**Measure before choosing between them** -- they look identical from the desk. `it-repair --only slow` times both lookups and reports the portal state per logged-in user.
+**The fix is the resolver, not the desktop.** `network_online` writes a `127.0.1.1` line so the box's own hostname never goes to DNS, and turns off NetworkManager's connectivity probe, which off-network can only time out. `it-repair --only identity` handles the sssd half.
+
+**Do not "fix" the session environment for this.** It was tried here, on the theory that an xrdp session exports no `XDG_CURRENT_DESKTOP` and so the portal cannot choose a backend. **That theory is false and was never checked before it was written down.** Measured in an xrdp session on a lab box carrying none of it:
+
+```
+$ echo "[$XDG_CURRENT_DESKTOP]"          [GNOME]
+$ systemctl --user is-active xdg-desktop-portal.service    active
+```
+
+The give-away was there the whole time and was ignored: the lab boxes ran the identical role and identical xrdp config and were **fine**, so whatever differed had to be the environment the boxes moved into, not the session. `/etc/X11/Xsession.d/56it-session-env` is kept as insurance -- every export in it is guarded on the value being unset, so it is inert wherever the session is already correct -- but it is **not** what fixed anything.
+
+**And the strongest single clue is where the delay sits.** A slow DCSA **login banner** prints before authentication, so no desktop fault can reach it. If the banner is slow, stop looking at the session and go to trap 12f.
 
 **12f. A dead `sssd` makes the box slow BEFORE anyone logs in.** `libnss-sss` puts `sss` into the `passwd`/`group`/`shadow` lines of `nsswitch.conf`, so every `getpwnam()` asks sssd. With sssd not running -- installed for a domain join that has not happened, or failing with *"couldn't load the configuration database"* -- those lookups wait rather than fail, and the cost is paid by the login banner, PAM, sudo, GDM and the session alike.
 

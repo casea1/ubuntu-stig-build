@@ -3,17 +3,19 @@
 # Tell the session what desktop it is, and push that into the systemd USER
 # manager, for RDP sessions.
 #
-# WHY. xdg-desktop-portal, ibus and gnome-keyring are systemd user services.
-# They need DISPLAY, XAUTHORITY and XDG_CURRENT_DESKTOP in the user manager's
-# environment; a GDM login exports those, an xrdp session does not. Without
-# them the portal cannot choose a backend and fails, and so do
-# org.freedesktop.IBus.session.GNOME and the keyring scopes.
+# INSURANCE, NOT A FIX. Read this before assuming it does something.
 #
-# The cost is not the failure, it is the WAIT. Every GTK app asks the portal
-# over D-Bus at startup and blocks until activation times out -- about 25
-# seconds -- before falling back and opening anyway. That is why Settings,
-# Files and Terminal "take forever but eventually work" over RDP while the
-# same box is fine locally.
+# It was written on the theory that an xrdp session exports no
+# XDG_CURRENT_DESKTOP, leaving xdg-desktop-portal unable to choose a backend.
+# THAT THEORY IS WRONG. Measured in an xrdp session on a box carrying none of
+# this: XDG_CURRENT_DESKTOP=GNOME, and xdg-desktop-portal active. The portal,
+# ibus and keyring failures that prompted it are downstream of stalled DNS and
+# NSS lookups on a fielded box -- see reference.md trap 12e.
+#
+# It is kept because every export below is guarded on the value being unset, so
+# it is inert wherever the session is already correct, and it makes the
+# environment explicit for a session type that has no display manager to set it.
+# Do not reach for it to explain a slow desktop.
 #
 # Sourced by /etc/X11/Xsession, which xrdp's startwm.sh runs. A drop-in rather
 # than a patched startwm.sh: that file belongs to the xrdp package and an edit
