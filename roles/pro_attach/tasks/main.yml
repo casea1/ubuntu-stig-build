@@ -26,6 +26,64 @@
 # one is unaffected by ordering. See trap 43.
 # =============================================================================
 
+# ---------------------------------------------------------------------------
+# CAN THIS BOX REACH CANONICAL AT ALL?
+#
+# Everything below talks to contracts.canonical.com, and the retries that make
+# this reliable in the lab are pure cost on a box that is air-gapped. `pro
+# enable` calls contract.refresh() first, and that POST hangs for its full
+# ~30s timeout with no response (trap 42) -- so five attempts 15s apart is
+# 5*30 + 4*15 = 210 SECONDS per call, twice, on a fielded box where not one of
+# them can succeed. Seven minutes of a pull spent waiting for a network that
+# is not there.
+#
+# The probe is deliberately ASYMMETRIC, and that is the whole design:
+#
+#   it fails  -> the box definitely cannot reach Canonical -> SKIP, save 7 min
+#   it passes -> proves nothing, so behave exactly as before, retries and all
+#
+# It has to be that way round because a success here is NOT evidence the call
+# will work. Trap 42: on dev-16 a GET to this very host answered 200 in 0.3s
+# while `pro enable`'s POST hung for the full 30s. So this can only ever rule
+# the network OUT, never in -- and ruling it out is all that is needed to stop
+# a fielded box retrying into a void.
+#
+# NOT a bare TCP connect. A transparent proxy, or a firewall that accepts and
+# then drops, completes the handshake and reports success for a host that is
+# unreachable -- verified in a proxied sandbox, where an unroutable address
+# connected in 6ms. An HTTP request that must come back is a real answer.
+#
+# --max-time bounds the request; `timeout` bounds the whole command including
+# DNS, which on a deployed box may itself be waiting on a resolver that will
+# never answer.
+- name: "PRO | Probe Canonical before spending any retries on it"
+  ansible.builtin.command:
+    cmd: >-
+      timeout 10 curl -fsS --max-time 8 -o /dev/null
+      https://contracts.canonical.com/v1/resources
+  register: _pro_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "PRO | Reachability"
+  ansible.builtin.set_fact:
+    # default(0), not default(1): if the probe itself did not run (check mode,
+    # curl absent), fall through to the old behaviour rather than silently
+    # skipping Pro on a box that is perfectly online.
+    _pro_online: "{{ (_pro_probe.rc | default(0)) == 0 }}"
+
+- name: "PRO | Offline -- Pro operations will be skipped, not retried"
+  ansible.builtin.debug:
+    msg: >-
+      contracts.canonical.com is not reachable from this box, so `pro attach`
+      and `pro enable` are SKIPPED rather than retried. Nothing here can
+      succeed without it, and the retries alone cost about seven minutes a
+      pull. Anything already enabled stays enabled -- this changes nothing
+      about the box's posture, only how long the pull takes. Enable Pro
+      services while the box is still on a network that can reach Canonical.
+  when: not (_pro_online | bool)
+
 - name: "PRO | Ensure the Ubuntu Pro client is installed"
   ansible.builtin.apt:
     name: ubuntu-pro-client
@@ -69,6 +127,8 @@
   when:
     - not _pro_attached
     - (_pro_token | length) > 0
+    # An attach against an unreachable contract server can only fail, slowly.
+    - _pro_online | default(true) | bool
   register: _pro_attach
   no_log: true
   changed_when: _pro_attach.rc == 0
@@ -134,6 +194,8 @@
     - _usg_active | default(false) | bool
     - usg_enable_fips | default(false) | bool
     - "'fips-updates' not in (_pro_enabled | default([]))"
+    # No point retrying a host we already proved unreachable.
+    - _pro_online | default(true) | bool
   changed_when: _fips_enable.rc == 0 and 'is already enabled' not in _fips_enable.stdout
   failed_when: false
   # Same transport risk as the usg enable above; same tolerated retry.

@@ -39,7 +39,13 @@
     - name: "USG | Enable the usg Pro service (tolerant: some releases ship it in the attached repos)"
       ansible.builtin.command: pro enable usg --assume-yes
       register: _usg_enable
-      when: "'usg' not in (_pro_enabled | default([]))"
+      when:
+        - "'usg' not in (_pro_enabled | default([]))"
+        # pro_attach probed Canonical once. Retrying an unreachable host here
+        # would cost another 210s on a fielded box, for a call that cannot
+        # succeed. Defaults true so a box that never ran pro_attach behaves as
+        # it always did.
+        - _pro_online | default(true) | bool
       changed_when: "'Updating' in _usg_enable.stdout or 'Installing' in _usg_enable.stdout"
       # Retried, because the observed failure on dev-16 is TRANSPORT and
       # INTERMITTENT, not entitlement (`pro status --all` shows usg ENTITLED on

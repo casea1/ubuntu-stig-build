@@ -152,6 +152,19 @@ This build deliberately does **not** install sssd -- `group_vars` explains why: 
 
 **12g. Neither LUKS nor GRUB records when its credential last changed, so it has to be written down at the time.** A LUKS2 header stores the keyslot's cipher, PBKDF parameters, salt and iterations, and **no timestamp** -- the format has no field for one. So "was the imaging passphrase rotated after deployment?" cannot be answered from the header afterwards, at any point. `it-luks-passwd` and `it-grub set` now append to `/etc/stig-build/credential-changes.log` as they run, and `it-repair --only creds` reads it back alongside what the system itself can prove: whether the GRUB drop-in still holds the CHANGEME sentinel, and whether the staged imaging passphrase is still sitting at `/etc/luks/initial-passphrase`. A rotation done with `cryptsetup` directly leaves no trace and never will.
 
+**12h. The retries that make Pro reliable in the lab cost a fielded box seven minutes a pull.** `pro enable` calls `contract.refresh()` first, and off-network that POST hangs for its full ~30 s (trap 42). With `retries: 5, delay: 15` that is 5x30 + 4x15 = **210 seconds per call**, and there are two of them (`usg`, `fips-updates`) -- so an air-gapped box spends about seven minutes of every pull waiting for a host it cannot reach, for calls that cannot succeed. The retries are right in the lab, where the failure is transport and intermittent; they are pure cost once the box is deployed.
+
+`pro_attach` now probes Canonical once and skips `attach`/`enable` when it cannot be reached. The probe is deliberately **asymmetric** and it has to be:
+
+| result | meaning | action |
+|---|---|---|
+| fails | the box definitely cannot reach Canonical | skip, and say so |
+| passes | **proves nothing** | behave exactly as before, retries included |
+
+A pass cannot be trusted because trap 42 is precisely the case where a GET to that host answers 200 in 0.3 s while `pro enable`'s POST hangs for 30 s. So the probe can rule the network out, never in -- which is all that is needed.
+
+**It is an HTTP request, not a TCP connect.** A transparent proxy, or a firewall that accepts and then drops, completes the handshake and reports success for a host that is unreachable: measured in a proxied sandbox, an unroutable address "connected" in 6 ms. Nothing already enabled is affected either way -- this changes how long a pull takes, not the box's posture.
+
 **13. Audit rules on disk are not audit rules in the kernel, and they may not be in `rules.d`.** Two separate traps in one place. First, `usg fix` writes **`/etc/audit/audit.rules` directly**, not `rules.d/*.rules` — so an empty `rules.d` is normal on a USG box, and counting only `rules.d` reports "no rules" on a box with a full ruleset. Second, whatever is on disk still has to reach the kernel: the STIG sets auditd `-e 2` (immutable), after which new rules are refused until a reboot. Either way **every file-based OVAL still passes**, because those check files. ASP-2 ran with **1 rule in the kernel** against 8.5 KB in `audit.rules` and the 96.41 % scan said nothing. `it-checklist` item 6 counts whichever source holds rules and compares it against the kernel. Diagnose with:
 
 > **Mind the glob.** `/etc/audit/rules.d` is `root:root 0750`, so `sudo cat /etc/audit/rules.d/*.rules` fails with *"No such file or directory"* — your **unprivileged shell** expands the glob before `sudo` runs, and it cannot read the directory. That looks exactly like an empty directory and is not. Wrap it: `sudo sh -c 'cat ...'`.
