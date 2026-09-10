@@ -1193,6 +1193,29 @@ sudo it-inventory     # hardware/serials/listening ports -> /opt/it/inventory-<h
 
 **`sudo it-checklist --fix`** adds a section after the table telling you how to close every FAIL, and what each MANUAL item needs from a human. It **prints steps and changes nothing** — several of the remedies restart auth or the firewall, which is not a decision a status command should make on its own.
 
+## 3.1a Is the network the problem? (`it-net check`)
+
+The network faults that hurt a **deployed** box are all *waiting*, not failing,
+and none of them show up in `it-net status`: the address is right, a resolver is
+listed, and every lookup still takes five seconds because nothing answers.
+
+```bash
+it-net check          # no sudo -- read-only, and it changes nothing
+```
+
+It times a lookup of the box's own hostname and of a name that cannot exist,
+then reports the gateway, chrony sync, NetworkManager's connectivity probe, and
+any `wait-online` unit that is enabled and failing. Each finding names the
+command that fixes it. Exit status is 1 while anything is outstanding.
+
+The number is the point. *"Own hostname resolves in 5002 ms"* is a diagnosis;
+"it feels slow" is not, and on an air-gapped box nobody can try things and
+report back.
+
+> If `check` finds nothing, the cause is not the network. Go to `it-repair`
+> below, and start with `--only identity` if the **login banner** is slow --
+> that prints before authentication, so no desktop fault can explain it.
+
 ## 3.1b The box is slow, or a session will not start (`it-repair`)
 
 Everything in this section was a hand-run remedy first. They are together

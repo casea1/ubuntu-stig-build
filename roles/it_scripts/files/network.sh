@@ -15,6 +15,9 @@
 #                              nameservers only, leaving the address alone
 #   it-net ntp <a,b>           chrony time source (STIG: server + maxpoll)
 #   it-net apply               apply the pending netplan config
+#   it-net check               is the network actually WORKING? Read-only.
+#                              Times the lookups a deployed box pays for, and
+#                              names what to run for anything it finds.
 #
 # NOTHING IS APPLIED UNTIL YOU SAY SO. Every write lands in
 # /etc/netplan/99-it-net.yaml and then asks, because `netplan apply` on the
@@ -26,7 +29,13 @@
 # run, so `it-net ntp` writes BOTH chrony.conf (immediate) and /opt/it/site.yml
 # (so the next pull agrees instead of reverting it).
 set -uo pipefail
-[ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
+# `check` changes nothing and every probe in it works unprivileged, so it does
+# not elevate: a diagnostic an engineer cannot run is a diagnostic that gets
+# reported second-hand. Everything else writes, and still does.
+case "${1:-}" in
+  check) ;;
+  *) [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@" ;;
+esac
 
 NETPLAN_FILE=/etc/netplan/99-it-net.yaml
 SITE=/opt/it/site.yml
@@ -352,8 +361,139 @@ PY
 }
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# `check` -- the network half of "why is this box slow", in one read-only pass.
+#
+# It exists because the network faults that hurt a DEPLOYED box are all
+# WAITING, not failing, and none of them are visible in `status`: an address is
+# configured correctly, a resolver is listed, and every lookup on the box still
+# takes five seconds because nothing answers. So this measures rather than
+# lists, and prints the milliseconds.
+#
+# Read-only on purpose. Every finding names the command that fixes it, and
+# nothing here reconfigures an interface -- doing that to a box you are on is
+# how you end up driving to it.
+# ---------------------------------------------------------------------------
+FOUND=0
+flag() { FOUND=$((FOUND + 1)); }
+note() { printf '       %s%s%s\n' "$DIM" "$*" "$R"; }
+
+ms_for() {   # $@ = command -> elapsed milliseconds
+  local a b
+  a=$(date +%s%N); "$@" >/dev/null 2>&1; b=$(date +%s%N)
+  echo $(( (b - a) / 1000000 ))
+}
+
+cmd_check() {
+  local t host ifc
+
+  head2 "Link"
+  if ! command -v ip >/dev/null 2>&1; then
+    # Say what is missing rather than reporting "no default route", which is
+    # what an absent iproute2 looks like and sends someone reconfiguring an
+    # interface that was fine.
+    bad "iproute2 is not installed -- cannot read the link state"
+    flag
+    ifc=""
+  else
+    ifc="$(default_iface 2>/dev/null || true)"
+  fi
+  if [ -n "$ifc" ]; then
+    ok "$ifc carries the default route -- $(ip -4 addr show "$ifc" 2>/dev/null | awk '/inet /{print $2; exit}')"
+    local gw; gw="$(ip -4 route show default 2>/dev/null | awk '{print $3; exit}')"
+    if [ -n "$gw" ]; then
+      if ping -c1 -W1 "$gw" >/dev/null 2>&1; then ok "gateway $gw answers"
+      else warn "gateway $gw does not answer a ping"
+           note "not conclusive on its own -- many gateways drop ICMP by policy"
+      fi
+    fi
+  elif command -v ip >/dev/null 2>&1; then
+    bad "no default route"; flag
+    note "set one:  sudo it-net ip <CIDR> --gateway <IP>"
+  fi
+
+  # THE ONE THAT MAKES EVERYTHING SLOW. Not "can it resolve" -- how LONG does it
+  # take not to. A resolver that is listed but unreachable costs this on every
+  # lookup, uncached, and it is paid by sudo, PAM, GNOME, D-Bus and X alike.
+  head2 "Name resolution"
+  host="$(hostname)"
+  t=$(ms_for getent hosts "$host")
+  if [ "$t" -gt 100 ]; then
+    bad "this box's OWN name took ${t}ms to resolve -- it is going to DNS"
+    note "every login, sudo and session start pays this. Fix:  sudo it-repair fix --only slow"
+    flag
+  else
+    ok "own hostname resolves in ${t}ms"
+  fi
+
+  t=$(ms_for getent hosts does-not-exist.invalid)
+  if [ "$t" -gt 1000 ]; then
+    bad "a failed lookup took ${t}ms -- a configured resolver is not answering"
+    note "see what is configured:  resolvectl status"
+    note "point it somewhere real, or nowhere:  sudo it-net dns <a,b>"
+    flag
+  else
+    ok "failed lookups return in ${t}ms"
+  fi
+
+  if command -v resolvectl >/dev/null 2>&1; then
+    local srv
+    srv="$(resolvectl status 2>/dev/null | awk '/DNS Servers/{$1=$2=""; print; exit}' | xargs)"
+    [ -n "$srv" ] && note "resolvers: $srv" || warn "no DNS servers configured"
+  fi
+
+  head2 "Time"
+  if command -v chronyc >/dev/null 2>&1; then
+    local src
+    src="$(chronyc -n sources 2>/dev/null | tail -n +3)"
+    if [ -z "$src" ]; then
+      warn "chrony has no sources"; flag
+      note "set one:  sudo it-net ntp <host>"
+    elif printf '%s' "$src" | grep -q '^\^\*'; then
+      ok "clock is synchronised"
+    else
+      warn "chrony has sources but none selected -- the box is not synchronised"
+      printf '%s\n' "$src" | sed 's/^/       /'
+      flag
+    fi
+  else
+    warn "chrony is not installed"
+  fi
+
+  head2 "Things that reach for a network that is not there"
+  if [ -e /etc/NetworkManager/conf.d/20-no-connectivity-check.conf ]; then
+    ok "NetworkManager connectivity check is off"
+  elif [ -e /usr/sbin/NetworkManager ]; then
+    warn "NetworkManager still probes connectivity.ubuntu.com"
+    note "off-network that can only time out:  sudo it-repair fix --only slow"
+    flag
+  fi
+  local u
+  for u in systemd-networkd-wait-online.service NetworkManager-wait-online.service; do
+    case "$(systemctl is-enabled "$u" 2>/dev/null | head -1)" in
+      enabled|enabled-runtime)
+        if systemctl is-failed --quiet "$u" 2>/dev/null; then
+          bad "$u is enabled and FAILING -- it delays every boot"
+          note "sudo it-repair --only net"
+          flag
+        fi ;;
+    esac
+  done
+
+  head2 "Summary"
+  if [ "$FOUND" -eq 0 ]; then
+    ok "nothing here explains a slow box"
+    note "if it is still slow, the cause is not the network:  sudo it-repair"
+  else
+    warn "$FOUND thing(s) to look at -- each is named above"
+  fi
+  say ""
+  [ "$FOUND" -eq 0 ] || return 1
+}
+
 case "${1:-status}" in
   status|"") cmd_status ;;
+  check)     cmd_check ;;
   ip)        shift; cmd_ip "$@" ;;
   dhcp)      shift; cmd_dhcp "$@" ;;
   dns)       shift; cmd_dns "$@" ;;
