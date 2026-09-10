@@ -23,7 +23,7 @@ while [ $# -gt 0 ]; do
     check|--check) MODE=check; shift ;;
     fix|--fix)     MODE=fix;   shift ;;
     --only) ONLY="${2:?--only needs a list}"; shift 2 ;;
-    --list) printf '%s\n' home net codeserver rdp tiles units crash boot disk audit; exit 0 ;;
+    --list) printf '%s\n' home net codeserver rdp tiles units crash sshclient boot disk audit; exit 0 ;;
     # Print the header block, however long it grows -- a line count here goes
     # stale the moment anyone edits the comment above.
     -h|--help) awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1{exit}' "$0"; exit 0 ;;
@@ -309,6 +309,42 @@ check_crash() {
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# 8. SSH CLIENT config a normal user cannot read.
+#
+# ssh reads /etc/ssh/ssh_config.d/*.conf AS THE CALLING USER. `usg fix` writes
+# the STIG's client ciphers there and nothing asserted a mode, so under the
+# STIG's umask 077 the file lands 0600 root:root: ssh works for an admin and
+# fails for everyone else, naming the drop-in -- which reads as a broken cipher
+# list rather than a permissions problem.
+#
+# 0644 is right, not a relaxation: algorithm lists, no secrets, and stock
+# /etc/ssh/ssh_config is 0644. sshd_config.d is deliberately left alone.
+# ---------------------------------------------------------------------------
+check_sshclient() {
+  head2 "SSH client config"
+  local d=/etc/ssh/ssh_config.d f n=0 mode
+  [ -d "$d" ] || { ok "no drop-in directory"; return 0; }
+  for f in "$d"/*.conf; do
+    [ -e "$f" ] || continue
+    mode="$(stat -c %a "$f" 2>/dev/null)"
+    case "$mode" in
+      *4|*5|*6|*7) continue ;;          # world-readable already
+    esac
+    n=$((n + 1))
+    if fixing; then
+      chmod 0644 "$f" && chown root:root "$f" && did "$(basename "$f") -> 0644"
+    else
+      bad "$(basename "$f") is $mode -- only root can read it, so ssh fails for everyone else"
+      flag
+    fi
+  done
+  [ "$n" = 0 ] && ok "every drop-in is readable"
+  [ "$n" -gt 0 ] && [ "$MODE" = check ] && \
+    note "test as a normal user:  ssh -G localhost >/dev/null"
+  return 0
+}
+
 # ---- read-only context -----------------------------------------------------
 check_boot() {
   head2 "Slowest units last boot"
@@ -350,7 +386,7 @@ check_audit() {
 say "${B}it-repair${R} -- $(hostname) -- $(date '+%Y-%m-%d %H:%M:%S %Z')"
 [ "$MODE" = check ] && note "reporting only. Apply with: sudo it-repair fix"
 
-for c in home net codeserver rdp tiles units crash boot disk audit; do
+for c in home net codeserver rdp tiles units crash sshclient boot disk audit; do
   want "$c" && "check_$c"
 done
 

@@ -127,6 +127,15 @@ The line it names is where the parser gave up, **not where the problem is** -- t
 
 **Why this one is worse than it looks.** `local.yml` loads `site.yml` in `pre_tasks`, so the play stops before a single role runs, and the fix for anything else on the box ships THROUGH a pull. dev-ai2 sat on `70ee4fb` while main was 9 commits ahead, and the `yaml_ok` guard that would have caught the write could not reach it -- the guard was in the repo, and the repo could not land. `it-pull` now validates the file BEFORE launching the pull and prints the parser's own complaint, which is one readable line instead of a sixty-line Ansible failure with the reason buried in a JSON blob.
 
+**12d. SSH works for the admin and fails for everyone else: it is the MODE on a client drop-in, not the ciphers.** `ssh` reads `/etc/ssh/ssh_config` and the `/etc/ssh/ssh_config.d/*.conf` it Includes **as the calling user**. `usg fix` writes the STIG's client `Ciphers`/`MACs` into a drop-in there, and nothing asserted a mode on it -- so the file lands at whatever root's umask was during that pull, and under the STIG's `umask 077` that is **0600 root:root**. Root reads it; an engineer does not, and their `ssh` fails naming the file, so it presents as a broken cipher list. Confirm in one line:
+
+```bash
+ls -l /etc/ssh/ssh_config.d/          # 0600 root:root is the fault
+sudo -u "$SOME_USER" ssh -G localhost >/dev/null   # parses the config, connects to nothing
+```
+
+`0644` is correct and not a relaxation: these files hold algorithm lists and no secrets, and stock `/etc/ssh/ssh_config` is `0644` for exactly this reason. `usg_remediate` now asserts it every pull, since `usg fix` can recreate the file; `it-repair --only sshclient` does the same on a box that cannot pull. **`sshd_config.d` is deliberately left alone** -- sshd reads those as root, and some of them should not be world-readable.
+
 **13. Audit rules on disk are not audit rules in the kernel, and they may not be in `rules.d`.** Two separate traps in one place. First, `usg fix` writes **`/etc/audit/audit.rules` directly**, not `rules.d/*.rules` — so an empty `rules.d` is normal on a USG box, and counting only `rules.d` reports "no rules" on a box with a full ruleset. Second, whatever is on disk still has to reach the kernel: the STIG sets auditd `-e 2` (immutable), after which new rules are refused until a reboot. Either way **every file-based OVAL still passes**, because those check files. ASP-2 ran with **1 rule in the kernel** against 8.5 KB in `audit.rules` and the 96.41 % scan said nothing. `it-checklist` item 6 counts whichever source holds rules and compares it against the kernel. Diagnose with:
 
 > **Mind the glob.** `/etc/audit/rules.d` is `root:root 0750`, so `sudo cat /etc/audit/rules.d/*.rules` fails with *"No such file or directory"* — your **unprivileged shell** expands the glob before `sudo` runs, and it cannot read the directory. That looks exactly like an empty directory and is not. Wrap it: `sudo sh -c 'cat ...'`.

@@ -1216,6 +1216,7 @@ Exit status is 0 when nothing is left to fix, so it can be run from a check.
 | `rdp` | Orphaned sessions, via `it-rdp sweep`. **Never** restart `xrdp-sesman` to clear these |
 | `tiles` | Duplicate FPGA app-grid entries, via `it-fpga desktop` |
 | `units` | Failed units. `code-server@<locked user>` is known noise and is reset; anything else is reported and left alone |
+| `sshclient` | `/etc/ssh/ssh_config.d/*.conf` that only root can read. `ssh` reads them as the calling user, so a `0600` drop-in from `usg fix` breaks outbound SSH for everyone except the admin testing it |
 | `crash` | Queued apport reports — the dialog at login — and `whoopsie`, which reports to Canonical |
 | `boot` `disk` `audit` | **Read-only.** Slowest units, filesystems over 80 %, and the kernel audit-rule count (a `1` there is trap 13 — diagnose with `it-checklist`) |
 

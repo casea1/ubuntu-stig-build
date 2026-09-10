@@ -227,6 +227,42 @@
 # 2) /var/log FILE PERMS + /var/log/audit DIR MODE
 # file_permissions_var_log_stig (UBTU-24-700010) + directory_permissions_var_log_audit
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# SSH CLIENT drop-ins must stay WORLD-READABLE.
+#
+# `ssh` reads /etc/ssh/ssh_config, which Includes /etc/ssh/ssh_config.d/*.conf,
+# AS THE CALLING USER. `usg fix` writes the STIG's client Ciphers/MACs into a
+# drop-in there, and nothing sets a umask around it -- so the file lands at
+# whatever root's umask was during that pull. Under the STIG's `umask 077` that
+# is 0600 root:root, which root can read and nobody else can.
+#
+# The symptom is that ssh works for an admin and fails for an engineer, naming
+# the drop-in -- so it reads as a broken cipher config rather than a mode. Same
+# root cause as the fpga launcher that shipped non-executable (reference.md
+# trap 44's neighbourhood): a file whose mode was never asserted.
+#
+# 0644 is correct and not a relaxation. These files hold algorithm lists, no
+# secrets, and stock /etc/ssh/ssh_config is 0644 for exactly this reason. NOTE
+# the sshd_config.d drop-ins are deliberately NOT touched: sshd reads those as
+# root, and some of them should not be world-readable.
+- name: "REMED | Find SSH client drop-ins that users cannot read"
+  ansible.builtin.find:
+    paths: /etc/ssh/ssh_config.d
+    patterns: "*.conf"
+    file_type: file
+  register: _ssh_client_conf
+  changed_when: false
+
+- name: "REMED | Make them readable (ssh reads them as the calling user)"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ _ssh_client_conf.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
 - name: "REMED | /var/log permission fixes"
   when: usg_fix_log_permissions | default(true) | bool
   block:
