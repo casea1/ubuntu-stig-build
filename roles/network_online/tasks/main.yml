@@ -76,3 +76,65 @@
          else 'systemd-networkd manages ' ~ (_net_managed.stdout | default('?') | trim) ~
               ' link(s); leaving systemd-networkd-wait-online alone. It is what
               provides network-online.target on this box.' }}
+
+# =============================================================================
+# OFF-NETWORK LATENCY. A deployed box has DNS servers it cannot reach and no
+# route off the LAN, and the default behaviour is to WAIT for those rather than
+# fail fast. That waiting is indistinguishable from a slow machine.
+# =============================================================================
+
+# 1. THE BOX'S OWN NAME. If the hostname is not in /etc/hosts, every
+#    gethostbyname() for it -- and there are many, from sudo to GNOME to D-Bus
+#    to X -- goes to a DNS server that will not answer, and blocks for the
+#    resolver timeout each time. On an air-gapped box that is seconds per
+#    lookup, on a path nothing caches.
+#
+#    127.0.1.1 rather than 127.0.0.1 is the Debian convention for a machine
+#    whose name has no permanent address: it resolves without claiming the
+#    loopback name.
+- name: "NET-ONLINE | This box's own hostname resolves without DNS"
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1[[:space:]]'
+    line: "127.0.1.1 {{ ansible_facts.fqdn | default(ansible_facts.hostname) }} {{ ansible_facts.hostname }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: net_hosts_self_entry | default(true) | bool
+
+# 2. NetworkManager's CONNECTIVITY CHECK. It fetches connectivity.ubuntu.com
+#    whenever an interface changes and on a timer, to decide whether to show
+#    the "limited connectivity" indicator. Off-network it times out every time,
+#    and the retry keeps the network state churning -- which the desktop shell
+#    reacts to. Nothing on a deployed box needs the answer.
+- name: "NET-ONLINE | Is NetworkManager present?"
+  ansible.builtin.stat:
+    path: /usr/sbin/NetworkManager
+  register: _net_nm_bin
+
+- name: "NET-ONLINE | Turn off the connectivity check (it cannot succeed here)"
+  ansible.builtin.copy:
+    dest: /etc/NetworkManager/conf.d/20-no-connectivity-check.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible (network_online) -- do not edit by hand.
+      # Off-network this fetch can only time out, repeatedly. See the role.
+      [connectivity]
+      enabled=false
+      uri=
+      interval=0
+  when:
+    - _net_nm_bin.stat.exists | default(false)
+    - net_disable_connectivity_check | default(true) | bool
+  notify: Reload NetworkManager
+
+- name: "NET-ONLINE | Restore it when switched back on"
+  ansible.builtin.file:
+    path: /etc/NetworkManager/conf.d/20-no-connectivity-check.conf
+    state: absent
+  when:
+    - _net_nm_bin.stat.exists | default(false)
+    - not (net_disable_connectivity_check | default(true) | bool)
+  notify: Reload NetworkManager

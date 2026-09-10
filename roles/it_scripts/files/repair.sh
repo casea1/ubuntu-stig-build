@@ -23,7 +23,7 @@ while [ $# -gt 0 ]; do
     check|--check) MODE=check; shift ;;
     fix|--fix)     MODE=fix;   shift ;;
     --only) ONLY="${2:?--only needs a list}"; shift 2 ;;
-    --list) printf '%s\n' home net codeserver rdp tiles units crash sshclient boot disk audit; exit 0 ;;
+    --list) printf '%s\n' home net codeserver rdp tiles units crash sshclient slow boot disk audit; exit 0 ;;
     # Print the header block, however long it grows -- a line count here goes
     # stale the moment anyone edits the comment above.
     -h|--help) awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1{exit}' "$0"; exit 0 ;;
@@ -345,6 +345,105 @@ check_sshclient() {
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# 9. WHY THE DESKTOP IS SLOW. On a deployed box the usual answer is not load,
+# it is WAITING: for a DNS server that will not answer, or for a D-Bus service
+# that cannot start. Both present identically -- an app that opens after a long
+# pause -- so this MEASURES rather than guesses, and prints the number.
+# ---------------------------------------------------------------------------
+ms_for() {   # $@ = command -> elapsed milliseconds, output discarded
+  local a b
+  a=$(date +%s%N)
+  "$@" >/dev/null 2>&1
+  b=$(date +%s%N)
+  echo $(( (b - a) / 1000000 ))
+}
+
+check_slow() {
+  head2 "Desktop latency"
+  local t host
+
+  # 1. The box's own name. Every gethostbyname() for it -- sudo, GNOME, D-Bus,
+  # X -- takes this path, and off-network an unanswered lookup costs seconds
+  # EACH TIME, uncached.
+  host="$(hostname)"
+  t=$(ms_for getent hosts "$host")
+  if [ "$t" -gt 100 ]; then
+    bad "resolving this box's own name took ${t}ms -- it is going to DNS"
+    if fixing; then
+      if ! grep -qE "^127\.0\.1\.1[[:space:]]" /etc/hosts; then
+        printf '127.0.1.1 %s\n' "$host" >> /etc/hosts
+        did "added 127.0.1.1 $host to /etc/hosts"
+      else
+        sed -i -E "s|^127\.0\.1\.1[[:space:]].*|127.0.1.1 $host|" /etc/hosts
+        did "corrected the 127.0.1.1 line in /etc/hosts"
+      fi
+    else
+      note "no /etc/hosts entry for it. Every lookup waits for the resolver."
+      flag
+    fi
+  else
+    ok "own hostname resolves in ${t}ms"
+  fi
+
+  # 2. A name that cannot exist. Off-network this SHOULD fail instantly; if it
+  # takes seconds, a configured DNS server is not answering and every lookup on
+  # the box pays that.
+  t=$(ms_for getent hosts does-not-exist.invalid)
+  if [ "$t" -gt 1000 ]; then
+    bad "a failed DNS lookup took ${t}ms -- a configured resolver is not answering"
+    note "every name lookup on this box pays this. Check: resolvectl status"
+    note "point it at a resolver that exists, or none: sudo it-net dns"
+    flag
+  else
+    ok "failed lookups return in ${t}ms"
+  fi
+
+  # 3. NetworkManager's connectivity probe: off-network it can only time out.
+  if [ -e /usr/sbin/NetworkManager ]; then
+    if [ -e /etc/NetworkManager/conf.d/20-no-connectivity-check.conf ]; then
+      ok "NetworkManager connectivity check is off"
+    elif fixing; then
+      install -d -m 0755 /etc/NetworkManager/conf.d
+      printf '[connectivity]\nenabled=false\nuri=\ninterval=0\n' \
+        > /etc/NetworkManager/conf.d/20-no-connectivity-check.conf
+      nmcli general reload >/dev/null 2>&1 || true
+      did "turned off the NetworkManager connectivity check"
+    else
+      warn "NetworkManager still probes connectivity.ubuntu.com -- it can only time out here"
+      flag
+    fi
+  fi
+
+  # 4. The user services an RDP session needs. Asked of each logged-in user's
+  # own manager, because that is where they run.
+  local u seen=0
+  for u in $(loginctl list-users --no-legend 2>/dev/null | awk '$2 != "root" {print $2}'); do
+    seen=1
+    local portal env_ok
+    portal="$(sctl_user "$u" is-active xdg-desktop-portal.service)"
+    env_ok="$(systemctl --user --machine="$u@.host" show-environment 2>/dev/null \
+              | grep -c '^XDG_CURRENT_DESKTOP=' || true)"
+    if [ "$portal" = active ] && [ "${env_ok:-0}" -gt 0 ]; then
+      ok "$u: desktop portal active, session environment present"
+    else
+      bad "$u: portal is '$portal', XDG_CURRENT_DESKTOP $([ "${env_ok:-0}" -gt 0 ] && echo present || echo MISSING)"
+      note "every GTK app waits out a ~25s portal timeout before it opens."
+      note "the pull ships /etc/X11/Xsession.d/56it-session-env to fix this;"
+      note "it applies at the NEXT full RDP login, not to this session."
+      flag
+    fi
+  done
+  [ "$seen" = 0 ] && note "no non-root user logged in, so the session services cannot be checked"
+  return 0
+}
+
+sctl_user() {   # $1 = user, rest = systemctl args -> one word
+  local out
+  out="$(systemctl --user --machine="$1@.host" "${@:2}" 2>/dev/null | head -1)"
+  printf '%s' "${out:-unknown}"
+}
+
 # ---- read-only context -----------------------------------------------------
 check_boot() {
   head2 "Slowest units last boot"
@@ -386,7 +485,7 @@ check_audit() {
 say "${B}it-repair${R} -- $(hostname) -- $(date '+%Y-%m-%d %H:%M:%S %Z')"
 [ "$MODE" = check ] && note "reporting only. Apply with: sudo it-repair fix"
 
-for c in home net codeserver rdp tiles units crash sshclient boot disk audit; do
+for c in home net codeserver rdp tiles units crash sshclient slow boot disk audit; do
   want "$c" && "check_$c"
 done
 

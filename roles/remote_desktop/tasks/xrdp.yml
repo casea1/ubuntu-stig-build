@@ -159,6 +159,26 @@
 # (~/thinclient_drives). Disabled by default: it's an uncontrolled file-transfer
 # path that bypasses the removable-media (dta/USB) controls. Toggle with
 # dev_rdp_drive_redirect. sesman.ini is read by xrdp-sesman, so restart that.
+# See the file's own header for why. Short version: the systemd user services
+# an RDP session depends on start blind without this, and every GTK app then
+# waits out a 25s portal timeout before opening.
+- name: "XRDP | Session environment for the user services (portal, ibus, keyring)"
+  ansible.builtin.copy:
+    src: 56it-session-env
+    dest: /etc/X11/Xsession.d/56it-session-env
+    owner: root
+    group: root
+    mode: "0644"
+  when: dev_rdp_session_env | default(true) | bool
+
+# Ansible only ever creates: switching the toggle off has to take the file away,
+# or it keeps being sourced by every login.
+- name: "XRDP | Remove it when switched off"
+  ansible.builtin.file:
+    path: /etc/X11/Xsession.d/56it-session-env
+    state: absent
+  when: not (dev_rdp_session_env | default(true) | bool)
+
 - name: "XRDP | Client drive redirection (chansrv FUSE mount) -> {{ dev_rdp_drive_redirect | default(false) }}"
   community.general.ini_file:
     path: /etc/xrdp/sesman.ini

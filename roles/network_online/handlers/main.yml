@@ -1,0 +1,8 @@
+---
+# A RELOAD, not a restart. Restarting NetworkManager drops every managed
+# connection, which on a box someone is using over RDP means cutting them off
+# to apply a setting about a connectivity probe.
+- name: Reload NetworkManager
+  ansible.builtin.command: nmcli general reload
+  changed_when: false
+  failed_when: false

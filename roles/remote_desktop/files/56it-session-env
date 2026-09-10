@@ -1,0 +1,36 @@
+# Managed by ansible (remote_desktop) -- do not edit by hand.
+#
+# Tell the session what desktop it is, and push that into the systemd USER
+# manager, for RDP sessions.
+#
+# WHY. xdg-desktop-portal, ibus and gnome-keyring are systemd user services.
+# They need DISPLAY, XAUTHORITY and XDG_CURRENT_DESKTOP in the user manager's
+# environment; a GDM login exports those, an xrdp session does not. Without
+# them the portal cannot choose a backend and fails, and so do
+# org.freedesktop.IBus.session.GNOME and the keyring scopes.
+#
+# The cost is not the failure, it is the WAIT. Every GTK app asks the portal
+# over D-Bus at startup and blocks until activation times out -- about 25
+# seconds -- before falling back and opening anyway. That is why Settings,
+# Files and Terminal "take forever but eventually work" over RDP while the
+# same box is fine locally.
+#
+# Sourced by /etc/X11/Xsession, which xrdp's startwm.sh runs. A drop-in rather
+# than a patched startwm.sh: that file belongs to the xrdp package and an edit
+# to it is lost on upgrade, silently.
+
+# Only fill in what the session has not already set. A GDM login sets these
+# itself, and this file must not override a local session that is already right.
+[ -n "${XDG_CURRENT_DESKTOP:-}" ]     || export XDG_CURRENT_DESKTOP="ubuntu:GNOME"
+[ -n "${XDG_SESSION_TYPE:-}" ]        || export XDG_SESSION_TYPE="x11"
+[ -n "${DESKTOP_SESSION:-}" ]         || export DESKTOP_SESSION="ubuntu"
+[ -n "${GNOME_SHELL_SESSION_MODE:-}" ] || export GNOME_SHELL_SESSION_MODE="ubuntu"
+
+# The part that actually fixes the user services: without this they inherit
+# nothing and start blind. Failure here must never break the login, so it is
+# swallowed -- a session with a slow portal beats no session at all.
+if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+  dbus-update-activation-environment --systemd \
+    DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE \
+    DESKTOP_SESSION GNOME_SHELL_SESSION_MODE >/dev/null 2>&1 || true
+fi
