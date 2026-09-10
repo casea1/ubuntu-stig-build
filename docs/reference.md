@@ -178,9 +178,11 @@ A pass cannot be trusted because trap 42 is precisely the case where a GET to th
 
 **12i. Choppy RDP with `xrdp` itself burning CPU is the server ENCODING, and the tuning that helps a slow link hurts here.** Measure before touching anything: `top` during a window drag says which process is busy, and the three answers need three different fixes.
 
+**A lighter session is not available here.** GNOME Flashback was tried on dev-16 and withdrawn: its panel and the **classification banner** want the same screen edge, and the banner covered the toolbars. On this fleet the banner wins, so `gnome-shell`'s cost has to be reduced rather than removed -- and the lever that does that without touching the desktop is **resolution**, which cuts compositing and encoding together.
+
 | busy process | cause | lever |
 |---|---|---|
-| `gnome-shell` / `Xorg` | software rendering -- xorgxrdp has no GPU path, so a full GNOME Shell is llvmpipe | a lighter session (`gnome-session-flashback`), not an xrdp setting |
+| `gnome-shell` / `Xorg` | software rendering -- xorgxrdp has no GPU path, so a full GNOME Shell is llvmpipe | lower the resolution; a lighter session is ruled out by the banner, above |
 | `xrdp` | encoding and compressing every update | `bitmap_compression`, `max_bpp` -- below |
 | nothing much | the link | `max_bpp: 16` |
 

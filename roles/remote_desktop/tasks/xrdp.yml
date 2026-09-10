@@ -164,31 +164,21 @@
 # See the file's own header for why. Short version: the systemd user services
 # an RDP session depends on start blind without this, and every GTK app then
 # waits out a 25s portal timeout before opening.
-# A LIGHTER SESSION FOR RDP. See the file's header for the measurement that
-# prompted it. Off by default: it changes what every engineer sees at login,
-# and that is not a change to make fleet-wide on one box's numbers.
-- name: "XRDP | Install GNOME Flashback (lighter RDP session)"
-  ansible.builtin.apt:
-    name: "{{ dev_rdp_flashback_packages }}"
-    state: present
-  when: (dev_rdp_session | default('gnome')) == 'flashback'
-  tags: [packages]
-
-- name: "XRDP | Select the Flashback session for RDP logins"
-  ansible.builtin.copy:
-    src: 55it-session-flashback
-    dest: /etc/X11/Xsession.d/55it-session-flashback
-    owner: root
-    group: root
-    mode: "0644"
-  when: (dev_rdp_session | default('gnome')) == 'flashback'
-
-# Switching back has to REMOVE it, or every login keeps sourcing it.
-- name: "XRDP | Back to the full GNOME session when Flashback is not selected"
+# RETIRED: GNOME Flashback as the RDP session.
+#
+# Tried on dev-16 and withdrawn. It is genuinely lighter -- gnome-shell was the
+# largest single consumer at 56% of a core -- but the CLASSIFICATION BANNER and
+# Flashback's panel occupy the same screen edge, and the banner covered the
+# toolbars. On this fleet the banner is not negotiable, so the session that
+# collides with it cannot be the one engineers use.
+#
+# The removal is UNCONDITIONAL and stays. Ansible only ever creates (trap 3),
+# so a box that received the drop-in would keep sourcing it at every login
+# forever if this task were simply deleted along with the feature.
+- name: "XRDP | Remove the retired Flashback session drop-in"
   ansible.builtin.file:
     path: /etc/X11/Xsession.d/55it-session-flashback
     state: absent
-  when: (dev_rdp_session | default('gnome')) != 'flashback'
 
 - name: "XRDP | Session environment for the user services (portal, ibus, keyring)"
   ansible.builtin.copy:
