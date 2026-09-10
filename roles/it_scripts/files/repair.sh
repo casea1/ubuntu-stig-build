@@ -484,9 +484,40 @@ check_identity() {
   head2 "Identity lookups (nsswitch / sssd)"
   local nss active t
 
+  # IS THIS BOX DOMAIN-JOINED? Everything below inverts if it is.
+  #
+  # On an UNJOINED box, `sss` in nsswitch with sssd dead is pure cost -- sssd is
+  # there because a join was staged and never happened, and taking it out of the
+  # lookup path is right. On a JOINED box the same state is an OUTAGE IN
+  # PROGRESS: sssd is how domain accounts resolve at all, and removing `sss`
+  # would turn a restartable service into every domain user losing their
+  # identity, their group memberships and their home directory.
+  #
+  # So the fix is refused there, loudly, and the service is named instead.
+  local joined=0
+  if command -v realm >/dev/null 2>&1 && realm list 2>/dev/null | grep -q 'domain-name'; then
+    joined=1
+  elif [ -s /etc/krb5.keytab ]; then
+    joined=1
+  fi
+
   nss="$(grep -E '^(passwd|group|shadow):' /etc/nsswitch.conf 2>/dev/null | grep -c 'sss' || true)"
   if [ "${nss:-0}" -eq 0 ]; then
-    ok "nsswitch does not consult sssd"
+    [ "$joined" = 1 ] \
+      && { bad "this box is domain-joined but nsswitch does NOT consult sssd -- domain accounts cannot resolve"; flag; } \
+      || ok "nsswitch does not consult sssd"
+  elif [ "$joined" = 1 ]; then
+    active="$(systemctl is-active sssd.service 2>/dev/null | head -1)"
+    if [ "$active" = active ]; then
+      ok "domain-joined, nsswitch uses sssd, sssd is running"
+    else
+      bad "DOMAIN-JOINED and sssd is '$active' -- domain logins are down right now"
+      note "this is NOT the unjoined case: do not remove sss from nsswitch, that"
+      note "would take domain identities away instead of restoring them."
+      note "  sudo systemctl status sssd    then    sudo systemctl restart sssd"
+      note "  sudo realm list               is the join still intact?"
+      flag
+    fi
   else
     active="$(systemctl is-active sssd.service 2>/dev/null | head -1)"
     if [ "$active" = active ]; then

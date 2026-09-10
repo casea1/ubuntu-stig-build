@@ -2442,6 +2442,41 @@ The carried repo is **unsigned**, so apt is told to trust it. The trust boundary
 
 **Ubuntu Pro / ESM packages are not covered.** The tree holds the main archive only; anything shipped through ESM has to be carried in as a loose `.deb`.
 
+## 4.3a What a domain controller changes (read before joining anything)
+
+A DC and file server arriving is mostly good news for this fleet, because two of
+the things it brings are the root causes of the worst problems on the deployed
+boxes.
+
+**What it fixes**
+
+| Today | With the DC |
+|---|---|
+| Resolvers from the lab that answer nothing, so every lookup waits (trap 12e) | The DC is the DNS server for the space. Lookups answer, and the stalls stop |
+| chrony has sources but selects none | AD *requires* time sync, and the DC is the authoritative source. Kerberos will not work until this is right, so it stops being optional |
+| SMB offloads run as **guest with `sec=none`** because NTLM cannot work on FIPS (trap 11) | `sec=krb5`. This is the POA&M item closing, not a workaround |
+
+**What it puts at risk**
+
+- **The PAM stack.** `libpam-sss`'s postinst runs `pam-auth-update --package` and regenerates `common-auth`. That is how ASP-2 became unloggable and needed live-USB recovery. It is exactly why `sssd-ad` and friends are **not** in `ad_prep_packages` and are installed only by `it-domain join`, which backs the stack up first and verifies it after. Never `apt install sssd-ad` by hand.
+- **Every local group that grants something.** `dev_code_server_group`, `dev_rdp_allowed_group`, `fpga_tools_access_group`, the sudoers grants -- all name local groups. Domain users are in none of them until that is decided.
+- **code-server ports break for domain users.** The port is `dev_code_server_port + (uid - dev_code_server_uid_base)`, and an AD account's UID is SID-mapped into the hundreds of millions. `uid 1000000001` computes to port 1000007081. The role skips a UID outside the span rather than doing something wrong, so domain users simply get no IDE until the derivation is changed.
+- **A DC outage becomes a login outage.** Keep at least one **local** admin account that does not depend on the domain, and know its password. sssd caches credentials for users who have logged in before; it does nothing for one who has not.
+
+**Order of operations**
+
+1. `sudo it-domain stage` on every box **while it is still on a network** -- it downloads the join packages so the join works later. A box that is already air-gapped cannot get them.
+2. Point DNS at the DC (`sudo it-net dns`) and time at the DC (`sudo it-net ntp`). Kerberos fails on a clock more than five minutes out, and the join needs the SRV records.
+3. `sudo it-domain join`. It preflights, backs up the PAM stack, joins, and verifies.
+4. Only then convert the offloads: `sudo it-smb test //SERVER/SHARE --krb5`.
+
+> **After the join, `it-repair --only identity` behaves differently on purpose.**
+> On an unjoined box, `sss` in `nsswitch.conf` with a dead sssd is dead weight and
+> `fix` removes it. On a **joined** box that same state is an outage in progress,
+> and removing `sss` would take away every domain user's identity rather than
+> restore it. The check detects the join and refuses, naming the service to
+> restart instead.
+
 ## 4.3b Join a box to Active Directory
 
 `development`, `ai` and `baseline` only. The EMI laptop stays standalone.
