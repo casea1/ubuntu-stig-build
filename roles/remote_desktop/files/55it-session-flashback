@@ -1,0 +1,30 @@
+# Managed by ansible (remote_desktop) -- do not edit by hand.
+#
+# Run the RDP session as GNOME Flashback (Metacity) instead of GNOME Shell.
+#
+# WHY. There is no GPU path through xorgxrdp, so GNOME Shell composites the
+# whole desktop in software via llvmpipe. Measured on a deployed box during a
+# window drag: gnome-shell 56% of a core, xrdp 38%, Xorg 11% -- saturated
+# between them, and no xrdp setting touches the first number because it is not
+# an encoding cost. Flashback uses Metacity with no compositing, so that work
+# stops existing rather than being made cheaper.
+#
+# It is still GNOME: the same apps, Settings, and panel. Vivado, Libero and
+# FPExpress are Java/Qt and do not care what window manager they run under.
+#
+# Numbered 55, BEFORE 56it-session-env, on purpose. That file fills in
+# XDG_CURRENT_DESKTOP only if it is unset, so this has to claim it first or the
+# portal is told GNOME and looks for a backend this session does not have.
+
+# Only if it is actually installed. A box without the package must fall through
+# to the normal session, not to a broken one.
+if [ -r /usr/share/gnome-session/sessions/gnome-flashback-metacity.session ]; then
+  export XDG_CURRENT_DESKTOP="GNOME-Flashback:GNOME"
+  export XDG_SESSION_DESKTOP="gnome-flashback-metacity"
+  export DESKTOP_SESSION="gnome-flashback-metacity"
+  # /etc/X11/Xsession's 99x11-common_start execs $STARTUP, so setting it here
+  # chooses the session without touching xrdp's startwm.sh -- that file belongs
+  # to the xrdp package and an edit to it is lost on upgrade, silently.
+  STARTUP="gnome-session --session=gnome-flashback-metacity"
+  export STARTUP
+fi

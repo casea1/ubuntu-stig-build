@@ -1987,6 +1987,52 @@ account is. Exclude them if you would rather they had no IDE:
 dev_code_server_exclude: [bob_smith_dta, amy_lee_aud]
 ```
 
+### A lighter desktop for RDP
+
+There is no GPU path through xorgxrdp, so GNOME Shell composites the whole
+desktop in software. Measured on a deployed box during a window drag:
+
+```
+gnome-shell  56%     xrdp  38%     Xorg  11%
+```
+
+Saturated between them, and **no xrdp setting touches the first number** -- that
+is not an encoding cost. GNOME Flashback uses Metacity with no compositing, so
+the work stops existing rather than being made cheaper. Same GNOME apps,
+Settings and panel; the FPGA tools are Java/Qt and do not care what window
+manager they run under.
+
+```yaml
+# /opt/it/site.yml
+dev_rdp_session: flashback
+```
+
+```bash
+sudo it-pull full        # `full` -- it installs a package
+```
+
+Then log out of RDP **completely** and back in; the session is chosen at login.
+Set it back to `gnome` and pull again to revert, which also removes the drop-in.
+
+> **Carrying it to an air-gapped box.** `gnome-session-flashback` and its
+> dependencies have to be in the offline repo first. Get the exact closure on a
+> connected box of the same release:
+> ```bash
+> sudo apt-get install --reinstall --download-only gnome-session-flashback
+> ls /var/cache/apt/archives/*.deb
+> ```
+> That downloads what this box would install and nothing else, so it is the
+> real list rather than a guess at the dependency tree. Copy those into the
+> repo tree and re-run `it-repo load` on the fielded box.
+
+Before deciding, check the numbers are still what they were: measure with no
+FPGA tool open, since a running Vivado or FPExpress is load that changing the
+window manager will not remove.
+
+```bash
+ps -eo pcpu,user,comm --sort=-pcpu | head -12
+```
+
 ### What this puts on the network
 
 Each instance is password-authed over self-signed TLS, with its **own**

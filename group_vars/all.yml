@@ -637,6 +637,23 @@ dev_rdp_drive_redirect: false
 # (32) can therefore be FASTER than capping, which is the opposite of how a
 # bandwidth setting usually behaves. 24 stays the default because it is what the
 # fleet has been running; try 32 on a box where xrdp is CPU-bound.
+# Which desktop an RDP login gets.
+#
+#   gnome      the full GNOME Shell -- what a console login gets
+#   flashback  GNOME Flashback (Metacity, NO compositing)
+#
+# There is no GPU through xorgxrdp, so GNOME Shell composites in software.
+# Measured during a window drag on a deployed box: gnome-shell 56% of a core,
+# xrdp 38%, Xorg 11%. Flashback removes that work rather than making it
+# cheaper, and keeps the GNOME apps, Settings and panel. The FPGA tools are
+# Java/Qt and do not care which window manager they run under.
+#
+# Default `gnome`: this changes what every engineer sees at login, so it is
+# opted into per box (or per fleet) rather than arriving in a pull.
+dev_rdp_session: gnome
+dev_rdp_flashback_packages:
+  - gnome-session-flashback
+
 dev_rdp_max_bpp: "24"
 
 # Compress bitmap updates before sending them?
