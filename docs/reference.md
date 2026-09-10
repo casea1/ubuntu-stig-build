@@ -165,6 +165,20 @@ A pass cannot be trusted because trap 42 is precisely the case where a GET to th
 
 **It is an HTTP request, not a TCP connect.** A transparent proxy, or a firewall that accepts and then drops, completes the handshake and reports success for a host that is unreachable: measured in a proxied sandbox, an unroutable address "connected" in 6 ms. Nothing already enabled is affected either way -- this changes how long a pull takes, not the box's posture.
 
+**12i. Choppy RDP with `xrdp` itself burning CPU is the server ENCODING, and the tuning that helps a slow link hurts here.** Measure before touching anything: `top` during a window drag says which process is busy, and the three answers need three different fixes.
+
+| busy process | cause | lever |
+|---|---|---|
+| `gnome-shell` / `Xorg` | software rendering -- xorgxrdp has no GPU path, so a full GNOME Shell is llvmpipe | a lighter session (`gnome-session-flashback`), not an xrdp setting |
+| `xrdp` | encoding and compressing every update | `bitmap_compression`, `max_bpp` -- below |
+| nothing much | the link | `max_bpp: 16` |
+
+Measured on a deployed box: **`xrdp` at 70%** with gnome-shell and Xorg idle. So the cost was compression, and `bitmap_compression=true` was buying bandwidth this fleet does not need -- every box is on a switched LAN. It now defaults **false** (`dev_rdp_bitmap_compression`); set it true only for a genuinely slow or metered link.
+
+**`max_bpp` is not purely a bandwidth dial either.** Capping at 24 while the client asks for 32 makes xrdp convert every tile, and that conversion is CPU on the process that is already the bottleneck -- so **raising** it to 32 can be faster than capping it. Counterintuitive, and worth trying on a CPU-bound box before reaching for a lighter desktop.
+
+Note what did NOT help, since it rules out a whole family of guesses: disabling GNOME animations, and unchecking font smoothing on the Windows client. Neither touches the encode path.
+
 **13. Audit rules on disk are not audit rules in the kernel, and they may not be in `rules.d`.** Two separate traps in one place. First, `usg fix` writes **`/etc/audit/audit.rules` directly**, not `rules.d/*.rules` — so an empty `rules.d` is normal on a USG box, and counting only `rules.d` reports "no rules" on a box with a full ruleset. Second, whatever is on disk still has to reach the kernel: the STIG sets auditd `-e 2` (immutable), after which new rules are refused until a reboot. Either way **every file-based OVAL still passes**, because those check files. ASP-2 ran with **1 rule in the kernel** against 8.5 KB in `audit.rules` and the 96.41 % scan said nothing. `it-checklist` item 6 counts whichever source holds rules and compares it against the kernel. Diagnose with:
 
 > **Mind the glob.** `/etc/audit/rules.d` is `root:root 0750`, so `sudo cat /etc/audit/rules.d/*.rules` fails with *"No such file or directory"* — your **unprivileged shell** expands the glob before `sudo` runs, and it cannot read the directory. That looks exactly like an empty directory and is not. Wrap it: `sudo sh -c 'cat ...'`.

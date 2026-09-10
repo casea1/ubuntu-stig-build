@@ -631,7 +631,24 @@ dev_rdp_drive_redirect: false
 # this is the biggest server-side responsiveness lever. 16 = snappiest (slight
 # color banding), 24 = balanced default, 32 = best quality/heaviest. Paired with
 # TCP-nodelay + bitmap caching/compression in the xrdp [Globals] config.
+# Colour depth cap. NOT purely a bandwidth dial: when the client asks for 32
+# and the server caps at 24, xrdp converts every tile, and that conversion is
+# paid in CPU on a server that is already the bottleneck. Matching the client
+# (32) can therefore be FASTER than capping, which is the opposite of how a
+# bandwidth setting usually behaves. 24 stays the default because it is what the
+# fleet has been running; try 32 on a box where xrdp is CPU-bound.
 dev_rdp_max_bpp: "24"
+
+# Compress bitmap updates before sending them?
+#
+# FALSE on purpose. This trades bandwidth for CPU, and on this fleet that trade
+# is backwards: every box is on a switched LAN with bandwidth to spare, and the
+# measured bottleneck is xrdp itself -- 70% of a core during a window drag, with
+# gnome-shell and Xorg idle. Compression is what it was spending it on.
+#
+# Set it true for a box reached over a slow or metered link, where the trade
+# runs the other way.
+dev_rdp_bitmap_compression: false
 # OPTIONAL: restrict RDP logins to members of this group (enforced in PAM). Empty
 # = any local account with a password may RDP (still password- + faillock-gated).
 # Set e.g. "rdpusers" to gate it; the role creates the group and adds the check.

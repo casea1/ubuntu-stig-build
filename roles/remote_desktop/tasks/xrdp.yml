@@ -52,7 +52,9 @@
     - { option: tcp_nodelay, value: "true" }        # disable Nagle -> lower input latency
     - { option: tcp_keepalive, value: "true" }      # keep idle sessions from stalling/dropping
     - { option: bitmap_cache, value: "true" }       # cache tiles client-side (less redraw traffic)
-    - { option: bitmap_compression, value: "true" } # compress bitmap updates
+    # See group_vars: this is a CPU-for-bandwidth trade, and on a LAN fleet with
+    # a CPU-bound xrdp it runs the wrong way.
+    - { option: bitmap_compression, value: "{{ dev_rdp_bitmap_compression | default(false) | ternary('true', 'false') }}" }
     - { option: new_cursors, value: "true" }        # efficient color cursor updates
     - { option: max_bpp, value: "{{ dev_rdp_max_bpp | default('24') }}" }  # cap color depth (bandwidth)
   notify: restart xrdp
