@@ -327,6 +327,30 @@ do_run() {
 "ansible-pull is not installed -- this box was never bootstrapped, or ansible was removed.
   sudo apt-get install -y ansible git"
 
+  # PRE-FLIGHT: does site.yml still parse? local.yml loads it in pre_tasks, so a
+  # broken one stops the play before a single role runs -- and what the operator
+  # sees is a sixty-line Ansible failure with the real complaint buried in a JSON
+  # blob. Worse, it is self-sustaining: the fix for whatever broke the file ships
+  # THROUGH a pull, and the pull is what cannot run. Caught here it costs one
+  # readable line instead.
+  #
+  # dev-ai2 hit exactly this: a stray `...` (YAML's document-end marker) left in
+  # the file by a hand-edit ended the document, so everything after it was a
+  # second document with no `---` and the whole node stopped updating.
+  local site_err
+  if ! site_err=$(yaml_ok "$SITE_YML"); then
+    die "$SITE_YML does not parse as YAML, so this pull would stop before any role ran:
+
+  $site_err
+
+Nothing else on this box is wrong; fix that file and run this again. Usually a
+hand-edit: a bare '...' or '---' at column 1 ends the YAML document, and
+anything after it is unreachable. Find one with:
+  sudo grep -nE '^[[:space:]]*(\.\.\.|---|%)' $SITE_YML
+Check a fix before running the pull:
+  sudo python3 -c 'import yaml; yaml.safe_load(open(\"$SITE_YML\")); print(\"ok\")'"
+  fi
+
   # Make the profile STICK. Written into site.yml, which local.yml loads above
   # group_vars, so a hand-typed `ansible-pull` with no -e builds this box the
   # same way it-pull does. Without this, the profile is only as good as the

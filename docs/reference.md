@@ -116,6 +116,17 @@ sudo journalctl -kf | grep 'UFW LIMIT BLOCK'
 
 The repo had `rule: limit` on **code-server** (8080:8099) and on **Cockpit** (9090) — both web consoles. Both are now `allow` with a source restriction (`dev_code_server_allow_from`, `cockpit_allow_from`), which is the protection rate-limiting was reaching for and does not deliver. **The old rule has to be deleted, not just superseded:** ufw evaluates in order, so a `LIMIT` ahead of the new `ALLOW` still wins — the pull deletes it explicitly. Do not add a web port to `stig_firewall_limit_ports`.
 
+**12c. A stray `...` in `/opt/it/site.yml` stops a box updating, permanently.** `...` is YAML's document-END marker. Put one at column 1 -- a hand-edit, or a half-uncommented block from `site.yml.example`, which carries `#   ...` inside a private-key illustration -- and the document ends there; everything after it is a second document with no `---`, and PyYAML refuses the file:
+
+```
+expected '<document start>', but found '<block mapping start>'
+  in "/opt/it/site.yml", line 41, column 1
+```
+
+The line it names is where the parser gave up, **not where the problem is** -- the marker is above it, often far above. Find it with `grep -nE '^[[:space:]]*(\.\.\.|---|%)' /opt/it/site.yml`; a bare `---` after line 1 gives *"expected a single document"* and a line starting with `%` gives *"...but found '<scalar>'"*, so the message tells you which one you have.
+
+**Why this one is worse than it looks.** `local.yml` loads `site.yml` in `pre_tasks`, so the play stops before a single role runs, and the fix for anything else on the box ships THROUGH a pull. dev-ai2 sat on `70ee4fb` while main was 9 commits ahead, and the `yaml_ok` guard that would have caught the write could not reach it -- the guard was in the repo, and the repo could not land. `it-pull` now validates the file BEFORE launching the pull and prints the parser's own complaint, which is one readable line instead of a sixty-line Ansible failure with the reason buried in a JSON blob.
+
 **13. Audit rules on disk are not audit rules in the kernel, and they may not be in `rules.d`.** Two separate traps in one place. First, `usg fix` writes **`/etc/audit/audit.rules` directly**, not `rules.d/*.rules` — so an empty `rules.d` is normal on a USG box, and counting only `rules.d` reports "no rules" on a box with a full ruleset. Second, whatever is on disk still has to reach the kernel: the STIG sets auditd `-e 2` (immutable), after which new rules are refused until a reboot. Either way **every file-based OVAL still passes**, because those check files. ASP-2 ran with **1 rule in the kernel** against 8.5 KB in `audit.rules` and the 96.41 % scan said nothing. `it-checklist` item 6 counts whichever source holds rules and compares it against the kernel. Diagnose with:
 
 > **Mind the glob.** `/etc/audit/rules.d` is `root:root 0750`, so `sudo cat /etc/audit/rules.d/*.rules` fails with *"No such file or directory"* — your **unprivileged shell** expands the glob before `sudo` runs, and it cannot read the directory. That looks exactly like an empty directory and is not. Wrap it: `sudo sh -c 'cat ...'`.
