@@ -58,6 +58,13 @@ echo
 # without the current passphrase, which is the behaviour we want: this is a
 # rotation, not a recovery, and there is no recovery without a key.
 if cryptsetup luksChangeKey "$DEV"; then
+  # RECORD IT. A LUKS2 header has no per-keyslot timestamp -- the format has no
+  # field for one -- so "was this rotated after deployment?" is unanswerable
+  # unless something writes it down at the time. This is that something.
+  install -d -m 0755 /etc/stig-build 2>/dev/null || true
+  printf '%s %s %s\n' "$(date -Is)" "${SUDO_USER:-$(id -un)}" "$DEV" \
+    >> /etc/stig-build/credential-changes.log 2>/dev/null || true
+  chmod 0644 /etc/stig-build/credential-changes.log 2>/dev/null || true
   printf '\n  %sOK%s   passphrase changed on %s\n' "$G" "$R" "$DEV"
   [ "${tpm:-0}" -gt 0 ] \
     && printf '  %sTPM auto-unlock is unaffected. Reboot to confirm it still unlocks itself.%s\n\n' "$DIM" "$R" \

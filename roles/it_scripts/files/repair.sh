@@ -23,10 +23,30 @@ while [ $# -gt 0 ]; do
     check|--check) MODE=check; shift ;;
     fix|--fix)     MODE=fix;   shift ;;
     --only) ONLY="${2:?--only needs a list}"; shift 2 ;;
-    --list) printf '%s\n' home net codeserver rdp tiles units crash sshclient slow boot disk audit; exit 0 ;;
+    --list) printf '%s\n' home net codeserver rdp tiles units crash sshclient identity slow boot disk creds audit; exit 0 ;;
     # Print the header block, however long it grows -- a line count here goes
     # stale the moment anyone edits the comment above.
-    -h|--help) awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1{exit}' "$0"; exit 0 ;;
+    -h|--help)
+      awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1{exit}' "$0"
+      # The checks themselves, not just a pointer to --list. A check nobody
+      # knows about is a check nobody runs.
+      printf '\nChecks:\n'
+      printf '  %-11s %s\n' \
+        home       "root-owned files in a home (black screen, stalled session)" \
+        net        "systemd-networkd-wait-online waiting for links it does not own" \
+        codeserver "leftover code-server system units that start at boot" \
+        rdp        "orphaned RDP sessions" \
+        tiles      "duplicate FPGA app-grid entries" \
+        units      "failed systemd units" \
+        crash      "queued apport reports, whoopsie" \
+        sshclient  "ssh_config.d drop-ins only root can read" \
+        identity   "sssd/nss stalling every user lookup on the box" \
+        slow       "desktop latency, MEASURED: DNS, portal, session environment" \
+        boot       "slowest units last boot (read-only)" \
+        disk       "filesystem usage (read-only)" \
+        creds      "were the imaging LUKS/GRUB credentials rotated? (read-only)" \\
+        audit      "kernel audit-rule count (read-only)"
+      exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -444,6 +464,60 @@ sctl_user() {   # $1 = user, rest = systemctl args -> one word
   printf '%s' "${out:-unknown}"
 }
 
+# ---------------------------------------------------------------------------
+# 10. IDENTITY LOOKUPS. The one that makes a box slow BEFORE anyone logs in.
+#
+# libnss-sss puts `sss` into the passwd/group/shadow lines of nsswitch.conf, so
+# every getpwnam() on the box asks sssd. With sssd dead -- installed for a
+# domain join that has not happened, or half-configured -- those lookups wait
+# instead of failing, and the cost lands on everything: the login banner, PAM,
+# sudo, GDM, the session.
+#
+# The give-away is WHERE the delay is. A slow desktop portal cannot slow down a
+# banner that is printed before authentication; a stalled NSS lookup can.
+#
+# This build deliberately does NOT install sssd (group_vars says why: libpam-sss
+# regenerates common-auth and that is how ASP-2 became unloggable). If it is
+# here, `it-domain stage` or a join put it here.
+# ---------------------------------------------------------------------------
+check_identity() {
+  head2 "Identity lookups (nsswitch / sssd)"
+  local nss active t
+
+  nss="$(grep -E '^(passwd|group|shadow):' /etc/nsswitch.conf 2>/dev/null | grep -c 'sss' || true)"
+  if [ "${nss:-0}" -eq 0 ]; then
+    ok "nsswitch does not consult sssd"
+  else
+    active="$(systemctl is-active sssd.service 2>/dev/null | head -1)"
+    if [ "$active" = active ]; then
+      ok "nsswitch uses sssd and sssd is running"
+    else
+      bad "nsswitch asks sssd on $nss line(s), but sssd is '$active'"
+      note "every user/group lookup on this box goes to a daemon that is not there --"
+      note "which is why the login banner is slow, not just the desktop."
+      if fixing; then
+        cp -a /etc/nsswitch.conf "/etc/nsswitch.conf.before-it-repair.$(date +%s)"
+        sed -i -E '/^(passwd|group|shadow):/ s/[[:space:]]+sss\b//g' /etc/nsswitch.conf
+        did "removed sss from nsswitch.conf (backup kept alongside it)"
+        note "libpam-sss is deliberately NOT touched: rewriting the auth stack is"
+        note "how a box becomes unloggable. Remove it only with it-domain."
+      else
+        flag
+      fi
+    fi
+  fi
+
+  # Measure it either way -- the number is what tells you if this is THE cause.
+  t=$(ms_for getent passwd root)
+  if [ "$t" -gt 200 ]; then
+    bad "a local user lookup took ${t}ms -- that is paid by every login and every sudo"
+    flag
+  else
+    ok "user lookups return in ${t}ms"
+  fi
+  return 0
+}
+
 # ---- read-only context -----------------------------------------------------
 check_boot() {
   head2 "Slowest units last boot"
@@ -466,6 +540,40 @@ check_disk() {
   df -h / /var 2>/dev/null | tail -n +2 | sed 's/^/       /'
 }
 
+# Read-only. Answers "were the imaging credentials rotated after deployment?"
+# from what the box recorded at the time -- see the note in the output for why
+# it cannot be reconstructed afterwards.
+check_creds() {
+  head2 "Credential changes since imaging"
+  local log=/etc/stig-build/credential-changes.log
+  if [ -s "$log" ]; then
+    sed 's/^/       /' "$log"
+  else
+    warn "nothing recorded"
+    note "either nothing has been rotated on this box, or it was rotated with"
+    note "cryptsetup/grub-mkpasswd directly instead of it-luks-passwd / it-grub set."
+  fi
+  # What CAN be read from the system itself, as a cross-check.
+  local g=/etc/grub.d/01_superusers
+  if [ -e "$g" ]; then
+    if grep -q CHANGEME "$g" 2>/dev/null; then
+      bad "GRUB password is still the CHANGEME sentinel -- it is NOT set"
+      flag
+    else
+      ok "GRUB password set; drop-in last written $(stat -c %y "$g" 2>/dev/null | cut -d. -f1)"
+    fi
+  else
+    warn "no GRUB password drop-in on this box"
+    flag
+  fi
+  [ -e /etc/luks/initial-passphrase ] \
+    && { bad "the IMAGING LUKS passphrase is still staged at /etc/luks/initial-passphrase"; flag; } \
+    || ok "no staged imaging passphrase left on disk"
+  note "a LUKS2 header stores no per-keyslot timestamp, so a passphrase change"
+  note "cannot be dated after the fact -- only recorded as it happens."
+  return 0
+}
+
 check_audit() {
   head2 "Audit rules"
   have auditctl || { note "auditctl not present -- skipped"; return 0; }
@@ -485,7 +593,7 @@ check_audit() {
 say "${B}it-repair${R} -- $(hostname) -- $(date '+%Y-%m-%d %H:%M:%S %Z')"
 [ "$MODE" = check ] && note "reporting only. Apply with: sudo it-repair fix"
 
-for c in home net codeserver rdp tiles units crash sshclient slow boot disk audit; do
+for c in home net codeserver rdp tiles units crash sshclient identity slow boot disk creds audit; do
   want "$c" && "check_$c"
 done
 

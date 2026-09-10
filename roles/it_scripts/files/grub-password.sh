@@ -238,6 +238,13 @@ EOF
   [ -f "$CFG.pre-grubpw" ] || cp -a "$CFG" "$CFG.pre-grubpw"
   install -o root -g root -m 0600 /tmp/grub.cfg.candidate "$CFG"
   rm -f /tmp/grub.cfg.candidate
+  # Same reason as it-luks-passwd: an assessor asks "was this changed after
+  # deployment?" and nothing on the box answers it unless it is written down at
+  # the time. The hash itself is not recorded -- only that a change happened.
+  install -d -m 0755 /etc/stig-build 2>/dev/null || true
+  printf '%s %s grub-password\n' "$(date -Is)" "${SUDO_USER:-$(id -un)}" \
+    >> /etc/stig-build/credential-changes.log 2>/dev/null || true
+  chmod 0644 /etc/stig-build/credential-changes.log 2>/dev/null || true
   cat <<MSG
 
 Applied.
