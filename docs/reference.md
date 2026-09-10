@@ -116,25 +116,25 @@ sudo journalctl -kf | grep 'UFW LIMIT BLOCK'
 
 The repo had `rule: limit` on **code-server** (8080:8099) and on **Cockpit** (9090) — both web consoles. Both are now `allow` with a source restriction (`dev_code_server_allow_from`, `cockpit_allow_from`), which is the protection rate-limiting was reaching for and does not deliver. **The old rule has to be deleted, not just superseded:** ufw evaluates in order, so a `LIMIT` ahead of the new `ALLOW` still wins — the pull deletes it explicitly. Do not add a web port to `stig_firewall_limit_ports`.
 
-**12c. A stray `...` in `/opt/it/site.yml` stops a box updating, permanently.** `...` is YAML's document-END marker. Put one at column 1 -- a hand-edit, or a half-uncommented block from `site.yml.example`, which carries `#   ...` inside a private-key illustration -- and the document ends there; everything after it is a second document with no `---`, and PyYAML refuses the file:
+**12c. `/opt/it/site.yml` that does not parse stops a box updating, permanently, and the line the parser names is not the cause.** `local.yml` loads it in `pre_tasks`, so the play stops before a single role runs. That makes it self-sustaining: the fix for anything on that box ships THROUGH a pull. dev-ai2 sat on `70ee4fb` with main nine commits ahead, unable to receive the very guard that would have caught the write.
 
 ```
 expected '<document start>', but found '<block mapping start>'
   in "/opt/it/site.yml", line 41, column 1
 ```
 
-The line it names is where the parser gave up, **not where the problem is** -- the marker is above it, often far above. Find it with `grep -nE '^[[:space:]]*(\.\.\.|---|%)' /opt/it/site.yml`; a bare `---` after line 1 gives *"expected a single document"* and a line starting with `%` gives *"...but found '<scalar>'"*, so the message tells you which one you have.
+That message means the YAML document **ended** above line 41 and ordinary content resumed. **Do not go to line 41** -- a parser reports where it could not continue, which for this fault is always below the cause. On dev-ai2 the offending line was in the twenties.
 
-**Why this one is worse than it looks.** `local.yml` loads `site.yml` in `pre_tasks`, so the play stops before a single role runs, and the fix for anything else on the box ships THROUGH a pull. dev-ai2 sat on `70ee4fb` while main was 9 commits ahead, and the `yaml_ok` guard that would have caught the write could not reach it -- the guard was in the repo, and the repo could not land. `it-pull` now validates the file BEFORE launching the pull and prints the parser's own complaint, which is one readable line instead of a sixty-line Ansible failure with the reason buried in a JSON blob.
+**And do not go looking for `...` or `---`.** Those end a document, but so does anything that completes it on its own, and the search finds nothing in the common case. On dev-ai2 `grep -nE '^[[:space:]]*(\.\.\.|---|%)'` matched **zero lines**. The actual cause was a key that had **lost its colon**: `key "value"` is a bare top-level scalar, which is a complete document by itself, so every setting below it became a second document. A closed `{flow mapping}` does the same.
 
-**12d. SSH works for the admin and fails for everyone else: it is the MODE on a client drop-in, not the ciphers.** `ssh` reads `/etc/ssh/ssh_config` and the `/etc/ssh/ssh_config.d/*.conf` it Includes **as the calling user**. `usg fix` writes the STIG's client `Ciphers`/`MACs` into a drop-in there, and nothing asserted a mode on it -- so the file lands at whatever root's umask was during that pull, and under the STIG's `umask 077` that is **0600 root:root**. Root reads it; an engineer does not, and their `ssh` fails naming the file, so it presents as a broken cipher list. Confirm in one line:
+Ask the parser instead of guessing. `it-pull` now does this for you before it launches anything, printing the first document's ROOT NODE -- if that is a `Scalar`, the line is named exactly:
 
 ```bash
-ls -l /etc/ssh/ssh_config.d/          # 0600 root:root is the fault
-sudo -u "$SOME_USER" ssh -G localhost >/dev/null   # parses the config, connects to nothing
+sudo it-pull            # refuses, with the analysis
+sudo python3 -c 'import yaml; yaml.safe_load(open("/opt/it/site.yml")); print("ok")'
 ```
 
-`0644` is correct and not a relaxation: these files hold algorithm lists and no secrets, and stock `/etc/ssh/ssh_config` is `0644` for exactly this reason. `usg_remediate` now asserts it every pull, since `usg fix` can recreate the file; `it-repair --only sshclient` does the same on a box that cannot pull. **`sshd_config.d` is deliberately left alone** -- sshd reads those as root, and some of them should not be world-readable.
+Related messages, so the text tells you which fault you have: a bare `---` after line 1 gives *"expected a single document in the stream"*; a line starting with `%` gives *"...but found '<scalar>'"*; a tab gives *"while scanning for the next token"*.
 
 **13. Audit rules on disk are not audit rules in the kernel, and they may not be in `rules.d`.** Two separate traps in one place. First, `usg fix` writes **`/etc/audit/audit.rules` directly**, not `rules.d/*.rules` — so an empty `rules.d` is normal on a USG box, and counting only `rules.d` reports "no rules" on a box with a full ruleset. Second, whatever is on disk still has to reach the kernel: the STIG sets auditd `-e 2` (immutable), after which new rules are refused until a reboot. Either way **every file-based OVAL still passes**, because those check files. ASP-2 ran with **1 rule in the kernel** against 8.5 KB in `audit.rules` and the 96.41 % scan said nothing. `it-checklist` item 6 counts whichever source holds rules and compares it against the kernel. Diagnose with:
 

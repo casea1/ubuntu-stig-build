@@ -139,6 +139,56 @@ except Exception as e:
     print(str(e).splitlines()[0]); sys.exit(1)' "$1" 2>&1
 }
 
+# WHERE the document ends, which is not where the parser gives up.
+#
+# A YAML parser reports the line it could not continue from, and for this class
+# of fault that is always BELOW the cause -- on dev-ai2 it named line 41 while
+# the offending line was in the twenties. Worse, the obvious search is a red
+# herring: a bare `...` or `---` will do this, but so will ANY construct that
+# completes the document by itself, and the one that actually happened (a key
+# that lost its colon, so its value became a top-level scalar) matches no such
+# grep at all.
+#
+# So: ask the parser for the first document's ROOT NODE and print it. If that is
+# a Scalar, the file's whole first document is one bare value and the line is
+# named exactly.
+yaml_why() {   # $1 = file -> prints the analysis, never fails
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 - "$1" <<'PYWHY' 2>/dev/null || true
+import sys, yaml
+p = sys.argv[1]
+lines = open(p, errors="replace").read().splitlines()
+ev = []
+try:
+    for e in yaml.parse(open(p, errors="replace")):
+        ev.append(e)
+        if isinstance(e, yaml.DocumentEndEvent):
+            break
+except Exception:
+    pass
+root = None
+for i, e in enumerate(ev):
+    if isinstance(e, yaml.DocumentStartEvent) and i + 1 < len(ev):
+        root = ev[i + 1]
+        break
+if root is None:
+    sys.exit(0)
+a = root.start_mark.line
+b = getattr(root, "end_mark", root.start_mark).line
+kind = type(root).__name__.replace("Event", "")
+print()
+print("  The first YAML document is a %s at lines %d-%d, and it ENDS there." % (kind, a + 1, b + 1))
+if kind == "Scalar":
+    print("  A bare value with no key is a complete document on its own, so everything")
+    print("  below it is a second document. That line almost certainly lost its colon.")
+else:
+    print("  The document closes there, so everything below it is unreachable.")
+print()
+for i in range(max(0, a - 3), min(len(lines), b + 3)):
+    print("  %s %4d: %s" % (">>" if a <= i <= b else "  ", i + 1, lines[i]))
+PYWHY
+}
+
 PROFILE_ARG=""                       # --profile, parsed below with the others
 SITE_PROFILE="$(site_profile)"
 RECORDED_PROFILE="$(getkey deployment_profile "$PROFILE_FILE")"
@@ -339,15 +389,12 @@ do_run() {
   # second document with no `---` and the whole node stopped updating.
   local site_err
   if ! site_err=$(yaml_ok "$SITE_YML"); then
-    die "$SITE_YML does not parse as YAML, so this pull would stop before any role ran:
-
-  $site_err
-
-Nothing else on this box is wrong; fix that file and run this again. Usually a
-hand-edit: a bare '...' or '---' at column 1 ends the YAML document, and
-anything after it is unreachable. Find one with:
-  sudo grep -nE '^[[:space:]]*(\.\.\.|---|%)' $SITE_YML
-Check a fix before running the pull:
+    printf '%s%s does not parse as YAML, so this pull would stop before any role ran:%s\n\n  %s\n' \
+      "$RD" "$SITE_YML" "$R" "$site_err"
+    yaml_why "$SITE_YML"
+    die "
+Nothing else on this box is wrong. Fix that file, then run this again. Check a
+fix before you do:
   sudo python3 -c 'import yaml; yaml.safe_load(open(\"$SITE_YML\")); print(\"ok\")'"
   fi
 
