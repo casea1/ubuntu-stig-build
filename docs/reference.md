@@ -180,6 +180,8 @@ A pass cannot be trusted because trap 42 is precisely the case where a GET to th
 
 **A lighter session is not available here.** GNOME Flashback was tried on dev-16 and withdrawn: its panel and the **classification banner** want the same screen edge, and the banner covered the toolbars. On this fleet the banner wins, so `gnome-shell`'s cost has to be reduced rather than removed -- and the lever that does that without touching the desktop is **resolution**, which cuts compositing and encoding together.
 
+**Choppy redraw and late typing are different faults.** Redraw is compositing plus encoding; typing is the input path, and none of the redraw levers touch it. The two on the input side are `use_fastpath=both` in `xrdp.ini` -- the lighter input PDU, now set by the role, previously left to whatever the package shipped -- and **ibus**, which puts an input-method hop on every keystroke and can be removed with `im-config -n none` where no non-Latin input is needed. `it-rdp perf` reports both, along with the redraw settings, and is meant to be run in the lab before a box ships.
+
 | busy process | cause | lever |
 |---|---|---|
 | `gnome-shell` / `Xorg` | software rendering -- xorgxrdp has no GPU path, so a full GNOME Shell is llvmpipe | lower the resolution; a lighter session is ruled out by the banner, above |

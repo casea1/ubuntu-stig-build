@@ -50,6 +50,11 @@
     - { option: autorun, value: "{{ dev_rdp_autorun_session | default('Xorg') }}" }
     # ---- Performance (GNOME-over-xrdp is heavy; these cut latency + bandwidth) --
     - { option: tcp_nodelay, value: "true" }        # disable Nagle -> lower input latency
+    # THE KEYSTROKE PATH. Fastpath carries input in the lighter PDU; without it
+    # every keypress rides the older, heavier form, which is felt as characters
+    # arriving late rather than as a slow desktop. Not previously set here, so
+    # boxes have been running whatever the xrdp package happened to ship.
+    - { option: use_fastpath, value: "both" }
     - { option: tcp_keepalive, value: "true" }      # keep idle sessions from stalling/dropping
     - { option: bitmap_cache, value: "true" }       # cache tiles client-side (less redraw traffic)
     # See group_vars: this is a CPU-for-bandwidth trade, and on a LAN fleet with

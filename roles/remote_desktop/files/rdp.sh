@@ -16,6 +16,9 @@
 # tears the connection down. One GNOME session per user is a hard limit; this
 # is what it looks like when the first one will not go away.
 #
+#   it-rdp perf            is RDP configured to feel quick? Read-only. Run it in
+#                          the LAB before deploying -- separates CHOPPY REDRAW
+#                          from LATE TYPING, which have different fixes.
 #   it-rdp                 sessions, orphans, and the sesman settings (default)
 #   it-rdp status          the same
 #   it-rdp reset [user]    end that user's sessions and sweep what is left
@@ -357,7 +360,79 @@ cmd_restart() {
   say ""
 }
 
+# ---------------------------------------------------------------------------
+# `perf` -- the settings and processes that decide whether RDP feels quick.
+#
+# Read-only, and meant to be run in the LAB before a box is deployed, because
+# every one of these is far easier to change with the machine in front of you.
+#
+# It separates the two complaints, which have different causes and different
+# fixes: REDRAW (dragging a window is choppy) is compositing and encoding,
+# TYPING (characters arrive late) is the input path, and a fix for one does
+# nothing for the other.
+# ---------------------------------------------------------------------------
+INI=/etc/xrdp/xrdp.ini
+ini_get() { sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$INI" 2>/dev/null | tail -1; }
+note() { printf '       %s%s%s\n' "$DIM" "$*" "$R"; }
+
+cmd_perf() {
+  local v
+
+  head2 "Redraw path (choppy windows)"
+  v="$(ini_get bitmap_compression)"
+  case "$v" in
+    false) ok "bitmap_compression=false -- right for a LAN" ;;
+    "")    warn "bitmap_compression not set (xrdp defaults it TRUE)"
+           note "on a LAN this spends CPU to save bandwidth you have. Set it false." ;;
+    *)     warn "bitmap_compression=$v -- spends CPU to save bandwidth"
+           note "this fleet is LAN-attached and xrdp is the bottleneck. Set it false." ;;
+  esac
+  v="$(ini_get max_bpp)"
+  ok "max_bpp=${v:-<unset>}"
+  [ "${v:-24}" != 32 ] && note "if the client asks for 32, xrdp converts EVERY tile. Raising this to 32 can be faster."
+  for k in bitmap_cache new_cursors tcp_nodelay; do
+    v="$(ini_get "$k")"
+    [ "$v" = true ] && ok "$k=true" || warn "$k=${v:-<unset>} -- should be true"
+  done
+
+  head2 "Input path (late characters)"
+  # fastpath is the one that matters for TYPING: without it every keystroke
+  # carries the older, heavier RDP input PDU. It is not set by this repo, so on
+  # most boxes it is whatever the xrdp package shipped.
+  v="$(ini_get use_fastpath)"
+  case "$v" in
+    both|input) ok "use_fastpath=$v" ;;
+    "")         warn "use_fastpath not set -- xrdp's default applies"
+                note "set it to 'both' in $INI and restart xrdp; it is the keystroke path." ;;
+    *)          warn "use_fastpath=$v -- 'both' covers input and output" ;;
+  esac
+  if pgrep -x ibus-daemon >/dev/null 2>&1; then
+    warn "ibus is running -- every keystroke passes through the input method"
+    note "if nobody needs a non-Latin input method:  im-config -n none  (then log out)"
+    note "that removes a hop from the typing path and is the usual fix for input lag."
+  else
+    ok "no ibus input-method hop"
+  fi
+
+  head2 "What the session is spending it on"
+  if command -v ps >/dev/null 2>&1; then
+    ps -eo pcpu,user,comm --sort=-pcpu 2>/dev/null | awk 'NR==1 || NR<=6' | sed 's/^/       /'
+    note "measure DURING a window drag, with no FPGA tool open, or you are timing the tool."
+    note "gnome-shell high -> compositing; xrdp high -> encoding; neither -> the link."
+  fi
+
+  head2 "Cheapest lever, and it is not on this box"
+  say "  Lower the CLIENT resolution one step (1920x1080 -> 1600x900)."
+  say "  It is the only change that cuts compositing AND encoding at once, needs"
+  say "  nothing here, and beats every setting above on a machine with no GPU."
+  say ""
+  say "  ${DIM}A lighter desktop is NOT an option on this fleet: Flashback's panel${R}"
+  say "  ${DIM}and the classification banner want the same screen edge.${R}"
+  say ""
+}
+
 case "${1:-status}" in
+  perf)       cmd_perf ;;
   status|"")  cmd_status ;;
   sweep)      cmd_sweep ;;
   reset)      shift; cmd_reset "$@" ;;
