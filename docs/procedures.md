@@ -1059,6 +1059,13 @@ three can point at the same binary.
 sudo it-fpga desktop     # now also the way to CLEAN UP existing duplicates
 ```
 
+**Icons on the desktop itself** are cleaned too. Libero's installer drops
+launchers in `~/Desktop` as well as `~/.local/share/applications`, and those are
+worse than untidy: GNOME will not run a `.desktop` file sitting in `~/Desktop`
+until it is marked trusted, which is the *"Allow Launching"* right-click nobody
+should have to know about. They are moved to the stash like the rest, leaving
+the app grid as the single place the tools are launched from.
+
 It rebuilds the imported set from scratch each run (a version bump changes the
 slug, so the old tile used to sit beside the new one and nothing removed it),
 imports **one** tile per program — skipping anything a pull tile already covers —

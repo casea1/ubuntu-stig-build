@@ -1137,6 +1137,15 @@ vendor_desktops() {
   for d in /root/.local/share/applications /home/*/.local/share/applications; do
     [ -d "$d" ] && find "$d" -maxdepth 1 -type f -name '*.desktop' 2>/dev/null
   done
+  # AND THE DESKTOP ITSELF. Libero's installer drops launchers in ~/Desktop as
+  # well as ~/.local/share/applications, and only the second was being cleaned
+  # -- so the app grid came out right while the icons stayed on the desktop.
+  # They are worse there than merely untidy: GNOME will not run a .desktop file
+  # in ~/Desktop until it is marked trusted, which is the "Allow Launching"
+  # right-click nobody should have to know about.
+  for d in /root/Desktop /home/*/Desktop; do
+    [ -d "$d" ] && find "$d" -maxdepth 1 -type f -name '*.desktop' 2>/dev/null
+  done
   [ -d "$STASH_DIR" ] && find "$STASH_DIR" -maxdepth 2 -type f -name '*.desktop' 2>/dev/null
   return 0
 }
@@ -1290,6 +1299,12 @@ cmd_desktop() {
     # vendor launcher: its Exec had to resolve inside a vendor tree to get here.
     if [ "$rc" = 0 ] || [ "$rc" = 2 ]; then
       case "$f" in
+        /home/*/Desktop/*|/root/Desktop/*)
+          local downer; downer="$(basename "$(dirname "$(dirname "$f")")")"
+          if install -D -m 0644 "$f" "$STASH_DIR/$downer/$(basename "$f")" 2>/dev/null; then
+            rm -f "$f"
+            say "      ${DIM}took it off $downer's desktop (kept in $STASH_DIR)${R}"
+          fi ;;
         /home/*/.local/share/applications/*|/root/.local/share/applications/*)
           local owner; owner="$(basename "${f%/.local/*}")"
           if install -D -m 0644 "$f" "$STASH_DIR/$owner/$(basename "$f")" 2>/dev/null; then
