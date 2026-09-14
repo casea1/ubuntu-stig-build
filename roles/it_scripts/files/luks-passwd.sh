@@ -42,6 +42,18 @@ tpm="$(clevis luks list -d "$DEV" 2>/dev/null | grep -c tpm2 || true)"
 printf '  keyslots  : %s\n' "${slots:-?}"
 printf '  TPM slots : %s\n' "${tpm:-0}"
 
+# Report the KDF per slot, and say so loudly if one is argon2 on a box that has
+# a FIPS kernel to boot into. See the note above luksChangeKey.
+kdfs="$(cryptsetup luksDump "$DEV" 2>/dev/null |
+        awk '/^[[:space:]]*[0-9]+: luks2/{s=$1} /PBKDF:/{printf "%s%s ", s, $2}')"
+[ -n "$kdfs" ] && printf '  KDF/slot  : %s\n' "$kdfs"
+if printf '%s' "$kdfs" | grep -qi argon && ls /boot/vmlinuz-*-fips >/dev/null 2>&1; then
+  printf '\n  %sWARNING: a keyslot uses argon2, and this box has a FIPS kernel.%s\n' "$Y" "$R"
+  printf '  %sArgon2 is not FIPS-approved. Such a slot may not unlock under the%s\n' "$DIM" "$R"
+  printf '  %sFIPS kernel -- which you would discover at a boot prompt. The slot%s\n' "$DIM" "$R"
+  printf '  %sthis changes is rewritten with pbkdf2; the others are NOT touched.%s\n' "$DIM" "$R"
+fi
+
 if [ "${tpm:-0}" -gt 0 ]; then
   printf '\n  %sThe TPM auto-unlock slot is separate and is NOT touched.%s\n' "$DIM" "$R"
   printf '  %sThis machine will keep unlocking itself at boot.%s\n' "$DIM" "$R"
@@ -54,10 +66,19 @@ read -r -p "  Change it now? [y/N] " a
 case "$a" in y|Y) ;; *) echo "  aborted -- nothing was changed"; exit 1 ;; esac
 echo
 
+# --pbkdf pbkdf2 IS NOT OPTIONAL ON THIS FLEET.
+#
+# LUKS2 defaults a new keyslot to argon2id. Argon2 is not a FIPS-approved KDF,
+# so cryptsetup running under a FIPS kernel restricts itself to PBKDF2 -- which
+# means a passphrase rotated while the box happened to be on a GENERIC kernel
+# can produce a keyslot the FIPS kernel cannot process. You find out at the next
+# boot, at the passphrase prompt, with no shell. Forcing pbkdf2 makes the slot
+# work under both.
+#
 # luksChangeKey replaces the passphrase IN PLACE in its own slot. It refuses
 # without the current passphrase, which is the behaviour we want: this is a
 # rotation, not a recovery, and there is no recovery without a key.
-if cryptsetup luksChangeKey "$DEV"; then
+if cryptsetup luksChangeKey --pbkdf pbkdf2 "$DEV"; then
   # RECORD IT. A LUKS2 header has no per-keyslot timestamp -- the format has no
   # field for one -- so "was this rotated after deployment?" is unanswerable
   # unless something writes it down at the time. This is that something.

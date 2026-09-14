@@ -108,7 +108,7 @@ menu_path_for() {   # $1 = kernel version
 }
 
 cmd_status() {
-  local running kver uuid rc=0
+  local running kver rc=0
   running="$(uname -r)"
   kver="$(newest_fips)"
 
@@ -178,6 +178,58 @@ cmd_status() {
   [ "${auto:-0}" -eq 0 ] \
     && ok "FIPS packages are marked manual" \
     || { bad "$auto FIPS package(s) marked auto -- one autoremove from removal"; rc=1; }
+
+  # ---- the two faults that cost site visits on dev-15 and dev-16 ----------
+  #
+  # Both are invisible until the box is at a prompt nobody can answer, and
+  # neither has anything to do with fips=1 being set correctly.
+  head2 "Will the FIPS kernel actually come up?"
+
+  # 1. SECURE BOOT. Ubuntu ships linux-image-<ver>-fips (signed) and
+  #    linux-image-unsigned-<ver>-fips. If autoremove took the signed one and
+  #    left the unsigned image in place, GRUB refuses it with a Secure Boot
+  #    policy error while the generic kernel boots normally -- which reads as
+  #    "FIPS is broken" and is really "that image has no signature".
+  local sb owner
+  sb="$(mokutil --sb-state 2>/dev/null | head -1)"
+  printf '  %-14s %s\n' "SecureBoot" "${sb:-unknown}"
+  if printf '%s' "$sb" | grep -qi enabled; then
+    owner="$(dpkg -S "/boot/vmlinuz-$kver" 2>/dev/null | cut -d: -f1)"
+    case "$owner" in
+      *unsigned*)
+        bad "/boot/vmlinuz-$kver comes from $owner -- an UNSIGNED image"
+        note "Secure Boot will refuse it. Reinstall the signed package:"
+        note "  sudo apt-get install --reinstall linux-image-$kver"
+        rc=1 ;;
+      "")
+        warn "no package owns /boot/vmlinuz-$kver -- cannot tell if it is signed"
+        note "check with: sbverify --list /boot/vmlinuz-$kver" ;;
+      *)
+        ok "/boot/vmlinuz-$kver comes from $owner (signed)" ;;
+    esac
+  else
+    ok "Secure Boot is off -- kernel signing cannot block the boot"
+  fi
+
+  # 2. LUKS KDF. Argon2 is not FIPS-approved, so cryptsetup under a FIPS kernel
+  #    restricts itself to PBKDF2. A keyslot written while the box was on a
+  #    generic kernel -- a passphrase rotation, say -- can be one the FIPS
+  #    kernel will not process, and the symptom is a failed unlock at boot.
+  local dev kdfs
+  dev="$(blkid -t TYPE=crypto_LUKS -o device 2>/dev/null | head -1)"
+  if [ -n "$dev" ] && command -v cryptsetup >/dev/null 2>&1; then
+    kdfs="$(cryptsetup luksDump "$dev" 2>/dev/null |
+            awk '/^[[:space:]]*[0-9]+: luks2/{s=$1} /PBKDF:/{printf "%s%s ", s, $2}')"
+    printf '  %-14s %s\n' "LUKS $dev" "${kdfs:-unreadable}"
+    if printf '%s' "$kdfs" | grep -qi argon; then
+      warn "a keyslot uses argon2, which is not FIPS-approved"
+      note "it may not unlock under the FIPS kernel. Rewrite that slot with"
+      note "pbkdf2 BEFORE rebooting -- 'sudo it-luks-passwd' now does this --"
+      note "or keep a slot that is already pbkdf2 and know which passphrase it is."
+    elif [ -n "$kdfs" ]; then
+      ok "every keyslot uses a FIPS-approved KDF"
+    fi
+  fi
 
   head2 "Boot selection"
   printf '  %-14s %s\n' "GRUB_DEFAULT" "$(sed -nE 's/^GRUB_DEFAULT=//p' /etc/default/grub 2>/dev/null)"
