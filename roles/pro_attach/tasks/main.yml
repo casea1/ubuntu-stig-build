@@ -205,6 +205,41 @@
 
 # Ask pro what is true now rather than trusting the rc above (trap 40), and
 # because `failed_when: false` makes that rc meaningless anyway.
+# ---------------------------------------------------------------------------
+# STOP `apt autoremove` TAKING FIPS AWAY.
+#
+# This happened on the deployed fleet. `pro enable fips-updates` installs
+# ubuntu-fips as a DEPENDENCY, so apt marks it auto-installed. Nothing depends
+# on it afterwards, so a routine `apt autoremove` -- the one `apt upgrade`
+# suggests, in the sentence everybody agrees to -- considers it unused and
+# removes it. Its postrm empties /etc/default/grub.d/fips.cfg, the kernel
+# IMAGES stay behind because they are separate packages, and the box reboots
+# onto a generic kernel looking entirely normal.
+#
+# Nothing announces it. `pro status` says disabled, /proc/sys/crypto is gone,
+# and every file-based compliance check still passes.
+#
+# `apt-mark manual` is the right tool, not `hold`: manual exempts a package from
+# autoremove while still letting it take security updates. A held FIPS kernel
+# would be worse than the problem.
+- name: "PRO | Which installed packages are FIPS ones?"
+  ansible.builtin.shell:
+    cmd: |
+      dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 2>/dev/null \
+        | awk '/^i/ && $2 ~ /fips/ {print $2}'
+  register: _pro_fips_pkgs
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "PRO | Mark them manual so autoremove cannot take them"
+  ansible.builtin.command:
+    cmd: "apt-mark manual {{ _pro_fips_pkgs.stdout_lines | join(' ') }}"
+  register: _pro_fips_mark
+  changed_when: "'set to manually installed' in (_pro_fips_mark.stdout | default(''))"
+  failed_when: false
+  when: (_pro_fips_pkgs.stdout_lines | default([]) | length) > 0
+
 - name: "PRO | Re-read Pro status after the FIPS attempt"
   ansible.builtin.command: pro status --format json
   register: _pro_status_fips
