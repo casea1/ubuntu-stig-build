@@ -625,6 +625,39 @@ check_fips() {
     flag
   fi
 
+  # boot=UUID= is a Red Hat parameter that every FIPS guide repeats, and on
+  # Ubuntu it is FATAL: initramfs-tools reads boot= as the name of a script under
+  # /scripts, so init sources /scripts/UUID=... , exits, and the kernel panics at
+  # "mounting root file system". It killed dev-16. Checked here because this is
+  # the only procedure that tempts anyone to add it.
+  local bootparam
+  bootparam="$(grep -ln '^[^#]*GRUB_CMDLINE_LINUX[A-Z_]*=.*[ "]boot=' \
+                 /etc/default/grub /etc/default/grub.d/*.cfg 2>/dev/null || true)"
+  if [ -n "$bootparam" ]; then
+    if fixing; then
+      local f
+      for f in $bootparam; do
+        cp -a "$f" "$f.before-it-repair.$(date +%s)"
+        sed -i -E '/^[^#]*GRUB_CMDLINE_LINUX[A-Z_]*=/ {
+            s/[[:space:]]+boot=[^[:space:]"]*//g
+            s/"boot=[^[:space:]"]*[[:space:]]*/"/g
+          }' "$f"
+        did "removed the boot= parameter from $f"
+      done
+      update-grub >/dev/null 2>&1 && did "regenerated grub.cfg"
+    else
+      bad "a boot= parameter is set -- this box will PANIC on its next boot:"
+      printf '%s\n' "$bootparam" | sed 's/^/         /'
+      note "on Ubuntu boot= names an initramfs script, not a partition. FIPS does"
+      note "not need it; it is a Red Hat instruction. 'it-repair fix' removes it."
+      note "If the box is already panicking: GRUB menu, 'e', delete that word,"
+      note "Ctrl-X. See procedures 4.2b."
+      flag
+    fi
+  else
+    ok "no boot= parameter on the kernel command line"
+  fi
+
   # Still marked auto is still at risk, even while everything is present.
   local auto
   auto="$(apt-mark showauto 2>/dev/null | grep -c fips || true)"

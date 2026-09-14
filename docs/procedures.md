@@ -2461,15 +2461,48 @@ grep -rs fips /etc/default/grub /etc/default/grub.d/
 lsblk -o NAME,MOUNTPOINT,UUID | grep -w /boot
 ```
 
-Two things have to be right, and the second is the one that bites:
+One thing has to be right, and one thing must **not** be there:
 
 | | why |
 |---|---|
-| `fips=1` on the kernel command line | without it a `-fips` kernel boots and `fips_enabled` is still 0 |
-| `boot=UUID=<uuid of /boot>` | **required when `/boot` is a separate partition**, which it is on every box built here -- LVM + LUKS leaves `/boot` outside the encryption. Without it the FIPS integrity check cannot find its files and the kernel panics |
+| `fips=1` on the kernel command line | required. Without it a `-fips` kernel boots and `fips_enabled` is still 0 |
+| `boot=UUID=<uuid of /boot>` | **never add this on Ubuntu.** It is a Red Hat parameter. Here it panics the box -- see below |
 
-`ubuntu-fips` normally writes both into `/etc/default/grub.d/99-fips.cfg`. If
-`pro disable` removed that file, recreate it before going further.
+`ubuntu-fips` normally writes `fips=1` into `/etc/default/grub.d/fips.cfg`. If
+`pro disable`, or an `apt autoremove`, emptied that file, recreate it before
+going further.
+
+> ### `boot=UUID=` panics Ubuntu. It is not optional-but-nice, it is fatal.
+>
+> Red Hat's dracut uses `boot=` to find `/boot` for the FIPS integrity check,
+> and the wording travels between guides. **Ubuntu uses initramfs-tools, where
+> `boot=` means something completely different**: it names the initramfs boot
+> *script*. `/init` does `BOOT=${x#boot=}`, defaults it to `local`, and at line
+> 287 runs `. "/scripts/${BOOT}"`. So `boot=UUID=1234` makes it source
+> `/scripts/UUID=1234`, which does not exist, `init` exits, and the kernel
+> panics:
+>
+> ```
+> Begin: mounting root file system ...
+> /init: line 287: can't open /scripts/UUID=<uuid>: no such file or directory
+> Kernel panic - not syncing: attempted to kill init! exitcode=0x00000200
+> ```
+>
+> The only valid values are `local` (the default), `nfs` and `casper`. Ubuntu's
+> FIPS check runs from inside the initramfs and needs no `boot=` at all -- a box
+> that panicked this way printed `Fips check done` four lines earlier. This took
+> down dev-16. `sudo it-fips fix` removes the parameter; `it-fips` reports it.
+>
+> **Recovering a box that is panicking right now** needs a keyboard and a
+> screen. At the GRUB menu press `e`, find the `linux` line, delete the
+> `boot=UUID=...` word (leave `fips=1`), and press `Ctrl-X`. That boots once,
+> without saving. Then run `sudo it-fips fix` to take it out permanently.
+
+> **Prefer `it-fips` to the hand commands below.** `sudo it-fips` reports the
+> state, `it-fips fix` repairs the config without changing what the box boots,
+> `it-fips boot` arms the one-shot, and `it-fips confirm` makes it permanent
+> only after it has seen the box actually running FIPS. The steps below are what
+> it does, kept for when the script is not on the box yet.
 
 ### 2. Switch with a ONE-SHOT boot, never a permanent change first
 
@@ -2503,9 +2536,12 @@ Only when both are right:
 sudo grub-set-default "Advanced options for Ubuntu>Ubuntu, with Linux <N>-fips"
 ```
 
-> Do one box first, and pick the one with the easiest physical access. A wrong
-> `boot=UUID` is a kernel panic, and the one-shot protects the *next* boot, not
-> the one you are watching.
+> Do one box first, and pick the one with the easiest physical access. The
+> one-shot protects the *next* boot, not the one you are watching -- and it only
+> self-recovers if `GRUB_RECORDFAIL_TIMEOUT` is set, because Ubuntu's default
+> for a boot that failed is to wait at the menu forever. `it-fips boot` sets it;
+> by hand it is `echo 'GRUB_RECORDFAIL_TIMEOUT=10' | sudo tee -a
+> /etc/default/grub && sudo update-grub`.
 
 > **This will happen again.** Nothing pins the FIPS kernel as default, so the
 > next kernel upgrade can re-order the menu the same way. `it-repair --only

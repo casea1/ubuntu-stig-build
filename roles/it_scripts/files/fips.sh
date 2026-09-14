@@ -2,19 +2,23 @@
 # it-fips -- check, repair and verify FIPS mode on this box.
 #
 # Written after `apt autoremove` took FIPS off six deployed workstations. The
-# repair is half a dozen exact commands including a UUID, and typing it six
-# times is how a headless box ends up with a bad boot=UUID and a kernel panic.
+# repair is half a dozen exact commands, and typing it six times is how a
+# headless box ends up unbootable and needing a physical visit.
 #
 #   it-fips                 status: is it FIPS now, and will it still be after a reboot?
 #   it-fips fix             repair the config. Changes NO boot order, reboots nothing.
 #   it-fips boot            arm a ONE-SHOT boot into the FIPS kernel
 #   it-fips confirm         after that reboot: verify, then make it permanent
 #
-# WHY IT IS FOUR STEPS. A wrong boot=UUID panics the FIPS kernel, and on a
-# headless box that means a physical visit. `boot` arms one boot only -- GRUB
-# clears it as it starts, so a panic brings the box back on the old kernel by
-# itself. Nothing becomes permanent until `confirm` has seen the box actually
-# running FIPS.
+# WHY IT IS FOUR STEPS. A kernel that does not come up is, on a headless box, a
+# physical visit. `boot` arms one boot only -- GRUB clears it as it starts, so a
+# failure brings the box back on the old kernel by itself (which is also why it
+# sets GRUB_RECORDFAIL_TIMEOUT first: without that, a failed boot waits at the
+# menu forever). Nothing becomes permanent until `confirm` has seen the box
+# actually running FIPS.
+#
+# DO NOT ADD boot=UUID=... . It is a dracut/RHEL parameter and it is FATAL here:
+# see the note above find_boot_param(). This script removes it.
 #
 # WHAT IT CANNOT DO. If the FIPS kernel packages are gone, this cannot help:
 # that kernel comes from Ubuntu Pro and needs Canonical. An air-gapped box in
@@ -42,16 +46,48 @@ GRUBCFG=/boot/grub/grub.cfg
 fips_kernels() { ls -1 /boot/vmlinuz-*-fips 2>/dev/null | sed 's#.*/vmlinuz-##' | sort -V; }
 newest_fips()  { fips_kernels | tail -1; }
 
-# /boot's UUID, and empty when /boot is NOT a separate filesystem -- in which
-# case boot=UUID must be omitted rather than guessed, or the kernel cannot find
-# its integrity files and panics.
-boot_uuid() {
-  local src root_src
-  src="$(findmnt -no SOURCE /boot 2>/dev/null)"
-  root_src="$(findmnt -no SOURCE / 2>/dev/null)"
-  [ -n "$src" ] || return 0
-  [ "$src" = "$root_src" ] && return 0
-  findmnt -no UUID /boot 2>/dev/null
+# `boot=` DOES NOT NAME A PARTITION ON UBUNTU. It names an initramfs boot script:
+# initramfs-tools' /init parses `BOOT=${x#boot=}`, defaults it to `local`, and
+# ends with `. "/scripts/${BOOT}"`. So boot=UUID=<uuid> makes init try to source
+# /scripts/UUID=<uuid>, which does not exist -- init exits and the kernel panics
+# with "attempted to kill init", right after "Begin: mounting root file system".
+# That is exactly what happened to dev-16. Valid values are local (the default),
+# nfs and casper; nothing else.
+#
+# The parameter comes from Red Hat, where dracut's fips module really does use it
+# to find /boot. Ubuntu's FIPS check runs from inside the initramfs and needs no
+# such thing -- dev-16 printed "Fips check done" and panicked four lines later.
+grub_cfg_files() {
+  printf '%s\n' /etc/default/grub
+  ls -1 /etc/default/grub.d/*.cfg 2>/dev/null
+}
+
+# Every boot= on a GRUB command line, as "file:line:text".
+find_boot_param() {
+  local f
+  grub_cfg_files | while read -r f; do
+    [ -f "$f" ] || continue
+    grep -Hn '^[^#]*GRUB_CMDLINE_LINUX[A-Z_]*=.*[ "]boot=' "$f" 2>/dev/null
+  done
+}
+
+# Remove it from one file. Returns 0 only if something was removed.
+strip_boot_param() {   # $1 = file
+  local f="$1"
+  grep -q '^[^#]*GRUB_CMDLINE_LINUX[A-Z_]*=.*[ "]boot=' "$f" 2>/dev/null || return 1
+  cp -a "$f" "$f.before-it-fips.$(date +%s)"
+  # Two expressions: boot= after a space, and boot= as the FIRST word of the
+  # value, where there is no space in front of it to match.
+  sed -i -E '/^[^#]*GRUB_CMDLINE_LINUX[A-Z_]*=/ {
+      s/[[:space:]]+boot=[^[:space:]"]*//g
+      s/"boot=[^[:space:]"]*[[:space:]]*/"/g
+    }' "$f"
+}
+
+# What GRUB will actually hand the kernel -- the generated file, not the intent.
+grubcfg_has_boot_param() {
+  grep -E '^[[:space:]]*linux[[:space:]]' "$GRUBCFG" 2>/dev/null \
+    | grep -q '[[:space:]]boot='
 }
 
 # The GRUB submenu path for a kernel, read from grub.cfg rather than assembled
@@ -104,17 +140,22 @@ cmd_status() {
     bad "$FIPSCFG is missing"; rc=1
   fi
 
-  uuid="$(boot_uuid)"
-  if [ -n "$uuid" ]; then
-    if grep -q "boot=UUID=$uuid" "$FIPSCFG" 2>/dev/null; then
-      ok "boot=UUID matches /boot ($uuid)"
-    else
-      bad "/boot is a separate filesystem and boot=UUID=$uuid is not set"
-      note "without it the FIPS kernel cannot find its integrity files and panics"
-      rc=1
-    fi
+  local stale
+  stale="$(find_boot_param)"
+  if [ -n "$stale" ]; then
+    bad "a boot= parameter is set -- this box will PANIC on any kernel:"
+    printf '%s\n' "$stale" | sed 's/^/          /'
+    note "on Ubuntu boot= names an initramfs script, not a partition, so"
+    note "boot=UUID=... makes init source /scripts/UUID=... and die. FIPS does"
+    note "not need it. Remove it with: sudo it-fips fix"
+    rc=1
   else
-    ok "/boot is not separate -- boot=UUID is correctly absent"
+    ok "no boot= parameter (it is a RHEL option, and it panics Ubuntu)"
+  fi
+
+  if grubcfg_has_boot_param; then
+    bad "grub.cfg still hands the kernel a boot= -- it will panic. Run: it-fips fix"
+    rc=1
   fi
 
   grep -q 'fips=1' "$GRUBCFG" 2>/dev/null \
@@ -147,20 +188,23 @@ cmd_status() {
 }
 
 cmd_fix() {
-  local kver uuid line
+  local kver line f stripped
   kver="$(newest_fips)"
   [ -n "$kver" ] || die "no FIPS kernel installed -- this cannot be repaired offline.
 The kernel comes from Ubuntu Pro; the box needs Canonical or the packages carried in."
 
   head2 "Repairing the FIPS boot configuration"
-  uuid="$(boot_uuid)"
-  if [ -n "$uuid" ]; then
-    line="GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT fips=1 boot=UUID=$uuid\""
-    ok "/boot is separate -- including boot=UUID=$uuid"
-  else
-    line="GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT fips=1\""
-    ok "/boot is not separate -- omitting boot=UUID"
-  fi
+
+  # Take boot= out wherever it is, before anything is written. A box carrying
+  # one panics on EVERY kernel, FIPS or not, so this is the first repair.
+  stripped=0
+  while read -r f; do
+    [ -f "$f" ] || continue
+    if strip_boot_param "$f"; then ok "removed a boot= parameter from $f"; stripped=1; fi
+  done <<< "$(grub_cfg_files)"
+  [ "$stripped" = 0 ] && ok "no boot= parameter to remove"
+
+  line="GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT fips=1\""
 
   [ -e "$FIPSCFG" ] && cp -a "$FIPSCFG" "$FIPSCFG.before-it-fips.$(date +%s)"
   install -d -m 0755 "$(dirname "$FIPSCFG")"
@@ -186,6 +230,11 @@ The kernel comes from Ubuntu Pro; the box needs Canonical or the packages carrie
   grep -q 'fips=1' "$GRUBCFG" 2>/dev/null \
     || die "update-grub ran but grub.cfg still has no fips=1 -- stopping before anything boots."
   ok "grub.cfg now carries fips=1"
+  ! grubcfg_has_boot_param \
+    || die "grub.cfg still hands the kernel a boot= parameter, which panics it.
+Find it by hand -- check /etc/default/grub and /etc/default/grub.d/*.cfg for
+GRUB_CMDLINE_LINUX lines -- and do NOT reboot this box until it is gone."
+  ok "grub.cfg carries no boot= parameter"
 
   say ""
   note "nothing has changed what this box boots. Next:  sudo it-fips boot"

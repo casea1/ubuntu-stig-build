@@ -200,7 +200,7 @@ What that leaves is the hard part to spot:
 
 | | |
 |---|---|
-| `/etc/default/grub.d/fips.cfg` | **emptied** by the postrm, so no `fips=1` and no `boot=UUID=` |
+| `/etc/default/grub.d/fips.cfg` | **emptied** by the postrm, so no `fips=1` |
 | the FIPS kernel images | **still installed** -- separate packages, so `dpkg -l \| grep fips` looks reassuring |
 | `pro status` | `fips-updates: disabled` |
 | `/proc/sys/crypto` | **gone entirely** -- the directory, not just the value |
@@ -210,7 +210,11 @@ So the box reboots onto a generic kernel and looks completely normal. `uname -r`
 
 `pro_attach` now runs `apt-mark manual` over every installed `*fips*` package, which exempts them from autoremove. **`manual`, not `hold`:** manual still allows security updates, and a held FIPS kernel would be a worse problem than the one it solves.
 
-**Recovering a box that has already lost it** is documented in procedures 4.2b, and it can be done in the space *provided the kernel images are still there* -- recreate `fips.cfg` with both `fips=1` and `boot=UUID=<uuid of /boot>` (the second is required because LVM+LUKS leaves `/boot` separate, and omitting it panics the FIPS kernel), then switch with a **one-shot** `grub-reboot` so a failed boot self-recovers. If the kernel images are gone too, it cannot be fixed offline at all: that kernel comes from Ubuntu Pro and `pro enable` needs Canonical.
+**Recovering a box that has already lost it** is `sudo it-fips` -> `fix` -> `boot` -> reboot -> `confirm`, written up in procedures 4.2b, and it works in the space *provided the kernel images are still there*. It recreates `fips.cfg` with `fips=1`, marks the packages manual, sets `GRUB_RECORDFAIL_TIMEOUT`, and switches with a **one-shot** `grub-reboot` so a failed boot self-recovers. If the kernel images are gone too, it cannot be fixed offline at all: that kernel comes from Ubuntu Pro and `pro enable` needs Canonical.
+
+**12l. `boot=UUID=<uuid>` is a Red Hat parameter and it PANICS Ubuntu.** Every FIPS guide that mentions it is a dracut guide: dracut's fips module uses `boot=` to mount `/boot` and find the kernel's `.hmac`. Ubuntu uses initramfs-tools, where `boot=` names the initramfs **boot script** instead -- `/init` does `BOOT=${x#boot=}`, defaults it to `local`, and at line 287 runs `. "/scripts/${BOOT}"`. `boot=UUID=1234` therefore sources `/scripts/UUID=1234`, which does not exist; `init` exits; the kernel panics with `attempted to kill init`, immediately after `Begin: mounting root file system`. The only valid values are `local`, `nfs` and `casper`.
+
+Ubuntu's FIPS integrity check runs from inside the initramfs and needs no `boot=` whatsoever -- the box that died this way (dev-16) had already printed `Fips check done` four lines above the panic, which is the proof. Recovery needs a screen and a keyboard: at the GRUB menu press `e`, delete the `boot=UUID=...` word from the `linux` line, `Ctrl-X`. `it-fips fix` strips it from `/etc/default/grub` and `/etc/default/grub.d/*.cfg`, and `it-fips` fails the box while it is present; both check the generated `grub.cfg` too, not just the intent.
 
 **12k. Backticks inside a double-quoted shell string RUN the command.** Three times in this repo, a message meant to *tell* someone to run something would have run it instead:
 
