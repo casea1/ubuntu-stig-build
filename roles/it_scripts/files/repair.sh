@@ -691,6 +691,40 @@ check_fips() {
 
 # ---- read-only context -----------------------------------------------------
 check_boot() {
+  head2 "Can this box boot unattended?"
+  # A GRUB superuser password with entries that are not --unrestricted means GRUB
+  # asks for a username and password before booting ANYTHING. The STIG wants the
+  # password to gate editing, not booting, so grub_password patches CLASS in
+  # /etc/grub.d/10_linux -- and a grub-common package update reverts that file.
+  # After that, the next update-grub (an it-fips fix, a kernel install, anything)
+  # bakes a password prompt into every entry and a headless box never returns.
+  if grep -rqs '^[[:space:]]*set[[:space:]]\+superusers=' /etc/grub.d/ /boot/grub/grub.cfg; then
+    if grep -sE '^[[:space:]]*(menuentry|submenu) ' /boot/grub/grub.cfg | grep -qv -- '--unrestricted'; then
+      if fixing; then
+        cp -a /etc/grub.d/10_linux "/etc/grub.d/10_linux.before-it-repair.$(date +%s)"
+        sed -i 's/^CLASS="\(--unrestricted \)\?/CLASS="--unrestricted /' /etc/grub.d/10_linux
+        update-grub >/dev/null 2>&1
+        if grep -sE '^[[:space:]]*(menuentry|submenu) ' /boot/grub/grub.cfg | grep -qv -- '--unrestricted'; then
+          bad "still password-gated after repatching 10_linux -- another generator"
+          note "in /etc/grub.d emits a bare menuentry. A full it-pull fixes all of them."
+          flag
+        else
+          did "made every GRUB menu entry --unrestricted and rebuilt grub.cfg"
+        fi
+      else
+        bad "GRUB asks for its password before booting ANY entry"
+        note "headless, this box never comes back from a reboot. The --unrestricted"
+        note "patch in /etc/grub.d/10_linux has been reverted -- a grub-common"
+        note "update does this. 'it-repair fix' repatches it; a full it-pull also does."
+        flag
+      fi
+    else
+      ok "GRUB password is set and entries are --unrestricted (boots unattended)"
+    fi
+  else
+    ok "no GRUB superuser password -- nothing gates the boot"
+  fi
+
   head2 "Slowest units last boot"
   have systemd-analyze || return 0
   systemd-analyze blame 2>/dev/null | head -6 | sed 's/^/       /'

@@ -91,6 +91,19 @@ grubcfg_has_boot_param() {
     | grep -q '[[:space:]]boot='
 }
 
+# A GRUB superuser password with entries that are NOT --unrestricted means GRUB
+# demands a username and password before it boots anything at all. On a headless
+# box that is a machine which never comes back.
+#
+# The STIG wants the password to gate EDITING, not booting, which is why
+# grub_password patches CLASS in /etc/grub.d/10_linux. A grub-common package
+# update reverts that file -- so `apt upgrade` followed by ANY update-grub is
+# enough to lock the fleet out, and update-grub is the last thing `fix` does.
+grub_locked() {
+  grep -rqs '^[[:space:]]*set[[:space:]]\+superusers=' /etc/grub.d/ "$GRUBCFG" || return 1
+  grep -sE '^[[:space:]]*(menuentry|submenu) ' "$GRUBCFG" | grep -qv -- '--unrestricted'
+}
+
 # The GRUB submenu path for a kernel, read from grub.cfg rather than assembled
 # from a template: the wording differs between releases, and a name that does
 # not match is silently ignored by grub-reboot.
@@ -184,6 +197,20 @@ cmd_status() {
   # Both are invisible until the box is at a prompt nobody can answer, and
   # neither has anything to do with fips=1 being set correctly.
   head2 "Will the FIPS kernel actually come up?"
+
+  # 0. Can it boot WITHOUT a person at the console at all?
+  if grub_locked; then
+    bad "GRUB has a superuser password and not every entry is --unrestricted"
+    note "this box asks for a GRUB username and password before it boots"
+    note "ANYTHING -- headless, it never comes back. Repair:"
+    note "  sudo sed -i 's/^CLASS=\"/CLASS=\"--unrestricted /' /etc/grub.d/10_linux"
+    note "  sudo update-grub"
+    note "a grub-common update reverts that patch; the next full it-pull"
+    note "re-applies it."
+    rc=1
+  else
+    ok "menu entries do not require the GRUB password to boot"
+  fi
 
   # 1. SECURE BOOT. Ubuntu ships linux-image-<ver>-fips (signed) and
   #    linux-image-unsigned-<ver>-fips. If autoremove took the signed one and
@@ -288,6 +315,19 @@ The kernel comes from Ubuntu Pro; the box needs Canonical or the packages carrie
 Find it by hand -- check /etc/default/grub and /etc/default/grub.d/*.cfg for
 GRUB_CMDLINE_LINUX lines -- and do NOT reboot this box until it is gone."
   ok "grub.cfg carries no boot= parameter"
+
+  # update-grub above just rewrote every menu entry. If the --unrestricted patch
+  # has been reverted, that rewrite is what locks the box at a password prompt.
+  if grub_locked; then
+    say ""
+    bad "STOP -- grub.cfg now requires the GRUB password to boot ANY entry."
+    note "That makes this box unbootable without someone at the console. The"
+    note "--unrestricted patch in /etc/grub.d/10_linux has been reverted, most"
+    note "likely by a grub-common update. Repair BEFORE rebooting:"
+    note "  sudo sed -i 's/^CLASS=\"/CLASS=\"--unrestricted /' /etc/grub.d/10_linux"
+    note "  sudo update-grub"
+    note "then re-run: sudo it-fips"
+  fi
 
   say ""
   note "This does NOT change which entry boots. It does add fips=1 to the"
