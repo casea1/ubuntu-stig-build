@@ -194,6 +194,27 @@ Measured on a deployed box: **`xrdp` at 70%** with gnome-shell and Xorg idle. So
 
 Note what did NOT help, since it rules out a whole family of guesses: disabling GNOME animations, and unchecking font smoothing on the Windows client. Neither touches the encode path.
 
+**12j. A box stops being FIPS by BOOTING the wrong kernel, and nothing announces it.** Found on dev-13/14/15 after deployment: `/proc/sys/crypto` did not exist at all. Nothing had turned FIPS off -- the box was running a non-FIPS kernel.
+
+The mechanism is routine and silent. The FIPS kernel is version-pinned (`6.8.0-N-fips`); an upgrade installs a newer **generic** kernel; GRUB orders entries by version and picks the generic one; the box reboots looking exactly as it did. Every file-based check still passes, because every file is still correct. Only `uname -r` disagrees.
+
+```bash
+uname -r                              # must end in -fips
+cat /proc/sys/crypto/fips_enabled     # must be 1; the PATH MISSING means a non-FIPS kernel
+ls -1 /boot/vmlinuz-*                 # is a fips kernel even installed?
+```
+
+`it-checklist` item 9 catches the end state. `it-repair --only fips` distinguishes the two cases, which need completely different answers:
+
+| | meaning | fix |
+|---|---|---|
+| a `-fips` kernel is installed, another booted | GRUB chose the newer one | boot the `-fips` entry, then make it the default |
+| no `-fips` kernel present | it was never installed, or was removed | **cannot be fixed offline** -- the kernel comes from Ubuntu Pro, and Pro/ESM packages are not in the carried repo |
+
+That second row is the one that hurts on a deployed box: `pro enable fips-updates` needs Canonical, and an air-gapped machine cannot reach it. Enabling FIPS after deployment is not a thing you can do in the space -- it has to be right before the box leaves, which is why it is on the pre-deployment list.
+
+**Nothing in this repo pins the FIPS kernel as the boot default.** `it-repair` reports and does not fix, deliberately: rewriting the default kernel on a box nobody can walk up to is how a box stops booting.
+
 **13. Audit rules on disk are not audit rules in the kernel, and they may not be in `rules.d`.** Two separate traps in one place. First, `usg fix` writes **`/etc/audit/audit.rules` directly**, not `rules.d/*.rules` — so an empty `rules.d` is normal on a USG box, and counting only `rules.d` reports "no rules" on a box with a full ruleset. Second, whatever is on disk still has to reach the kernel: the STIG sets auditd `-e 2` (immutable), after which new rules are refused until a reboot. Either way **every file-based OVAL still passes**, because those check files. ASP-2 ran with **1 rule in the kernel** against 8.5 KB in `audit.rules` and the 96.41 % scan said nothing. `it-checklist` item 6 counts whichever source holds rules and compares it against the kernel. Diagnose with:
 
 > **Mind the glob.** `/etc/audit/rules.d` is `root:root 0750`, so `sudo cat /etc/audit/rules.d/*.rules` fails with *"No such file or directory"* — your **unprivileged shell** expands the glob before `sudo` runs, and it cannot read the directory. That looks exactly like an empty directory and is not. Wrap it: `sudo sh -c 'cat ...'`.

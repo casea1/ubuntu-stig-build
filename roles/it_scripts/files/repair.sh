@@ -23,7 +23,7 @@ while [ $# -gt 0 ]; do
     check|--check) MODE=check; shift ;;
     fix|--fix)     MODE=fix;   shift ;;
     --only) ONLY="${2:?--only needs a list}"; shift 2 ;;
-    --list) printf '%s\n' home net codeserver rdp tiles units crash sshclient identity slow boot disk creds audit; exit 0 ;;
+    --list) printf '%s\n' home net codeserver rdp tiles units crash sshclient identity slow fips boot disk creds audit; exit 0 ;;
     # Print the header block, however long it grows -- a line count here goes
     # stale the moment anyone edits the comment above.
     -h|--help)
@@ -42,9 +42,10 @@ while [ $# -gt 0 ]; do
         sshclient  "ssh_config.d drop-ins only root can read" \
         identity   "sssd/nss stalling every user lookup on the box" \
         slow       "desktop latency, MEASURED: DNS, portal, session environment" \
+        fips       "is the box RUNNING a FIPS kernel, or just carrying one?" \
         boot       "slowest units last boot (read-only)" \
         disk       "filesystem usage (read-only)" \
-        creds      "were the imaging LUKS/GRUB credentials rotated? (read-only)" \\
+        creds      "were the imaging LUKS/GRUB credentials rotated? (read-only)" \
         audit      "kernel audit-rule count (read-only)"
       exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -549,6 +550,58 @@ check_identity() {
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# 11. IS THIS BOX ACTUALLY RUNNING FIPS?
+#
+# Found on dev-13/14/15 after deployment: /proc/sys/crypto did not exist at all,
+# meaning a non-FIPS kernel. Nothing had "turned FIPS off" -- the box was
+# BOOTING a different kernel.
+#
+# That is the failure mode worth naming, because it is silent and it happens
+# after the fact: the FIPS kernel is version-pinned (6.8.0-N-fips), a routine
+# upgrade installs a newer generic kernel, GRUB orders by version and picks the
+# generic one, and the box comes back looking compliant and is not FIPS. Every
+# file-based check still passes. Only the RUNNING kernel disagrees.
+#
+# Read-only, deliberately. Rewriting the default kernel on a box nobody can walk
+# up to is how a box stops booting, so this reports and names the fix rather
+# than making it.
+# ---------------------------------------------------------------------------
+check_fips() {
+  head2 "FIPS"
+  local running have_fips enabled
+  running="$(uname -r)"
+  have_fips="$(ls -1 /boot/vmlinuz-*-fips 2>/dev/null | wc -l)"
+  enabled="$(cat /proc/sys/crypto/fips_enabled 2>/dev/null)"
+  printf '  %-12s %s\n' "running" "$running"
+
+  case "$running" in
+    *-fips)
+      if [ "$enabled" = 1 ]; then
+        ok "FIPS kernel booted and crypto.fips_enabled=1"
+      else
+        bad "running a -fips kernel but fips_enabled='${enabled:-<absent>}'"
+        note "the kernel is right and FIPS mode is not on -- check the boot line for fips=1"
+        flag
+      fi ;;
+    *)
+      if [ "${have_fips:-0}" -gt 0 ]; then
+        bad "a FIPS kernel is INSTALLED but this box booted $running"
+        note "nothing disabled FIPS -- GRUB chose a newer non-FIPS kernel. Installed:"
+        ls -1 /boot/vmlinuz-* 2>/dev/null | sed 's#^/boot/vmlinuz-#         #'
+        note "boot the -fips entry from the GRUB menu to confirm, then make it default."
+        note "do NOT edit GRUB blind on a box nobody can reach physically."
+      else
+        bad "no FIPS kernel installed, and none running"
+        note "this box cannot be made FIPS offline: the kernel comes from Ubuntu Pro,"
+        note "and Pro/ESM packages are not carried in the offline repo. It needs to"
+        note "reach Canonical, or the packages have to be carried in deliberately."
+      fi
+      flag ;;
+  esac
+  return 0
+}
+
 # ---- read-only context -----------------------------------------------------
 check_boot() {
   head2 "Slowest units last boot"
@@ -624,7 +677,7 @@ check_audit() {
 say "${B}it-repair${R} -- $(hostname) -- $(date '+%Y-%m-%d %H:%M:%S %Z')"
 [ "$MODE" = check ] && note "reporting only. Apply with: sudo it-repair fix"
 
-for c in home net codeserver rdp tiles units crash sshclient identity slow boot disk creds audit; do
+for c in home net codeserver rdp tiles units crash sshclient identity slow fips boot disk creds audit; do
   want "$c" && "check_$c"
 done
 
