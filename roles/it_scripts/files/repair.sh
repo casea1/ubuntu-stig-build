@@ -701,12 +701,37 @@ check_boot() {
   if grep -rqs '^[[:space:]]*set[[:space:]]\+superusers=' /etc/grub.d/ /boot/grub/grub.cfg; then
     if grep -sE '^[[:space:]]*(menuentry|submenu) ' /boot/grub/grub.cfg | grep -qv -- '--unrestricted'; then
       if fixing; then
-        cp -a /etc/grub.d/10_linux "/etc/grub.d/10_linux.before-it-repair.$(date +%s)"
+        local g ts
+        ts="$(date +%s)"
+        # 10_linux builds its entries from $CLASS, so the flag goes there.
+        cp -a /etc/grub.d/10_linux "/etc/grub.d/10_linux.before-it-repair.$ts"
         sed -i 's/^CLASS="\(--unrestricted \)\?/CLASS="--unrestricted /' /etc/grub.d/10_linux
+
+        # $CLASS does NOT reach the other generators. UEFI Firmware Settings,
+        # memtest and os-prober write `menuentry` literally -- in a heredoc or
+        # inside a quoted echo -- and each one of those is a password prompt on
+        # its own. 40_custom/41_custom are the operator's and are left alone: a
+        # site may deliberately want a gated entry there.
+        for g in /etc/grub.d/*; do
+          case "${g##*/}" in
+            00_header|01_users|40_custom|41_custom|README) continue ;;
+            *.pre-grubpw|*.bak|*.dpkg-*|*~|*.before-it-repair.*) continue ;;
+          esac
+          [ -f "$g" ] && [ -r "$g" ] || continue
+          grep -qE '(^[[:space:]]*|["'"'"'])menuentry ' "$g" 2>/dev/null || continue
+          grep -qE '(^[[:space:]]*|["'"'"'])menuentry (--unrestricted )?' "$g" 2>/dev/null || continue
+          cp -a "$g" "$g.before-it-repair.$ts"
+          sed -i -E 's/(^[[:space:]]*|["'"'"'])menuentry (--unrestricted )?/\1menuentry --unrestricted /g' "$g"
+          did "made $g emit --unrestricted entries"
+        done
+
         update-grub >/dev/null 2>&1
         if grep -sE '^[[:space:]]*(menuentry|submenu) ' /boot/grub/grub.cfg | grep -qv -- '--unrestricted'; then
-          bad "still password-gated after repatching 10_linux -- another generator"
-          note "in /etc/grub.d emits a bare menuentry. A full it-pull fixes all of them."
+          bad "still password-gated after patching every generator. The entries"
+          note "that are still gated are:"
+          grep -sE '^[[:space:]]*(menuentry|submenu) ' /boot/grub/grub.cfg \
+            | grep -v -- '--unrestricted' | sed 's/^/         /'
+          note "find which file emits them:  grep -rn menuentry /etc/grub.d/"
           flag
         else
           did "made every GRUB menu entry --unrestricted and rebuilt grub.cfg"
@@ -715,7 +740,8 @@ check_boot() {
         bad "GRUB asks for its password before booting ANY entry"
         note "headless, this box never comes back from a reboot. The --unrestricted"
         note "patch in /etc/grub.d/10_linux has been reverted -- a grub-common"
-        note "update does this. 'it-repair fix' repatches it; a full it-pull also does."
+        note "update does this. 'it-repair fix' repatches every generator here,"
+        note "so it does not need a pull and works on an air-gapped box."
         flag
       fi
     else
