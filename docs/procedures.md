@@ -2442,6 +2442,75 @@ The carried repo is **unsigned**, so apt is told to trust it. The trust boundary
 
 **Ubuntu Pro / ESM packages are not covered.** The tree holds the main archive only; anything shipped through ESM has to be carried in as a loose `.deb`.
 
+## 4.2b The box has a FIPS kernel but is not booting it
+
+Found on dev-13/14/15 after deployment. `uname -r` shows a generic kernel,
+`/boot` carries a `-fips` one, and `pro status` says `fips-updates` is
+installed but disabled. Nothing switched FIPS off: an upgrade installed a newer
+generic kernel, GRUB ordered the entries by version, and picked it.
+
+This is the **recoverable** case and it can be done in the space -- no Canonical
+needed, because the kernel is already on disk. (The other case, no `-fips`
+kernel present at all, cannot: see reference.md trap 12j.)
+
+### 1. Check the boot line before changing anything
+
+```bash
+cat /proc/cmdline
+grep -rs fips /etc/default/grub /etc/default/grub.d/
+lsblk -o NAME,MOUNTPOINT,UUID | grep -w /boot
+```
+
+Two things have to be right, and the second is the one that bites:
+
+| | why |
+|---|---|
+| `fips=1` on the kernel command line | without it a `-fips` kernel boots and `fips_enabled` is still 0 |
+| `boot=UUID=<uuid of /boot>` | **required when `/boot` is a separate partition**, which it is on every box built here -- LVM + LUKS leaves `/boot` outside the encryption. Without it the FIPS integrity check cannot find its files and the kernel panics |
+
+`ubuntu-fips` normally writes both into `/etc/default/grub.d/99-fips.cfg`. If
+`pro disable` removed that file, recreate it before going further.
+
+### 2. Switch with a ONE-SHOT boot, never a permanent change first
+
+```bash
+sudo cp -a /etc/default/grub /etc/default/grub.pre-fips
+sudo sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT=saved/' /etc/default/grub
+sudo update-grub
+
+# the exact menu path, copied from this output
+awk -F"'" '/menuentry |submenu /{print $2}' /boot/grub/grub.cfg
+
+sudo grub-reboot "Advanced options for Ubuntu>Ubuntu, with Linux <N>-fips"
+sudo reboot
+```
+
+`grub-reboot` sets the entry for the **next boot only**. GRUB clears it as it
+starts, so if the FIPS kernel panics the box comes back on the generic kernel by
+itself. That self-recovery is the entire reason to do it this way on a machine
+nobody can walk up to.
+
+### 3. Confirm, then make it permanent
+
+```bash
+uname -r                            # must end in -fips
+cat /proc/sys/crypto/fips_enabled   # must be 1
+```
+
+Only when both are right:
+
+```bash
+sudo grub-set-default "Advanced options for Ubuntu>Ubuntu, with Linux <N>-fips"
+```
+
+> Do one box first, and pick the one with the easiest physical access. A wrong
+> `boot=UUID` is a kernel panic, and the one-shot protects the *next* boot, not
+> the one you are watching.
+
+> **This will happen again.** Nothing pins the FIPS kernel as default, so the
+> next kernel upgrade can re-order the menu the same way. `it-repair --only
+> fips` detects it; add it to whatever runs after patching.
+
 ## 4.3a What a domain controller changes (read before joining anything)
 
 A DC and file server arriving is mostly good news for this fleet, because two of
