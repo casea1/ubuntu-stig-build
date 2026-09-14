@@ -212,7 +212,25 @@ So the box reboots onto a generic kernel and looks completely normal. `uname -r`
 
 **Recovering a box that has already lost it** is documented in procedures 4.2b, and it can be done in the space *provided the kernel images are still there* -- recreate `fips.cfg` with both `fips=1` and `boot=UUID=<uuid of /boot>` (the second is required because LVM+LUKS leaves `/boot` separate, and omitting it panics the FIPS kernel), then switch with a **one-shot** `grub-reboot` so a failed boot self-recovers. If the kernel images are gone too, it cannot be fixed offline at all: that kernel comes from Ubuntu Pro and `pro enable` needs Canonical.
 
-**13. Audit rules on disk are not audit rules in the kernel**13. Audit rules on disk are not audit rules in the kernel, and they may not be in `rules.d`.** Two separate traps in one place. First, `usg fix` writes **`/etc/audit/audit.rules` directly**, not `rules.d/*.rules` — so an empty `rules.d` is normal on a USG box, and counting only `rules.d` reports "no rules" on a box with a full ruleset. Second, whatever is on disk still has to reach the kernel: the STIG sets auditd `-e 2` (immutable), after which new rules are refused until a reboot. Either way **every file-based OVAL still passes**, because those check files. ASP-2 ran with **1 rule in the kernel** against 8.5 KB in `audit.rules` and the 96.41 % scan said nothing. `it-checklist` item 6 counts whichever source holds rules and compares it against the kernel. Diagnose with:
+**12k. Backticks inside a double-quoted shell string RUN the command.** Three times in this repo, a message meant to *tell* someone to run something would have run it instead:
+
+```sh
+bad "Run `it-clamav test` for the likely cause"        # runs it-clamav test
+say "Peripherals added later need `it-usb enroll`"     # runs it-usb enroll -- INTERACTIVE, rewrites the USBGuard policy
+bad "one `apt autoremove` from being removed"          # runs apt autoremove
+```
+
+All three sat on an **error path**, which is the worst place for it: that code runs only once something has already gone wrong, so normal use never reaches it and nobody notices. The `it-usb enroll` one lived in `it-go-classified` -- it would have fired while taking a box classified.
+
+Use `'single quotes'` when naming a command inside a message, or escape the backtick. Sweep for survivors:
+
+```bash
+find roles tools -name '*.sh' | while read -r f; do
+  awk -v F="$f" '!/^[[:space:]]*#/ && /"[^"]*`/ && !/\\`/ {print F":"FNR}' "$f"
+done
+```
+
+**13. Audit rules on disk are not audit rules in the kernel, and they may not be in `rules.d`.** Two separate traps in one place. First, `usg fix` writes **`/etc/audit/audit.rules` directly**, not `rules.d/*.rules` — so an empty `rules.d` is normal on a USG box, and counting only `rules.d` reports "no rules" on a box with a full ruleset. Second, whatever is on disk still has to reach the kernel: the STIG sets auditd `-e 2` (immutable), after which new rules are refused until a reboot. Either way **every file-based OVAL still passes**, because those check files. ASP-2 ran with **1 rule in the kernel** against 8.5 KB in `audit.rules` and the 96.41 % scan said nothing. `it-checklist` item 6 counts whichever source holds rules and compares it against the kernel. Diagnose with:
 
 > **Mind the glob.** `/etc/audit/rules.d` is `root:root 0750`, so `sudo cat /etc/audit/rules.d/*.rules` fails with *"No such file or directory"* — your **unprivileged shell** expands the glob before `sudo` runs, and it cannot read the directory. That looks exactly like an empty directory and is not. Wrap it: `sudo sh -c 'cat ...'`.
 
