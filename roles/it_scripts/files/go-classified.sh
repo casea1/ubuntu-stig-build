@@ -193,7 +193,7 @@ if active usbguard; then
   rules=$(wc -l < /etc/usbguard/rules.conf 2>/dev/null || echo 0)
   row PASS 4.3 "USBGuard active" "$rules rule(s), policy dated $pol"
   ask 4.4 "USBGuard policy matches the fielded kit" "Does the USB allow-list cover exactly the peripherals this box will have in the field?" \
-      "Policy generated $pol. Peripherals added later need `it-usb enroll`; anything left in it that is not going with the box should come out."
+      "Policy generated $pol. Peripherals added later need 'it-usb enroll'; anything left in it that is not going with the box should come out."
 else row FAIL 4.3 "USBGuard active" "usbguard is not running"; fi
 
 # --- Detection and monitoring ----------------------------------------------

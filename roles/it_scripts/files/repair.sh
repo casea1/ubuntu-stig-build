@@ -599,6 +599,60 @@ check_fips() {
       fi
       flag ;;
   esac
+
+  # WILL IT SURVIVE THE NEXT REBOOT?
+  #
+  # This is the half that matters on a box that looks fine. A RUNNING FIPS
+  # kernel keeps working after its packages are removed -- uname and
+  # fips_enabled both stay correct until the reboot, and then it is gone. So
+  # the running state says nothing about whether it is still configured.
+  local cfg=/etc/default/grub.d/fips.cfg
+  if [ -s "$cfg" ] && grep -q 'fips=1' "$cfg" 2>/dev/null; then
+    ok "fips.cfg still sets fips=1"
+  elif [ -e "$cfg" ]; then
+    bad "$cfg exists but is EMPTY -- the next reboot loses FIPS"
+    note 'this is what apt autoremove leaves behind. See procedures 4.2b.'
+    flag
+  else
+    bad "$cfg is missing -- the next reboot loses FIPS"
+    flag
+  fi
+
+  if grep -q 'fips=1' /boot/grub/grub.cfg 2>/dev/null; then
+    ok "grub.cfg carries fips=1"
+  else
+    bad "no fips=1 in grub.cfg -- whatever boots next will not be in FIPS mode"
+    flag
+  fi
+
+  # Still marked auto is still at risk, even while everything is present.
+  local auto
+  auto="$(apt-mark showauto 2>/dev/null | grep -c fips || true)"
+  if [ "${auto:-0}" -gt 0 ]; then
+    if fixing; then
+      apt-mark manual $(apt-mark showauto 2>/dev/null | grep fips) >/dev/null 2>&1 \
+        && did "marked $auto FIPS package(s) manual -- autoremove can no longer take them"
+    else
+      bad "$auto FIPS package(s) are marked AUTO -- one apt autoremove from being removed"
+      note "that is exactly how dev-13/14/15 lost FIPS, silently, until a reboot."
+      flag
+    fi
+  else
+    ok "FIPS packages are marked manual"
+  fi
+
+  # The decisive one: ask apt what it would actually do.
+  if command -v apt-get >/dev/null 2>&1; then
+    local would
+    would="$(apt-get -s autoremove 2>/dev/null | awk '/^Remv/ && /fips/ {print $2}')"
+    if [ -n "$would" ]; then
+      bad "apt autoremove WOULD remove:"
+      printf '%s\n' "$would" | sed 's/^/         /'
+      flag
+    else
+      ok "apt autoremove would not touch FIPS"
+    fi
+  fi
   return 0
 }
 

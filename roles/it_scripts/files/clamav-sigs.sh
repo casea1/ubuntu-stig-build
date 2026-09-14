@@ -716,7 +716,7 @@ cmd_install() {
       ok "detection test passed -- $SELFTEST_ENGINE flagged the EICAR test file"
     else
       bad "detection test FAILED -- the database loaded but the engine detects nothing."
-      bad "Run `it-clamav test` for the likely cause. Roll back with: it-clamav rollback"
+      bad "Run 'it-clamav test' for the likely cause. Roll back with: it-clamav rollback"
       exit 1
     fi
   fi
