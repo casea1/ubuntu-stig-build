@@ -9,6 +9,7 @@
 #   it-fips fix             repair the config. Changes NO boot order, reboots nothing.
 #   it-fips boot            arm a ONE-SHOT boot into the FIPS kernel
 #   it-fips confirm         after that reboot: verify, then make it permanent
+#   it-fips undo            put the GRUB config back the way it was
 #
 # WHY IT IS FOUR STEPS. A kernel that does not come up is, on a headless box, a
 # physical visit. `boot` arms one boot only -- GRUB clears it as it starts, so a
@@ -237,7 +238,36 @@ GRUB_CMDLINE_LINUX lines -- and do NOT reboot this box until it is gone."
   ok "grub.cfg carries no boot= parameter"
 
   say ""
-  note "nothing has changed what this box boots. Next:  sudo it-fips boot"
+  note "This does NOT change which entry boots. It does add fips=1 to the"
+  note "command line of EVERY normal entry, generic ones included -- that is"
+  note "how Canonical's own fips.cfg works, and it is why a reboot after this"
+  note "is not a no-op even though the menu looks identical."
+  note ""
+  note "Next:  sudo it-fips boot        (and 'it-fips undo' if this went wrong)"
+  say ""
+}
+
+# Put back what fix/boot saved, newest backup per file, and rebuild grub.cfg.
+# The lever for "I ran it, I rebooted, it did not come up, get me back".
+cmd_undo() {
+  local f bak n=0
+  head2 "Restoring the GRUB config saved before it-fips"
+  while read -r f; do
+    bak="$(ls -1t "$f".before-it-fips.* 2>/dev/null | head -1)"
+    [ -n "$bak" ] || continue
+    cp -a "$bak" "$f"
+    ok "$f  <-  $(basename "$bak")"
+    n=$((n+1))
+  done <<< "$(grub_cfg_files)"
+
+  [ "$n" -gt 0 ] || die "no it-fips backups found -- nothing to undo.
+The backups are <file>.before-it-fips.<epoch> beside each GRUB config."
+
+  say ""
+  update-grub 2>&1 | sed 's/^/  /'
+  say ""
+  note "Config restored and grub.cfg rebuilt. If a one-shot boot is still armed,"
+  note "clear it with:  sudo grub-editenv - unset next_entry"
   say ""
 }
 
@@ -263,9 +293,11 @@ Look for it yourself:  awk -F\\' '/menuentry |submenu /{print \$2}' $GRUBCFG"
   #
   # The one-shot boot below is only a safe experiment if a failure recovers on
   # its own, so this is set BEFORE arming anything.
+  local regen=0
   if ! grep -qE '^GRUB_RECORDFAIL_TIMEOUT=' /etc/default/grub 2>/dev/null; then
     cp -a /etc/default/grub "/etc/default/grub.before-it-fips.$(date +%s)"
     printf 'GRUB_RECORDFAIL_TIMEOUT=%s\n' "${FIPS_RECORDFAIL_TIMEOUT:-10}" >> /etc/default/grub
+    regen=1
     ok "set GRUB_RECORDFAIL_TIMEOUT=${FIPS_RECORDFAIL_TIMEOUT:-10} -- a failed boot will no longer hang at the menu"
   else
     ok "GRUB_RECORDFAIL_TIMEOUT already set ($(sed -nE 's/^GRUB_RECORDFAIL_TIMEOUT=//p' /etc/default/grub))"
@@ -275,8 +307,16 @@ Look for it yourself:  awk -F\\' '/menuentry |submenu /{print \$2}' $GRUBCFG"
   if ! grep -qE '^GRUB_DEFAULT=saved' /etc/default/grub 2>/dev/null; then
     cp -a /etc/default/grub "/etc/default/grub.before-it-fips.$(date +%s)"
     sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT=saved/' /etc/default/grub
-    update-grub >/dev/null 2>&1
+    regen=1
     ok "set GRUB_DEFAULT=saved"
+  fi
+
+  # /etc/default/grub is only intent. Nothing above reaches the box until
+  # grub.cfg is rebuilt -- and an unregenerated GRUB_RECORDFAIL_TIMEOUT is a
+  # safety net that is not actually there, which is worse than knowing it isn't.
+  if [ "$regen" = 1 ]; then
+    update-grub >/dev/null 2>&1 || die "update-grub failed -- not arming anything."
+    ok "regenerated grub.cfg"
   fi
 
   head2 "Arming ONE boot into FIPS"
@@ -324,6 +364,7 @@ case "${1:-status}" in
   fix)       cmd_fix ;;
   boot)      cmd_boot ;;
   confirm)   cmd_confirm ;;
+  undo)      cmd_undo ;;
   *) die "unknown command: $1
 $(usage)" ;;
 esac
