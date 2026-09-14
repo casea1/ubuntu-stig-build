@@ -56,6 +56,9 @@ it_scripts_common:
   # The imaging passphrase is temporary. This is how it is rotated at
   # deployment, without disturbing the TPM auto-unlock slot.
   - { file: luks-passwd.sh,        link: it-luks-passwd }
+  # FIPS: check, repair, and the safe one-shot switch back onto the FIPS
+  # kernel. Written after `apt autoremove` took FIPS off six deployed boxes.
+  - { file: fips.sh,               link: it-fips }
   - { file: set-classification.sh, link: it-set-classification }
   - { file: oscap-scan.sh,         link: it-oscap }
   - { file: audit-offload.sh,      link: it-offload }
