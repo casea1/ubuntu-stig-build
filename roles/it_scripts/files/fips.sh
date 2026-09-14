@@ -121,6 +121,16 @@ cmd_status() {
     && ok "grub.cfg carries fips=1" \
     || { bad "grub.cfg has no fips=1 -- run: it-fips fix"; rc=1; }
 
+  # The one that turns a failed boot into a site visit.
+  if grep -qE '^GRUB_RECORDFAIL_TIMEOUT=' /etc/default/grub 2>/dev/null; then
+    ok "GRUB_RECORDFAIL_TIMEOUT set -- a failed boot recovers on its own"
+  else
+    bad "GRUB_RECORDFAIL_TIMEOUT is unset: after ANY failed boot, GRUB waits"
+    note "forever at the menu for a keypress. On a headless box that is a site"
+    note "visit, and a power cycle does not clear it. 'it-fips boot' sets it."
+    rc=1
+  fi
+
   local auto
   auto="$(apt-mark showauto 2>/dev/null | grep -c fips || true)"
   [ "${auto:-0}" -eq 0 ] \
@@ -192,6 +202,25 @@ cmd_boot() {
   path="$(menu_path_for "$kver")"
   [ -n "$path" ] || die "could not find a GRUB menu entry for $kver.
 Look for it yourself:  awk -F\\' '/menuentry |submenu /{print \$2}' $GRUBCFG"
+
+  # HEADLESS SAFETY, and it is not optional on this fleet.
+  #
+  # Ubuntu's 00_header does:  if recordfail=1, timeout=${GRUB_RECORDFAIL_TIMEOUT:--1}
+  # and -1 means WAIT FOREVER for a keypress. So any failed boot leaves a
+  # headless box sitting at a GRUB menu that nobody can answer -- and a power
+  # cycle does not help, because the flag is still set and it waits again. That
+  # is what a panicking FIPS kernel actually costs: not a failed boot, an
+  # unreachable machine.
+  #
+  # The one-shot boot below is only a safe experiment if a failure recovers on
+  # its own, so this is set BEFORE arming anything.
+  if ! grep -qE '^GRUB_RECORDFAIL_TIMEOUT=' /etc/default/grub 2>/dev/null; then
+    cp -a /etc/default/grub "/etc/default/grub.before-it-fips.$(date +%s)"
+    printf 'GRUB_RECORDFAIL_TIMEOUT=%s\n' "${FIPS_RECORDFAIL_TIMEOUT:-10}" >> /etc/default/grub
+    ok "set GRUB_RECORDFAIL_TIMEOUT=${FIPS_RECORDFAIL_TIMEOUT:-10} -- a failed boot will no longer hang at the menu"
+  else
+    ok "GRUB_RECORDFAIL_TIMEOUT already set ($(sed -nE 's/^GRUB_RECORDFAIL_TIMEOUT=//p' /etc/default/grub))"
+  fi
 
   # grub-reboot needs a saved default to write next_entry against.
   if ! grep -qE '^GRUB_DEFAULT=saved' /etc/default/grub 2>/dev/null; then
