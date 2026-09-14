@@ -201,3 +201,15 @@ pam_auth_check_path: /usr/local/sbin/pam-auth-check
 # Remove `nullok` from the PAM stack (UBTU-24-300028). Only narrows what
 # pam_unix accepts, so it cannot reject a currently-valid password.
 usg_fix_pam_nullok: true
+
+# ---- SSH idle timeout (UBTU-24 ClientAlive rules) ---------------------------
+# The benchmark wants interval <= 600 and countmax EXACTLY 1. Both are asserted
+# before they are written, because a wrong value here fails a scan on a box that
+# is otherwise clean, and the failure is a long way from the cause.
+#
+# The effective drop is about interval x (countmax + 1), so 600/1 leaves roughly
+# twenty minutes before an idle session is cut -- not the ten seconds people
+# assume when they see countmax 1 and reach for 3 instead.
+usg_fix_ssh_clientalive: true
+usg_ssh_client_alive_interval: 600
+usg_ssh_client_alive_count_max: 1

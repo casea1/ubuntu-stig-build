@@ -228,6 +228,64 @@
 # file_permissions_var_log_stig (UBTU-24-700010) + directory_permissions_var_log_audit
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
+# SSH IDLE TIMEOUT (UBTU-24 ClientAlive rules).
+#
+# `usg fix` does not set these, and neither did this role -- so every box has
+# been running sshd's defaults, which are ClientAliveInterval 0 (no probing at
+# all) and therefore a finding on a rule the scan checks.
+#
+# The STIG text, verbatim from the benchmark shipped in scap_scan:
+#   ClientAliveInterval  "600" or less
+#   ClientAliveCountMax  "1"        (not "1" -> finding)
+#
+# CountMax 1 is the one people get wrong, because 3 looks more forgiving and is
+# what half the internet suggests. It is a finding. It is also not the timeout
+# people think it is: the session drops after roughly interval x (countmax + 1),
+# so 600/1 is still about twenty minutes of grace, not ten seconds.
+#
+# A drop-in sorting AFTER the banner ones, because sshd takes the FIRST value it
+# sees for a keyword and these must not be shadowed by a stale line in the main
+# sshd_config.
+- name: "REMED | SSH idle timeout (ClientAliveInterval / ClientAliveCountMax)"
+  when: usg_fix_ssh_clientalive | default(true) | bool
+  block:
+    - name: "REMED | Write the ClientAlive drop-in"
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/00-2-client-alive.conf
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # Managed by ansible (usg_remediate) -- do not edit by hand.
+          # UBTU-24: interval 600 or less, countmax exactly 1.
+          ClientAliveInterval {{ usg_ssh_client_alive_interval }}
+          ClientAliveCountMax {{ usg_ssh_client_alive_count_max }}
+      notify: Restart ssh
+
+    # A value left in the main sshd_config wins over a drop-in when it appears
+    # first, so an older hand-edit would silently beat this file.
+    - name: "REMED | Comment out any ClientAlive lines in the main sshd_config"
+      ansible.builtin.replace:
+        path: /etc/ssh/sshd_config
+        regexp: '^(\s*)(ClientAlive(?:Interval|CountMax)\s+.*)$'
+        replace: '\1# \2  # superseded by sshd_config.d/00-2-client-alive.conf'
+      notify: Restart ssh
+
+- name: "REMED | Refuse a ClientAlive setting the scan will fail"
+  ansible.builtin.assert:
+    that:
+      - (usg_ssh_client_alive_interval | int) > 0
+      - (usg_ssh_client_alive_interval | int) <= 600
+      - (usg_ssh_client_alive_count_max | int) == 1
+    fail_msg: >-
+      usg_ssh_client_alive_interval must be 1-600 and
+      usg_ssh_client_alive_count_max must be exactly 1 -- the benchmark checks
+      for those literal values, and anything else is a finding on a box that
+      otherwise passes. Got {{ usg_ssh_client_alive_interval }} /
+      {{ usg_ssh_client_alive_count_max }}.
+  when: usg_fix_ssh_clientalive | default(true) | bool
+
+# ---------------------------------------------------------------------------
 # SSH CLIENT drop-ins must stay WORLD-READABLE.
 #
 # `ssh` reads /etc/ssh/ssh_config, which Includes /etc/ssh/ssh_config.d/*.conf,
