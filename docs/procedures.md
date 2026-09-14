@@ -2833,6 +2833,15 @@ one archive.
    > SSD gets, refuses to overwrite a good archive if anything fails, and
    > checks the clone really is this baseline before packing — so a wrong
    > repository is caught in the lab rather than in front of a fielded box.
+   >
+   > **`make-baseline-github.bat` beside it does the same from GitHub**
+   > (`casea1/ubuntu-stig-build`) instead of Forgejo — for a PC that is off the
+   > lab network, or when GitHub is the one that is current. The repository is
+   > private, so the first run opens a browser to sign in. Both scripts write
+   > the same `baseline.git.tar.gz`, so the SSD only ever carries one baseline
+   > and the archive's name does not say which repo it came from: the GitHub
+   > one also writes `baseline.git.info.txt` naming the source, branch, commit
+   > and build time. Read that before you carry the SSD out.
 
 2. **Copy `baseline.git.tar.gz` to the box** — WinSCP (SFTP, port 22) from the file server,
    into your own home directory. You cannot write `/opt` over SFTP: the STIG `umask 077`
