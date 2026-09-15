@@ -103,6 +103,27 @@ if [ "${1:-}" = check ]; then
     fi
   done
 
+  # THE HEADER'S OWN HASHES, WHICH DECIDE WHETHER FIPS CAN READ IT AT ALL.
+  #
+  # A LUKS2 header names a hash for each keyslot (AF) and for each digest. If any
+  # of them is blake2b, a FIPS kernel refuses the algorithm -- the kernel prints
+  # "blake2b-256-generic is disabled due to fips" -- cryptsetup cannot verify the
+  # header, and the device is reported as NOT A VALID LUKS DEVICE with no used
+  # slots. Every passphrase is then rejected because nothing got as far as
+  # checking one. This is invisible from a generic kernel, where blake2b works.
+  hashes="$(cryptsetup luksDump "$LUKS" 2>/dev/null |
+            awk -F: '/[Hh]ash:/ {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}' | sort -u)"
+  badh="$(printf '%s\n' "$hashes" | grep -v '^$' |
+          grep -viE '^sha(1|224|256|384|512)$|^sha3-' | paste -sd' ' -)"
+  printf '  header hashes : %s\n' "$(printf '%s\n' "$hashes" | grep -v '^$' | paste -sd' ' -)"
+  if [ -n "$badh" ]; then
+    printf '  HEADER HASH   : %s IS NOT FIPS-APPROVED -- a FIPS kernel cannot read\n' "$badh"
+    printf '                  this header at all. It reports "not a valid LUKS\n'
+    printf '                  device" and rejects every passphrase.\n'
+  else
+    printf '  header hashes : all FIPS-approved\n'
+  fi
+
   printf '  TPM present : %s\n' "$([ -e /sys/class/tpm/tpm0 ] && echo yes || echo NO)"
   printf '  secure boot : %s\n' "$(mokutil --sb-state 2>/dev/null | tr -d '\n')"
 
