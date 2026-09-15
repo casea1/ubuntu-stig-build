@@ -17,9 +17,15 @@
 #   it-fpga license --check    what each licence SOURCE actually serves, with
 #                              expiry dates -- including a trial .lic sitting
 #                              in ~/.Xilinx that nothing here configured
-#   it-fpga check              run the vendors' own checkers and translate
+#   it-fpga check              can the installed tools actually run here --
+#                              ldd against Libero, FlashPro Express and Vivado,
+#                              plus the i386 half. `--vendor` also runs
+#                              Microchip's check_linux_req, which tests for
+#                              RHEL and reports RPM names, so it calls Ubuntu
+#                              unsupported and every dependency missing
 #   it-fpga fixup              post-install fixes on an INSTALLED tree: make it
-#                              readable by every user, drop Libero's bundled libstdc++
+#                              readable by every user, drop Libero's bundled
+#                              libstdc++, repair what fp6_env_install left 0600
 #   it-fpga install xilinx     run the Xilinx installer unattended from a staged
 #                              .bin + saved config, under systemd so it survives
 #                              a dropped session. Then fixes permissions itself.
@@ -1383,40 +1389,73 @@ cmd_desktop() {
   say ""
 }
 
-cmd_check() {
-  head2 "Vendor checkers"
-  # Microchip moves this between releases -- 2025.1 buries it at
-  # Libero_SoC/Designer/bin/check_linux_req/check_linux_req.sh -- so find it
-  # rather than hardcode a path that silently reports "not found" on the next
-  # version and looks like a missing install.
-  local c=""
-  if [ -d "$LIBDIR" ]; then
-    c="$(find "$LIBDIR" -maxdepth 6 -type f -name 'check_linux_req*' \
-           -perm -u+x 2>/dev/null | sort | head -1)"
+# What the vendor's checker is really asking -- does this binary have every
+# library it needs -- answered in a way that is true on Ubuntu. ldd resolves
+# against the box's actual linker, so it cannot be wrong about a package name.
+check_ldd() {   # $1 = binary, $2 = label
+  local miss
+  [ -x "$1" ] || return 0
+  miss="$(ldd "$1" 2>/dev/null | grep 'not found' || true)"
+  if [ -n "$miss" ]; then
+    bad "$2: missing libraries -- this is what a hang or a silent exit looks like"
+    printf '%s\n' "$miss" | sed 's/^/    /'
+    say "  ${DIM}$1${R}"
+    return 1
   fi
-  if [ -n "$c" ] && [ -x "$c" ]; then
-    say "  ${DIM}$c${R}"
-    say "  ${DIM}Microchip's checker reports in RPM names -- translate before believing it.${R}"
-    say ""
-    "$c" 2>&1 | sed 's/^/  /'
-  else
-    warn "Microchip's check_linux_req not found under $LIBDIR"
-  fi
+  ok "$2: every library resolves"
+}
 
-  local v="$XROOT/Vivado/$XVER/bin/unwrapped/lnx64.o/vivado"
-  if [ -x "$v" ]; then
-    head2 "Vivado shared libraries"
-    if ldd "$v" 2>/dev/null | grep -q 'not found'; then
-      bad "missing libraries -- this is why the splash screen hangs:"
-      ldd "$v" 2>/dev/null | grep 'not found' | sed 's/^/    /'
-    else
-      ok "every library resolves"
-    fi
-  fi
+cmd_check() {
+  local vendor=0 c="" v b
+  case "${1:-}" in --vendor) vendor=1 ;; esac
+
+  # MICROCHIP'S CHECKER ONLY UNDERSTANDS RHEL, so it is not the default.
+  #
+  # check_linux_req.sh tests the distro against RHEL/AlmaLinux and then looks
+  # for RPM package names. On Ubuntu it reports the OS as unsupported and every
+  # dependency as missing, none of which is true -- and an engineer reading a
+  # wall of FAILs acts on it. The useful question underneath is whether the
+  # binaries resolve their libraries, which ldd answers correctly on any distro.
+  head2 "Shared libraries (the question the vendor checker is really asking)"
+  b="$(find "$LIBDIR" -maxdepth 6 -type f -name 'fpexpress' -perm -u+x 2>/dev/null | sort | head -1)"
+  check_ldd "${LIBERO_BIN:-}" "Libero"
+  check_ldd "$b" "FlashPro Express"
+  v="$XROOT/Vivado/$XVER/bin/unwrapped/lnx64.o/vivado"
+  check_ldd "$v" "Vivado"
+  case "${LIBERO_BIN:-}$b$v" in
+    "") warn "no vendor binaries found -- nothing installed under $LIBDIR or $XROOT" ;;
+  esac
 
   # The i386 half. Ubuntu 24.04 publishes only a curated subset for i386, so
   # some vendor dependencies cannot be installed at all -- the pull says so
   # once, and this says so whenever anyone asks.
+  if [ "$vendor" = 1 ]; then
+    head2 "Microchip's own checker (RHEL package names -- see below)"
+    # Microchip moves this between releases -- 2025.1 buries it at
+    # Libero_SoC/Designer/bin/check_linux_req/check_linux_req.sh -- so find it
+    # rather than hardcode a path that silently reports "not found" on the next
+    # version and looks like a missing install.
+    [ -d "$LIBDIR" ] && c="$(find "$LIBDIR" -maxdepth 6 -type f -name 'check_linux_req*' \
+                               -perm -u+x 2>/dev/null | sort | head -1)"
+    if [ -n "$c" ] && [ -x "$c" ]; then
+      say "  ${DIM}$c${R}"
+      say ""
+      "$c" 2>&1 | sed 's/^/  /'
+      say ""
+      warn "EVERYTHING ABOVE IS IN RPM TERMS AND THIS IS NOT RHEL."
+      say "  ${DIM}It checks the distro against RHEL/AlmaLinux and looks for RPM${R}"
+      say "  ${DIM}package names, so on Ubuntu it reports the OS as unsupported and${R}"
+      say "  ${DIM}the dependencies as missing whether they are installed or not.${R}"
+      say "  ${DIM}The ldd results above are the ones that are true here.${R}"
+    else
+      warn "Microchip's check_linux_req not found under $LIBDIR"
+    fi
+  else
+    say ""
+    say "  ${DIM}Microchip's own check_linux_req is not run: it reports in RPM names${R}"
+    say "  ${DIM}and calls Ubuntu unsupported. See it anyway with: it-fpga check --vendor${R}"
+  fi
+
   head2 "32-bit dependencies"
   if ! dpkg --print-foreign-architectures 2>/dev/null | grep -qx i386 && fips_on; then
     ok "i386 multiarch is off because this box is in FIPS mode -- correct."
@@ -1501,7 +1540,7 @@ case "${1:-status}" in
   desktop)   cmd_desktop ;;
   install)   shift; cmd_install "$@" ;;
   compat)    shift; cmd_compat "$@" ;;
-  check)     cmd_check ;;
+  check)     shift 2>/dev/null; cmd_check "$@" ;;
   cables)    head2 "Programmer cables"; cables_show; say "" ;;
   env)       cmd_env ;;
   *) die "unknown command: $1  (try: it-fpga --help)" ;;
