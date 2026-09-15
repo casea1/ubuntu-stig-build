@@ -329,6 +329,19 @@ luks_slot_tokens() {   # $1 = device -> "slot:tokentype" per line
 luks_token_for() {   # $1 = device, $2 = slot
   luks_slot_tokens "$1" | awk -F: -v s="$2" '$1 == s { print $2; exit }'
 }
+# Token slots whose KDF is argon2. These are the quiet killer: the token holds
+# the key, FIPS mode cannot process the slot, so the TPM unseal fails and the
+# box drops to a passphrase prompt on EVERY boot -- and if the passphrase slots
+# are argon2 too, nothing opens the disk at all. It cannot be fixed from a
+# generic kernel: re-binding needs cryptsetup running UNDER FIPS. The way out is
+# to convert a PASSPHRASE slot first, boot FIPS on that, then it-luks-rebind.
+luks_token_slots_argon() {   # $1 = device
+  local sl
+  for sl in $(luks_argon_slots "$1"); do
+    [ -n "$(luks_token_for "$1" "$sl")" ] && printf '%s\n' "$sl"
+  done
+}
+
 # The slots a person could actually convert: argon2, and no token behind them.
 luks_convertible_argon_slots() {   # $1 = device
   local sl
@@ -759,6 +772,21 @@ cmd_status() {
       note "Slot(s) $conv: argon2, no token -- convertible with their own"
     [ -n "$conv" ] && \
       note "passphrase by  sudo it-fips luks"
+
+    # The one that makes a box ask for a passphrase at every boot.
+    if [ -n "$(luks_token_slots_argon "$dev")" ] && is_boot_luks "$dev"; then
+      note ""
+      bad "$dev: token slot(s) $(luks_token_slots_argon "$dev" | paste -sd, -) are argon2"
+      note "The TPM holds that key and FIPS mode cannot process the slot, so the"
+      note "unseal FAILS and this box drops to a passphrase prompt on every boot."
+      note "It cannot be re-bound from here -- that needs cryptsetup running"
+      note "UNDER the FIPS kernel. The order out of it is:"
+      note "  1. sudo it-fips luks          convert a PASSPHRASE slot (do this now)"
+      note "  2. boot FIPS and type that passphrase at the prompt"
+      note "  3. sudo it-luks-rebind        new TPM slot, written under FIPS"
+      note "  4. reboot -- it unlocks itself again"
+      rc=1
+    fi
 
     for sl in $(luks_argon_slots "$dev"); do
       tok="$(luks_token_for "$dev" "$sl")"
