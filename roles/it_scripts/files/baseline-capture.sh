@@ -15,6 +15,11 @@
 #   it-baseline --stdout      write it to standard output instead of a file
 #   it-baseline --brief       skip the long inventories (packages, files)
 #
+# ON A DOCKER HOST it also captures the containers: image digests, state,
+# restart policy, published ports, mounts, volumes, and the sha256 of every
+# compose file. Environment variables are listed by NAME only. Nothing is
+# started, stopped or recreated.
+#
 # READ-ONLY. It runs no fix, starts nothing, changes nothing.
 #
 # SECRETS ARE NEVER INCLUDED. Credential files, *.pw, *.cred, .env, keytabs and
@@ -160,6 +165,60 @@ sub "USB"
 LIMIT=30 run "it-usb status 2>&1"
 sub "serial adapters"
 LIMIT=25 run "it-serial status 2>&1"
+
+# ---------------------------------------------------------------------------
+# The AI nodes have drifted from the repo and the engineers are still testing,
+# so on those boxes the containers ARE what the machine is. it-stack-diff shows
+# how the FILES differ; this shows what is actually running, which is not the
+# same question -- a commented-out `restart:` and a stopped container look
+# identical in a diff and completely different here.
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+sec "CONTAINERS -- runtime truth, not the repo's intent"
+note "Read-only: nothing is started, stopped or recreated."
+note "Environment variables are listed by NAME ONLY. No value is ever printed."
+
+sub "engine"
+LIMIT=6  run "docker version --format 'server {{.Server.Version}} api {{.Server.APIVersion}}' 2>&1"
+LIMIT=6  run "docker info --format 'storage={{.Driver}} cgroup={{.CgroupDriver}} runtime={{.DefaultRuntime}} live-restore={{.LiveRestoreEnabled}}' 2>&1"
+LIMIT=40 run "cat /etc/docker/daemon.json 2>/dev/null || echo '(no daemon.json)'"
+
+sub "containers, including stopped ones"
+docker ps -a --format '{{.Names}}|{{.State}}|{{.Image}}|{{.Ports}}' 2>/dev/null |
+  awk -F'|' '{printf "  %-22s %-9s %-42s %s\n", $1, $2, $3, $4}' | head -60
+
+sub "image digests (what is running, against the pinned tag)"
+docker images --digests --format '{{.Repository}}:{{.Tag}} {{.Digest}}' 2>/dev/null |
+  sed 's/^/  /' | head -40
+
+sub "per container"
+for _c in $(docker ps -aq 2>/dev/null | head -40); do
+  docker inspect "$_c" --format '
+{{.Name}}
+  image      {{.Config.Image}}
+  state      {{.State.Status}} (exit {{.State.ExitCode}})
+  restart    {{if .HostConfig.RestartPolicy.Name}}{{.HostConfig.RestartPolicy.Name}}{{else}}(none){{end}}
+  published  {{range $p, $v := .HostConfig.PortBindings}}{{$p}}<-{{range $v}}{{.HostIp}}:{{.HostPort}} {{end}}{{end}}
+  mounts     {{range .Mounts}}{{.Source}}:{{.Destination}}:{{if .RW}}rw{{else}}ro{{end}} {{end}}
+  compose    {{index .Config.Labels "com.docker.compose.project"}}/{{index .Config.Labels "com.docker.compose.service"}}' 2>/dev/null
+  printf '  env names  '
+  docker inspect "$_c" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null |
+    cut -d= -f1 | tr '\n' ' ' | head -c 900
+  printf '\n'
+done
+
+sub "volumes (external ones survive a compose down -v)"
+docker volume ls --format '{{.Driver}} {{.Name}}' 2>/dev/null | sed 's/^/  /' | head -40
+sub "networks"
+docker network ls --format '{{.Driver}} {{.Name}}' 2>/dev/null | sed 's/^/  /' | head -20
+
+sub "/opt/stacks compose files (sha256; .env is never read)"
+find /opt/stacks -maxdepth 2 \( -name 'compose*.y*ml' -o -name 'docker-compose*.y*ml' \) -print0 2>/dev/null |
+  xargs -0 -r sha256sum 2>/dev/null | sed 's/^/  /' | head -30
+shape /opt/stacks/*/.env /opt/stacks/*/*.env
+
+sub "how /opt/stacks differs from what the repo would deploy"
+LIMIT=150 run "it-stack-diff 2>&1"
+fi
 
 # ---------------------------------------------------------------------------
 sec "EVIDENCE PIPELINE"
