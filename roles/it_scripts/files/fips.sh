@@ -258,6 +258,26 @@ luks_boot_devices() {
 }
 is_boot_luks() { luks_boot_devices | grep -qx "$1"; }
 
+# Does the root filesystem live underneath this encrypted device? lsblk lists a
+# device and everything stacked on it by kernel name, so the dm-N that findmnt
+# reports for / appears there exactly when this is the OS disk. Worth printing:
+# "which NVMe is the encrypted one" is not obvious from the outside, and acting
+# on the wrong one is how a keyslot gets removed from the disk that boots.
+luks_holds_root() {   # $1 = device
+  local rootsrc
+  rootsrc="$(findmnt -no SOURCE / 2>/dev/null)"
+  [ -n "$rootsrc" ] || return 1
+  rootsrc="$(basename "$(readlink -f "$rootsrc" 2>/dev/null)")"
+  [ -n "$rootsrc" ] || return 1
+  lsblk -no KNAME "$1" 2>/dev/null | grep -qx "$rootsrc"
+}
+luks_role() {   # $1 = device -> a short label for what it is
+  if luks_holds_root "$1"; then printf 'holds / -- THE OS DISK'
+  elif is_boot_luks "$1";  then printf 'in /etc/crypttab'
+  else                          printf 'not in /etc/crypttab -- mounts nothing'
+  fi
+}
+
 luks_kdfs() {   # $1 = device
   [ -n "${1:-}" ] && command -v cryptsetup >/dev/null 2>&1 || return 0
   cryptsetup luksDump "$1" 2>/dev/null |
@@ -676,7 +696,8 @@ cmd_status() {
   for dev in $(luks_devices); do
     kdfs="$(luks_kdfs "$dev")"
     toks="$(luks_slot_tokens "$dev" | paste -sd' ' -)"
-    printf '  %-14s %s\n' "$dev" "${kdfs:-unreadable}"
+    printf '  %-14s %s\n' "$dev" "$(luks_role "$dev")"
+    printf '  %-14s %s\n' "  keyslots" "${kdfs:-unreadable}"
     [ -n "$toks" ] && printf '  %-14s %s\n' "  tokens" "$toks"
 
     if ! is_boot_luks "$dev"; then
@@ -860,7 +881,7 @@ cmd_retire() {
     if [ "$(luks_devices | wc -l)" -gt 1 ]; then
       die "this box has more than one encrypted disk, so name the device:
   sudo it-fips retire <slot> <device>
-$(for d in $(luks_devices); do printf '  %-18s %s\n' "$d" "$(luks_kdfs "$d")"; done)"
+$(for d in $(luks_devices); do printf '  %-18s %-26s %s\n' "$d" "$(luks_role "$d")" "$(luks_kdfs "$d")"; done)"
     fi
     dev="$(luks_device)"
   fi
