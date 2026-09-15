@@ -188,6 +188,46 @@ grub_pin_is_nested() {
   case "$(grub_saved_entry)" in *">"*) return 0 ;; *) return 1 ;; esac
 }
 
+# THE FIPS KERNEL'S INITRAMFS IS A SNAPSHOT, AND ON THESE BOXES IT IS OLD.
+#
+# initramfs-tools bakes conf/conf.d/cryptroot -- where the encrypted root lives
+# -- into each image when it is built. A box that lost FIPS and then ran on the
+# generic kernel for weeks has a FIPS initramfs from before all of that, still
+# pointing where it pointed then. At the next FIPS boot it looks for the wrong
+# device, finds something that is not LUKS, and says so:
+#
+#   /dev/nvmeXn1p3 is not a valid LUKS device
+#   No used slots detected
+#
+# which is indistinguishable from a wrong passphrase and is not one. It stranded
+# dev-13 and dev-15 through an entire evening of keyslot work that was never
+# going to help. Regenerating it is one command and it is what fixed them.
+#
+# Triggered on age against crypttab rather than run unconditionally: rebuilding
+# every initramfs on every `fix` is slow and writes to /boot for nothing.
+fix_initramfs() {
+  local kver img
+  kver="$(newest_fips)"
+  [ -n "$kver" ] || return 0
+  img="/boot/initrd.img-$kver"
+  if [ ! -e "$img" ]; then
+    bad "$img is MISSING -- the FIPS kernel has no initramfs to boot"
+    update-initramfs -c -k "$kver" >/dev/null 2>&1 \
+      && ok "created $img" || bad "could not create it"
+    return 0
+  fi
+  if [ -e /etc/crypttab ] && [ /etc/crypttab -nt "$img" ]; then
+    say "  regenerating initramfs -- /etc/crypttab is newer than the FIPS one"
+    update-initramfs -u -k all >/dev/null 2>&1 \
+      && ok "rebuilt every initramfs from the current crypttab" \
+      || bad "update-initramfs failed -- run it by hand before rebooting"
+  else
+    ok "FIPS initramfs is not older than /etc/crypttab"
+    note "if the box still stops at 'not a valid LUKS device', rebuild anyway:"
+    note "  sudo update-initramfs -u -k all"
+  fi
+}
+
 # `boot` is always the LAST step, so a next_entry still set when `fix` runs is
 # one that outlived its boot. Under Secure Boot GRUB cannot clear it itself, and
 # `confirm` -- the only other thing that clears it -- refuses to run on a box
@@ -831,6 +871,7 @@ The kernel comes from Ubuntu Pro; the box needs Canonical or the packages carrie
   fix_grub_unrestricted       # after the others; update-grub is what bakes it in
   fix_grub_submenu            # a pinned kernel behind a gated submenu = a prompt
   fix_stale_oneshot           # a next_entry Secure Boot will not let GRUB clear
+  fix_initramfs               # a stale FIPS initramfs looks for the wrong disk
 
   if [ "$NEEDGRUB" = 1 ]; then
     say ""
