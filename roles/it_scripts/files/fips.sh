@@ -140,6 +140,52 @@ grub_gated_submenus() {
 }
 grub_locked() { grub_superusers && [ -n "$(grub_gated_entries)" ]; }
 
+# THE ONE THAT ASKS FOR A PASSWORD ON EVERY BOOT.
+#
+# `grub-set-default 'Advanced options for Ubuntu>Ubuntu, with Linux X-fips'`
+# pins a NESTED entry. To reach it GRUB must enter the submenu -- and 10_linux
+# emits `submenu` with no $CLASS, so the submenu is password-gated on every box
+# in this fleet. The entry itself is --unrestricted and the check said so, which
+# is true and useless: you cannot get to it without authenticating first.
+#
+# So `it-fips confirm` pinning the FIPS kernel is what started the GRUB password
+# prompt on dev-16. Before it, GRUB_DEFAULT=0 booted the top-level entry.
+#
+# The fix is GRUB_DISABLE_SUBMENU=y: every kernel becomes a top-level menuentry,
+# which DOES carry $CLASS and so is --unrestricted. The password still gates `e`
+# and the GRUB command line, which is what the STIG actually requires.
+grub_saved_entry() { grub-editenv list 2>/dev/null | sed -n 's/^saved_entry=//p'; }
+grub_pin_is_nested() {
+  grub_superusers || return 1
+  case "$(grub_saved_entry)" in *">"*) return 0 ;; *) return 1 ;; esac
+}
+
+fix_grub_submenu() {
+  grub_superusers || { ok "no GRUB password -- submenus cost nothing"; return 0; }
+  if grep -qE '^GRUB_DISABLE_SUBMENU=(y|true)' /etc/default/grub 2>/dev/null; then
+    ok "GRUB_DISABLE_SUBMENU already set -- kernels are top-level entries"
+    return 0
+  fi
+  cp -a /etc/default/grub "/etc/default/grub.before-it-fips.$(date +%s)"
+  if grep -qE '^[#[:space:]]*GRUB_DISABLE_SUBMENU=' /etc/default/grub 2>/dev/null; then
+    sed -i -E 's|^[#[:space:]]*GRUB_DISABLE_SUBMENU=.*|GRUB_DISABLE_SUBMENU=y|' /etc/default/grub
+  else
+    printf 'GRUB_DISABLE_SUBMENU=y\n' >> /etc/default/grub
+  fi
+  ok "set GRUB_DISABLE_SUBMENU=y -- every kernel becomes a top-level entry"
+  note "with a GRUB password, a kernel inside the Advanced options submenu"
+  note "cannot be booted without authenticating: the submenu is gated even"
+  note "when the entry is not. Flat menu, no prompt, password still on 'e'."
+  # A pin into the old submenu is now a path that does not exist. Drop it and
+  # let `confirm` set the flat one, rather than leaving GRUB to fall back
+  # silently to entry 0 -- which may not be the FIPS kernel.
+  if grub_pin_is_nested; then
+    grub-editenv - unset saved_entry 2>/dev/null \
+      && ok "cleared the now-invalid nested pin -- re-pin with: sudo it-fips confirm"
+  fi
+  NEEDGRUB=1
+}
+
 # Which LUKS keyslots use a KDF that FIPS mode will not process.
 #
 # Argon2 is not FIPS-approved, and LUKS2 defaults a NEW keyslot to argon2id. So
@@ -445,10 +491,18 @@ cmd_status() {
     rc=1
   else
     ok "every bootable menu entry is --unrestricted"
-    if [ -n "$(grub_gated_submenus)" ]; then
-      note "the Advanced options submenu is password-gated, which is normal and"
-      note "not a fault: 10_linux never puts \$CLASS on a submenu line. It gates"
-      note "walking the menu by hand, not the unattended boot of the default."
+    if grub_pin_is_nested; then
+      bad "but the pinned default is INSIDE the gated submenu:"
+      note "  $(grub_saved_entry)"
+      note "GRUB must enter the submenu to reach it, and the submenu is"
+      note "password-gated, so this box asks for the GRUB password on EVERY"
+      note "boot. Headless, it never comes back. Fix: sudo it-fips fix"
+      note "(sets GRUB_DISABLE_SUBMENU=y), then: sudo it-fips confirm"
+      rc=1
+    elif [ -n "$(grub_gated_submenus)" ]; then
+      note "the Advanced options submenu is password-gated. That is normal --"
+      note "10_linux never puts \$CLASS on a submenu line -- and harmless only"
+      note "while nothing pinned inside it is what boots."
     fi
   fi
 
@@ -551,6 +605,7 @@ The kernel comes from Ubuntu Pro; the box needs Canonical or the packages carrie
   fix_aptmark
   fix_recordfail
   fix_grub_unrestricted       # after the others; update-grub is what bakes it in
+  fix_grub_submenu            # a pinned kernel behind a gated submenu = a prompt
 
   if [ "$NEEDGRUB" = 1 ]; then
     say ""
