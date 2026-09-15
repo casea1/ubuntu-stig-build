@@ -228,6 +228,35 @@ luks_kdfs() {
     awk '/^[[:space:]]*[0-9]+: luks2/{s=$1} /PBKDF:/{printf "%s%s ", s, $2}'
 }
 luks_has_argon()  { luks_kdfs | grep -qi argon; }
+
+# WHICH KEYSLOTS ARE NOT OPENED BY A TYPED PASSPHRASE AT ALL.
+#
+# A LUKS2 token binds a keyslot to something that is not a person: clevis
+# (TPM2), systemd-tpm2, systemd-recovery, systemd-fido2. The key in such a slot
+# is a long random string held by the token, so "enter the passphrase for that
+# slot" is advice that cannot be followed -- and trying every passphrase you
+# know against it, on every box, is what this fleet has just spent an evening
+# doing. Print the token so the slot identifies itself.
+luks_slot_tokens() {   # -> "slot:tokentype" per line
+  local dev; dev="$(luks_device)"
+  [ -n "$dev" ] && command -v cryptsetup >/dev/null 2>&1 || return 0
+  cryptsetup luksDump "$dev" 2>/dev/null | awk '
+    /^Tokens:/      { intok = 1; next }
+    /^Digests:/     { intok = 0 }
+    intok && /^[[:space:]]+[0-9]+:[[:space:]]*[^[:space:]]/ { ttype = $2; next }
+    intok && /^[[:space:]]+Keyslot:/ { gsub(/[^0-9]/, "", $2); print $2 ":" ttype }
+  '
+}
+luks_token_for() {   # $1 = slot -> token type, or empty
+  luks_slot_tokens | awk -F: -v s="$1" '$1 == s { print $2; exit }'
+}
+# The slots a person could actually convert: argon2, and no token behind them.
+luks_convertible_argon_slots() {
+  local sl
+  for sl in $(luks_argon_slots); do
+    [ -z "$(luks_token_for "$sl")" ] && printf '%s\n' "$sl"
+  done
+}
 # At least one slot FIPS mode CAN use. This is the question that decides whether
 # the box boots: dev-ai1 runs FIPS today with slots 0 and 1 on argon2, because
 # slot 2 is pbkdf2 and that is the one that unlocks it. Argon2 slots are dead
@@ -358,7 +387,7 @@ fix_grub_unrestricted() {
 # luksConvertKey re-encrypts the slot with a different KDF; it does not change
 # the credential, so nothing has to be re-recorded or re-issued.
 fix_luks_kdf() {
-  local dev slots s bak clev done_any=0
+  local dev slots s bak clev tok done_any=0
   dev="$(luks_device)"
   [ -n "$dev" ] || { ok "no LUKS device on this box"; return 0; }
   slots="$(luks_argon_slots)"
@@ -385,12 +414,20 @@ fix_luks_kdf() {
   clev="$(clevis luks list -d "$dev" 2>/dev/null | awk -F: '{gsub(/ /,"",$1); print $1}')"
 
   for s in $slots; do
+    tok="$(luks_token_for "$s")"
     if [ -n "$clev" ] && printf '%s\n' "$clev" | grep -qx "$s"; then
       warn "slot $s is the TPM (clevis) slot and is left alone"
       note "re-binding it needs cryptsetup running UNDER the FIPS kernel, which"
       note "this box is not yet. Order: finish here, boot FIPS and type the"
       note "passphrase at the console once, then run 'sudo it-luks-rebind'."
       note "Until that is done this box asks for the passphrase at every boot."
+      continue
+    fi
+    if [ -n "$tok" ]; then
+      warn "slot $s is held by a '$tok' token -- there is no passphrase to type"
+      note "Its key is a long random string the token holds, so no passphrase"
+      note "you know will EVER open it and none should. Do not keep trying."
+      note "Identify it, or retire it:  sudo it-fips retire $s"
       continue
     fi
     say ""
@@ -581,6 +618,8 @@ cmd_status() {
   kdfs="$(luks_kdfs)"
   if [ -n "$dev" ]; then
     printf '  %-14s %s\n' "LUKS $dev" "${kdfs:-unreadable}"
+    [ -n "$(luks_slot_tokens)" ] && \
+      printf '  %-14s %s\n' "slot tokens" "$(luks_slot_tokens | paste -sd' ' -)"
     if ! printf '%s' "$kdfs" | grep -qi argon; then
       [ -n "$kdfs" ] && ok "every keyslot uses a FIPS-approved KDF"
     elif luks_has_usable; then
@@ -589,7 +628,7 @@ cmd_status() {
       warn "argon2 keyslot(s) present -- those passphrases will NOT work in FIPS"
       note "mode. The disk unlocks through slot(s) $(luks_pbkdf2_slots), which is"
       note "why this box is fine today."
-      local typeable
+      local typeable _s
       typeable="$(luks_usable_passphrase_slots)"
       if [ -z "$typeable" ]; then
         note ""
@@ -601,7 +640,18 @@ cmd_status() {
       else
         note "Slot(s) $typeable are typeable passphrases that DO work in FIPS mode,"
         note "so the TPM is not a single point of failure here."
-        note "The argon2 slot(s) are inert: see 'sudo it-fips luks'."
+      local conv
+      conv="$(luks_convertible_argon_slots | paste -sd, -)"
+      if [ -n "$conv" ]; then
+        note "Slot(s) $conv are argon2 with no token: convertible with their own"
+        note "passphrase by  sudo it-fips luks"
+      fi
+      for _s in $(luks_argon_slots); do
+        [ -n "$(luks_token_for "$_s")" ] || continue
+        note "Slot $_s is held by a '$(luks_token_for "$_s")' token: there is NO"
+        note "passphrase for it and no passphrase you try will work. Identify it"
+        note "or retire it:  sudo it-fips retire $_s"
+      done
       fi
     else
       bad "EVERY keyslot uses argon2, which FIPS mode will not process"
