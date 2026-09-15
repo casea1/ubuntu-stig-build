@@ -188,6 +188,24 @@ grub_pin_is_nested() {
   case "$(grub_saved_entry)" in *">"*) return 0 ;; *) return 1 ;; esac
 }
 
+# `boot` is always the LAST step, so a next_entry still set when `fix` runs is
+# one that outlived its boot. Under Secure Boot GRUB cannot clear it itself, and
+# `confirm` -- the only other thing that clears it -- refuses to run on a box
+# that is not in FIPS mode yet. That left dev-15 with no command that could.
+fix_stale_oneshot() {
+  grub_stale_oneshot || { ok "no stale one-shot boot armed"; return 0; }
+  local ne; ne="$(grub_next_entry)"
+  if grub-editenv - unset next_entry 2>/dev/null; then
+    ok "cleared a one-shot that was still armed: $ne"
+    note "under Secure Boot GRUB cannot clear this itself, so it was selecting"
+    note "that entry on every boot and printing 'error: prohibited by secure"
+    note "boot policy' before the menu."
+  else
+    bad "could not clear next_entry=$ne -- do it by hand:"
+    note "  sudo grub-editenv - unset next_entry"
+  fi
+}
+
 fix_grub_submenu() {
   grub_superusers || { ok "no GRUB password -- submenus cost nothing"; return 0; }
   if grep -qE '^GRUB_DISABLE_SUBMENU=(y|true)' /etc/default/grub 2>/dev/null; then
@@ -784,6 +802,7 @@ The kernel comes from Ubuntu Pro; the box needs Canonical or the packages carrie
   fix_recordfail
   fix_grub_unrestricted       # after the others; update-grub is what bakes it in
   fix_grub_submenu            # a pinned kernel behind a gated submenu = a prompt
+  fix_stale_oneshot           # a next_entry Secure Boot will not let GRUB clear
 
   if [ "$NEEDGRUB" = 1 ]; then
     say ""
