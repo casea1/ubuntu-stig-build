@@ -5,6 +5,7 @@
 # Who may use the installed toolchains. root owns them; this group may read and
 # execute; nobody else. Engineers must not be able to modify a shared toolchain.
 ACCESS_GROUP={{ fpga_tools_access_group }}
+DEVICE_GROUP={{ fpga_device_group }}
 ENFORCE_ACCESS={{ fpga_tools_enforce_access | bool | lower }}
 
 XILINX_ROOT={{ fpga_xilinx_root }}

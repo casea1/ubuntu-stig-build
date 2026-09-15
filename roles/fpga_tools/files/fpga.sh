@@ -83,6 +83,7 @@ conf_get() {   # $1 = key, $2 = default
   printf '%s' "${v:-$2}"
 }
 ACCESS_GROUP="$(conf_get ACCESS_GROUP sentry)"
+DEVICE_GROUP="$(conf_get DEVICE_GROUP plugdev)"
 
 # ---------------------------------------------------------------------------
 # site.yml, with the same guard the pull applies on the way in: a file that
@@ -667,6 +668,57 @@ check_parents() {   # $1 = path -> 0 quiet, 1 after naming the blocker
   return "$rc"
 }
 
+# Microchip's fp6_env_install -- the script FlashPro Express tells an engineer
+# to run -- writes /etc/cyusb.conf and its own udev rules. Run under sudo with
+# the STIG's umask 077 it creates them 0600 root:root, and FlashPro Express then
+# fails reading cyusb.conf because it runs as the ENGINEER, not as root.
+#
+# This is trap 5 again in a different place: a vendor installer that assumes the
+# default umask, and an error message that names the vendor's file instead of
+# the permissions on it. Do NOT "fix" it by running FlashPro with sudo -- root
+# has no Xauthority cookie for an RDP session and the GUI then fails on X11
+# instead (trap 29).
+fix_vendor_usb_conf() {
+  local f m seen=0 changed=0 rules=0
+  for f in /etc/cyusb.conf \
+           /etc/udev/rules.d/*cyusb*.rules \
+           /etc/udev/rules.d/*microsemi*.rules \
+           /etc/udev/rules.d/*microchip*.rules \
+           /etc/udev/rules.d/*flashpro*.rules; do
+    [ -f "$f" ] || continue
+    seen=$((seen + 1))
+    case "$f" in *.rules) rules=1 ;; esac
+    m="$(stat -c '%a' "$f" 2>/dev/null)"
+    # World-read is the bit that matters: the tool runs as the engineer.
+    if [ "$(( 0$m & 0004 ))" -eq 0 ]; then
+      chown root:root "$f" 2>/dev/null
+      chmod 0644 "$f" 2>/dev/null
+      ok "$f was $m -- now 0644, so FlashPro can read it as the engineer"
+      changed=$((changed + 1))
+    else
+      ok "$f is $m -- already readable"
+    fi
+  done
+
+  if [ "$seen" -eq 0 ]; then
+    say "  ${DIM}no Microchip USB config found. If FlashPro Express asks for it,${R}"
+    say "  ${DIM}run the vendor script once:  sudo ./fp6_env_install${R}"
+    say "  ${DIM}then run 'sudo it-fpga fixup' again to correct its modes.${R}"
+    return 0
+  fi
+
+  if [ "$changed" -gt 0 ] && [ "$rules" -eq 1 ]; then
+    udevadm control --reload-rules 2>/dev/null && udevadm trigger 2>/dev/null \
+      && ok "udev rules reloaded -- unplug and replug the programmer"
+  fi
+
+  # Permissions were only ever half of it on this fleet.
+  say ""
+  say "  ${DIM}If FlashPro still cannot see the programmer, it is one of:${R}"
+  say "  ${DIM}  USBGuard authorises the cable BEFORE udev names it:  sudo it-usb enroll${R}"
+  say "  ${DIM}  the engineer is not in $DEVICE_GROUP:  id <user>  (log out and back in after)${R}"
+}
+
 cmd_fixup() {
   local n=0
   head2 "Post-install fixes"
@@ -718,6 +770,12 @@ cmd_fixup() {
   else
     warn "Libero is not installed at $LIBDIR -- nothing to fix"
   fi
+
+  # FlashPro Express: the vendor script the tool tells you to run leaves its
+  # config root-only under the STIG umask.
+  say ""
+  head2 "Microchip USB programmer config"
+  fix_vendor_usb_conf
 
   # The vendor's own tiles, which otherwise belong to whoever ran the installer.
   cmd_desktop
