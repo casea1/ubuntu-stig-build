@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 # LUKS / TPM auto-unlock status.
+#
+#   it-luks           the usual summary
+#   it-luks check     a short report built to be transcribed off an air-gapped
+#                     screen: which disk boots, its keyslots and tokens, whether
+#                     a token points at a deleted slot, whether EVERY installed
+#                     kernel's initramfs carries clevis, and whether the TPM can
+#                     release a key right now.
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 KREL=$(uname -r)
 # --- shared: which encrypted disk does this box actually boot from? ---------
@@ -52,6 +59,90 @@ luks_pick_device() {
 }
 
 LUKS=$(luks_pick_device "") || LUKS=""
+
+# ---------------------------------------------------------------------------
+# it-luks check -- a short report meant to be READ ALOUD or transcribed.
+#
+# The deployed boxes are air-gapped: nothing can be copied off them, so a
+# diagnostic that needs a 40-line paste is a diagnostic nobody can act on. Every
+# line here is one fact, short enough to read down a phone.
+#
+# It exists because the checks above only ever looked at the RUNNING kernel's
+# initramfs. A box sitting on generic says "clevis initramfs: YES" while the
+# FIPS kernel's initramfs -- the one that has to unlock the disk at the next
+# boot -- may have no clevis in it at all, and nothing reported that.
+# ---------------------------------------------------------------------------
+if [ "${1:-}" = check ]; then
+  echo "== LUKS PRE-FLIGHT =="
+  [ -n "$LUKS" ] || { echo "  no LUKS device found"; exit 1; }
+  root="$(luks_root_device 2>/dev/null)"
+  printf '  device      : %s%s\n' "$LUKS" \
+    "$([ "$LUKS" = "$root" ] && printf '  (holds /)' || printf '  (NOT the root disk)')"
+  printf '  other disks : %s\n' "$(luks_all_devices | grep -vx "$LUKS" | paste -sd' ' - || true)"
+
+  printf '  slots       : %s\n' \
+    "$(cryptsetup luksDump "$LUKS" 2>/dev/null |
+       awk '/^[[:space:]]*[0-9]+: luks2/{s=$1} /PBKDF:/{printf "%s%s ", s, $2}')"
+
+  toks="$(cryptsetup luksDump "$LUKS" 2>/dev/null | awk '
+      /^Tokens:/  { intok = 1; next }
+      /^Digests:/ { intok = 0 }
+      intok && /^[[:space:]]+[0-9]+:[[:space:]]*[^[:space:]]/ { t = $2; next }
+      intok && /^[[:space:]]+Keyslot:/ { gsub(/[^0-9]/, "", $2); print $2 ":" t }')"
+  printf '  tokens      : %s\n' "${toks:-none}"
+
+  # A token pointing at a keyslot that was deleted is the failure that looks
+  # like a wrong passphrase: the TPM has nothing to open, and the prompt that
+  # follows is the only way in.
+  for tk in $toks; do
+    sl="${tk%%:*}"
+    if cryptsetup luksDump "$LUKS" 2>/dev/null | grep -qE "^[[:space:]]*$sl: luks2"; then
+      printf '  token slot %s: EXISTS\n' "$sl"
+    else
+      printf '  token slot %s: MISSING -- the token points at a deleted keyslot\n' "$sl"
+    fi
+  done
+
+  printf '  TPM present : %s\n' "$([ -e /sys/class/tpm/tpm0 ] && echo yes || echo NO)"
+  printf '  secure boot : %s\n' "$(mokutil --sb-state 2>/dev/null | tr -d '\n')"
+
+  # EVERY installed kernel, not just the running one.
+  for img in /boot/initrd.img-*; do
+    [ -e "$img" ] || continue
+    kv="${img#/boot/initrd.img-}"
+    c=NO; lsinitramfs "$img" 2>/dev/null | grep -qi clevis && c=YES
+    y=NO; lsinitramfs "$img" 2>/dev/null | grep -q 'cryptsetup' && y=YES
+    printf '  initrd %-22s clevis=%s cryptsetup=%s\n' "$kv" "$c" "$y"
+  done
+
+  # Can the TPM actually release a key RIGHT NOW? Output is discarded: this
+  # prints yes or no, never the passphrase it recovers.
+  if command -v clevis >/dev/null 2>&1 && clevis luks pass --help >/dev/null 2>&1; then
+    for tk in $toks; do
+      sl="${tk%%:*}"
+      if clevis luks pass -d "$LUKS" -s "$sl" >/dev/null 2>&1; then
+        printf '  TPM unlock slot %s: WORKS NOW\n' "$sl"
+      else
+        printf '  TPM unlock slot %s: FAILS NOW\n' "$sl"
+      fi
+    done
+  else
+    echo "  TPM unlock  : cannot test (this clevis has no 'luks pass')"
+  fi
+
+  # Slots with no token behind them: the ones a person can type at a prompt.
+  pbk="$(cryptsetup luksDump "$LUKS" 2>/dev/null |
+    awk '/^[[:space:]]*[0-9]+: luks2/{s=$1; sub(":","",s)} /PBKDF:/{if ($2 ~ /pbkdf2/) print s}')"
+  tokslots="$(printf '%s\n' $toks | cut -d: -f1 | grep -v '^$' || true)"
+  if [ -n "$tokslots" ]; then
+    typeable="$(printf '%s\n' "$pbk" | grep -vxF "$tokslots" | grep -v '^$' | paste -sd, -)"
+  else
+    typeable="$(printf '%s\n' "$pbk" | grep -v '^$' | paste -sd, -)"
+  fi
+  printf '  typeable pbkdf2 slots : %s\n' "${typeable:-NONE -- nothing can be typed at the prompt}"
+  exit 0
+fi
+
 sb=$(mokutil --sb-state 2>/dev/null | tr -d '\n')
 init=NO; lsinitramfs "/boot/initrd.img-$KREL" 2>/dev/null | grep -qi clevis && init=YES
 bind=""; [ -n "$LUKS" ] && bind=$(clevis luks list -d "$LUKS" 2>/dev/null | grep tpm2)
