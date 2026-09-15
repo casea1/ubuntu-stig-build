@@ -104,6 +104,22 @@ grub_locked() {
   grep -sE '^[[:space:]]*(menuentry|submenu) ' "$GRUBCFG" | grep -qv -- '--unrestricted'
 }
 
+# Which LUKS keyslots use a KDF that FIPS mode will not process.
+#
+# Argon2 is not FIPS-approved, and LUKS2 defaults a NEW keyslot to argon2id. So
+# a passphrase rotated while the box sat on a generic kernel writes a slot that
+# cannot be used once fips=1 is on the command line. The box reaches the LUKS
+# prompt, refuses every correct passphrase, and there is no shell to debug from.
+# That is dev-15.
+luks_device() { blkid -t TYPE=crypto_LUKS -o device 2>/dev/null | head -1; }
+luks_kdfs() {
+  local dev; dev="$(luks_device)"
+  [ -n "$dev" ] && command -v cryptsetup >/dev/null 2>&1 || return 0
+  cryptsetup luksDump "$dev" 2>/dev/null |
+    awk '/^[[:space:]]*[0-9]+: luks2/{s=$1} /PBKDF:/{printf "%s%s ", s, $2}'
+}
+luks_has_argon() { luks_kdfs | grep -qi argon; }
+
 # The GRUB submenu path for a kernel, read from grub.cfg rather than assembled
 # from a template: the wording differs between releases, and a name that does
 # not match is silently ignored by grub-reboot.
@@ -242,20 +258,31 @@ cmd_status() {
   #    restricts itself to PBKDF2. A keyslot written while the box was on a
   #    generic kernel -- a passphrase rotation, say -- can be one the FIPS
   #    kernel will not process, and the symptom is a failed unlock at boot.
-  local dev kdfs
-  dev="$(blkid -t TYPE=crypto_LUKS -o device 2>/dev/null | head -1)"
-  if [ -n "$dev" ] && command -v cryptsetup >/dev/null 2>&1; then
-    kdfs="$(cryptsetup luksDump "$dev" 2>/dev/null |
-            awk '/^[[:space:]]*[0-9]+: luks2/{s=$1} /PBKDF:/{printf "%s%s ", s, $2}')"
+  local dev kdfs entries
+  dev="$(luks_device)"
+  kdfs="$(luks_kdfs)"
+  if [ -n "$dev" ]; then
     printf '  %-14s %s\n' "LUKS $dev" "${kdfs:-unreadable}"
     if printf '%s' "$kdfs" | grep -qi argon; then
-      warn "a keyslot uses argon2, which is not FIPS-approved"
-      note "it may not unlock under the FIPS kernel. Rewrite that slot with"
-      note "pbkdf2 BEFORE rebooting -- 'sudo it-luks-passwd' now does this --"
-      note "or keep a slot that is already pbkdf2 and know which passphrase it is."
+      bad "a keyslot uses argon2, which FIPS mode will not process"
+      note "this box will reach the LUKS prompt and refuse every correct"
+      note "passphrase once fips=1 is on the command line. That is dev-15."
+      note "Rewrite the slot FIRST:  sudo it-luks-passwd   (forces pbkdf2)"
+      note "'it-fips boot' refuses to arm anything while this is true."
+      rc=1
     elif [ -n "$kdfs" ]; then
       ok "every keyslot uses a FIPS-approved KDF"
     fi
+  fi
+
+  # fips=1 comes from GRUB_CMDLINE_LINUX_DEFAULT, which update-grub stamps onto
+  # EVERY normal entry. Canonical's own fips.cfg works the same way. So the
+  # generic entry is NOT a clean fallback: whatever fips=1 breaks, it breaks
+  # there too, and on dev-15 that was the disk unlock.
+  entries="$(grep -cE '^[[:space:]]*linux .*fips=1' "$GRUBCFG" 2>/dev/null || true)"
+  if [ "${entries:-0}" -gt 0 ]; then
+    note "fips=1 is on ${entries} menu entries, generic kernels included -- so"
+    note "booting 'the other one' is not a way round anything fips=1 causes."
   fi
 
   head2 "Boot selection"
@@ -369,6 +396,21 @@ cmd_boot() {
   [ -n "$kver" ] || die "no FIPS kernel installed."
   grep -q 'fips=1' "$GRUBCFG" 2>/dev/null \
     || die "grub.cfg has no fips=1 yet -- run 'sudo it-fips fix' first."
+
+  # HARD STOP. Arming a boot the disk cannot unlock is the exact site visit this
+  # script exists to avoid, and the generic entry does not save you: fips=1 is on
+  # that one too.
+  if [ "${FIPS_ALLOW_ARGON:-0}" != 1 ] && luks_has_argon; then
+    die "REFUSING to arm a FIPS boot: a LUKS keyslot uses argon2.
+  $(luks_device):  $(luks_kdfs)
+Argon2 is not FIPS-approved, so this box will reach the passphrase prompt and
+refuse every correct passphrase. Rewrite the slot first:
+
+    sudo it-luks-passwd        # forces pbkdf2
+
+then run 'sudo it-fips' again. Override with FIPS_ALLOW_ARGON=1 only if you are
+sitting in front of the machine."
+  fi
 
   path="$(menu_path_for "$kver")"
   [ -n "$path" ] || die "could not find a GRUB menu entry for $kver.
