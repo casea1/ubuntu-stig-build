@@ -23,11 +23,15 @@
 # argon2 (which FIPS mode will not process, so the disk never unlocks).
 #
 # WHY IT IS STAGED. A kernel that does not come up is, on a headless box, a
-# physical visit. `boot` arms one boot only -- GRUB clears it as it starts, so a
-# failure brings the box back on the old kernel by itself (which is also why it
-# sets GRUB_RECORDFAIL_TIMEOUT first: without that, a failed boot waits at the
-# menu forever). Nothing becomes permanent until `confirm` has seen the box
-# actually running FIPS.
+# physical visit. `boot` arms one boot, and nothing becomes permanent until
+# `confirm` has seen the box actually running FIPS.
+#
+# READ THIS BEFORE TRUSTING THE ONE-SHOT. On a box with SECURE BOOT ENABLED it
+# is not a one-shot at all: GRUB clears next_entry by writing grubenv, lockdown
+# refuses the write ("error: prohibited by secure boot policy", before the
+# menu), and the entry stays selected on every boot. A kernel that fails is
+# then retried forever instead of falling back. `boot` says so when it arms,
+# `status` fails the box while one is stuck, and `confirm` clears it.
 #
 # DO NOT ADD boot=UUID=... . It is a dracut/RHEL parameter and it is FATAL here:
 # see the note above find_boot_param(). This script removes it.
@@ -155,6 +159,29 @@ grub_locked() { grub_superusers && [ -n "$(grub_gated_entries)" ]; }
 # which DOES carry $CLASS and so is --unrestricted. The password still gates `e`
 # and the GRUB command line, which is what the STIG actually requires.
 grub_saved_entry() { grub-editenv list 2>/dev/null | sed -n 's/^saved_entry=//p'; }
+grub_next_entry()  { grub-editenv list 2>/dev/null | sed -n 's/^next_entry=//p'; }
+secure_boot_on()   { mokutil --sb-state 2>/dev/null | grep -qi enabled; }
+
+# THE ONE-SHOT DOES NOT SELF-CLEAR UNDER SECURE BOOT, WHICH BREAKS THE WHOLE
+# PREMISE OF `boot`.
+#
+# With GRUB_DEFAULT=saved, 00_header runs this before the menu is drawn:
+#
+#     if [ "${next_entry}" ] ; then
+#        set default="${next_entry}"
+#        set next_entry=
+#        save_env next_entry          <-- writes to grubenv
+#
+# Under Secure Boot GRUB is locked down and that write is refused:
+#
+#     error: prohibited by secure boot policy
+#
+# printed exactly there -- before the menu, on every boot. So next_entry is
+# never cleared, a one-shot becomes permanent, and a kernel that does not come
+# up is retried forever instead of falling back. grub-reboot was chosen for this
+# fleet precisely because a failure was supposed to self-recover; with Secure
+# Boot on it does the opposite.
+grub_stale_oneshot() { [ -n "$(grub_next_entry)" ]; }
 grub_pin_is_nested() {
   grub_superusers || return 1
   case "$(grub_saved_entry)" in *">"*) return 0 ;; *) return 1 ;; esac
@@ -491,6 +518,19 @@ cmd_status() {
     rc=1
   else
     ok "every bootable menu entry is --unrestricted"
+    if grub_stale_oneshot; then
+      bad "a one-shot boot is STILL ARMED and cannot clear itself:"
+      note "  next_entry=$(grub_next_entry)"
+      if secure_boot_on; then
+        note "Secure Boot locks GRUB down, so its own 'save_env next_entry' is"
+        note "refused -- that IS the 'error: prohibited by secure boot policy'"
+        note "printed before the menu. The one-shot is therefore permanent: a"
+        note "kernel that fails is retried forever instead of falling back."
+      fi
+      note "Clear it with:  sudo grub-editenv - unset next_entry"
+      note "or let 'sudo it-fips confirm' clear it while pinning properly."
+      rc=1
+    fi
     if grub_pin_is_nested; then
       bad "but the pinned default is INSIDE the gated submenu:"
       note "  $(grub_saved_entry)"
@@ -868,9 +908,21 @@ Look for it yourself:  awk -F\\' '/menuentry |submenu /{print \$2}' $GRUBCFG"
   grub-reboot "$path" || die "grub-reboot failed"
   ok "armed"
   say ""
-  note "This applies to the NEXT BOOT ONLY. GRUB clears it as it starts, so if"
-  note "the FIPS kernel panics the box comes back on the current kernel by"
-  note "itself -- power-cycle it and you are where you started."
+  if secure_boot_on; then
+    warn "SECURE BOOT IS ON, SO THIS IS NOT ACTUALLY A ONE-SHOT."
+    note "GRUB clears next_entry by writing grubenv, and lockdown refuses that"
+    note "write -- you get 'error: prohibited by secure boot policy' before the"
+    note "menu. The entry stays selected on EVERY boot, and a kernel that fails"
+    note "is retried rather than falling back to the old one."
+    note ""
+    note "Do not treat this as a safe experiment on a box you cannot walk up to."
+    note "After the reboot, 'sudo it-fips confirm' clears next_entry and pins the"
+    note "kernel properly. If it does not come up, you need the console."
+  else
+    note "This applies to the NEXT BOOT ONLY. GRUB clears it as it starts, so if"
+    note "the FIPS kernel panics the box comes back on the current kernel by"
+    note "itself -- power-cycle it and you are where you started."
+  fi
   say ""
   say "  ${B}sudo reboot${R}   then, once it is back:   ${B}sudo it-fips confirm${R}"
   say ""
@@ -895,6 +947,14 @@ Nothing has been made permanent."
   [ -n "$path" ] || die "running FIPS but cannot find its GRUB entry to make default."
   grub-set-default "$path" || die "grub-set-default failed"
   ok "default boot is now: $path"
+
+  # Always, not only under Secure Boot: a next_entry that outlived its boot
+  # overrides the default just set, and on a locked-down box it cannot clear
+  # itself. This is the only place that reliably removes it.
+  if grub_stale_oneshot; then
+    grub-editenv - unset next_entry 2>/dev/null \
+      && ok "cleared the armed one-shot -- the pin above now decides every boot"
+  fi
   grub-editenv list 2>/dev/null | sed 's/^/  /'
   say ""
   note "An SMB mount using sec=ntlmssp will stop working now: NTLM needs"
