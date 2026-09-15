@@ -29,12 +29,65 @@ esac
 
 command -v cryptsetup >/dev/null 2>&1 || die "cryptsetup is not installed."
 
-DEV="${1:-$(blkid -t TYPE=crypto_LUKS -o device 2>/dev/null | head -1)}"
+# --- shared: which encrypted disk does this box actually boot from? ---------
+#
+# `blkid -t TYPE=crypto_LUKS -o device | head -1` is the idiom and it is WRONG
+# on this fleet. These workstations have two NVMe drives, the OS is not always
+# the first one blkid lists (on dev-15 it is nvme1n1p3, with a spare at
+# nvme0n1p3), and a passphrase or a keyslot edit aimed at the wrong disk looks
+# like it worked while changing nothing that boots. Prefer, in order: the disk
+# the root filesystem is stacked on, then whatever /etc/crypttab names, then --
+# only if there is exactly one -- the single LUKS device on the box.
+luks_all_devices() { blkid -t TYPE=crypto_LUKS -o device 2>/dev/null; }
+
+luks_root_device() {
+  local rootsrc d
+  rootsrc="$(findmnt -no SOURCE / 2>/dev/null)"
+  [ -n "$rootsrc" ] || return 1
+  rootsrc="$(basename "$(readlink -f "$rootsrc" 2>/dev/null)")"
+  [ -n "$rootsrc" ] || return 1
+  for d in $(luks_all_devices); do
+    lsblk -no KNAME "$d" 2>/dev/null | grep -qx "$rootsrc" && { printf '%s' "$d"; return 0; }
+  done
+  return 1
+}
+
+luks_crypttab_device() {
+  local name src rest d
+  [ -r /etc/crypttab ] || return 1
+  while read -r name src rest; do
+    case "$name" in ''|\#*) continue ;; esac
+    case "$src" in
+      UUID=*) d="$(blkid -U "${src#UUID=}" 2>/dev/null)" ;;
+      /dev/*) d="$src" ;;
+      *)      d="" ;;
+    esac
+    [ -n "$d" ] && { printf '%s' "$d"; return 0; }
+  done < /etc/crypttab
+  return 1
+}
+
+# $1 = a device the caller was given, or empty.
+luks_pick_device() {
+  local given="${1:-}" d n
+  if [ -n "$given" ]; then printf '%s' "$given"; return 0; fi
+  d="$(luks_root_device)"     && { printf '%s' "$d"; return 0; }
+  d="$(luks_crypttab_device)" && { printf '%s' "$d"; return 0; }
+  n="$(luks_all_devices | wc -l)"
+  [ "$n" -eq 1 ] && { luks_all_devices | tr -d '\n'; return 0; }
+  return 1
+}
+
+DEV="$(luks_pick_device "${1:-}")" || die "This box has more than one encrypted disk and none of them
+holds the root filesystem, so there is nothing safe to guess. Name it:
+  sudo it-luks-passwd /dev/nvmeXn1pY
+$(for d in $(luks_all_devices); do printf '  %s\n' "$d"; done)"
 [ -n "$DEV" ] || die "No LUKS device found. Pass it explicitly: it-luks-passwd /dev/nvmeXn1pY"
 cryptsetup isLuks "$DEV" 2>/dev/null || die "$DEV is not a LUKS device."
 
 printf '\n%sChange the disk passphrase%s\n' "$B" "$R"
-printf '  device    : %s\n' "$DEV"
+printf '  device    : %s%s\n' "$DEV" \
+  "$([ "$DEV" = "$(luks_root_device 2>/dev/null)" ] && printf '   <- holds /, the disk this box boots')"
 
 # Show the slots, so someone who is about to change the only one can see that.
 slots="$(cryptsetup luksDump "$DEV" 2>/dev/null | awk '/^[[:space:]]*[0-9]+: luks2/{n++} END{print n+0}')"
