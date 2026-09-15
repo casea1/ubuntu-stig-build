@@ -6,12 +6,21 @@
 # headless box ends up unbootable and needing a physical visit.
 #
 #   it-fips                 status: is it FIPS now, and will it still be after a reboot?
-#   it-fips fix             repair the config. Changes NO boot order, reboots nothing.
+#   it-fips auto            DO ALL OF IT: repair everything repairable, then arm
+#                           one FIPS boot -- or say exactly what is still wrong.
+#                           Reboot, then `it-fips confirm`. Start here.
+#   it-fips fix             the config repairs only. Arms nothing, reboots nothing.
 #   it-fips boot            arm a ONE-SHOT boot into the FIPS kernel
 #   it-fips confirm         after that reboot: verify, then make it permanent
 #   it-fips undo            put the GRUB config back the way it was
 #
-# WHY IT IS FOUR STEPS. A kernel that does not come up is, on a headless box, a
+# WHAT `auto` REPAIRS: a boot= parameter (panics every kernel), an emptied
+# fips.cfg, FIPS packages marked auto (one autoremove from removal), a missing
+# GRUB_RECORDFAIL_TIMEOUT (a failed boot waits at the menu forever), GRUB menu
+# entries that ask for the GRUB password before booting, and LUKS keyslots on
+# argon2 (which FIPS mode will not process, so the disk never unlocks).
+#
+# WHY IT IS STAGED. A kernel that does not come up is, on a headless box, a
 # physical visit. `boot` arms one boot only -- GRUB clears it as it starts, so a
 # failure brings the box back on the old kernel by itself (which is also why it
 # sets GRUB_RECORDFAIL_TIMEOUT first: without that, a failed boot waits at the
@@ -134,6 +143,168 @@ menu_path_for() {   # $1 = kernel version
         exit
       }
     }' "$GRUBCFG" 2>/dev/null
+}
+
+# Which keyslots specifically, so a repair can name them.
+luks_argon_slots() {
+  local dev; dev="$(luks_device)"
+  [ -n "$dev" ] && command -v cryptsetup >/dev/null 2>&1 || return 0
+  cryptsetup luksDump "$dev" 2>/dev/null |
+    awk '/^[[:space:]]*[0-9]+: luks2/{s=$1; sub(":","",s)} /PBKDF:/{if ($2 ~ /argon/) print s}'
+}
+
+NEEDGRUB=0
+
+# --- repair primitives. Each one is idempotent and says what it did. --------
+
+fix_boot_param_all() {
+  local f n=0
+  while read -r f; do
+    [ -f "$f" ] || continue
+    if strip_boot_param "$f"; then ok "removed a boot= parameter from $f"; n=1; fi
+  done <<< "$(grub_cfg_files)"
+  [ "$n" = 1 ] && NEEDGRUB=1 || ok "no boot= parameter to remove"
+}
+
+fix_fipscfg() {
+  local line="GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT fips=1\""
+  if [ -s "$FIPSCFG" ] && grep -qxF "$line" "$FIPSCFG" 2>/dev/null; then
+    ok "$FIPSCFG already correct"
+    return 0
+  fi
+  [ -e "$FIPSCFG" ] && cp -a "$FIPSCFG" "$FIPSCFG.before-it-fips.$(date +%s)"
+  install -d -m 0755 "$(dirname "$FIPSCFG")"
+  { printf '# Managed by it-fips -- recreated after apt autoremove took it away.\n'
+    printf '%s\n' "$line"; } > "$FIPSCFG"
+  chmod 0644 "$FIPSCFG"
+  ok "wrote $FIPSCFG"
+  NEEDGRUB=1
+}
+
+fix_aptmark() {
+  local autos
+  autos="$(apt-mark showauto 2>/dev/null | grep fips || true)"
+  if [ -n "$autos" ]; then
+    # shellcheck disable=SC2086
+    apt-mark manual $autos >/dev/null 2>&1 \
+      && ok "marked $(printf '%s\n' "$autos" | wc -l) FIPS package(s) manual -- autoremove can no longer take them"
+  else
+    ok "FIPS packages already manual"
+  fi
+}
+
+fix_recordfail() {
+  if grep -qE '^GRUB_RECORDFAIL_TIMEOUT=' /etc/default/grub 2>/dev/null; then
+    ok "GRUB_RECORDFAIL_TIMEOUT already set ($(sed -nE 's/^GRUB_RECORDFAIL_TIMEOUT=//p' /etc/default/grub))"
+    return 0
+  fi
+  cp -a /etc/default/grub "/etc/default/grub.before-it-fips.$(date +%s)"
+  printf 'GRUB_RECORDFAIL_TIMEOUT=%s\n' "${FIPS_RECORDFAIL_TIMEOUT:-10}" >> /etc/default/grub
+  ok "set GRUB_RECORDFAIL_TIMEOUT=${FIPS_RECORDFAIL_TIMEOUT:-10} -- a failed boot no longer waits forever"
+  NEEDGRUB=1
+}
+
+fix_grub_default_saved() {
+  grep -qE '^GRUB_DEFAULT=saved' /etc/default/grub 2>/dev/null && return 0
+  cp -a /etc/default/grub "/etc/default/grub.before-it-fips.$(date +%s)"
+  sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT=saved/' /etc/default/grub
+  ok "set GRUB_DEFAULT=saved (grub-reboot needs somewhere to write next_entry)"
+  NEEDGRUB=1
+}
+
+# Every generator, not just 10_linux: $CLASS does not reach the ones that write
+# `menuentry` literally (UEFI firmware settings, memtest, os-prober), and one
+# gated entry is still a password prompt. 40_custom/41_custom are the operator's.
+fix_grub_unrestricted() {
+  local g ts
+  grub_locked || { ok "GRUB does not require its password to boot"; return 0; }
+  ts="$(date +%s)"
+  cp -a /etc/grub.d/10_linux "/etc/grub.d/10_linux.before-it-fips.$ts" 2>/dev/null
+  sed -i 's/^CLASS="\(--unrestricted \)\?/CLASS="--unrestricted /' /etc/grub.d/10_linux 2>/dev/null
+  for g in /etc/grub.d/*; do
+    case "${g##*/}" in
+      00_header|01_users|40_custom|41_custom|README) continue ;;
+      *.pre-grubpw|*.bak|*.dpkg-*|*~|*.before-it-*) continue ;;
+    esac
+    [ -f "$g" ] && [ -r "$g" ] || continue
+    grep -qE '(^[[:space:]]*|["'"'"'])menuentry ' "$g" 2>/dev/null || continue
+    cp -a "$g" "$g.before-it-fips.$ts"
+    sed -i -E 's/(^[[:space:]]*|["'"'"'])menuentry (--unrestricted )?/\1menuentry --unrestricted /g' "$g"
+  done
+  ok "patched /etc/grub.d so menu entries do not require the GRUB password"
+  NEEDGRUB=1
+}
+
+# Rewrite argon2 keyslots as pbkdf2, KEEPING THE SAME PASSPHRASE.
+# luksConvertKey re-encrypts the slot with a different KDF; it does not change
+# the credential, so nothing has to be re-recorded or re-issued.
+fix_luks_kdf() {
+  local dev slots s bak clev done_any=0
+  dev="$(luks_device)"
+  [ -n "$dev" ] || { ok "no LUKS device on this box"; return 0; }
+  slots="$(luks_argon_slots)"
+  [ -n "$slots" ] || { ok "every LUKS keyslot already uses a FIPS-approved KDF"; return 0; }
+
+  if ! cryptsetup --help 2>&1 | grep -q luksConvertKey; then
+    bad "this cryptsetup has no luksConvertKey, so the slot cannot be converted"
+    note "change the passphrase instead:  sudo it-luks-passwd   (forces pbkdf2)"
+    return 1
+  fi
+
+  # HEADER BACKUP FIRST, ALWAYS. Keyslot edits are the one thing here that can
+  # lose the disk, and a backup header restores every passphrase as it was.
+  install -d -m 0700 /etc/stig-build
+  bak="/etc/stig-build/luks-header-$(basename "$dev")-$(date +%Y%m%d%H%M%S).img"
+  cryptsetup luksHeaderBackup "$dev" --header-backup-file "$bak" \
+    || { bad "header backup failed -- refusing to touch any keyslot"; return 1; }
+  chmod 0600 "$bak"
+  ok "LUKS header backed up: $bak"
+  note "that file unlocks this disk with any of its passphrases. It lives on the"
+  note "encrypted volume; do not copy it off the box. Restore with:"
+  note "  cryptsetup luksHeaderRestore $dev --header-backup-file $bak"
+
+  clev="$(clevis luks list -d "$dev" 2>/dev/null | awk -F: '{gsub(/ /,"",$1); print $1}')"
+
+  for s in $slots; do
+    if [ -n "$clev" ] && printf '%s\n' "$clev" | grep -qx "$s"; then
+      warn "slot $s is the TPM (clevis) slot and is left alone"
+      note "re-binding it needs cryptsetup running UNDER the FIPS kernel, which"
+      note "this box is not yet. Order: finish here, boot FIPS and type the"
+      note "passphrase at the console once, then run 'sudo it-luks-rebind'."
+      note "Until that is done this box asks for the passphrase at every boot."
+      continue
+    fi
+    say ""
+    say "  ${B}Keyslot $s uses argon2. Enter the passphrase for THAT slot.${R}"
+    say "  ${DIM}The passphrase does not change -- only how the slot is derived.${R}"
+    if cryptsetup luksConvertKey --pbkdf pbkdf2 --key-slot "$s" "$dev"; then
+      ok "slot $s is now pbkdf2, same passphrase"
+      done_any=1
+    else
+      bad "slot $s NOT converted (wrong passphrase for that slot, or refused)"
+      note "that slot is unchanged. Header backup is at $bak"
+    fi
+  done
+  [ "$done_any" = 1 ] && say ""
+  return 0
+}
+
+# What still stands between this box and a FIPS boot. Deliberately does NOT
+# include "is not running FIPS yet" -- that is the point of the exercise.
+boot_blockers() {
+  local n=0 dev
+  [ -n "$(newest_fips)" ] || { say "  - no FIPS kernel installed"; n=$((n+1)); }
+  grep -q 'fips=1' "$GRUBCFG" 2>/dev/null || { say "  - grub.cfg has no fips=1"; n=$((n+1)); }
+  grubcfg_has_boot_param && { say "  - grub.cfg still hands the kernel a boot= parameter"; n=$((n+1)); }
+  grub_locked && { say "  - GRUB asks for its password before booting any entry"; n=$((n+1)); }
+  grep -qE '^GRUB_RECORDFAIL_TIMEOUT=' /etc/default/grub 2>/dev/null \
+    || { say "  - GRUB_RECORDFAIL_TIMEOUT is unset"; n=$((n+1)); }
+  dev="$(luks_device)"
+  if [ -n "$dev" ] && [ -n "$(luks_argon_slots)" ]; then
+    say "  - LUKS keyslot(s) $(luks_argon_slots | tr '\n' ' ')still use argon2"
+    n=$((n+1))
+  fi
+  return "$n"
 }
 
 cmd_status() {
@@ -295,99 +466,81 @@ cmd_status() {
 }
 
 cmd_fix() {
-  local kver line f stripped
+  local kver
   kver="$(newest_fips)"
   [ -n "$kver" ] || die "no FIPS kernel installed -- this cannot be repaired offline.
 The kernel comes from Ubuntu Pro; the box needs Canonical or the packages carried in."
 
   head2 "Repairing the FIPS boot configuration"
+  fix_boot_param_all          # first: a boot= panics EVERY kernel, not just FIPS
+  fix_fipscfg
+  fix_aptmark
+  fix_recordfail
+  fix_grub_unrestricted       # after the others; update-grub is what bakes it in
 
-  # Take boot= out wherever it is, before anything is written. A box carrying
-  # one panics on EVERY kernel, FIPS or not, so this is the first repair.
-  stripped=0
-  while read -r f; do
-    [ -f "$f" ] || continue
-    if strip_boot_param "$f"; then ok "removed a boot= parameter from $f"; stripped=1; fi
-  done <<< "$(grub_cfg_files)"
-  [ "$stripped" = 0 ] && ok "no boot= parameter to remove"
-
-  line="GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT fips=1\""
-
-  [ -e "$FIPSCFG" ] && cp -a "$FIPSCFG" "$FIPSCFG.before-it-fips.$(date +%s)"
-  install -d -m 0755 "$(dirname "$FIPSCFG")"
-  { printf '# Managed by it-fips -- recreated after apt autoremove took it away.\n'
-    printf '%s\n' "$line"; } > "$FIPSCFG"
-  chmod 0644 "$FIPSCFG"
-  ok "wrote $FIPSCFG"
-
-  # Stop it happening again: `manual`, not `hold` -- hold would also block
-  # security updates for the kernel, which is worse than the problem.
-  local autos
-  autos="$(apt-mark showauto 2>/dev/null | grep fips || true)"
-  if [ -n "$autos" ]; then
-    # shellcheck disable=SC2086
-    apt-mark manual $autos >/dev/null 2>&1 \
-      && ok "marked $(printf '%s\n' "$autos" | wc -l) FIPS package(s) manual"
+  if [ "$NEEDGRUB" = 1 ]; then
+    say ""
+    update-grub 2>&1 | sed 's/^/  /'
   else
-    ok "FIPS packages already manual"
+    say ""
+    ok "grub.cfg already current -- nothing to regenerate"
   fi
 
-  say ""
-  update-grub 2>&1 | sed 's/^/  /'
   grep -q 'fips=1' "$GRUBCFG" 2>/dev/null \
     || die "update-grub ran but grub.cfg still has no fips=1 -- stopping before anything boots."
-  ok "grub.cfg now carries fips=1"
+  ok "grub.cfg carries fips=1"
   ! grubcfg_has_boot_param \
     || die "grub.cfg still hands the kernel a boot= parameter, which panics it.
-Find it by hand -- check /etc/default/grub and /etc/default/grub.d/*.cfg for
-GRUB_CMDLINE_LINUX lines -- and do NOT reboot this box until it is gone."
+Check /etc/default/grub and /etc/default/grub.d/*.cfg for GRUB_CMDLINE_LINUX
+lines, and do NOT reboot this box until it is gone."
   ok "grub.cfg carries no boot= parameter"
-
-  # update-grub above just rewrote every menu entry. If the --unrestricted patch
-  # has been reverted, that rewrite is what locks the box at a password prompt.
-  if grub_locked; then
-    say ""
-    bad "STOP -- grub.cfg now requires the GRUB password to boot ANY entry."
-    note "That makes this box unbootable without someone at the console. The"
-    note "--unrestricted patch in /etc/grub.d/10_linux has been reverted, most"
-    note "likely by a grub-common update. Repair BEFORE rebooting:"
-    note "  sudo sed -i 's/^CLASS=\"/CLASS=\"--unrestricted /' /etc/grub.d/10_linux"
-    note "  sudo update-grub"
-    note "then re-run: sudo it-fips"
-  fi
+  ! grub_locked \
+    || die "grub.cfg still requires the GRUB password to boot an entry, which
+makes this box unbootable without someone at the console. Find what emits it:
+  grep -rn menuentry /etc/grub.d/"
+  ok "no entry requires the GRUB password to boot"
 
   say ""
-  note "This does NOT change which entry boots. It does add fips=1 to the"
-  note "command line of EVERY normal entry, generic ones included -- that is"
-  note "how Canonical's own fips.cfg works, and it is why a reboot after this"
-  note "is not a no-op even though the menu looks identical."
+  note "This does NOT change which entry boots. It DOES add fips=1 to the command"
+  note "line of every normal entry, generic ones included -- that is how"
+  note "Canonical's own fips.cfg works, so the generic entry is not a fallback"
+  note "from anything fips=1 causes."
   note ""
-  note "Next:  sudo it-fips boot        (and 'it-fips undo' if this went wrong)"
+  note "Next:  sudo it-fips auto       (or: boot, then confirm after the reboot)"
+  note "       sudo it-fips undo       if this went wrong"
   say ""
 }
 
-# Put back what fix/boot saved, newest backup per file, and rebuild grub.cfg.
-# The lever for "I ran it, I rebooted, it did not come up, get me back".
-cmd_undo() {
-  local f bak n=0
-  head2 "Restoring the GRUB config saved before it-fips"
-  while read -r f; do
-    bak="$(ls -1t "$f".before-it-fips.* 2>/dev/null | head -1)"
-    [ -n "$bak" ] || continue
-    cp -a "$bak" "$f"
-    ok "$f  <-  $(basename "$bak")"
-    n=$((n+1))
-  done <<< "$(grub_cfg_files)"
+# The whole repair, in the order the faults have to be cleared, ending with the
+# box armed for one FIPS boot -- or told exactly what is still in the way.
+cmd_auto() {
+  local n
+  head2 "it-fips auto"
+  note "config repairs, then the LUKS keyslots, then arm ONE boot into FIPS."
+  note "Nothing reboots. Nothing becomes permanent until 'it-fips confirm'."
 
-  [ "$n" -gt 0 ] || die "no it-fips backups found -- nothing to undo.
-The backups are <file>.before-it-fips.<epoch> beside each GRUB config."
+  cmd_fix
 
+  head2 "LUKS keyslots"
+  fix_luks_kdf
+
+  head2 "Anything still in the way?"
+  # Capture the count before anything else runs: after `if ... fi` with no else,
+  # $? is the status of the `if` itself, not of the command it tested.
+  boot_blockers; n=$?
+  if [ "$n" -eq 0 ]; then
+    ok "nothing -- arming the boot"
+    cmd_boot
+    return 0
+  fi
   say ""
-  update-grub 2>&1 | sed 's/^/  /'
+  bad "$n item(s) above must be cleared first. Nothing has been armed."
+  note "A TPM/clevis slot on argon2 is expected at this point and is NOT a"
+  note "blocker you can clear from here: boot FIPS with the passphrase once,"
+  note "then run 'sudo it-luks-rebind' under FIPS. Arm it anyway with:"
+  note "  sudo FIPS_ALLOW_ARGON=1 it-fips boot"
   say ""
-  note "Config restored and grub.cfg rebuilt. If a one-shot boot is still armed,"
-  note "clear it with:  sudo grub-editenv - unset next_entry"
-  say ""
+  return 1
 }
 
 cmd_boot() {
@@ -495,6 +648,7 @@ Nothing has been made permanent."
 
 case "${1:-status}" in
   status|"") cmd_status ;;
+  auto|all)  cmd_auto ;;
   fix)       cmd_fix ;;
   boot)      cmd_boot ;;
   confirm)   cmd_confirm ;;

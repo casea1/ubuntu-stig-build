@@ -2498,7 +2498,38 @@ going further.
 > `boot=UUID=...` word (leave `fips=1`), and press `Ctrl-X`. That boots once,
 > without saving. Then run `sudo it-fips fix` to take it out permanently.
 
-> **Prefer `it-fips` to the hand commands below.** `sudo it-fips` reports the
+> ## Just run `sudo it-fips auto`
+>
+> One command. It repairs everything repairable, in the order the faults have to
+> be cleared, then arms a single FIPS boot -- or stops and names what is still in
+> the way. Reboot, then `sudo it-fips confirm`.
+>
+> ```bash
+> sudo it-pull scripts     # make sure the box has the current script
+> sudo it-fips auto
+> sudo reboot
+> sudo it-fips confirm     # once it is back
+> ```
+>
+> What `auto` clears, in order:
+>
+> | fault | what it does |
+> |---|---|
+> | a `boot=` parameter | removes it from `/etc/default/grub` and `grub.d/*.cfg`. Panics **every** kernel, so this goes first |
+> | emptied `fips.cfg` | rewrites it with `fips=1` |
+> | FIPS packages marked `auto` | `apt-mark manual`, so the next `autoremove` cannot take them |
+> | `GRUB_RECORDFAIL_TIMEOUT` unset | sets it to 10. Without it a failed boot waits at the menu **forever** |
+> | GRUB password gating the boot | re-adds `--unrestricted` to every generator in `/etc/grub.d`, not just `10_linux` |
+> | LUKS keyslot on argon2 | backs up the header, then `luksConvertKey --pbkdf pbkdf2` per slot. **Same passphrase** -- only the derivation changes |
+>
+> The TPM/clevis keyslot is the one thing it deliberately will not touch:
+> re-binding needs cryptsetup running *under* the FIPS kernel, which the box is
+> not yet. Boot FIPS, type the passphrase at the console once, run `sudo
+> it-luks-rebind`, reboot. After that it unlocks itself again.
+>
+> `sudo it-fips undo` puts the GRUB config back if any of it goes wrong.
+
+> **The hand commands below are what `auto` does.** `sudo it-fips` reports the
 > state, `it-fips fix` repairs the config without changing what the box boots,
 > `it-fips boot` arms the one-shot, and `it-fips confirm` makes it permanent
 > only after it has seen the box actually running FIPS. The steps below are what
