@@ -25,7 +25,9 @@
 #                              unsupported and every dependency missing
 #   it-fpga fixup              post-install fixes on an INSTALLED tree: make it
 #                              readable by every user, drop Libero's bundled
-#                              libstdc++, repair what fp6_env_install left 0600
+#                              libstdc++, repair what fp6_env_install left 0600.
+#                              Skips a tree that is already correct -- `--force`
+#                              walks it anyway
 #   it-fpga install xilinx     run the Xilinx installer unattended from a staged
 #                              .bin + saved config, under systemd so it survives
 #                              a dropped session. Then fixes permissions itself.
@@ -613,13 +615,34 @@ cmd_license() {
 #
 # a+rX, not a+rx: capital X adds execute only to DIRECTORIES and to files that
 # already have it for someone, so data files do not come out executable.
-fix_perms() {   # $1 = tree, $2 = label
-  local d="$1" lbl="$2"
+fix_perms() {   # $1 = tree, $2 = label, $3 = probe file (optional)
+  local d="$1" lbl="$2" probe="${3:-}" wrong
   have_tree "$d" || return 0
   if ! getent group "$ACCESS_GROUP" >/dev/null 2>&1; then
     bad "no '$ACCESS_GROUP' group on this box -- run an ansible-pull first"; return 1
   fi
-  say "  granting $ACCESS_GROUP read+execute on $lbl ($(du -sh "$d" 2>/dev/null | cut -f1)) -- takes a moment"
+
+  # DO NOT RECURSE A 150 GB TREE TO CHANGE NOTHING.
+  #
+  # This used to chown -R and chmod -R unconditionally, which writes every inode
+  # under Vivado whether or not it needed it, every single time anyone ran
+  # fixup. The pull has enforced this with one stat for exactly this reason; the
+  # command people actually run did not. Probe first, and if the probe is right,
+  # confirm with one cheap find that stops at the first counter-example.
+  if [ "${FPGA_FIXUP_FORCE:-0}" != 1 ] && [ -n "$probe" ] && perms_ok "$probe"; then
+    # Bounded to 3 levels on purpose. An unbounded walk of Vivado is itself
+    # minutes of stat() on a tree that turns out to be fine, which is the
+    # complaint this is answering. A partially-broken install is broken at the
+    # top -- whole subtrees the installer created -- not in one leaf 8 deep.
+    wrong="$(find "$d" -maxdepth 3 \( ! -group "$ACCESS_GROUP" -o ! -perm -g+r \) \
+               -print -quit 2>/dev/null)"
+    if [ -z "$wrong" ]; then
+      ok "$lbl already correct -- skipped (it-fpga fixup --force to redo it anyway)"
+      return 0
+    fi
+    say "  ${DIM}$lbl mostly correct; first exception: $wrong${R}"
+  fi
+
   # g+rX, o-rwx: the group may USE the toolchain, nobody may modify it, and it
   # is not readable by every account on the box. Capital X adds execute only to
   # directories and to files that already have it, so data files do not come
@@ -627,8 +650,16 @@ fix_perms() {   # $1 = tree, $2 = label
   # chown, not just chgrp: an installer run unprivileged (which is how Libero
   # avoids needing an X cookie for root) leaves the tree owned by that person,
   # and "engineers cannot modify a shared toolchain" then is not true.
-  chown -R "root:$ACCESS_GROUP" "$d" 2>/dev/null
-  chmod -R g+rX,o-rwx "$d" 2>/dev/null
+  #
+  # Both passes are `find ... ! -<already correct>`, so a tree that is 99% right
+  # costs a metadata walk instead of rewriting every inode in it.
+  say "  repairing $lbl ($(du -sh "$d" 2>/dev/null | cut -f1)) -- only what is wrong"
+  find "$d" \( ! -user root -o ! -group "$ACCESS_GROUP" \) \
+       -exec chown -h "root:$ACCESS_GROUP" {} + 2>/dev/null
+  find "$d" -type d ! -perm -g+rx -exec chmod g+rx {} + 2>/dev/null
+  find "$d" -type f ! -perm -g+r  -exec chmod g+r  {} + 2>/dev/null
+  find "$d" \( -perm -o+r -o -perm -o+w -o -perm -o+x \) \
+       ! -type l -exec chmod o-rwx {} + 2>/dev/null
   ok "$lbl owned by root, usable by every member of $ACCESS_GROUP"
 }
 
@@ -727,12 +758,14 @@ fix_vendor_usb_conf() {
 
 cmd_fixup() {
   local n=0
+  case "${1:-}" in --force|-f) export FPGA_FIXUP_FORCE=1 ;; esac
   head2 "Post-install fixes"
+  [ "${FPGA_FIXUP_FORCE:-0}" = 1 ] && say "  ${DIM}--force: repairing the trees even if they look correct${R}"
 
   # First, because it is the one that makes the tools unusable for everyone
   # except the person who installed them.
-  fix_perms "$XROOT" "Xilinx"
-  fix_perms "$LIBDIR" "Libero"
+  fix_perms "$XROOT"  "Xilinx" "$XROOT/Vivado/$XVER/settings64.sh"
+  fix_perms "$LIBDIR" "Libero" "${LIBERO_BIN:-}"
   have_tree "$XROOT"  && check_parents "$XROOT"
   have_tree "$LIBDIR" && check_parents "$LIBDIR"
 
@@ -1536,7 +1569,7 @@ cmd_env() {
 case "${1:-status}" in
   ""|status) cmd_status ;;
   license|licence) shift; cmd_license "$@" ;;
-  fixup)     cmd_fixup ;;
+  fixup)     shift 2>/dev/null; cmd_fixup "$@" ;;
   desktop)   cmd_desktop ;;
   install)   shift; cmd_install "$@" ;;
   compat)    shift; cmd_compat "$@" ;;
