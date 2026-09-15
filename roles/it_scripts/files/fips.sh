@@ -10,6 +10,7 @@
 #                           one FIPS boot -- or say exactly what is still wrong.
 #                           Reboot, then `it-fips confirm`. Start here.
 #   it-fips fix             the config repairs only. Arms nothing, reboots nothing.
+#   it-fips luks            rewrite argon2 keyslots as pbkdf2, same passphrase
 #   it-fips boot            arm a ONE-SHOT boot into the FIPS kernel
 #   it-fips confirm         after that reboot: verify, then make it permanent
 #   it-fips undo            put the GRUB config back the way it was
@@ -158,7 +159,7 @@ luks_has_argon()  { luks_kdfs | grep -qi argon; }
 # slot 2 is pbkdf2 and that is the one that unlocks it. Argon2 slots are dead
 # weight under FIPS -- their passphrases stop working -- but they are not fatal.
 luks_has_usable() { luks_kdfs | grep -qi pbkdf2; }
-luks_pbkdf2_slots() { luks_kdfs | tr ' ' '\n' | grep -i pbkdf2 | sed 's/pbkdf2//'; }
+luks_pbkdf2_slots() { luks_kdfs | tr ' ' '\n' | grep -i pbkdf2 | sed 's/:.*//' | paste -sd, -; }
 
 # The GRUB submenu path for a kernel, read from grub.cfg rather than assembled
 # from a template: the wording differs between releases, and a name that does
@@ -480,11 +481,22 @@ cmd_status() {
     if ! printf '%s' "$kdfs" | grep -qi argon; then
       [ -n "$kdfs" ] && ok "every keyslot uses a FIPS-approved KDF"
     elif luks_has_usable; then
-      warn "argon2 keyslot(s) present -- their passphrases will NOT work in FIPS"
-      note "mode. The disk still unlocks, through slot(s) $(luks_pbkdf2_slots | tr -d '\n' | sed 's/./& /g')-- make sure you"
-      note "know which passphrase that is, or that it is the TPM slot:"
-      note "  sudo clevis luks list -d $dev"
-      note "Convert the rest with 'sudo it-fips auto' (keeps the same passphrase)."
+      local tpmslots
+      tpmslots="$(clevis luks list -d "$dev" 2>/dev/null | awk -F: '{gsub(/ /,"",$1); print $1}' | paste -sd, -)"
+      warn "argon2 keyslot(s) present -- those passphrases will NOT work in FIPS"
+      note "mode. The disk unlocks through slot(s) $(luks_pbkdf2_slots), which is"
+      note "why this box is fine today."
+      if [ -n "$tpmslots" ] && [ "$tpmslots" = "$(luks_pbkdf2_slots)" ]; then
+        note ""
+        note "BUT THE ONLY WORKING SLOT IS THE TPM ($tpmslots). If the TPM binding"
+        note "ever breaks -- a firmware update or a Secure Boot change moves PCR 7"
+        note "-- this box falls back to a passphrase, and NEITHER passphrase works"
+        note "under FIPS. That is a machine nobody can open, at the console."
+        note "Convert them now:  sudo it-fips luks   (keeps the same passphrase)"
+      else
+        note "Check whether that slot is the TPM one:  sudo clevis luks list -d $dev"
+        note "Convert the rest with:  sudo it-fips luks   (keeps the passphrase)"
+      fi
     else
       bad "EVERY keyslot uses argon2, which FIPS mode will not process"
       note "this box will reach the LUKS prompt and refuse every correct"
@@ -501,6 +513,7 @@ cmd_status() {
   # there too, and on dev-15 that was the disk unlock.
   entries="$(grep -cE '^[[:space:]]*linux[[:space:]].*fips=1' "$GRUBCFG" 2>/dev/null || true)"
   if [ "${entries:-0}" -gt 0 ]; then
+    say ""
     note "fips=1 is on ${entries} menu entries, generic kernels included -- so"
     note "booting 'the other one' is not a way round anything fips=1 causes."
   fi
@@ -560,8 +573,18 @@ makes this box unbootable without someone at the console. Find what emits it:
   say ""
 }
 
+cmd_luks() {
+  head2 "LUKS keyslots"
+  fix_luks_kdf
+  say ""
+  printf '  %-14s %s\n' "now" "$(luks_kdfs)"
+  say ""
+}
+
 # The whole repair, in the order the faults have to be cleared, ending with the
-# box armed for one FIPS boot -- or told exactly what is still in the way.
+# box armed for one FIPS boot -- or, on a box already running FIPS, with that
+# kernel pinned as the default instead. Arming a one-shot into the kernel the
+# box is already on tells you nothing.
 cmd_auto() {
   local n
   head2 "it-fips auto"
@@ -572,6 +595,18 @@ cmd_auto() {
 
   head2 "LUKS keyslots"
   fix_luks_kdf
+
+  # Already there? Then there is nothing to arm -- pin it instead, so a kernel
+  # upgrade reordering the menu cannot quietly drop the box back to generic.
+  case "$(uname -r)" in
+    *-fips)
+      if [ "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null)" = 1 ]; then
+        head2 "This box is already in FIPS mode"
+        note "nothing to arm. Making this kernel the default instead."
+        cmd_confirm
+        return 0
+      fi ;;
+  esac
 
   head2 "Anything still in the way?"
   # Capture the count before anything else runs: after `if ... fi` with no else,
@@ -699,6 +734,7 @@ case "${1:-status}" in
   status|"") cmd_status ;;
   auto|all)  cmd_auto ;;
   fix)       cmd_fix ;;
+  luks)      cmd_luks ;;
   boot)      cmd_boot ;;
   confirm)   cmd_confirm ;;
   undo)      cmd_undo ;;
