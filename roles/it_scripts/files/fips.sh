@@ -160,6 +160,14 @@ luks_has_argon()  { luks_kdfs | grep -qi argon; }
 # weight under FIPS -- their passphrases stop working -- but they are not fatal.
 luks_has_usable() { luks_kdfs | grep -qi pbkdf2; }
 luks_pbkdf2_slots() { luks_kdfs | tr ' ' '\n' | grep -i pbkdf2 | sed 's/:.*//' | paste -sd, -; }
+luks_tpm_slots()    { clevis luks list -d "$(luks_device)" 2>/dev/null | awk -F: '{gsub(/ /,"",$1); print $1}'; }
+# pbkdf2 slots that are NOT the TPM: the ones a person can actually type at a
+# console while the box is in FIPS mode. If this is empty, the TPM is the only
+# way in and a moved PCR 7 locks the machine.
+luks_usable_passphrase_slots() {
+  comm -23 <(luks_kdfs | tr ' ' '\n' | grep -i pbkdf2 | sed 's/:.*//' | sort -u) \
+           <(luks_tpm_slots | sort -u) 2>/dev/null | paste -sd, -
+}
 
 # The GRUB submenu path for a kernel, read from grub.cfg rather than assembled
 # from a template: the wording differs between releases, and a name that does
@@ -486,16 +494,19 @@ cmd_status() {
       warn "argon2 keyslot(s) present -- those passphrases will NOT work in FIPS"
       note "mode. The disk unlocks through slot(s) $(luks_pbkdf2_slots), which is"
       note "why this box is fine today."
-      if [ -n "$tpmslots" ] && [ "$tpmslots" = "$(luks_pbkdf2_slots)" ]; then
+      local typeable
+      typeable="$(luks_usable_passphrase_slots)"
+      if [ -z "$typeable" ]; then
         note ""
-        note "BUT THE ONLY WORKING SLOT IS THE TPM ($tpmslots). If the TPM binding"
-        note "ever breaks -- a firmware update or a Secure Boot change moves PCR 7"
-        note "-- this box falls back to a passphrase, and NEITHER passphrase works"
-        note "under FIPS. That is a machine nobody can open, at the console."
-        note "Convert them now:  sudo it-fips luks   (keeps the same passphrase)"
+        note "AND THE ONLY WORKING SLOT IS THE TPM (${tpmslots:-?}). If that binding"
+        note "breaks -- a firmware update or a Secure Boot change moves PCR 7 --"
+        note "this box falls back to a passphrase, and NO passphrase works under"
+        note "FIPS. That is a machine nobody can open, standing at the console."
+        note "Convert one now:  sudo it-fips luks   (keeps the same passphrase)"
       else
-        note "Check whether that slot is the TPM one:  sudo clevis luks list -d $dev"
-        note "Convert the rest with:  sudo it-fips luks   (keeps the passphrase)"
+        note "Slot(s) $typeable are typeable passphrases that DO work in FIPS mode,"
+        note "so the TPM is not a single point of failure here."
+        note "The argon2 slot(s) are inert: see 'sudo it-fips luks'."
       fi
     else
       bad "EVERY keyslot uses argon2, which FIPS mode will not process"
@@ -574,10 +585,36 @@ makes this box unbootable without someone at the console. Find what emits it:
 }
 
 cmd_luks() {
+  local left typeable dev
   head2 "LUKS keyslots"
   fix_luks_kdf
+  dev="$(luks_device)"
   say ""
   printf '  %-14s %s\n' "now" "$(luks_kdfs)"
+
+  left="$(luks_argon_slots | paste -sd, -)"
+  [ -n "$left" ] || { say ""; ok "every slot works in FIPS mode"; say ""; return 0; }
+
+  typeable="$(luks_usable_passphrase_slots)"
+  say ""
+  if [ -n "$typeable" ]; then
+    ok "slot(s) $typeable are typeable and work in FIPS mode -- the disk is openable"
+  else
+    bad "no typeable slot works in FIPS mode -- only the TPM can open this disk"
+  fi
+
+  warn "slot(s) $left still use argon2 and are inert while fips=1 is set"
+  note "A keyslot whose passphrase nobody here knows is not just dead weight: it"
+  note "can still decrypt this disk on a non-FIPS kernel, and it is an"
+  note "unaccounted-for credential in front of an assessor. It is most likely the"
+  note "TEMPORARY passphrase from imaging, which was meant to be retired at"
+  note "deployment."
+  note ""
+  note "Either recover it and re-run this, or remove the slot:"
+  note "  sudo cryptsetup luksKillSlot $dev <slot>"
+  note "That asks for a passphrase from a DIFFERENT slot, so it cannot lock you"
+  note "out, and the header backup above restores it if you change your mind."
+  note "Do not remove a slot while it is the only one you can type."
   say ""
 }
 
