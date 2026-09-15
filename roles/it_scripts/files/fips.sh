@@ -188,6 +188,82 @@ grub_pin_is_nested() {
   case "$(grub_saved_entry)" in *">"*) return 0 ;; *) return 1 ;; esac
 }
 
+# PUT OPENSSL'S FIPS PROVIDER IN THE INITRAMFS, OR THE DISK WILL NOT UNLOCK.
+#
+# cryptsetup uses OpenSSL as its crypto backend, and OpenSSL 3 providers are
+# dlopen()ed at runtime -- not linked -- so `copy_exec` does not pull them into
+# the initramfs. Ubuntu's own cryptsetup-initramfs hook special-cases exactly
+# this for ONE provider:
+#
+#     copy_libssl_legacy_library()   ->   copy_exec ossl-modules/legacy.so
+#
+# and does nothing for fips.so. On a FIPS kernel OpenSSL enters FIPS mode
+# because /proc/sys/crypto/fips_enabled is 1, finds no FIPS provider inside the
+# image, and cannot produce a digest -- so cryptsetup cannot verify the LUKS2
+# header checksum and `cryptsetup isLuks --type luks2` returns FALSE. The device
+# then reads as not-LUKS:
+#
+#     /dev/nvmeXn1p3 is not a valid LUKS device        (cryptsetup)
+#     /dev/nvmeXn1p3 is not a supported LUKS device!   (clevis-luks-common-functions)
+#     No used slots detected for device ...            (clevis-luks-list)
+#
+# Every passphrase is rejected because nothing ever reached a keyslot. The
+# keyslots are fine, and converting them to pbkdf2 changes nothing -- which is
+# an evening nobody should have to repeat.
+#
+# Invisible from the running system: on the generic kernel OpenSSL is not in
+# FIPS mode, needs no provider, and the same disk opens perfectly.
+OSSL_HOOK=/etc/initramfs-tools/hooks/fips-openssl
+
+host_has_fips_provider() { ls /usr/lib/*/ossl-modules/fips.so >/dev/null 2>&1; }
+initramfs_has_fips_provider() {   # $1 = kernel version
+  lsinitramfs "/boot/initrd.img-$1" 2>/dev/null | grep -q 'ossl-modules/fips.so'
+}
+
+fix_fips_openssl_hook() {
+  if ! host_has_fips_provider; then
+    ok "no OpenSSL FIPS provider installed on this box -- nothing to carry in"
+    note "if the disk will not unlock under FIPS, that is a different fault."
+    return 0
+  fi
+  if [ -x "$OSSL_HOOK" ] && grep -q 'ossl-modules/fips.so' "$OSSL_HOOK" 2>/dev/null; then
+    ok "initramfs hook for the OpenSSL FIPS provider already installed"
+    return 0
+  fi
+  install -d -m 0755 /etc/initramfs-tools/hooks
+  cat > "$OSSL_HOOK" <<'HOOK'
+#!/bin/sh
+# Managed by it-fips. Carries OpenSSL's FIPS provider into the initramfs.
+# Without it cryptsetup cannot verify a LUKS2 header under a FIPS kernel and the
+# device reads as "not a valid LUKS device" with every passphrase rejected.
+# Ubuntu's cryptsetup-initramfs hook does the same for ossl-modules/legacy.so
+# and stops there; providers are dlopen()ed, so nothing copies them implicitly.
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "${1:-}" in prereqs) prereqs; exit 0 ;; esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+for m in /usr/lib/*/ossl-modules/fips.so /usr/lib/ossl-modules/fips.so; do
+    [ -e "$m" ] && copy_exec "$m"
+done
+
+# The provider is selected by config, so the config travels with it.
+# fipsmodule.cnf carries the module self-test status; without it OpenSSL
+# refuses to activate the provider it has just loaded.
+for f in /etc/ssl/openssl.cnf /etc/ssl/fipsmodule.cnf; do
+    [ -e "$f" ] && copy_file config "$f" "$f"
+done
+
+exit 0
+HOOK
+  chmod 0755 "$OSSL_HOOK"
+  ok "wrote $OSSL_HOOK"
+  NEEDINITRAMFS=1
+}
+
+NEEDINITRAMFS=0
+
 # THE FIPS KERNEL'S INITRAMFS IS A SNAPSHOT, AND ON THESE BOXES IT IS OLD.
 #
 # initramfs-tools bakes conf/conf.d/cryptroot -- where the encrypted root lives
@@ -216,15 +292,28 @@ fix_initramfs() {
       && ok "created $img" || bad "could not create it"
     return 0
   fi
-  if [ -e /etc/crypttab ] && [ /etc/crypttab -nt "$img" ]; then
+  if [ "$NEEDINITRAMFS" = 1 ] || { [ -e /etc/crypttab ] && [ /etc/crypttab -nt "$img" ]; }; then
     say "  regenerating initramfs -- /etc/crypttab is newer than the FIPS one"
     update-initramfs -u -k all >/dev/null 2>&1 \
       && ok "rebuilt every initramfs from the current crypttab" \
       || bad "update-initramfs failed -- run it by hand before rebooting"
   else
     ok "FIPS initramfs is not older than /etc/crypttab"
-    note "if the box still stops at 'not a valid LUKS device', rebuild anyway:"
-    note "  sudo update-initramfs -u -k all"
+  fi
+
+  # The decisive one. Verify the provider is really in the image, not just that
+  # the hook exists -- a hook that failed silently looks identical from here.
+  if host_has_fips_provider; then
+    if initramfs_has_fips_provider "$kver"; then
+      ok "the FIPS initramfs carries ossl-modules/fips.so"
+    else
+      bad "the FIPS initramfs has NO ossl-modules/fips.so"
+      note "cryptsetup cannot verify the LUKS2 header without it, and this box"
+      note "will stop at 'not a valid LUKS device' with every passphrase"
+      note "refused. Rebuild by hand and check again:"
+      note "  sudo update-initramfs -u -k $kver"
+      note "  lsinitramfs /boot/initrd.img-$kver | grep fips.so"
+    fi
   fi
 }
 
@@ -871,6 +960,7 @@ The kernel comes from Ubuntu Pro; the box needs Canonical or the packages carrie
   fix_grub_unrestricted       # after the others; update-grub is what bakes it in
   fix_grub_submenu            # a pinned kernel behind a gated submenu = a prompt
   fix_stale_oneshot           # a next_entry Secure Boot will not let GRUB clear
+  fix_fips_openssl_hook       # without fips.so in the initramfs, LUKS will not open
   fix_initramfs               # a stale FIPS initramfs looks for the wrong disk
 
   if [ "$NEEDGRUB" = 1 ]; then
