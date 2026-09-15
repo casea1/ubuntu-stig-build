@@ -10,7 +10,8 @@
 #                           one FIPS boot -- or say exactly what is still wrong.
 #                           Reboot, then `it-fips confirm`. Start here.
 #   it-fips fix             the config repairs only. Arms nothing, reboots nothing.
-#   it-fips luks            rewrite argon2 keyslots as pbkdf2, same passphrase
+#   it-fips luks            rewrite argon2 keyslots as pbkdf2, same passphrase.
+#                           Only disks /etc/crypttab names; --all for the rest
 #   it-fips retire <slot> [dev]  remove a LUKS keyslot whose passphrase is gone
 #   it-fips boot            arm a ONE-SHOT boot into the FIPS kernel
 #   it-fips confirm         after that reboot: verify, then make it permanent
@@ -228,6 +229,34 @@ fix_grub_submenu() {
 # callers loop over luks_devices.
 luks_devices() { blkid -t TYPE=crypto_LUKS -o device 2>/dev/null; }
 luks_device()  { luks_devices | head -1; }   # only where one is genuinely meant
+
+# WHICH ENCRYPTED DISKS ACTUALLY GATE THE BOOT: the ones /etc/crypttab names.
+#
+# The second NVMe in these workstations is a spare nobody has provisioned, and
+# it carries a LUKS header from some earlier life -- complete with a clevis
+# binding. Reporting that is right; treating it as a boot blocker is not. Left
+# unscoped, an all-argon2 stale disk would refuse to arm a FIPS boot over a
+# volume the box never touches.
+#
+# Falls back to every device only when crypttab cannot be read, because guessing
+# "none are boot-critical" is the dangerous direction to be wrong in.
+luks_boot_devices() {
+  local name src rest dev found=0
+  if [ -r /etc/crypttab ]; then
+    while read -r name src rest; do
+      case "$name" in ''|\#*) continue ;; esac
+      case "$src" in
+        UUID=*)      dev="$(blkid -U "${src#UUID=}" 2>/dev/null)" ;;
+        PARTUUID=*)  dev="$(blkid -t "PARTUUID=${src#PARTUUID=}" -o device 2>/dev/null | head -1)" ;;
+        /dev/*)      dev="$src" ;;
+        *)           dev="" ;;
+      esac
+      [ -n "$dev" ] && { printf '%s\n' "$dev"; found=1; }
+    done < /etc/crypttab
+  fi
+  [ "$found" = 1 ] || luks_devices
+}
+is_boot_luks() { luks_boot_devices | grep -qx "$1"; }
 
 luks_kdfs() {   # $1 = device
   [ -n "${1:-}" ] && command -v cryptsetup >/dev/null 2>&1 || return 0
@@ -461,10 +490,16 @@ fix_luks_kdf_dev() {   # $1 = device
 fix_luks_kdf() {
   local d n=0
   for d in $(luks_devices); do
+    if [ "${FIPS_LUKS_ALL:-0}" != 1 ] && ! is_boot_luks "$d"; then
+      warn "$d is not in /etc/crypttab -- skipped"
+      note "it does not gate the boot, so its KDFs do not matter to FIPS. Convert"
+      note "it anyway with:  sudo it-fips luks --all"
+      continue
+    fi
     n=$((n + 1))
     fix_luks_kdf_dev "$d"
   done
-  [ "$n" -gt 0 ] || ok "no LUKS device on this box"
+  [ "$n" -gt 0 ] || ok "no boot-critical LUKS device on this box"
 }
 
 # What still stands between this box and a FIPS boot. Deliberately does NOT
@@ -478,7 +513,7 @@ boot_blockers() {
   grep -qE '^GRUB_RECORDFAIL_TIMEOUT=' /etc/default/grub 2>/dev/null \
     || { say "  - GRUB_RECORDFAIL_TIMEOUT is unset"; n=$((n+1)); }
   dev="$(luks_device)"
-  for dev in $(luks_devices); do
+  for dev in $(luks_boot_devices); do
     if [ -n "$(luks_argon_slots "$dev")" ] && ! luks_has_usable "$dev"; then
       say "  - $dev: every keyslot uses argon2, so nothing can unlock it"
       n=$((n+1))
@@ -644,6 +679,14 @@ cmd_status() {
     printf '  %-14s %s\n' "$dev" "${kdfs:-unreadable}"
     [ -n "$toks" ] && printf '  %-14s %s\n' "  tokens" "$toks"
 
+    if ! is_boot_luks "$dev"; then
+      warn "$dev is NOT in /etc/crypttab -- it does not gate this box's boot"
+      note "an encrypted volume nothing mounts, carrying keyslots and possibly a"
+      note "TPM binding, is drift and an assessor will ask about it. Its KDFs"
+      note "cannot break a boot, so nothing here treats it as a blocker."
+      continue
+    fi
+
     if ! printf '%s' "$kdfs" | grep -qi argon; then
       [ -n "$kdfs" ] && ok "$dev: every keyslot uses a FIPS-approved KDF"
       continue
@@ -756,6 +799,7 @@ makes this box unbootable without someone at the console. Find what emits it:
 
 cmd_luks() {
   local dev left typeable conv sl tok
+  case "${1:-}" in --all) export FIPS_LUKS_ALL=1 ;; esac
   head2 "LUKS keyslots"
   fix_luks_kdf
 
@@ -763,6 +807,9 @@ cmd_luks() {
     say ""
     printf '  %-14s %s\n' "$dev" "$(luks_kdfs "$dev")"
     left="$(luks_argon_slots "$dev" | paste -sd, -)"
+    if ! is_boot_luks "$dev" && [ "${FIPS_LUKS_ALL:-0}" != 1 ]; then
+      continue
+    fi
     if [ -z "$left" ]; then
       ok "$dev: every slot works in FIPS mode"
       continue
@@ -944,7 +991,7 @@ cmd_boot() {
   # HARD STOP. Arming a boot the disk cannot unlock is the exact site visit this
   # script exists to avoid, and the generic entry does not save you: fips=1 is on
   # that one too.
-  for _d in $(luks_devices); do
+  for _d in $(luks_boot_devices); do
     [ "${FIPS_ALLOW_ARGON:-0}" = 1 ] && break
     luks_has_argon "$_d" && ! luks_has_usable "$_d" || continue
     die "REFUSING to arm a FIPS boot: EVERY keyslot on $_d uses argon2.
@@ -1063,7 +1110,7 @@ case "${1:-status}" in
   status|"") cmd_status ;;
   auto|all)  cmd_auto ;;
   fix)       cmd_fix ;;
-  luks)      cmd_luks ;;
+  luks)      shift 2>/dev/null; cmd_luks "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
   boot)      cmd_boot ;;
   confirm)   cmd_confirm ;;
