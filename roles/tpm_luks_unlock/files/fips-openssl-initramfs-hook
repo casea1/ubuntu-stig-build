@@ -1,0 +1,45 @@
+#!/bin/sh
+# Managed by the tpm_luks_unlock role -- do not edit by hand.
+#
+# PUT OPENSSL'S FIPS PROVIDER IN THE INITRAMFS, OR THE DISK WILL NOT UNLOCK.
+#
+# cryptsetup uses OpenSSL as its crypto backend. OpenSSL 3 providers are
+# dlopen()ed at runtime, so `copy_exec` does NOT pull them in -- they are not
+# linked, and nothing in the image references them. Ubuntu's own
+# cryptsetup-initramfs hook already special-cases exactly this for one provider:
+#
+#     copy_libssl_legacy_library()   ->   copy_exec ossl-modules/legacy.so
+#
+# It does not do the same for fips.so. On a FIPS kernel OpenSSL goes into FIPS
+# mode because /proc/sys/crypto/fips_enabled is 1, looks for the FIPS provider,
+# does not find it inside the initramfs, and cannot produce a digest. cryptsetup
+# then cannot verify the LUKS2 header checksum, so `cryptsetup isLuks --type
+# luks2` returns false and the device reads as not-LUKS:
+#
+#     /dev/nvmeXn1p3 is not a valid LUKS device        (cryptsetup)
+#     /dev/nvmeXn1p3 is not a supported LUKS device!   (clevis-luks-common-functions)
+#     No used slots detected for device ...            (clevis-luks-list)
+#
+# Every passphrase is then rejected, because nothing ever reached a keyslot.
+# The keyslots are fine; converting them to pbkdf2 changes nothing.
+#
+# This is invisible from the running system: on the generic kernel OpenSSL is
+# not in FIPS mode, needs no provider, and everything works.
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "${1:-}" in prereqs) prereqs; exit 0 ;; esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+for m in /usr/lib/*/ossl-modules/fips.so /usr/lib/ossl-modules/fips.so; do
+    [ -e "$m" ] && copy_exec "$m"
+done
+
+# The provider is selected by config, so the config has to travel with it.
+# fipsmodule.cnf carries the module's self-test status; without it OpenSSL
+# refuses to activate the provider it has just loaded.
+for f in /etc/ssl/openssl.cnf /etc/ssl/fipsmodule.cnf; do
+    [ -e "$f" ] && copy_file config "$f" "$f"
+done
+
+exit 0

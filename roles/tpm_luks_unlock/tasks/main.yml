@@ -190,3 +190,24 @@
              if ('tpm2' in (tpm_clevis_list.stdout | default('')))
              else 'created -- initramfs will be rebuilt; auto-unlock applies on next boot' }}.
           The install passphrase keyslot is retained for recovery.
+
+    # THE DISK DOES NOT UNLOCK UNDER FIPS WITHOUT THIS. See the long note in the
+    # hook: OpenSSL providers are dlopen()ed, so nothing copies fips.so into the
+    # initramfs, and cryptsetup then cannot verify the LUKS2 header at all.
+    # Ubuntu's own cryptsetup hook already does this for legacy.so and stops
+    # there. Deployed unconditionally on an encrypted box, not gated on FIPS
+    # being on today: the hook is inert without a FIPS provider to copy, and the
+    # box that needs it is the one that has just been switched.
+    - name: "TPM | Carry OpenSSL's FIPS provider into the initramfs"
+      ansible.builtin.copy:
+        src: fips-openssl-initramfs-hook
+        dest: /etc/initramfs-tools/hooks/fips-openssl
+        owner: root
+        group: root
+        mode: "0755"
+      register: _fips_ossl_hook
+
+    - name: "TPM | Rebuild the initramfs so the provider is actually in it"
+      ansible.builtin.command: update-initramfs -u -k all
+      when: _fips_ossl_hook is changed
+      changed_when: true
