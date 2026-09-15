@@ -11,6 +11,7 @@
 #                           Reboot, then `it-fips confirm`. Start here.
 #   it-fips fix             the config repairs only. Arms nothing, reboots nothing.
 #   it-fips luks            rewrite argon2 keyslots as pbkdf2, same passphrase
+#   it-fips retire <slot>   remove a LUKS keyslot whose passphrase is gone
 #   it-fips boot            arm a ONE-SHOT boot into the FIPS kernel
 #   it-fips confirm         after that reboot: verify, then make it permanent
 #   it-fips undo            put the GRUB config back the way it was
@@ -618,6 +619,85 @@ cmd_luks() {
   say ""
 }
 
+# Retire a keyslot whose passphrase nobody has. DELIBERATELY ITS OWN VERB and
+# never part of `auto`: nothing here can tell a stale imaging passphrase apart
+# from somebody's deliberate recovery key, and only a person knows which it is.
+#
+# What it will not do, because the fleet has eight of these and a typo is a slot
+# number: remove the TPM binding, remove the last slot a person can type, or
+# remove the last slot at all.
+cmd_retire() {
+  local slot="${1:-}" dev bak typeable left answer
+  dev="$(luks_device)"
+  [ -n "$dev" ] || die "no LUKS device found on this box."
+  command -v cryptsetup >/dev/null 2>&1 || die "cryptsetup is not installed."
+
+  case "$slot" in
+    ''|*[!0-9]*) die "usage: sudo it-fips retire <slot number>
+This disk: $(luks_kdfs)" ;;
+  esac
+
+  luks_kdfs | tr ' ' '\n' | grep -q "^${slot}:" \
+    || die "slot $slot is not in use on $dev.
+This disk: $(luks_kdfs)"
+
+  if luks_tpm_slots | grep -qx "$slot"; then
+    die "REFUSING: slot $slot is the TPM (clevis) binding. Removing it stops this
+box unlocking itself at boot, and on a headless machine that is a site visit.
+To replace a TPM slot, use:  sudo it-luks-rebind"
+  fi
+
+  [ "$(luks_kdfs | wc -w)" -gt 1 ] || die "REFUSING: slot $slot is the only keyslot on $dev.
+Removing it destroys every way into this disk."
+
+  typeable="$(luks_usable_passphrase_slots | tr ',' '\n' | grep -v "^${slot}$" | paste -sd, -)"
+  [ -n "$typeable" ] || die "REFUSING: slot $slot is the last slot a person can type in FIPS mode.
+Removing it leaves only the TPM, and a moved PCR 7 would then lock this box with
+nobody able to open it. Convert another slot first:  sudo it-fips luks"
+
+  head2 "Retiring LUKS keyslot $slot on $dev"
+  printf '  %-14s %s\n' "slots now" "$(luks_kdfs)"
+  printf '  %-14s %s\n' "TPM slot(s)" "$(luks_tpm_slots | paste -sd, - || true)"
+  printf '  %-14s %s\n' "left after" "$typeable (typeable) + the TPM"
+  say ""
+  note "cryptsetup asks for a passphrase from a DIFFERENT slot, so this cannot"
+  note "lock you out. A header backup is taken first either way."
+
+  install -d -m 0700 /etc/stig-build
+  bak="/etc/stig-build/luks-header-$(basename "$dev")-$(date +%Y%m%d%H%M%S).img"
+  cryptsetup luksHeaderBackup "$dev" --header-backup-file "$bak" \
+    || die "header backup failed -- refusing to remove anything."
+  chmod 0600 "$bak"
+  ok "header backed up: $bak"
+  note "undo with: cryptsetup luksHeaderRestore $dev --header-backup-file $bak"
+
+  say ""
+  if [ "${FIPS_ASSUME_YES:-0}" != 1 ]; then
+    read -r -p "  Type the slot number again to remove it: " answer
+    [ "$answer" = "$slot" ] || die "  aborted -- nothing was removed."
+  fi
+  say ""
+
+  cryptsetup luksKillSlot "$dev" "$slot" || die "
+slot $slot was NOT removed. Nothing changed."
+
+  # LUKS2 has no per-keyslot timestamp, so "was the imaging passphrase ever
+  # retired?" is unanswerable later unless something records it now. Same
+  # reasoning, and the same file, as it-luks-passwd.
+  printf '%s %s %s keyslot %s retired (was %s)\n' \
+    "$(date -Is)" "${SUDO_USER:-$(id -un)}" "$dev" "$slot" "argon2/unknown" \
+    >> /etc/stig-build/credential-changes.log 2>/dev/null || true
+  chmod 0644 /etc/stig-build/credential-changes.log 2>/dev/null || true
+
+  left="$(luks_kdfs)"
+  ok "slot $slot removed"
+  printf '  %-14s %s\n' "slots now" "$left"
+  say ""
+  note "recorded in /etc/stig-build/credential-changes.log -- that is the only"
+  note "evidence an assessor can read that the imaging credential was retired."
+  say ""
+}
+
 # The whole repair, in the order the faults have to be cleared, ending with the
 # box armed for one FIPS boot -- or, on a box already running FIPS, with that
 # kernel pinned as the default instead. Arming a one-shot into the kernel the
@@ -772,6 +852,7 @@ case "${1:-status}" in
   auto|all)  cmd_auto ;;
   fix)       cmd_fix ;;
   luks)      cmd_luks ;;
+  retire)    shift; cmd_retire "$@" ;;
   boot)      cmd_boot ;;
   confirm)   cmd_confirm ;;
   undo)      cmd_undo ;;

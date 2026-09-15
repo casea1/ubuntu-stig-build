@@ -2528,6 +2528,24 @@ going further.
 > it-luks-rebind`, reboot. After that it unlocks itself again.
 >
 > `sudo it-fips undo` puts the GRUB config back if any of it goes wrong.
+>
+> **LUKS keyslots, separately.** `sudo it-fips luks` converts argon2 slots to
+> pbkdf2 without changing any passphrase. A slot whose passphrase nobody has
+> cannot be converted -- almost always the TEMPORARY imaging passphrase, which
+> is supposed to be retired at deployment and usually was not. It is inert under
+> FIPS but still decrypts the disk on a generic kernel, so it is an
+> unaccounted-for credential, not debris. Retire it with:
+>
+> ```bash
+> sudo it-fips retire <slot>
+> ```
+>
+> which refuses to remove the TPM binding, refuses to leave the box without a
+> passphrase a person can type in FIPS mode, refuses to remove the last slot,
+> takes a header backup first, and records the retirement in
+> `/etc/stig-build/credential-changes.log` -- LUKS2 has no per-keyslot
+> timestamp, so that log is the only evidence an assessor can read that the
+> imaging credential was ever retired.
 
 > **The hand commands below are what `auto` does.** `sudo it-fips` reports the
 > state, `it-fips fix` repairs the config without changing what the box boots,
