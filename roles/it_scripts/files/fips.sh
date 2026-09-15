@@ -100,18 +100,43 @@ grubcfg_has_boot_param() {
     | grep -q '[[:space:]]boot='
 }
 
-# A GRUB superuser password with entries that are NOT --unrestricted means GRUB
-# demands a username and password before it boots anything at all. On a headless
-# box that is a machine which never comes back.
+# Which GRUB config file configures fips=1 -- ANY of them will do.
 #
-# The STIG wants the password to gate EDITING, not booting, which is why
-# grub_password patches CLASS in /etc/grub.d/10_linux. A grub-common package
-# update reverts that file -- so `apt upgrade` followed by ANY update-grub is
-# enough to lock the fleet out, and update-grub is the last thing `fix` does.
-grub_locked() {
-  grep -rqs '^[[:space:]]*set[[:space:]]\+superusers=' /etc/grub.d/ "$GRUBCFG" || return 1
-  grep -sE '^[[:space:]]*(menuentry|submenu) ' "$GRUBCFG" | grep -qv -- '--unrestricted'
+# ubuntu-fips ships 99-fips.cfg, this script writes fips.cfg, and a box can
+# equally have it typed into /etc/default/grub by hand. dev-ai1 has no fips.cfg
+# at all and has been running FIPS for months. Checking one hardcoded filename
+# reported a working box as broken, so ask the question that matters: is fips=1
+# configured anywhere the generator reads?
+fips_cfg_source() {
+  local f
+  grub_cfg_files | while read -r f; do
+    [ -f "$f" ] || continue
+    grep -q '^[^#]*GRUB_CMDLINE_LINUX[A-Z_]*=.*fips=1' "$f" 2>/dev/null && printf '%s\n' "$f"
+  done
 }
+
+# A GRUB superuser password with MENU ENTRIES that are not --unrestricted means
+# GRUB demands a username and password before it boots. On a headless box that
+# is a machine which never comes back.
+#
+# Two things this must NOT do, both learned from dev-ai1, which boots unattended
+# and was reported as locked:
+#
+#  - Read /etc/grub.d/. Those are the generator's inputs, and a `set superusers`
+#    in one of them (or in a .bak beside it) says nothing about what GRUB is
+#    reading today. Only the generated grub.cfg decides.
+#  - Count `submenu` lines. 10_linux emits `submenu ... $menuentry_id_option`
+#    with no $CLASS, so the Advanced options submenu is ALWAYS gated and always
+#    has been. It gates walking into the menu by hand, not the unattended boot
+#    of the default entry, which is a top-level menuentry.
+grub_superusers() { grep -qs '^[[:space:]]*set[[:space:]]\+superusers=' "$GRUBCFG"; }
+grub_gated_entries() {
+  grep -sE '^[[:space:]]*menuentry ' "$GRUBCFG" | grep -v -- '--unrestricted'
+}
+grub_gated_submenus() {
+  grep -sE '^[[:space:]]*submenu ' "$GRUBCFG" | grep -v -- '--unrestricted'
+}
+grub_locked() { grub_superusers && [ -n "$(grub_gated_entries)" ]; }
 
 # Which LUKS keyslots use a KDF that FIPS mode will not process.
 #
@@ -127,7 +152,13 @@ luks_kdfs() {
   cryptsetup luksDump "$dev" 2>/dev/null |
     awk '/^[[:space:]]*[0-9]+: luks2/{s=$1} /PBKDF:/{printf "%s%s ", s, $2}'
 }
-luks_has_argon() { luks_kdfs | grep -qi argon; }
+luks_has_argon()  { luks_kdfs | grep -qi argon; }
+# At least one slot FIPS mode CAN use. This is the question that decides whether
+# the box boots: dev-ai1 runs FIPS today with slots 0 and 1 on argon2, because
+# slot 2 is pbkdf2 and that is the one that unlocks it. Argon2 slots are dead
+# weight under FIPS -- their passphrases stop working -- but they are not fatal.
+luks_has_usable() { luks_kdfs | grep -qi pbkdf2; }
+luks_pbkdf2_slots() { luks_kdfs | tr ' ' '\n' | grep -i pbkdf2 | sed 's/pbkdf2//'; }
 
 # The GRUB submenu path for a kernel, read from grub.cfg rather than assembled
 # from a template: the wording differs between releases, and a name that does
@@ -168,8 +199,13 @@ fix_boot_param_all() {
 
 fix_fipscfg() {
   local line="GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT fips=1\""
-  if [ -s "$FIPSCFG" ] && grep -qxF "$line" "$FIPSCFG" 2>/dev/null; then
-    ok "$FIPSCFG already correct"
+  local src
+  # Do not add a second fips=1 to a box that already has one somewhere else --
+  # ubuntu-fips ships 99-fips.cfg, and dev-ai1 has it in neither of those places
+  # and has been in FIPS mode for months.
+  src="$(fips_cfg_source | tr '\n' ' ')"
+  if [ -n "$src" ]; then
+    ok "fips=1 already configured in ${src% } -- leaving it alone"
     return 0
   fi
   [ -e "$FIPSCFG" ] && cp -a "$FIPSCFG" "$FIPSCFG.before-it-fips.$(date +%s)"
@@ -300,8 +336,8 @@ boot_blockers() {
   grep -qE '^GRUB_RECORDFAIL_TIMEOUT=' /etc/default/grub 2>/dev/null \
     || { say "  - GRUB_RECORDFAIL_TIMEOUT is unset"; n=$((n+1)); }
   dev="$(luks_device)"
-  if [ -n "$dev" ] && [ -n "$(luks_argon_slots)" ]; then
-    say "  - LUKS keyslot(s) $(luks_argon_slots | tr '\n' ' ')still use argon2"
+  if [ -n "$dev" ] && [ -n "$(luks_argon_slots)" ] && ! luks_has_usable; then
+    say "  - every LUKS keyslot uses argon2, so nothing can unlock this disk"
     n=$((n+1))
   fi
   return "$n"
@@ -333,12 +369,15 @@ cmd_status() {
   fi
   ok "FIPS kernel available: $kver"
 
-  if [ -s "$FIPSCFG" ] && grep -q 'fips=1' "$FIPSCFG" 2>/dev/null; then
-    ok "$FIPSCFG sets fips=1"
+  local src
+  src="$(fips_cfg_source | tr '\n' ' ')"
+  if [ -n "$src" ]; then
+    ok "fips=1 is configured in: ${src% }"
   elif [ -e "$FIPSCFG" ]; then
     bad "$FIPSCFG exists but does not set fips=1 (apt autoremove empties it)"; rc=1
   else
-    bad "$FIPSCFG is missing"; rc=1
+    bad "nothing configures fips=1 -- no GRUB config file sets it"; rc=1
+    note "checked /etc/default/grub and /etc/default/grub.d/*.cfg"
   fi
 
   local stale
@@ -386,17 +425,21 @@ cmd_status() {
   head2 "Will the FIPS kernel actually come up?"
 
   # 0. Can it boot WITHOUT a person at the console at all?
-  if grub_locked; then
-    bad "GRUB has a superuser password and not every entry is --unrestricted"
-    note "this box asks for a GRUB username and password before it boots"
-    note "ANYTHING -- headless, it never comes back. Repair:"
-    note "  sudo sed -i 's/^CLASS=\"/CLASS=\"--unrestricted /' /etc/grub.d/10_linux"
-    note "  sudo update-grub"
-    note "a grub-common update reverts that patch; the next full it-pull"
-    note "re-applies it."
+  if ! grub_superusers; then
+    ok "no GRUB superuser password in grub.cfg -- nothing gates the boot"
+  elif grub_locked; then
+    bad "$(grub_gated_entries | wc -l) menu entry(s) need the GRUB password to BOOT:"
+    grub_gated_entries | sed 's/^/          /' | head -8
+    note "headless, this box does not come back from a reboot. Repair:"
+    note "  sudo it-fips fix     (patches every generator in /etc/grub.d)"
     rc=1
   else
-    ok "menu entries do not require the GRUB password to boot"
+    ok "every bootable menu entry is --unrestricted"
+    if [ -n "$(grub_gated_submenus)" ]; then
+      note "the Advanced options submenu is password-gated, which is normal and"
+      note "not a fault: 10_linux never puts \$CLASS on a submenu line. It gates"
+      note "walking the menu by hand, not the unattended boot of the default."
+    fi
   fi
 
   # 1. SECURE BOOT. Ubuntu ships linux-image-<ver>-fips (signed) and
@@ -434,15 +477,21 @@ cmd_status() {
   kdfs="$(luks_kdfs)"
   if [ -n "$dev" ]; then
     printf '  %-14s %s\n' "LUKS $dev" "${kdfs:-unreadable}"
-    if printf '%s' "$kdfs" | grep -qi argon; then
-      bad "a keyslot uses argon2, which FIPS mode will not process"
+    if ! printf '%s' "$kdfs" | grep -qi argon; then
+      [ -n "$kdfs" ] && ok "every keyslot uses a FIPS-approved KDF"
+    elif luks_has_usable; then
+      warn "argon2 keyslot(s) present -- their passphrases will NOT work in FIPS"
+      note "mode. The disk still unlocks, through slot(s) $(luks_pbkdf2_slots | tr -d '\n' | sed 's/./& /g')-- make sure you"
+      note "know which passphrase that is, or that it is the TPM slot:"
+      note "  sudo clevis luks list -d $dev"
+      note "Convert the rest with 'sudo it-fips auto' (keeps the same passphrase)."
+    else
+      bad "EVERY keyslot uses argon2, which FIPS mode will not process"
       note "this box will reach the LUKS prompt and refuse every correct"
       note "passphrase once fips=1 is on the command line. That is dev-15."
-      note "Rewrite the slot FIRST:  sudo it-luks-passwd   (forces pbkdf2)"
+      note "Rewrite a slot FIRST:  sudo it-fips auto   (keeps the passphrase)"
       note "'it-fips boot' refuses to arm anything while this is true."
       rc=1
-    elif [ -n "$kdfs" ]; then
-      ok "every keyslot uses a FIPS-approved KDF"
     fi
   fi
 
@@ -450,7 +499,7 @@ cmd_status() {
   # EVERY normal entry. Canonical's own fips.cfg works the same way. So the
   # generic entry is NOT a clean fallback: whatever fips=1 breaks, it breaks
   # there too, and on dev-15 that was the disk unlock.
-  entries="$(grep -cE '^[[:space:]]*linux .*fips=1' "$GRUBCFG" 2>/dev/null || true)"
+  entries="$(grep -cE '^[[:space:]]*linux[[:space:]].*fips=1' "$GRUBCFG" 2>/dev/null || true)"
   if [ "${entries:-0}" -gt 0 ]; then
     note "fips=1 is on ${entries} menu entries, generic kernels included -- so"
     note "booting 'the other one' is not a way round anything fips=1 causes."
@@ -553,8 +602,8 @@ cmd_boot() {
   # HARD STOP. Arming a boot the disk cannot unlock is the exact site visit this
   # script exists to avoid, and the generic entry does not save you: fips=1 is on
   # that one too.
-  if [ "${FIPS_ALLOW_ARGON:-0}" != 1 ] && luks_has_argon; then
-    die "REFUSING to arm a FIPS boot: a LUKS keyslot uses argon2.
+  if [ "${FIPS_ALLOW_ARGON:-0}" != 1 ] && luks_has_argon && ! luks_has_usable; then
+    die "REFUSING to arm a FIPS boot: EVERY LUKS keyslot uses argon2.
   $(luks_device):  $(luks_kdfs)
 Argon2 is not FIPS-approved, so this box will reach the passphrase prompt and
 refuse every correct passphrase. Rewrite the slot first:

@@ -698,8 +698,14 @@ check_boot() {
   # /etc/grub.d/10_linux -- and a grub-common package update reverts that file.
   # After that, the next update-grub (an it-fips fix, a kernel install, anything)
   # bakes a password prompt into every entry and a headless box never returns.
-  if grep -rqs '^[[:space:]]*set[[:space:]]\+superusers=' /etc/grub.d/ /boot/grub/grub.cfg; then
-    if grep -sE '^[[:space:]]*(menuentry|submenu) ' /boot/grub/grub.cfg | grep -qv -- '--unrestricted'; then
+  # Only grub.cfg decides -- /etc/grub.d holds the generator's INPUTS, and a
+  # `set superusers` there (or in a .bak beside it) says nothing about what GRUB
+  # reads today. And only `menuentry` counts: 10_linux emits `submenu` with no
+  # $CLASS, so the Advanced options submenu is always gated and always has been.
+  # It gates walking the menu by hand, not the unattended boot of the default
+  # entry. Both mistakes reported dev-ai1, which boots fine, as locked out.
+  if grep -qs '^[[:space:]]*set[[:space:]]\+superusers=' /boot/grub/grub.cfg; then
+    if grep -sE '^[[:space:]]*menuentry ' /boot/grub/grub.cfg | grep -qv -- '--unrestricted'; then
       if fixing; then
         local g ts
         ts="$(date +%s)"
@@ -726,10 +732,10 @@ check_boot() {
         done
 
         update-grub >/dev/null 2>&1
-        if grep -sE '^[[:space:]]*(menuentry|submenu) ' /boot/grub/grub.cfg | grep -qv -- '--unrestricted'; then
+        if grep -sE '^[[:space:]]*menuentry ' /boot/grub/grub.cfg | grep -qv -- '--unrestricted'; then
           bad "still password-gated after patching every generator. The entries"
           note "that are still gated are:"
-          grep -sE '^[[:space:]]*(menuentry|submenu) ' /boot/grub/grub.cfg \
+          grep -sE '^[[:space:]]*menuentry ' /boot/grub/grub.cfg \
             | grep -v -- '--unrestricted' | sed 's/^/         /'
           note "find which file emits them:  grep -rn menuentry /etc/grub.d/"
           flag
