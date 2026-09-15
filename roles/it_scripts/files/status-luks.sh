@@ -136,6 +136,41 @@ if [ "${1:-}" = check ]; then
     printf '  initrd %-22s clevis=%s cryptsetup=%s\n' "$kv" "$c" "$y"
   done
 
+  # WHAT EACH INITRAMFS WILL ACTUALLY TRY TO UNLOCK.
+  #
+  # initramfs-tools bakes conf/conf.d/cryptroot into the image, naming the
+  # source. That is a SNAPSHOT: an initramfs built when the layout was different
+  # keeps pointing where it pointed then. If it names a /dev path, or a UUID that
+  # is not this disk, the boot looks for the wrong device -- and reports exactly
+  # what dev-15 reports, "not a valid LUKS device ... No used slots detected",
+  # because whatever it found there genuinely is not LUKS.
+  #
+  # The running system cannot show this: it reads /etc/crypttab, which is right.
+  # Only the packed image says what the next boot will do.
+  uuid="$(blkid -s UUID -o value "$LUKS" 2>/dev/null)"
+  printf '  disk UUID   : %s\n' "${uuid:-?}"
+  if command -v unmkinitramfs >/dev/null 2>&1; then
+    tmp="$(mktemp -d)"
+    for img in /boot/initrd.img-*; do
+      [ -e "$img" ] || continue
+      kv="${img#/boot/initrd.img-}"
+      rm -rf "${tmp:?}/x"; mkdir -p "$tmp/x"
+      if ! unmkinitramfs "$img" "$tmp/x" >/dev/null 2>&1; then
+        printf '  cryptroot %-22s (cannot unpack)\n' "$kv"; continue
+      fi
+      src="$(find "$tmp/x" -name cryptroot -type f -exec cat {} + 2>/dev/null |
+             sed -n 's/.*source=\([^,]*\).*/\1/p' | sort -u | paste -sd' ' -)"
+      case "${src:-none}" in
+        *"${uuid:-__none__}"*) printf '  cryptroot %-22s %s  OK\n' "$kv" "$src" ;;
+        none|"")               printf '  cryptroot %-22s NONE -- this image unlocks nothing\n' "$kv" ;;
+        *)                     printf '  cryptroot %-22s %s  *** WRONG DEVICE ***\n' "$kv" "$src" ;;
+      esac
+    done
+    rm -rf "$tmp"
+  else
+    echo "  cryptroot   : unmkinitramfs not available"
+  fi
+
   # Can the TPM actually release a key RIGHT NOW? Output is discarded: this
   # prints yes or no, never the passphrase it recovers.
   if command -v clevis >/dev/null 2>&1 && clevis luks pass --help >/dev/null 2>&1; then
