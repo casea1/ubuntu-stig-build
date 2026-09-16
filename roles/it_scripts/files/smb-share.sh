@@ -718,6 +718,32 @@ cmd_add() {
     # sec=none is an anonymous setup with no NTLM response to compute.
     opts="guest,sec=none,vers=$vers,uid=$uid,gid=$gid,file_mode=$fmode,dir_mode=$dmode,iocharset=utf8,_netdev,nofail"
   else
+    # A CREDENTIALS MOUNT CANNOT WORK ON A FIPS BOX, so say it here rather than
+    # let the operator discover it as a mount error that means something else.
+    #
+    # NTLMv2 is built on HMAC-MD5. A FIPS kernel removes MD5 from the crypto
+    # API, so the cifs client cannot allocate the transform and the session
+    # setup dies:
+    #
+    #   Could not allocate shash TFM 'hmac(md5)'
+    #   Error -2 during NTLMSSP authentication
+    #
+    # -2 is ENOENT -- the SAME errno a missing share returns -- so `mount
+    # error(2): No such file or directory` reads as a wrong share name and is
+    # not one. Confirmed on dev-14 and again on a deployed box.
+    if [ "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null)" = 1 ]; then
+      warn "this box is in FIPS mode and this mount will use NTLM, which cannot work."
+      say "  ${DIM}NTLMv2 needs HMAC-MD5 and FIPS removes MD5, so the mount will fail${R}"
+      say "  ${DIM}with 'mount error(2): No such file or directory' -- the same errno a${R}"
+      say "  ${DIM}MISSING SHARE returns, so it will look like a wrong share name.${R}"
+      say ""
+      say "  ${B}For a guest/anonymous share, use --guest${R} ${DIM}(forces sec=none).${R}"
+      say "  ${DIM}For an authenticated share, sec=krb5 after an AD join is the only${R}"
+      say "  ${DIM}thing that works; that is a POA&M item here and is not built yet.${R}"
+      say ""
+      read -r -p "  Create it anyway? [y/N] " a
+      case "$a" in y|Y) ;; *) die "  aborted -- nothing was configured." ;; esac
+    fi
     opts="credentials=$cred,vers=$vers,uid=$uid,gid=$gid,file_mode=$fmode,dir_mode=$dmode,iocharset=utf8,_netdev,nofail"
   fi
   [ "$ro" -eq 1 ] && opts="$opts,ro"
