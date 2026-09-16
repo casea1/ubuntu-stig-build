@@ -232,6 +232,19 @@
   failed_when: false
   check_mode: false
 
+# apt-mark is a property of the package DATABASE and is lost when a package is
+# reinstalled or its state rebuilt, and it cannot protect a package installed
+# later. This is declarative and covers both. Same mechanism Ubuntu uses for
+# running kernels in 01autoremove. NOT `hold`, which would block security
+# updates for the FIPS kernel too.
+- name: "PRO | Tell apt never to autoremove the FIPS packages"
+  ansible.builtin.copy:
+    src: 01-fips-never-autoremove
+    dest: /etc/apt/apt.conf.d/01-fips-never-autoremove
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: "PRO | Mark them manual so autoremove cannot take them"
   ansible.builtin.command:
     cmd: "apt-mark manual {{ _pro_fips_pkgs.stdout_lines | join(' ') }}"

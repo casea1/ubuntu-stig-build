@@ -823,6 +823,17 @@ cmd_status() {
     rc=1
   fi
 
+  # Declarative protection, which apt-mark is not: a manual mark is lost when a
+  # package is reinstalled and cannot cover one installed later.
+  if apt-config dump APT::NeverAutoRemove 2>/dev/null | grep -qi fips; then
+    ok "apt is configured never to autoremove the FIPS packages"
+  else
+    bad "nothing stops 'apt autoremove' taking FIPS again"
+    note "that is how six boxes lost it. Repair: sudo it-pull   (pro_attach"
+    note "writes /etc/apt/apt.conf.d/01-fips-never-autoremove)"
+    rc=1
+  fi
+
   local auto
   auto="$(apt-mark showauto 2>/dev/null | grep -c fips || true)"
   [ "${auto:-0}" -eq 0 ] \

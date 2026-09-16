@@ -1,0 +1,38 @@
+// Managed by the pro_attach role -- do not edit by hand.
+//
+// STOP `apt autoremove` TAKING FIPS AWAY. AGAIN.
+//
+// It already did once, to six deployed workstations, and the damage is not
+// obvious: the kernel IMAGES survive, so `dpkg -l | grep fips` still looks
+// reassuring and every file-based compliance check still passes. What goes is
+// the configuration and the userspace half -- openssl-fips-module-3 above all --
+// and the box reboots into a broken FIPS or into generic, silently.
+//
+// `apt-mark manual` is the first defence and the role applies it, but it is a
+// property of the package DATABASE: it is lost the moment a package is
+// reinstalled or its state is rebuilt, and it says nothing about packages
+// installed later. This is declarative, applies to anything matching now or in
+// future, and is the same mechanism Ubuntu uses to protect running kernels in
+// 01autoremove.
+//
+// NOT `apt-mark hold`: that would also block security updates for the FIPS
+// kernel and for openssl-fips-module-3, which is a worse problem than the one
+// it solves. This blocks REMOVAL BY AUTOREMOVE only. An explicit
+// `apt remove <package>` still works, as it should.
+APT
+{
+  NeverAutoRemove
+  {
+	"^ubuntu-fips$";
+	"^ubuntu-fips-userspace$";
+	"^openssl-fips-module-3$";
+	"^fips-initramfs$";
+	"^linux-.*-fips$";
+	"^linux-fips$";
+	"^linux-image-.*-fips$";
+	"^linux-image-hmac-.*-fips$";
+	"^linux-modules-.*-fips$";
+	"^linux-headers-.*-fips$";
+	"^linux-tools-.*-fips$";
+  };
+};
