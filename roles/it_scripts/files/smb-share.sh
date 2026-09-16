@@ -23,7 +23,9 @@
 #        --guest                 anonymous/guest share -- no credentials at all
 #        --group NAME            let members of NAME read (and write, unless
 #                                --ro) the mount, instead of root only
-#        --mountpoint PATH       default /mnt/smb/<name>
+#        --mountpoint PATH       default /media/smb/<name> -- under /media so it
+#                                shows up in Files; shares already at /mnt/smb
+#                                keep working and are not moved
 #        --vers 3.1.1|3.0|2.1    SMB dialect (default 3.1.1)
 #        --ro                    mount read-only
 #        --uid N --gid N         owner of the mounted files (default 0:0)
@@ -45,7 +47,17 @@
 #   it-smb log [N]               last N lines of the action log (default 40)
 set -uo pipefail
 
-MOUNT_ROOT="${IT_SMB_ROOT:-/mnt/smb}"
+# /media, not /mnt: GNOME's Files lists mounts under /media, so a share put
+# there is one the engineers can find without being told a path. /mnt is for
+# things an admin mounts by hand and nothing advertises.
+MOUNT_ROOT="${IT_SMB_ROOT:-/media/smb}"
+
+# Shares created before that change live under /mnt/smb. Their units are still
+# managed and must keep working: this script derives everything from the unit
+# files, so a root it does not recognise means an existing share silently stops
+# being listed, mounted or removable. Nothing is moved -- a mountpoint is only
+# chosen when a share is CREATED.
+LEGACY_ROOTS="/mnt/smb"
 CRED_DIR="${IT_SMB_CRED_DIR:-/etc/stig-build/smb}"
 UNIT_DIR="${IT_SMB_UNIT_DIR:-/etc/systemd/system}"
 LOG="${IT_SMB_LOG:-/var/log/it-smb.log}"
@@ -66,17 +78,30 @@ logline() { printf '%s [%s] %s\n' "$(date -Is)" "${SUDO_USER:-root}" "$*" >> "$L
 
 unit_of()  { systemd-escape -p --suffix=mount "$1"; }
 amount_of(){ systemd-escape -p --suffix=automount "$1"; }
-mp_of()    { printf '%s/%s\n' "$MOUNT_ROOT" "$1"; }
+# An existing managed unit wins over the default, so a share created under the
+# old root keeps resolving to where it actually is.
+mp_of() {
+  local r u
+  for r in "$MOUNT_ROOT" $LEGACY_ROOTS; do
+    u="$UNIT_DIR/$(unit_of "$r/$1")"
+    if [ -r "$u" ] && grep -q "^$MARKER" "$u" 2>/dev/null; then
+      printf '%s/%s\n' "$r" "$1"; return 0
+    fi
+  done
+  printf '%s/%s\n' "$MOUNT_ROOT" "$1"
+}
 cred_of()  { printf '%s/%s.cred\n' "$CRED_DIR" "$1"; }
 
 # Every managed share, by name. Derived from the units, so it cannot go stale.
 shares() {
-  local f mp
+  local f mp r
   for f in "$UNIT_DIR"/*.mount; do
     [ -r "$f" ] || continue
     grep -q "^$MARKER" "$f" || continue
     mp=$(sed -nE 's/^Where=//p' "$f" | tail -1)
-    case "$mp" in "$MOUNT_ROOT"/*) basename "$mp" ;; esac
+    for r in "$MOUNT_ROOT" $LEGACY_ROOTS; do
+      case "$mp" in "$r"/*) basename "$mp"; break ;; esac
+    done
   done | sort -u
 }
 

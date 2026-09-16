@@ -2719,8 +2719,8 @@ sudo it-smb add --name pubshare --share '//fileserver/Public' --guest --group us
 **Do not do this per user.** One system automount serves everyone: it mounts on first access, survives logout, needs no login script, and there is one place to change it. If people want it to look like a mapped drive, symlink it into their home:
 
 ```bash
-ln -s /mnt/smb/pubshare ~/Public          # per user
-sudo ln -s /mnt/smb/pubshare /etc/skel/Public   # and for every future account
+ln -s /media/smb/pubshare ~/Public          # per user
+sudo ln -s /media/smb/pubshare /etc/skel/Public   # and for every future account
 ```
 
 > Windows disables guest SMB2+ access by default from Windows 10 1709 onward. If the share works from your Windows boxes today, the server has it enabled and this will work too. Once the machines are domain-joined, replace this with `--options sec=krb5` and drop guest access entirely.
@@ -2733,7 +2733,7 @@ Three reasons, all of which bite on a hardened box:
 - it mounts on first access and unmounts when idle, so a server that is down costs nothing until something wants the share;
 - `systemctl status` and the journal give a real error, where a bad fstab line gives a boot-time message nobody sees.
 
-The units *are* the registry — mountpoints under `/mnt/smb/<name>`, no second state file to drift.
+The units *are* the registry — mountpoints under `/media/smb/<name>` (under `/media` so GNOME's Files lists them; shares created earlier stay at `/mnt/smb` and keep working), no second state file to drift.
 
 ### When it will not mount
 
