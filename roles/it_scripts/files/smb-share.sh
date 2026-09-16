@@ -63,6 +63,19 @@ UNIT_DIR="${IT_SMB_UNIT_DIR:-/etc/systemd/system}"
 LOG="${IT_SMB_LOG:-/var/log/it-smb.log}"
 MARKER="# Managed by it-smb -- do not edit by hand."
 
+# THE UNIT RECORDS ITS OWN NAME, because the mountpoint cannot.
+#
+# shares() used to derive the name from the mountpoint: anything under
+# $MOUNT_ROOT was a share called basename(Where). That silently loses any share
+# created with --mountpoint somewhere else -- the unit is written, the automount
+# works, and `it-smb list` then reports "none are configured yet" because the
+# path does not start with the root it expects. The share becomes real and
+# unmanageable at the same time, which is the worst of both.
+#
+# The marker says "this is ours" and this line says which share it is. Units
+# written before this have no tag, so the old basename rule stays as a fallback.
+NAME_TAG="# it-smb-name:"
+
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -81,7 +94,16 @@ amount_of(){ systemd-escape -p --suffix=automount "$1"; }
 # An existing managed unit wins over the default, so a share created under the
 # old root keeps resolving to where it actually is.
 mp_of() {
-  local r u
+  local r u f
+  # A unit that names itself wins, whatever path it was given.
+  for f in "$UNIT_DIR"/*.mount; do
+    [ -r "$f" ] || continue
+    grep -q "^$MARKER" "$f" || continue
+    [ "$(sed -nE "s|^$NAME_TAG[[:space:]]*||p" "$f" | tail -1)" = "$1" ] || continue
+    sed -nE 's/^Where=//p' "$f" | tail -1
+    return 0
+  done
+  # Then an untagged unit at either known root.
   for r in "$MOUNT_ROOT" $LEGACY_ROOTS; do
     u="$UNIT_DIR/$(unit_of "$r/$1")"
     if [ -r "$u" ] && grep -q "^$MARKER" "$u" 2>/dev/null; then
@@ -94,10 +116,13 @@ cred_of()  { printf '%s/%s.cred\n' "$CRED_DIR" "$1"; }
 
 # Every managed share, by name. Derived from the units, so it cannot go stale.
 shares() {
-  local f mp r
+  local f mp r n
   for f in "$UNIT_DIR"/*.mount; do
     [ -r "$f" ] || continue
     grep -q "^$MARKER" "$f" || continue
+    n=$(sed -nE "s|^$NAME_TAG[[:space:]]*||p" "$f" | tail -1)
+    if [ -n "$n" ]; then printf '%s\n' "$n"; continue; fi
+    # Untagged: written by an older it-smb, which only ever used its own root.
     mp=$(sed -nE 's/^Where=//p' "$f" | tail -1)
     for r in "$MOUNT_ROOT" $LEGACY_ROOTS; do
       case "$mp" in "$r"/*) basename "$mp"; break ;; esac
@@ -705,6 +730,7 @@ cmd_add() {
   local mu au; mu="$UNIT_DIR/$(unit_of "$mp")"; au="$UNIT_DIR/$(amount_of "$mp")"
   cat > "$mu" <<EOF
 $MARKER
+$NAME_TAG $name
 [Unit]
 Description=SMB share $name ($what)
 After=network-online.target
