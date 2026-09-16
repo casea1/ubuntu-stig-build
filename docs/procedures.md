@@ -2775,6 +2775,70 @@ Three reasons, all of which bite on a hardened box:
 - it mounts on first access and unmounts when idle, so a server that is down costs nothing until something wants the share;
 - `systemctl status` and the journal give a real error, where a bad fstab line gives a boot-time message nobody sees.
 
+### Mounting a file share on a FIPS box (SSH, not SMB)
+
+SMB does not work on a FIPS box against a server that is not domain-joined —
+see trap 11 and `compliance.md`. Until the AD join, use SSH. The crypto is
+FIPS-approved, it needs no KDC, and it is not subject to the 20-connection cap
+Windows client editions put on SMB.
+
+**On the Windows machine, once, as Administrator:**
+
+```powershell
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Set-Service -Name sshd -StartupType Automatic
+Start-Service sshd
+New-NetFirewallRule -Name sshd -DisplayName 'OpenSSH Server' -Enabled True `
+  -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
+
+New-LocalUser -Name svc_ubuntu -Description "Ubuntu file access"
+icacls "C:\Shares\Sentry" /grant "svc_ubuntu:(OI)(CI)M"
+```
+
+> **Do not make the service account an administrator.** Windows OpenSSH reads a
+> normal user's keys from `C:\Users\<user>\.ssh\authorized_keys` but an
+> administrator's from `C:\ProgramData\ssh\administrators_authorized_keys`,
+> and that difference is the single most common reason key auth "silently
+> doesn't work".
+
+**On each Ubuntu box:**
+
+```bash
+sudo it-sshfs add --name sentry_share \
+  --remote svc_ubuntu@10.10.99.100:/C:/Shares/Sentry \
+  --group sentry
+```
+
+It generates a key, shows the server's host-key fingerprint for you to check,
+and prints the public key to install. Paste that line into the service account's
+`authorized_keys` on Windows, then:
+
+```bash
+sudo it-sshfs test sentry_share
+```
+
+One machine-authenticated mount at `/media/sentry_share`, usable by every member
+of `sentry` and nobody else. The private key stays on the box at 0600; there is
+no password on disk, which is better than the credentials file the SMB path
+needed.
+
+**For the audit offload**, set in `/opt/it/site.yml`:
+
+```yaml
+usg_audit_offload_sftp_enabled: true
+usg_audit_offload_sftp_dest: "svc_ubuntu@10.10.99.100:/C:/Shares/Audit"
+usg_audit_offload_sftp_key: /etc/stig-build/ssh/sentry_share
+```
+
+then `sudo it-offload apply` and `sudo it-offload test`. It takes precedence
+over the SMB block, scp's straight to the server with nothing left mounted, and
+keeps `StrictHostKeyChecking` on — so the host key must be pinned, which
+`it-sshfs add` has already done.
+
+**When the domain controller lands**, the access model does not change: a
+machine credential, one mount, group access. Only the transport moves to
+`sec=krb5` with a keytab and `kinit -k`.
+
 The units *are* the registry — mountpoints under `/media/smb/<name>` (under `/media` so GNOME's Files lists them; shares created earlier stay at `/mnt/smb` and keep working), no second state file to drift.
 
 ### When it will not mount
