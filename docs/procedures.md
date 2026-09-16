@@ -2529,6 +2529,48 @@ going further.
 >
 > `sudo it-fips undo` puts the GRUB config back if any of it goes wrong.
 >
+> ### A box that lost FIPS to `apt autoremove` needs TWO things restored
+>
+> Found the hard way on dev-13 and dev-15. `autoremove` takes more than the
+> `fips=1` line, and restoring only that leaves a box that boots the FIPS kernel
+> and then fails, usually at the LUKS prompt, in a way that reads as a wrong
+> passphrase:
+>
+> | missing | symptom | restore |
+> |---|---|---|
+> | `openssl-fips-module-3` | OpenSSL has no FIPS provider, so cryptsetup cannot verify the LUKS2 header. `not a valid LUKS device`, `No used slots detected`, every passphrase refused | carry the `.deb` in (see below) |
+> | `bootdev=` on the kernel command line | the FIPS initramfs cannot find `/boot` to verify itself; the boot fails naming a missing bootdev argument | `it-fips fix`, or by hand (trap 12r) |
+>
+> Compare against a box that works -- that is the fastest diagnosis by a wide
+> margin, and both faults show up in one line each:
+>
+> ```bash
+> cat /proc/cmdline | tr ' ' '\n' | grep -E 'fips|bootdev'
+> dpkg -l | awk '/fips/ {print $2, $3}'
+> ```
+>
+> **Getting `openssl-fips-module-3` to an air-gapped box.** It comes from
+> `esm.ubuntu.com` and needs a Pro machine token, so it cannot be mirrored by the
+> usual `it-repo` path. On a Pro-attached box that already has FIPS enabled --
+> one of the AI nodes, not a spare, because `pro enable fips-updates` cannot be
+> enabled repo-only and would convert whatever machine you ran it on:
+>
+> ```bash
+> mkdir -p ~/fips-debs && cd ~/fips-debs
+> sudo apt-get download openssl-fips-module-3     # sudo: the ESM credential is root-only
+> sudo chown "$USER":"$USER" ./*.deb
+> ```
+>
+> `apt-get download` installs nothing, resolves no dependencies and restarts no
+> service -- it is safe on a node running containers. The package depends only on
+> `libc6`, so it installs standalone on the target with
+> `sudo apt-get install ./openssl-fips-module-3_*.deb`. The `ubuntu-fips` and
+> `ubuntu-fips-userspace` metapackages are NOT needed for this: they ship almost
+> no files, and `ubuntu-fips-userspace` pins FIPS builds of `libgcrypt20` and
+> `libgnutls30` that would replace stock crypto libraries on a deployed box. The
+> one thing they buy -- surviving the next `autoremove` -- `it-fips fix` already
+> does with `apt-mark manual`.
+>
 > **LUKS keyslots, separately.** `sudo it-fips luks` converts argon2 slots to
 > pbkdf2 without changing any passphrase. A slot whose passphrase nobody has
 > cannot be converted -- almost always the TEMPORARY imaging passphrase, which
