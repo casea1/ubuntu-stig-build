@@ -2650,7 +2650,7 @@ boxes.
 |---|---|
 | Resolvers from the lab that answer nothing, so every lookup waits (trap 12e) | The DC is the DNS server for the space. Lookups answer, and the stalls stop |
 | chrony has sources but selects none | AD *requires* time sync, and the DC is the authoritative source. Kerberos will not work until this is right, so it stops being optional |
-| SMB offloads run as **guest with `sec=none`** because NTLM cannot work on FIPS (trap 11) | `sec=krb5`. This is the POA&M item closing, not a workaround |
+| SMB offloads **cannot run at all** on a FIPS box: NTLM needs HMAC-MD5 and `sec=none` does not avoid it, because SMB2/3 carries even an anonymous session over NTLMSSP (confirmed 2026-09-16) | `sec=krb5` after the AD join. Until then the evidence has to leave by another route |
 
 **What it puts at risk**
 

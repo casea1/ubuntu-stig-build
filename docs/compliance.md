@@ -327,17 +327,28 @@ two-copy workflow above.
 > with **ENOENT** — byte-for-byte the errno a *missing share* returns, which is
 > why this reads as a wrong share name or a typo'd password and is neither.
 >
-> **Guest/anonymous is the usable path until the fleet is domain-joined**, and
-> it needs `sec=none` — `guest` alone still performs whatever session setup
-> `sec=` asks for, and every default here said `sec=ntlmssp`, so guest mode
-> failed on FIPS for exactly the same reason. Both offloads and `it-smb` now
-> force `sec=none` whenever auth is guest.
+> **`sec=none` DOES NOT RESCUE THIS, and that is confirmed on the deployed
+> fleet (2026-09-16).** It was written up here as the usable path until the AD
+> join; testing every dialect against the deployed file server, from a box in
+> FIPS mode, produced the same `hmac(md5)` failure with `sec=none` as with
+> `sec=ntlmssp`. The reason is that **for SMB2 and SMB3 an anonymous session is
+> still carried over NTLMSSP** — `sec=none` meaningfully selects a null session
+> only on SMB1, which no hardened Windows server accepts. So the client reaches
+> for HMAC-MD5 whatever `sec=` says. `smbclient -L //server -N` from the same
+> box returns `NT_STATUS_ACCESS_DENIED`, so the server is not accepting a null
+> session either.
 >
-> That is a working transport and a **weak** one, and it belongs on the POA&M
-> rather than in the "solved" column: an anonymous SMB mount authenticates
-> nobody, so the evidence crosses the LAN unauthenticated, and anyone who can
-> reach the share can read every box's audit trail. Accept it only where the
-> file server is already open to anonymous users and the network is the control.
+> **Consequence: on a FIPS box there is no SMB path to this file server at all**
+> until Kerberos. Both offloads are therefore not merely weak, they are
+> **inoperative** — `it-offload` cannot deliver the AU-4 auditd trail and
+> `it-powerstrux offload` cannot deliver the reports. That is an availability
+> gap in the evidence pipeline, not a strength-of-authentication finding, and it
+> dates from the moment each box went FIPS.
+>
+> Until the AD join, evidence has to leave the boxes another way — the DTA path,
+> or SFTP to a host running an SSH server, which uses FIPS-approved crypto and
+> needs no domain. `sec=krb5` after the join remains the answer, and the
+> unattended half (machine keytab, `kinit -k` before the mount) is still unbuilt.
 >
 > **Both offloads mount with a credentials file by default, so both are affected**:
 > `it-offload` (the auditd trail — the AU-4 artifact) and
