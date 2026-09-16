@@ -96,7 +96,59 @@ if [ -n "$extra_tmp" ]; then
 fi
 {% endif %}
 
-{% if usg_audit_offload_smb_enabled | default(false) | bool %}
+{% if usg_audit_offload_sftp_enabled | default(false) | bool %}
+# ---- 3. push over SFTP -----------------------------------------------------
+# WHY NOT SMB HERE. On a FIPS box there is no SMB path to a file server that is
+# not domain-joined: NTLMv2 is built on MD5, FIPS removes MD5 from the kernel
+# crypto API, and sec=none does not avoid it because SMB2/3 carries even an
+# anonymous session over NTLMSSP. Tested at every dialect against the deployed
+# server. SSH crypto is FIPS-approved and needs no KDC, so the AU-4 trail moves
+# today instead of waiting for the domain controller.
+#
+# No mount: scp straight to the server. There is nothing to leave mounted, no
+# boot-time dependency, and no path onto this box if the server is compromised.
+SFTP_DEST='{{ usg_audit_offload_sftp_dest }}'
+SFTP_KEY='{{ usg_audit_offload_sftp_key }}'
+SFTP_PORT='{{ usg_audit_offload_sftp_port | default(22) }}'
+SFTP_SUB='{{ usg_audit_offload_sftp_subdir | default('') }}'
+SFTP_KNOWN='{{ usg_audit_offload_sftp_known_hosts | default('/etc/stig-build/ssh/known_hosts') }}'
+
+push_failed=0
+if [ ! -r "$SFTP_KEY" ]; then
+  log "ERROR: no SSH key at $SFTP_KEY -- push SKIPPED, local copy kept"
+  push_failed=1
+elif [ ! -r "$SFTP_KNOWN" ]; then
+  # StrictHostKeyChecking stays ON. An unattended job that trusts whatever
+  # answers on port 22 is a man-in-the-middle waiting to happen, and the point
+  # of this transport is that it is the compliant one.
+  log "ERROR: no pinned host key at $SFTP_KNOWN -- push SKIPPED, local copy kept"
+  log "       pin it with: it-sshfs add, or ssh-keyscan -H <host> >> $SFTP_KNOWN"
+  push_failed=1
+else
+  ssh_opts="-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes"
+  ssh_opts="$ssh_opts -o UserKnownHostsFile=$SFTP_KNOWN -i $SFTP_KEY -P $SFTP_PORT"
+  # user@host:/path -> split so a subdirectory can be created before the copy
+  sftp_user_host="${SFTP_DEST%%:*}"
+  sftp_path="${SFTP_DEST#*:}"
+  [ -n "$SFTP_SUB" ] && sftp_path="$sftp_path/$SFTP_SUB"
+
+  # mkdir -p has no sftp equivalent; `-mkdir` in a batch is allowed to fail, and
+  # an existing directory failing is the normal case, not an error.
+  printf 'mkdir %s\nquit\n' "$sftp_path" | \
+    sftp -q $ssh_opts "$sftp_user_host" >/dev/null 2>&1 || true
+
+  for f in "$DEST"/audit-"$host"-"$stamp".tar.gz "$DEST"/logs-"$host"-"$stamp".tar.gz; do
+    [ -f "$f" ] || continue
+    if printf 'put %s\nquit\n' "$f" | \
+       sftp -q $ssh_opts "$sftp_user_host:$sftp_path" >>"$LOG" 2>&1; then
+      log "pushed: $(basename "$f") -> $SFTP_DEST/$SFTP_SUB"
+    else
+      log "ERROR: SFTP push failed for $(basename "$f")"
+      push_failed=1
+    fi
+  done
+fi
+{% elif usg_audit_offload_smb_enabled | default(false) | bool %}
 # ---- 3. push to the share --------------------------------------------------
 # Mounted ON DEMAND and unmounted straight after. A share left permanently
 # mounted is a path onto the box and a boot-time dependency on a server that

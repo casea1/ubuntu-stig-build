@@ -213,6 +213,11 @@ offline_repo_backup_dir: "{{ it_dir | default('/opt/it') }}/apt-sources-backup"
 #   cifs-utils : mount SMB/CIFS shares (`mount -t cifs //server/share ...`)
 #   smbclient  : browse/test SMB shares (`smbclient -L //server -U user`) --
 #                the diagnostic companion to cifs-utils (SMB2/3; SMB1 stays off)
+#   sshfs      : mount a remote folder over SSH (`it-sshfs`). On a FIPS box with
+#                no domain controller this is the ONLY working file-share
+#                transport: NTLM needs MD5, FIPS removes it, and sec=none does
+#                not avoid it because SMB2/3 carries even an anonymous session
+#                over NTLMSSP. SSH crypto is FIPS-approved. See compliance.md.
 #   net-tools  : ifconfig / route / netstat for network admin
 #   unzip      : extract .zip archives (installers, exported bundles)
 base_common_packages:
@@ -221,6 +226,7 @@ base_common_packages:
                                # media first" is circular on an air-gapped box.
   - cifs-utils
   - smbclient
+  - sshfs
   - net-tools
   - unzip
   - cron                       # provides /usr/bin/crontab + the cron daemon

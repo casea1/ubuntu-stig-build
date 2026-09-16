@@ -83,13 +83,40 @@ usg_audit_offload_smb_credentials: /etc/stig-build/audit-offload.cred
 usg_audit_offload_smb_options: "vers=3.1.1,sec=ntlmssp,uid=0,gid=0,file_mode=0640,dir_mode=0750"
 
 # How the weekly push authenticates: "creds" (a credentials file) or "guest"
-# (anonymous). GUEST IS THE ONLY ONE THAT WORKS ON A FIPS BOX until the fleet
-# is domain-joined: NTLMv2 needs HMAC-MD5 and FIPS removes MD5 from the kernel
-# crypto API, so a credentials mount dies with "Could not allocate shash TFM"
-# and ENOENT. When this is "guest" the script forces sec=none, because `guest`
-# alone still performs the sec= session setup the options ask for.
+# (anonymous).
+#
+# NEITHER WORKS ON A FIPS BOX, and "guest" was recorded here as the one that
+# did. Tested against the deployed server at every dialect (2026-09-16): SMB2
+# and SMB3 carry even an anonymous session over NTLMSSP, so sec=none does not
+# avoid NTLM, and NTLMv2 needs HMAC-MD5 which FIPS removes from the kernel
+# crypto API. Both fail with "Could not allocate shash TFM 'hmac(md5)'" and
+# ENOENT -- the same errno a missing share returns, so it reads as a wrong
+# share name. Use the SFTP transport below until the fleet is domain-joined and
+# sec=krb5 is available.
 usg_audit_offload_smb_auth: creds
 usg_audit_offload_smb_subdir: "{{ ansible_hostname | default('unknown') }}"
+
+# ---- push over SFTP (the FIPS-viable transport) -----------------------------
+# Takes precedence over the SMB block when enabled, because on a FIPS box the
+# SMB one cannot work at all and silently keeping both would just mean the
+# weekly job fails every week with the local copy piling up.
+#
+# No mount: the files are scp'd straight to the server. Nothing is left mounted,
+# there is no boot-time dependency on the file server, and a compromised server
+# has no path onto this box. SSH crypto is FIPS-approved and needs no KDC.
+#
+# The private key is generated ON THE BOX by `it-sshfs add` and never leaves it;
+# only the public half goes to the server's authorized_keys. There is no
+# password on disk, which is a straight improvement on the credentials file the
+# SMB transport needed.
+usg_audit_offload_sftp_enabled: false
+usg_audit_offload_sftp_dest: ""                                    # svc_ubuntu@10.0.0.5:/C:/Shares/Audit
+usg_audit_offload_sftp_key: /etc/stig-build/ssh/audit-offload
+usg_audit_offload_sftp_port: 22
+usg_audit_offload_sftp_subdir: "{{ ansible_hostname | default('unknown') }}"
+# StrictHostKeyChecking stays ON, so the host key must be pinned here first --
+# `it-sshfs add` does it interactively and shows the fingerprint to check.
+usg_audit_offload_sftp_known_hosts: /etc/stig-build/ssh/known_hosts
 
 usg_audit_privileged_commands_enabled: true
 usg_audit_privileged_commands_key: privileged
