@@ -212,6 +212,14 @@ So the box reboots onto a generic kernel and looks completely normal. `uname -r`
 
 **Recovering a box that has already lost it** is `sudo it-fips` -> `fix` -> `boot` -> reboot -> `confirm`, written up in procedures 4.2b, and it works in the space *provided the kernel images are still there*. It recreates `fips.cfg` with `fips=1`, marks the packages manual, sets `GRUB_RECORDFAIL_TIMEOUT`, and switches with a **one-shot** `grub-reboot` so a failed boot self-recovers. If the kernel images are gone too, it cannot be fixed offline at all: that kernel comes from Ubuntu Pro and `pro enable` needs Canonical.
 
+**12r. Ubuntu's FIPS parameter is `bootdev=`, not Red Hat's `boot=`, and a box needs BOTH it and `fips=1`.** The FIPS check runs from the initramfs and verifies itself against `.hmac` files on `/boot`; where `/boot` is a separate filesystem -- which LVM + LUKS leaves it -- it has to be told where. Ubuntu's name for that is `bootdev=/dev/disk/by-uuid/<uuid>`, written into `99-fips.cfg` by `ubuntu-fips` when `pro enable fips-updates` runs. A working box shows both:
+
+```
+BOOT_IMAGE=/vmlinuz-6.8.0-139-fips root=/dev/mapper/ubuntu--vg-ubuntu--lv ro audit=1 fips=1 bootdev=/dev/disk/by-uuid/<uuid>
+```
+
+`apt autoremove` empties `99-fips.cfg`, and a `fips.cfg` rebuilt with `fips=1` alone leaves FIPS requested with no way for the initramfs to verify itself -- it fails naming a missing bootdev argument, and everything downstream (the LUKS unlock included) fails with it. That cost dev-13 and dev-15 a week, because the obvious repair is to restore `fips=1` and the missing half is invisible unless you compare `/proc/cmdline` against a box that works. **Do not substitute Red Hat's `boot=`:** it is a different parameter, `initramfs-tools` reads it as the name of a script under `/scripts`, and it panics the kernel (trap 12l). The two look interchangeable and are not. `it-fips` now reports a missing `bootdev=` as a failure and `it-fips fix` writes both; the `boot=` stripper is anchored so it cannot eat `bootdev=`.
+
 **12q. A stale FIPS initramfs looks for the wrong disk, and it reads as a wrong passphrase.** dev-13 and dev-15 stopped at the unlock prompt with `device /dev/nvme1n1p3 is not a valid LUKS device`, `No used slots detected`, and rejected every correct passphrase -- while the same header read perfectly from the running system. `initramfs-tools` bakes `conf/conf.d/cryptroot`, naming where the encrypted root lives, into each image **when that image is built**. Both boxes had lost FIPS and then run on the generic kernel for weeks, so their FIPS initramfs was a snapshot from before all of it and pointed somewhere that is no longer the root disk -- where it found the unprovisioned second NVMe, which genuinely is not LUKS. The fix is one stock command:
 
 ```bash

@@ -114,6 +114,34 @@ grubcfg_has_boot_param() {
 # at all and has been running FIPS for months. Checking one hardcoded filename
 # reported a working box as broken, so ask the question that matters: is fips=1
 # configured anywhere the generator reads?
+# UBUNTU'S FIPS PARAMETER IS bootdev=, NOT boot=.
+#
+# The FIPS integrity check runs from the initramfs and has to find its .hmac
+# files on /boot. On a box where /boot is a separate filesystem -- which LVM +
+# LUKS leaves it -- it must be told where, and Ubuntu's name for that is
+# `bootdev=/dev/disk/by-uuid/<uuid>`. Red Hat's `boot=` is a DIFFERENT
+# parameter and is fatal here: initramfs-tools reads it as the name of a script
+# under /scripts and the kernel panics (see find_boot_param, trap 12l). The two
+# look interchangeable and are not.
+#
+# ubuntu-fips writes this into 99-fips.cfg when `pro enable fips-updates` runs.
+# `apt autoremove` empties that file, and a fips.cfg rebuilt with fips=1 alone
+# -- which is what this script used to write -- leaves the box with FIPS
+# requested and no way to verify itself. dev-16 carries it and boots; dev-15 had
+# fips=1 only and did not.
+boot_dev_uuid() {
+  # findmnt resolves /boot to its own mount when separate, and to / when not, so
+  # this is right either way.
+  findmnt -no UUID /boot 2>/dev/null
+}
+bootdev_configured() {
+  local f
+  grub_cfg_files | while read -r f; do
+    [ -f "$f" ] || continue
+    grep -q '^[^#]*GRUB_CMDLINE_LINUX[A-Z_]*=.*bootdev=' "$f" 2>/dev/null && printf '%s\n' "$f"
+  done
+}
+
 fips_cfg_source() {
   local f
   grub_cfg_files | while read -r f; do
@@ -535,16 +563,25 @@ fix_boot_param_all() {
 }
 
 fix_fipscfg() {
-  local line="GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT fips=1\""
-  local src
-  # Do not add a second fips=1 to a box that already has one somewhere else --
-  # ubuntu-fips ships 99-fips.cfg, and dev-ai1 has it in neither of those places
-  # and has been in FIPS mode for months.
+  local line src bsrc uuid
+  uuid="$(boot_dev_uuid)"
+
   src="$(fips_cfg_source | tr '\n' ' ')"
-  if [ -n "$src" ]; then
-    ok "fips=1 already configured in ${src% } -- leaving it alone"
+  bsrc="$(bootdev_configured | tr '\n' ' ')"
+
+  # fips=1 without bootdev= is the state that cost dev-13 and dev-15 a week:
+  # FIPS requested, and no way for the initramfs to find what it must verify.
+  if [ -n "$src" ] && [ -n "$bsrc" ]; then
+    ok "fips=1 in ${src% } and bootdev= in ${bsrc% } -- leaving both alone"
     return 0
   fi
+  if [ -n "$src" ] && [ -z "$bsrc" ]; then
+    warn "fips=1 is set in ${src% } but nothing sets bootdev="
+    note "the FIPS initramfs cannot find /boot to verify itself. Adding it."
+  fi
+  [ -n "$uuid" ] || { bad "cannot determine /boot's UUID -- not writing a guess"; return 1; }
+
+  line="GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT fips=1 bootdev=/dev/disk/by-uuid/$uuid\""
   [ -e "$FIPSCFG" ] && cp -a "$FIPSCFG" "$FIPSCFG.before-it-fips.$(date +%s)"
   install -d -m 0755 "$(dirname "$FIPSCFG")"
   { printf '# Managed by it-fips -- recreated after apt autoremove took it away.\n'
@@ -731,10 +768,22 @@ cmd_status() {
   fi
   ok "FIPS kernel available: $kver"
 
-  local src
+  local src bsrc
   src="$(fips_cfg_source | tr '\n' ' ')"
+  bsrc="$(bootdev_configured | tr '\n' ' ')"
   if [ -n "$src" ]; then
     ok "fips=1 is configured in: ${src% }"
+    if [ -n "$bsrc" ]; then
+      ok "bootdev= is configured in: ${bsrc% }"
+    else
+      bad "nothing sets bootdev= -- the FIPS initramfs cannot find /boot"
+      note "Ubuntu's FIPS check verifies itself against .hmac files on /boot and"
+      note "must be told where that is. Without it the boot fails with a missing"
+      note "bootdev argument. It is NOT Red Hat's boot=, which panics this box."
+      note "  expected: bootdev=/dev/disk/by-uuid/$(boot_dev_uuid)"
+      note "  repair:   sudo it-fips fix"
+      rc=1
+    fi
   elif [ -e "$FIPSCFG" ]; then
     bad "$FIPSCFG exists but does not set fips=1 (apt autoremove empties it)"; rc=1
   else
