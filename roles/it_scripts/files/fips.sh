@@ -307,12 +307,15 @@ fix_initramfs() {
     if initramfs_has_fips_provider "$kver"; then
       ok "the FIPS initramfs carries ossl-modules/fips.so"
     else
-      bad "the FIPS initramfs has NO ossl-modules/fips.so"
-      note "cryptsetup cannot verify the LUKS2 header without it, and this box"
-      note "will stop at 'not a valid LUKS device' with every passphrase"
-      note "refused. Rebuild by hand and check again:"
-      note "  sudo update-initramfs -u -k $kver"
-      note "  lsinitramfs /boot/initrd.img-$kver | grep fips.so"
+      # NOT a failure. dev-16 boots FIPS, unlocks its disk, and has no fips.so
+      # in its initramfs -- which disproves the theory this check was written
+      # for. Kept because it is a real difference between boxes and worth
+      # seeing, but reporting it as a fault sent an operator chasing a
+      # non-problem on a machine that works.
+      warn "no ossl-modules/fips.so in the FIPS initramfs (informational)"
+      note "this does NOT stop a box booting: dev-16 is in FIPS mode, unlocks"
+      note "its disk and does not have it either. Do not treat it as the cause"
+      note "of an unlock failure."
     fi
   fi
 }
