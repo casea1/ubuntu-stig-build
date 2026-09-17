@@ -34,6 +34,20 @@
 # and goes away when idle, and a failure leaves a real error in the journal
 # instead of a boot-time message nobody sees.
 #
+# WHAT THIS DESIGN GIVES UP: PER-USER ATTRIBUTION. One machine credential and
+# `allow_other` means every file under the mount appears owned by the single
+# uid/gid the mount was given, and the server sees every write as the service
+# account. That is right for a shared team folder and wrong for home
+# directories or anywhere an audit needs to say WHICH person wrote a file. If
+# you need that before the domain controller lands, use one share per person
+# with their own key rather than one shared mount; afterwards, SMB with
+# sec=krb5,multiuser gives each user their own ticket and is the better answer.
+#
+# NFS is not an alternative here. NFSv3/v4 with sec=sys does no cryptography at
+# all, so FIPS does not block it -- and it authenticates nobody: the client
+# asserts a uid and the server believes it. NFS with sec=krb5 needs the same KDC
+# that SMB does, so it solves nothing sooner.
+#
 # THE PRIVATE KEY NEVER LEAVES THE BOX. It is generated here, 0600 root-only,
 # and only the public half is ever printed. There is no password on disk.
 set -uo pipefail
