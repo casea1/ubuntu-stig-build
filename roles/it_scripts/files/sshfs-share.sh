@@ -73,6 +73,10 @@ def_get() {   # $1 = key, $2 = fallback
 MOUNT_ROOT="${IT_SSHFS_ROOT:-/media}"
 KEY_DIR="${IT_SSHFS_KEY_DIR:-/etc/stig-build/ssh}"
 KNOWN_HOSTS="${IT_SSHFS_KNOWN_HOSTS:-$KEY_DIR/known_hosts}"
+# Where the raw sshfs mount lives when a group owns the share. Under /run so it
+# is tmpfs, root-only, and gone on reboot -- it is plumbing, not a location
+# anybody should be told about.
+PRIV_ROOT="${IT_SSHFS_PRIV_ROOT:-/run/it-sshfs}"
 UNIT_DIR="${IT_SSHFS_UNIT_DIR:-/etc/systemd/system}"
 LOG="${IT_SSHFS_LOG:-/var/log/it-sshfs.log}"
 MARKER="# Managed by it-sshfs -- do not edit by hand."
@@ -196,14 +200,14 @@ safely to sftp. Rename the folder on the server." ;;
     ggid=$(getent group "$group" 2>/dev/null | cut -d: -f3)
     [ -n "$ggid" ] || die "group '$group' does not exist on this box"
     gid="$ggid"
-    [ -n "$mp" ] || mp="$MOUNT_ROOT/$group/$name"
+    [ -n "$mp" ] || mp="$MOUNT_ROOT/$name"
   fi
   [ -n "$mp" ] || mp="$MOUNT_ROOT/$name"
 
   printf '  %-12s %s\n' "remote" "$R_USER@$R_HOST:$R_PATH"
   printf '  %-12s %s\n' "port" "$port"
   printf '  %-12s %s\n' "mountpoint" "$mp"
-  [ -n "$group" ] && printf '  %-12s %s\n' "access" "members of $group (via $(dirname "$mp") at 0750)"
+  [ -n "$group" ] && printf '  %-12s %s\n' "access" "members of $group only (bindfs mirror-only)"
 
 
   # ---- key ----------------------------------------------------------------
@@ -242,45 +246,99 @@ safely to sftp. Rename the folder on the server." ;;
   fi
 
   # ---- access model -------------------------------------------------------
-  # ACCESS IS GATED BY THE PARENT DIRECTORY, NOT BY THE MOUNT'S OWN MODES.
+  # THE MODES CANNOT COME FROM sshfs, AND CANNOT COME FROM THE SERVER EITHER.
   #
-  # sshfs has no file_mode/dir_mode -- those are cifs options. With
-  # `default_permissions` the kernel enforces whatever the SERVER reports, and
-  # Windows OpenSSH reports modes derived from NTFS ACLs that do not map: a
-  # share came back 0707, group `---` and other `rwx`. Unix stops at the first
-  # matching class, so being IN the entitled group got the empty group bits and
-  # never fell through to other -- membership made it worse, and a user not in
-  # the group could walk in. `umask` cannot fix that: it clears bits, it cannot
-  # add the group bits that are missing.
+  # sshfs has no uid=, gid=, umask=, file_mode= or dir_mode= options -- only
+  # idmap/uidfile/gidfile, which map IDs and not permissions. So ownership and
+  # modes are whatever the remote reports, and with `default_permissions` the
+  # kernel enforces exactly that. Windows OpenSSH synthesises them from NTFS
+  # ACLs and a share came back 0707: owner rwx, GROUP ---, other rwx. Unix stops
+  # at the first matching class, so a member of the entitled group got the empty
+  # group bits and was denied, while a non-member would have walked in.
   #
-  # So: no default_permissions, and the mount goes inside a directory owned by
-  # the group at 0750. Traversal into the mount requires traversing that parent,
-  # which the kernel checks locally against real group membership. The remote
-  # side is authorised by the service account's NTFS rights, as before.
-  if ! grep -qE '^[[:space:]]*user_allow_other' /etc/fuse.conf 2>/dev/null; then
-    printf 'user_allow_other\n' >> /etc/fuse.conf
-    ok "enabled user_allow_other in /etc/fuse.conf (needed for allow_other)"
+  # So the sshfs mount is kept PRIVATE, under /run where only root can reach it,
+  # and bindfs presents it at the real mountpoint with ownership and modes we
+  # choose. bindfs exists for exactly this and can also restrict the mount to
+  # one group outright (--mirror-only=@group disallows everyone else but root).
+  #
+  # Without --group there is nothing to gate, so sshfs mounts straight at the
+  # mountpoint, root-only, and bindfs is not involved.
+  if [ -n "$group" ] && ! command -v bindfs >/dev/null 2>&1; then
+    die "--group needs bindfs, which is not installed:  sudo apt-get install bindfs
+Without it, sshfs can only present the modes the server reports, and a Windows
+server reports modes that deny the very group you are granting."
   fi
 
-  local opts="IdentityFile=$key,UserKnownHostsFile=$KNOWN_HOSTS,StrictHostKeyChecking=yes"
-  opts="$opts,port=$port,allow_other,uid=$uid,gid=$gid,umask=022"
-  opts="$opts,idmap=none,reconnect,ServerAliveInterval=15,ServerAliveCountMax=3"
-  opts="$opts,_netdev,nofail"
-  [ "$ro" -eq 1 ] && opts="$opts,ro"
-  [ -n "$extra" ] && opts="$opts,$extra"
+  local sopts bopts priv
+  sopts="IdentityFile=$key,UserKnownHostsFile=$KNOWN_HOSTS,StrictHostKeyChecking=yes"
+  sopts="$sopts,port=$port,reconnect,ServerAliveInterval=15,ServerAliveCountMax=3"
+  sopts="$sopts,_netdev,nofail"
+  [ "$ro" -eq 1 ] && sopts="$sopts,ro"
+  [ -n "$extra" ] && sopts="$sopts,$extra"
 
   install -d -m 0755 "$MOUNT_ROOT"
+
+  local mu au bu
   if [ -n "$group" ]; then
-    # 0750 root:<group> on the PARENT is the access control. Members traverse
-    # it; nobody else can, whatever the mounted filesystem claims about itself.
-    install -d -m 0750 -o root -g "$group" "$(dirname "$mp")"
-    install -d -m 0755 -o root -g "$group" "$mp"
+    if ! grep -qE '^[[:space:]]*user_allow_other' /etc/fuse.conf 2>/dev/null; then
+      printf 'user_allow_other\n' >> /etc/fuse.conf
+      ok "enabled user_allow_other in /etc/fuse.conf"
+    fi
+    priv="$PRIV_ROOT/$name"
+    install -d -m 0700 -o root -g root "$PRIV_ROOT"
+    install -d -m 0700 -o root -g root "$priv"
+    install -d -m 0750 -o root -g "$group" "$mp"
+
+    bopts="force-user=root,force-group=$group,perms=0770,mirror-only=@$group"
+    bopts="$bopts,allow_other,_netdev,nofail"
+    [ "$ro" -eq 1 ] && bopts="$bopts,perms=0550"
+
+    bu="$UNIT_DIR/$(unit_of "$priv")"
+    mu="$UNIT_DIR/$(unit_of "$mp")"
+    au="$UNIT_DIR/$(amount_of "$mp")"
+
+    # The private sshfs mount. No allow_other: nothing but root and the bindfs
+    # daemon, which runs as root, ever touches it.
+    cat > "$bu" <<EOF
+$MARKER
+$NAME_TAG $name
+[Unit]
+Description=SSH transport for share $name ($R_USER@$R_HOST:$R_PATH)
+After=network-online.target
+Wants=network-online.target
+
+[Mount]
+What=$R_USER@$R_HOST:$R_PATH
+Where=$priv
+Type=fuse.sshfs
+Options=$sopts
+TimeoutSec=30
+EOF
+    # What people actually use. Requires the transport, so touching the
+    # mountpoint brings the whole chain up.
+    cat > "$mu" <<EOF
+$MARKER
+$NAME_TAG $name
+[Unit]
+Description=SSH share $name, for members of $group
+Requires=$(unit_of "$priv")
+After=$(unit_of "$priv")
+
+[Mount]
+What=$priv
+Where=$mp
+Type=fuse.bindfs
+Options=$bopts
+TimeoutSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOF
   else
     install -d -m 0750 "$mp"
-  fi
-
-  local mu au; mu="$UNIT_DIR/$(unit_of "$mp")"; au="$UNIT_DIR/$(amount_of "$mp")"
-  cat > "$mu" <<EOF
+    mu="$UNIT_DIR/$(unit_of "$mp")"
+    au="$UNIT_DIR/$(amount_of "$mp")"
+    cat > "$mu" <<EOF
 $MARKER
 $NAME_TAG $name
 [Unit]
@@ -292,12 +350,14 @@ Wants=network-online.target
 What=$R_USER@$R_HOST:$R_PATH
 Where=$mp
 Type=fuse.sshfs
-Options=$opts
+Options=$sopts
 TimeoutSec=30
 
 [Install]
 WantedBy=multi-user.target
 EOF
+  fi
+
   cat > "$au" <<EOF
 $MARKER
 $NAME_TAG $name
@@ -312,6 +372,7 @@ TimeoutIdleSec=600
 WantedBy=multi-user.target
 EOF
   chmod 0644 "$mu" "$au"
+  [ -n "${bu:-}" ] && chmod 0644 "$bu"
   systemctl daemon-reload
   systemctl enable --now "$(amount_of "$mp")" >/dev/null 2>&1 \
     && ok "automount enabled -- it mounts on first access" \
@@ -532,6 +593,11 @@ cmd_remove() {
   systemctl disable --now "$(amount_of "$mp")" >/dev/null 2>&1 || true
   systemctl stop "$(unit_of "$mp")" >/dev/null 2>&1 || true
   rm -f "$UNIT_DIR/$(unit_of "$mp")" "$UNIT_DIR/$(amount_of "$mp")"
+  # The private sshfs transport, when the share was group-gated.
+  local priv="$PRIV_ROOT/$n"
+  systemctl stop "$(unit_of "$priv")" >/dev/null 2>&1 || true
+  rm -f "$UNIT_DIR/$(unit_of "$priv")"
+  rmdir "$priv" 2>/dev/null || true
   systemctl daemon-reload
   rmdir "$mp" 2>/dev/null || true
   ok "removed $n"

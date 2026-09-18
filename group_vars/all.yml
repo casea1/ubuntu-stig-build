@@ -227,6 +227,11 @@ base_common_packages:
   - cifs-utils
   - smbclient
   - sshfs
+  - bindfs                     # it-sshfs: sshfs cannot set uid/gid/modes at all
+                               # (no such options -- only idmap), so a Windows
+                               # server's reported modes decide, and they deny
+                               # the group you are granting. bindfs presents the
+                               # mount with ownership and modes we choose.
   - net-tools
   - unzip
   - cron                       # provides /usr/bin/crontab + the cron daemon
