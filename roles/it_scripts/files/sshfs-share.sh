@@ -130,6 +130,28 @@ share_field() {
   [ -r "$u" ] || return 1
   sed -nE "s/^$2=//p" "$u" | tail -1
 }
+
+# WHICH UNIT ACTUALLY HOLDS THE SSH CONNECTION.
+#
+# A group-gated share is two mounts: sshfs onto /run/it-sshfs/<name>, then
+# bindfs from there onto /media/<name>. So the unit at the MOUNTPOINT has
+# What=/run/it-sshfs/<name> -- a local path, not user@host:/path -- and anything
+# that reads the remote from it gets a directory and tries to resolve it as a
+# hostname. Follow the What= one hop when it is a path.
+transport_unit() {   # $1 = share name -> unit file holding the sshfs mount
+  local mp w
+  mp="$(mp_of "$1")"
+  w="$(sed -nE 's/^What=//p' "$UNIT_DIR/$(unit_of "$mp")" 2>/dev/null | tail -1)"
+  case "$w" in
+    /*) printf '%s\n' "$UNIT_DIR/$(unit_of "$w")" ;;
+    *)  printf '%s\n' "$UNIT_DIR/$(unit_of "$mp")" ;;
+  esac
+}
+remote_of()   { sed -nE 's/^What=//p' "$(transport_unit "$1")" 2>/dev/null | tail -1; }
+remote_port() {
+  sed -nE 's/^Options=//p' "$(transport_unit "$1")" 2>/dev/null | tail -1 |
+    tr ',' '\n' | sed -nE 's/^port=//p' | tail -1
+}
 have_share() { shares | grep -qx "$1"; }
 
 split_remote() {   # USER@HOST:/PATH -> sets R_USER R_HOST R_PATH
@@ -152,7 +174,7 @@ cmd_list() {
   fi
   for n in $(shares); do
     mp="$(mp_of "$n")"
-    what="$(share_field "$n" What)"
+    what="$(remote_of "$n")"
     st="$(systemctl is-active "$(unit_of "$mp")" 2>/dev/null || true)"
     printf '  %-18s %-34s %-22s %s\n' "$n" "$what" "$mp" "${st:-unknown}"
   done
@@ -430,9 +452,14 @@ configured: $(shares | paste -sd' ' - || echo none)"
   case "$pub" in *"'"*) die "the key comment contains a single quote, which would break the remote script.
 Regenerate it:  ssh-keygen -t ed25519 -N '' -f $key -C \"$n $(hostname -s)\"" ;; esac
 
-  what="$(share_field "$n" What)"
+  what="$(remote_of "$n")"
+  case "$what" in
+    *@*:*) ;;
+    *) die "cannot work out the remote for '$n' from its unit files.
+What= reads: ${what:-<empty>}" ;;
+  esac
   user="${what%%@*}"; host="${what#*@}"; host="${host%%:*}"
-  port="$(share_field "$n" Options | tr ',' '\n' | sed -nE 's/^port=//p' | tail -1)"; port="${port:-22}"
+  port="$(remote_port "$n")"; port="${port:-22}"
 
   head2 "Installing this box's key on $user@$host"
   note "you will be asked for ${user}'s PASSWORD once. After this, the key is"
@@ -480,9 +507,14 @@ cmd_test() {
 configured: $(shares | paste -sd' ' - || echo none)"
 
   local what mp key host port user path
-  what="$(share_field "$n" What)"; mp="$(mp_of "$n")"; key="$(key_of "$n")"
+  what="$(remote_of "$n")"; mp="$(mp_of "$n")"; key="$(key_of "$n")"
+  case "$what" in
+    *@*:*) ;;
+    *) die "cannot work out the remote for '$n' from its unit files.
+What= reads: ${what:-<empty>}" ;;
+  esac
   user="${what%%@*}"; host="${what#*@}"; host="${host%%:*}"; path="${what#*:}"
-  port="$(share_field "$n" Options | tr ',' '\n' | sed -nE 's/^port=//p' | tail -1)"; port="${port:-22}"
+  port="$(remote_port "$n")"; port="${port:-22}"
 
   head2 "$n -> $what"
 
