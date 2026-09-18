@@ -44,3 +44,15 @@ SMB_SUBDIR={{ powerstrux_offload_smb_subdir | default(ansible_hostname | default
 SMB_CRED={{ powerstrux_offload_smb_credentials | default('/etc/stig-build/powerstrux-offload.cred') }}
 SMB_AUTH={{ powerstrux_offload_smb_auth | default('domain') }}
 SMB_OPTS={{ powerstrux_offload_smb_options | default('vers=3.1.1,sec=ntlmssp,uid=0,gid=0,file_mode=0640,dir_mode=0750') }}
+
+# ---- transport --------------------------------------------------------------
+# smb  = mount the share and copy (CANNOT WORK on a FIPS box -- NTLM needs MD5)
+# sftp = scp over SSH. FIPS-approved crypto, no KDC, nothing left mounted, and
+#        the far-side account can be CREATE-ONLY so a box can drop a report and
+#        cannot read back, alter or delete another box's.
+TRANSPORT={{ powerstrux_offload_transport | default('smb') }}
+SFTP_DEST={{ powerstrux_offload_sftp_dest | default('') }}
+SFTP_KEY={{ powerstrux_offload_sftp_key | default('/etc/stig-build/ssh/powerstrux-offload') }}
+SFTP_PORT={{ powerstrux_offload_sftp_port | default(22) }}
+SFTP_SUBDIR={{ powerstrux_offload_sftp_subdir | default(ansible_hostname | default('unknown')) }}
+SFTP_KNOWN_HOSTS={{ powerstrux_offload_sftp_known_hosts | default('/etc/stig-build/ssh/known_hosts') }}

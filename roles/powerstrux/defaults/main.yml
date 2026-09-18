@@ -84,3 +84,16 @@ powerstrux_offload_smb_options: "vers=3.1.1,sec=ntlmssp,uid=0,gid=0,file_mode=06
 # own. Set a calendar spec to ALSO run it independently (e.g. a box where the
 # reports arrive from somewhere other than the local audit).
 powerstrux_offload_oncalendar: ""
+
+# ---- offload transport ------------------------------------------------------
+# SMB cannot work on a FIPS box against a server that is not domain-joined:
+# NTLMv2 needs HMAC-MD5, FIPS removes MD5, and sec=none does not avoid it
+# because SMB2/3 carries even an anonymous session over NTLMSSP. Set this to
+# sftp and give the far side a CREATE-ONLY service account -- see
+# docs/procedures.md, "Getting the PowerStrux reports to the auditors".
+powerstrux_offload_transport: smb
+powerstrux_offload_sftp_dest: ""          # svc_powerstrux@10.0.0.5:/C:/Evidence/PowerStrux
+powerstrux_offload_sftp_key: /etc/stig-build/ssh/powerstrux-offload
+powerstrux_offload_sftp_port: 22
+powerstrux_offload_sftp_subdir: "{{ ansible_hostname | default('unknown') }}"
+powerstrux_offload_sftp_known_hosts: /etc/stig-build/ssh/known_hosts

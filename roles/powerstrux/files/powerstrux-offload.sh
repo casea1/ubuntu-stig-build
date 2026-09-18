@@ -233,6 +233,24 @@ SMB_CRED=$(conf_get SMB_CRED "$DEFAULT_CRED")
 SMB_AUTH=$(conf_get SMB_AUTH domain)
 SMB_OPTS=$(conf_get SMB_OPTS "vers=3.1.1,sec=ntlmssp,uid=0,gid=0,file_mode=0640,dir_mode=0750")
 
+# SFTP is the transport that works on a FIPS box. SMB does not, at all, against
+# a server that is not domain-joined: NTLMv2 needs HMAC-MD5, FIPS removes MD5
+# from the kernel crypto API, and sec=none does not avoid it because SMB2 and
+# SMB3 carry even an anonymous session over NTLMSSP. Tested at every dialect
+# against the deployed server (2026-09-16).
+#
+# It is also a better fit for evidence than a mount. Nothing is left mounted, so
+# a compromised file server has no path onto this box, and the service account
+# on the far side can be given CREATE-ONLY rights -- it drops reports and cannot
+# read back, alter or delete what other boxes have written. A mount cannot be
+# constrained that way without the same NTFS work, and tempts someone to browse.
+TRANSPORT=$(conf_get TRANSPORT smb)
+SFTP_DEST=$(conf_get SFTP_DEST "")
+SFTP_KEY=$(conf_get SFTP_KEY /etc/stig-build/ssh/powerstrux-offload)
+SFTP_PORT=$(conf_get SFTP_PORT 22)
+SFTP_SUBDIR=$(conf_get SFTP_SUBDIR "$(hostname -s)")
+SFTP_KNOWN=$(conf_get SFTP_KNOWN_HOSTS /etc/stig-build/ssh/known_hosts)
+
 case "$KEEP"   in ''|*[!0-9]*) KEEP=26 ;; esac
 case "$WINDOW" in ''|*[!0-9]*) WINDOW=8 ;; esac
 
@@ -424,9 +442,41 @@ mount_share() {   # 0 = mounted at $MNT
 }
 umount_share() { mountpoint -q "$MNT" && { umount "$MNT" 2>>"$RUN_LOG" || log "WARNING: umount $MNT failed"; }; return 0; }
 
+# StrictHostKeyChecking stays ON and BatchMode is set: an unattended job that
+# trusts whatever answers on port 22, or that can sit at a prompt, is not an
+# evidence transport. The host key is pinned once by `it-sshfs add` or by hand.
+push_week_sftp() {   # $1 = local week dir
+  local wdir="$1" week base uh path
+  week="$(basename "$wdir")"
+  [ -n "$SFTP_DEST" ] || { log "ERROR: no SFTP_DEST configured"; return 1; }
+  [ -r "$SFTP_KEY" ]  || { log "ERROR: no SSH key at $SFTP_KEY"; return 1; }
+  [ -r "$SFTP_KNOWN" ] || {
+    log "ERROR: no pinned host key at $SFTP_KNOWN -- push SKIPPED, local copy kept"
+    log "       pin it with 'it-sshfs add', or: ssh-keyscan -H <host> >> $SFTP_KNOWN"
+    return 1; }
+
+  uh="${SFTP_DEST%%:*}"
+  path="${SFTP_DEST#*:}"
+  base="$path/$SFTP_SUBDIR"
+
+  # `-mkdir` ignores failure, which is what an already-existing directory is.
+  # `cd` then `put -r <wdir>` creates <base>/<week> from the directory's own name.
+  if printf -- '-mkdir %s\n-mkdir %s\ncd %s\nput -r %s\nquit\n' \
+        "$path" "$base" "$base" "$wdir" |
+     sftp -q -b - -o BatchMode=yes -o ConnectTimeout=20 \
+          -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$SFTP_KNOWN" \
+          -i "$SFTP_KEY" -P "$SFTP_PORT" "$uh" >>"$RUN_LOG" 2>&1; then
+    log "pushed: $week -> $SFTP_DEST/$SFTP_SUBDIR/$week ($(find "$wdir" -type f | wc -l) file(s))"
+    return 0
+  fi
+  log "ERROR: SFTP push of $week to $SFTP_DEST failed -- local copy kept"
+  return 1
+}
+
 push_week() {   # $1 = local week dir
   local wdir="$1" week dst
   week="$(basename "$wdir")"
+  if [ "$TRANSPORT" = sftp ]; then push_week_sftp "$wdir"; return $?; fi
   mount_share || { log "ERROR: could not mount $SMB_SHARE -- push SKIPPED, local copy kept"; return 1; }
   dst="$MNT/$SMB_SUBDIR/$week"
   if ! mkdir -p "$dst" 2>>"$RUN_LOG"; then
