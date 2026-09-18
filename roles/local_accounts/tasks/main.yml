@@ -175,6 +175,12 @@
 #
 # This is a privilege grant and should be recorded as such -- it lets a
 # non-administrator change a deployed machine's address. Off by default.
+#
+# subject.active is required by default: an idle or background session should
+# not be able to authorize. But logind does not always mark an xrdp session
+# active, and when it does not the rule declines with nothing logged -- the user
+# simply gets the password prompt again. network_admin_require_active: false
+# drops that condition when the session type on this fleet does not satisfy it.
 - name: ACCOUNTS | Network-settings group exists ({{ network_admin_group }})
   ansible.builtin.group:
     name: "{{ network_admin_group }}"
@@ -197,7 +203,7 @@
               "org.freedesktop.NetworkManager.network-control"
           ];
           if (nm.indexOf(action.id) !== -1 &&
-              subject.isInGroup("{{ network_admin_group }}") && subject.active) {
+              subject.isInGroup("{{ network_admin_group }}"){{ ' && subject.active' if (network_admin_require_active | default(true) | bool) else '' }}) {
               return polkit.Result.YES;
           }
       });

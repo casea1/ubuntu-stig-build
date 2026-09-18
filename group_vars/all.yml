@@ -1892,3 +1892,10 @@ ia_retention_targets:
 # without sudo. Record it as a deviation before enabling it on anything fielded.
 network_admin_enabled: false
 network_admin_group: netadmin
+
+# Require an ACTIVE logind session, so an idle or background session cannot
+# authorize. Set false if `loginctl show-session <id> -p Active` reads no for
+# the session type in use -- xrdp does not always get marked active, and the
+# rule then declines with nothing logged at all: the user just gets the password
+# prompt again and every check looks correct.
+network_admin_require_active: true
