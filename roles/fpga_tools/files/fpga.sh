@@ -737,10 +737,50 @@ fix_vendor_usb_conf() {
     fi
   done
 
+  # NOTHING THERE AT ALL: run the vendor's own installer, then fix what it
+  # leaves behind.
+  #
+  # FlashPro Express says "cannot search for FP6 programmers, cyusb.conf file not
+  # present under /etc folder. Please install software as a super user", which
+  # reads as "run me with sudo" -- and that is the wrong thing to do. Launching
+  # the GUI as root fails on X instead, because root has no Xauthority cookie for
+  # the user's RDP session (trap 29). The message means the SETUP script wants
+  # root, once. Finding fp6_env_install inside a vendor tree is real friction, so
+  # this does it.
   if [ "$seen" -eq 0 ]; then
-    say "  ${DIM}no Microchip USB config found. If FlashPro Express asks for it,${R}"
-    say "  ${DIM}run the vendor script once:  sudo ./fp6_env_install${R}"
-    say "  ${DIM}then run 'sudo it-fpga fixup' again to correct its modes.${R}"
+    local envsh=""
+    [ -d "$MCHP_ROOT" ] && envsh="$(find "$MCHP_ROOT" -maxdepth 8 -type f \
+        -name 'fp6_env_install*' 2>/dev/null | sort | head -1)"
+    if [ -z "$envsh" ]; then
+      warn "no Microchip USB config, and no fp6_env_install found under $MCHP_ROOT"
+      say "  ${DIM}Run the vendor script once as root, then 'sudo it-fpga fixup' again.${R}"
+      say "  ${DIM}It ships with FlashPro Express, under the installed tree.${R}"
+      return 0
+    fi
+    say "  running the vendor USB setup once: $envsh"
+    if ( cd "$(dirname "$envsh")" && sh "$envsh" ) >/dev/null 2>&1; then
+      ok "vendor USB setup completed"
+    else
+      warn "the vendor script reported an error; checking what it left anyway"
+    fi
+    # Straight back through the same loop, so its files get the mode repair.
+    if [ -f /etc/cyusb.conf ]; then
+      chown root:root /etc/cyusb.conf 2>/dev/null
+      chmod 0644 /etc/cyusb.conf 2>/dev/null
+      ok "/etc/cyusb.conf created and set 0644"
+      udevadm control --reload-rules 2>/dev/null && udevadm trigger 2>/dev/null \
+        && ok "udev rules reloaded -- unplug and replug the programmer"
+    else
+      bad "still no /etc/cyusb.conf after running $envsh"
+      say "  ${DIM}Run it by hand and read its output:  sudo sh $envsh${R}"
+      return 1
+    fi
+    say ""
+    say "  ${B}Now launch FlashPro Express AS THE ENGINEER, not with sudo.${R}"
+    say "  ${DIM}The message that asked for a super user meant this setup script,${R}"
+    say "  ${DIM}not the tool. Run as root it fails on X instead: root has no${R}"
+    say "  ${DIM}Xauthority cookie for the user's session, which is the${R}"
+    say "  ${DIM}'qt.qpa.xcb: could not connect to display' error.${R}"
     return 0
   fi
 
