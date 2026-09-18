@@ -132,15 +132,17 @@ else
   sftp_path="${SFTP_DEST#*:}"
   [ -n "$SFTP_SUB" ] && sftp_path="$sftp_path/$SFTP_SUB"
 
-  # mkdir -p has no sftp equivalent; `-mkdir` in a batch is allowed to fail, and
-  # an existing directory failing is the normal case, not an error.
-  printf 'mkdir %s\nquit\n' "$sftp_path" | \
-    sftp -q $ssh_opts "$sftp_user_host" >/dev/null 2>&1 || true
+  # Every path is QUOTED: sftp splits its own commands on whitespace, so an
+  # unquoted "/E:/Shared Folders/Audit" becomes two arguments and the cd fails
+  # on a directory that exists. mkdir -p has no sftp equivalent; `-mkdir` is
+  # allowed to fail, and an existing directory failing is the normal case.
+  printf -- '-mkdir "%s"\nquit\n' "$sftp_path" | \
+    sftp -q -b - $ssh_opts "$sftp_user_host" >/dev/null 2>&1 || true
 
   for f in "$DEST"/audit-"$host"-"$stamp".tar.gz "$DEST"/logs-"$host"-"$stamp".tar.gz; do
     [ -f "$f" ] || continue
-    if printf 'put %s\nquit\n' "$f" | \
-       sftp -q $ssh_opts "$sftp_user_host:$sftp_path" >>"$LOG" 2>&1; then
+    if printf -- 'cd "%s"\nput "%s"\nquit\n' "$sftp_path" "$f" | \
+       sftp -q -b - $ssh_opts "$sftp_user_host" >>"$LOG" 2>&1; then
       log "pushed: $(basename "$f") -> $SFTP_DEST/$SFTP_SUB"
     else
       log "ERROR: SFTP push failed for $(basename "$f")"

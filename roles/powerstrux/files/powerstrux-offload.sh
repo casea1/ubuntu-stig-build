@@ -455,13 +455,21 @@ push_week_sftp() {   # $1 = local week dir
     log "       pin it with 'it-sshfs add', or: ssh-keyscan -H <host> >> $SFTP_KNOWN"
     return 1; }
 
+  # Split on the FIRST colon only: a Windows destination has two, as in
+  # svc@host:/E:/Shared Folders/Evidence.
   uh="${SFTP_DEST%%:*}"
   path="${SFTP_DEST#*:}"
+  case "$path" in
+    *'"'*) log "ERROR: SFTP_DEST path contains a double quote -- cannot be passed to sftp"; return 1 ;;
+  esac
   base="$path/$SFTP_SUBDIR"
 
-  # `-mkdir` ignores failure, which is what an already-existing directory is.
   # `cd` then `put -r <wdir>` creates <base>/<week> from the directory's own name.
-  if printf -- '-mkdir %s\n-mkdir %s\ncd %s\nput -r %s\nquit\n' \
+  # Every path is QUOTED: sftp splits its own commands on whitespace, so an
+  # unquoted "/E:/Shared Folders/X" becomes two arguments and the cd fails on a
+  # directory that exists. `-mkdir` ignores failure, which is what an existing
+  # directory is.
+  if printf -- '-mkdir "%s"\n-mkdir "%s"\ncd "%s"\nput -r "%s"\nquit\n' \
         "$path" "$base" "$base" "$wdir" |
      sftp -q -b - -o BatchMode=yes -o ConnectTimeout=20 \
           -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$SFTP_KNOWN" \

@@ -2893,6 +2893,23 @@ sudo it-sshfs add --name sentry_share \
   --group sentry
 ```
 
+**A path with a space needs the whole `--remote` argument quoted**, and the drive
+letter stays in it:
+
+```bash
+sudo it-sshfs add --name sentry_share \
+  --remote 'svc_share@10.10.99.100:/E:/Shared Folders/Sentry_Share' \
+  --group sentry
+```
+
+Two different quoting problems hide behind that. The shell splits the argument
+unless you quote it — obvious enough. Less obvious: **`sftp` splits its own batch
+commands on whitespace too**, so `cd /E:/Shared Folders/X` becomes `cd
+/E:/Shared` and fails on a directory that plainly exists. Every path the offload
+jobs and `it-sshfs test` hand to `sftp` is quoted for that reason. A path
+containing a double quote is refused outright rather than silently producing a
+share that never mounts.
+
 It generates a key, shows the server's host-key fingerprint for you to check,
 and prints the public key to install. Paste that line into the service account's
 `authorized_keys` on Windows, then:

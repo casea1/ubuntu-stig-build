@@ -17,6 +17,9 @@
 #   it-sshfs                     status of every managed share
 #   it-sshfs list                the same
 #   it-sshfs add --name NAME --remote USER@HOST:/PATH [options]
+#        A Windows path keeps its drive letter: /C:/Shares/Sentry. If it
+#        contains a space, QUOTE THE WHOLE --remote argument:
+#          --remote 'svc_share@10.0.0.5:/E:/Shared Folders/Sentry_Share'
 #        --group NAME            members of NAME may use the mount (default: root only)
 #        --mountpoint PATH       default /media/<name>
 #        --port N                ssh port (default 22)
@@ -164,6 +167,10 @@ $(usage)" ;;
 
   command -v sshfs >/dev/null 2>&1 || die "sshfs is not installed:  sudo apt-get install sshfs"
   split_remote "$remote"
+  case "$R_PATH" in
+    *'"'*) die "the remote path contains a double quote, which cannot be passed
+safely to sftp. Rename the folder on the server." ;;
+  esac
   [ -n "$mp" ] || mp="$MOUNT_ROOT/$name"
 
   head2 "Adding $name"
@@ -355,14 +362,18 @@ configured: $(shares | paste -sd' ' - || echo none)"
   fi
 
   if [ "$rc" = 0 ]; then
-    if printf 'ls\nquit\n' | timeout 15 sftp -q -o BatchMode=yes \
-         -o UserKnownHostsFile="$KNOWN_HOSTS" -o StrictHostKeyChecking=yes \
-         -i "$key" -P "$port" "$user@$host:$path" >/dev/null 2>&1; then
+    # `cd "<path>"` in a batch rather than user@host:path on the command line:
+    # sftp splits its own commands on whitespace, so an unquoted path containing
+    # a space becomes two arguments and the cd fails on a directory that exists.
+    if printf 'cd "%s"\nls\nquit\n' "$path" | timeout 15 sftp -q -b - \
+         -o BatchMode=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
+         -o StrictHostKeyChecking=yes -i "$key" -P "$port" "$user@$host" >/dev/null 2>&1; then
       ok "the remote path exists and is readable: $path"
     else
       bad "cannot list $path as $user"
-      note "check the path (Windows paths look like /C:/Shares/Name) and that the"
-      note "account has NTFS permissions on it"
+      note "check the path and that the account has NTFS permissions on it."
+      note "Windows paths look like /C:/Shares/Name, and a drive other than C:"
+      note "is the same shape: /E:/Shared Folders/Sentry_Share"
       rc=1
     fi
   fi
