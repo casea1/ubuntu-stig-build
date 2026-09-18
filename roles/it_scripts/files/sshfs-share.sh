@@ -27,6 +27,10 @@
 #        --uid N --gid N         owner of the mounted files (default 0:0)
 #        --options "k=v,..."     extra sshfs options, appended last
 #   it-sshfs key NAME            print the PUBLIC key to install on the server
+#   it-sshfs install-key NAME    put it on the server for you, over SSH. Asks for
+#                                the service account's password ONCE; after that
+#                                the key authenticates and the password is not
+#                                used again. Idempotent, so each box adds its own
 #   it-sshfs test NAME           DNS, port, host key, key auth, sftp, then a mount
 #   it-sshfs mount NAME|--all
 #   it-sshfs umount NAME|--all
@@ -54,6 +58,17 @@
 # THE PRIVATE KEY NEVER LEAVES THE BOX. It is generated here, 0600 root-only,
 # and only the public half is ever printed. There is no password on disk.
 set -uo pipefail
+
+# Fleet defaults, so the long --remote is typed once into a file that the
+# baseline carries rather than once per box at a console. Anything given on the
+# command line still wins.
+DEFAULTS="${IT_SSHFS_DEFAULTS:-/etc/stig-build/sshfs.conf}"
+def_get() {   # $1 = key, $2 = fallback
+  local v=""
+  [ -r "$DEFAULTS" ] && v=$(sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$DEFAULTS" | tail -1)
+  v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+  printf '%s' "${v:-$2}"
+}
 
 MOUNT_ROOT="${IT_SSHFS_ROOT:-/media}"
 KEY_DIR="${IT_SSHFS_KEY_DIR:-/etc/stig-build/ssh}"
@@ -160,8 +175,11 @@ cmd_add() {
 $(usage)" ;;
     esac
   done
-  [ -n "$name" ]   || die "--name is required"
-  [ -n "$remote" ] || die "--remote USER@HOST:/PATH is required"
+  [ -n "$name" ]   || name="$(def_get NAME '')"
+  [ -n "$remote" ] || remote="$(def_get REMOTE '')"
+  [ -n "$group" ]  || group="$(def_get GROUP '')"
+  [ -n "$name" ]   || die "--name is required (or set NAME= in $DEFAULTS)"
+  [ -n "$remote" ] || die "--remote USER@HOST:/PATH is required (or set REMOTE= in $DEFAULTS)"
   case "$name" in *[!A-Za-z0-9_-]*) die "--name may only contain letters, digits, _ and -" ;; esac
   have_share "$name" && die "a share named '$name' already exists. Remove it first, or pick another name."
 
@@ -303,6 +321,74 @@ cmd_key() {
   cat "$key.pub"
 }
 
+# ---- install-key ----------------------------------------------------------
+# Put this box's public key into the service account's authorized_keys, over
+# SSH, in one command.
+#
+# Doing it by hand means a scp, then a PowerShell block, on every box -- and on
+# an air-gapped fleet there is no clipboard between the machine holding the
+# instructions and the machine running them, so "paste this" means "type this",
+# eight times, with a base64 key in it.
+#
+# ONE ssh session, so ONE password prompt: the key is embedded in the script
+# that is piped to `powershell -Command -`, which reads its commands from stdin
+# and therefore needs no escaping through cmd.exe.
+#
+# Idempotent. Re-running adds nothing, and each box appends its own line, so the
+# accumulated authorized_keys is the fleet.
+cmd_install_key() {
+  local n="${1:-}"
+  [ -n "$n" ] || die "usage: it-sshfs install-key NAME"
+  have_share "$n" || die "no share named '$n'.
+configured: $(shares | paste -sd' ' - || echo none)"
+
+  local key pub what user host port
+  key="$(key_of "$n")"
+  [ -r "$key.pub" ] || die "no public key at $key.pub"
+  pub="$(cat "$key.pub")"
+  case "$pub" in *"'"*) die "the key comment contains a single quote, which would break the remote script.
+Regenerate it:  ssh-keygen -t ed25519 -N '' -f $key -C \"$n $(hostname -s)\"" ;; esac
+
+  what="$(share_field "$n" What)"
+  user="${what%%@*}"; host="${what#*@}"; host="${host%%:*}"
+  port="$(share_field "$n" Options | tr ',' '\n' | sed -nE 's/^port=//p' | tail -1)"; port="${port:-22}"
+
+  head2 "Installing this box's key on $user@$host"
+  note "you will be asked for ${user}'s PASSWORD once. After this, the key is"
+  note "what authenticates and the password is not used again."
+  say ""
+
+  # -T: no pty wanted, we are piping a script. StrictHostKeyChecking stays on --
+  # the host key was pinned by `add`, and turning it off here to save a prompt
+  # would undo the one thing that makes this transport trustworthy.
+  if printf '%s\n' \
+      '$ErrorActionPreference = "Stop"' \
+      '$d = "$env:USERPROFILE\.ssh"' \
+      '$f = "$d\authorized_keys"' \
+      "\$k = '$pub'" \
+      'New-Item -ItemType Directory -Force -Path $d | Out-Null' \
+      'if (-not (Test-Path $f)) { New-Item -ItemType File -Path $f | Out-Null }' \
+      'if (-not (Select-String -Path $f -SimpleMatch $k -Quiet)) { Add-Content -Path $f -Value $k -Encoding ascii }' \
+      'icacls $d /inheritance:r /grant "$($env:USERNAME):(OI)(CI)F" /grant "SYSTEM:(OI)(CI)F" /T | Out-Null' \
+      'Write-Output ("keys now installed: " + (Get-Content $f).Count)' \
+     | ssh -T -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
+           -p "$port" "$user@$host" "powershell -NoProfile -Command -" 2>&1 | sed 's/^/  /'
+  then
+    ok "key installed"
+    logline "installed key for $n on $user@$host"
+    say ""
+    note "verify with:  sudo it-sshfs test $n"
+    say ""
+  else
+    bad "could not install the key"
+    note "the password prompt is ${user}'s Windows password. If it was accepted"
+    note "and this still failed, that account may be an ADMINISTRATOR -- sshd"
+    note "then reads C:\\ProgramData\\ssh\\administrators_authorized_keys instead"
+    note "and ignores the file this just wrote. Service accounts must be standard users."
+    return 1
+  fi
+}
+
 # ---- test -----------------------------------------------------------------
 # Each step is a different failure with a different fix, so they are reported
 # separately rather than as one "it did not work".
@@ -441,6 +527,7 @@ case "${1:-list}" in
   list|status|"") cmd_list ;;
   add)     shift; cmd_add "$@" ;;
   key)     shift; cmd_key "${1:-}" ;;
+  install-key|sendkey) shift; cmd_install_key "${1:-}" ;;
   test)    shift; cmd_test "${1:-}" ;;
   mount)   shift; cmd_mount "${1:-}" ;;
   umount)  shift; cmd_umount "${1:-}" ;;

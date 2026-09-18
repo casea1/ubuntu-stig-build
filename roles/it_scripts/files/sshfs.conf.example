@@ -1,0 +1,16 @@
+# it-sshfs fleet defaults.
+#
+# Install as /etc/stig-build/sshfs.conf. Anything given on the `it-sshfs add`
+# command line overrides what is here.
+#
+# The point of this file: the --remote argument is long, contains a path with
+# spaces, and is IDENTICAL on every box. Typing it at eight consoles is eight
+# chances to mistype it. Carry it in the baseline instead and the per-box work
+# becomes two short commands:
+#
+#     sudo it-sshfs add
+#     sudo it-sshfs install-key sentry_share
+#
+NAME=sentry_share
+REMOTE=svc_share@10.10.99.100:/E:/Shared Folders/Sentry_Share
+GROUP=sentry

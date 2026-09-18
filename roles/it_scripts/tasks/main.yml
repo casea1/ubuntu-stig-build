@@ -19,6 +19,17 @@
 # shell script can source it.
 # copy does not create parents, and /etc/stig-build only exists on a box that
 # has generated a secret into it -- which the EMI profile never does.
+# The long --remote is identical on every box and is typed at a console on each
+# one. Carrying it here turns that into `sudo it-sshfs add` with no arguments.
+# force: false -- a box that has been pointed somewhere else keeps its setting.
+- name: "IT-SCRIPTS | it-sshfs fleet defaults (example, not overwritten)"
+  ansible.builtin.copy:
+    src: sshfs.conf.example
+    dest: /etc/stig-build/sshfs.conf.example
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: "IT-SCRIPTS | Ensure /etc/stig-build exists (root-only; holds generated secrets)"
   ansible.builtin.file:
     path: /etc/stig-build

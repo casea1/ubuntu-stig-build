@@ -2893,8 +2893,34 @@ sudo it-sshfs add --name sentry_share \
   --group sentry
 ```
 
-**A path with a space needs the whole `--remote` argument quoted**, and the drive
-letter stays in it:
+**For a fleet, do not type this at eight consoles.** Put the settings in
+`/etc/stig-build/sshfs.conf` once, carry it in the baseline, and each box
+becomes two short commands:
+
+```bash
+sudo it-sshfs add                       # reads NAME, REMOTE, GROUP from the file
+sudo it-sshfs install-key sentry_share  # asks for the service account password ONCE
+sudo it-sshfs test sentry_share
+```
+
+`install-key` puts this box's public key into the service account's
+`authorized_keys` over SSH, in one session, and is idempotent — so each box adds
+its own line and the file accumulates into the fleet. After it runs, the key is
+what authenticates and the password is not used again. There is no clipboard
+between the machine holding these instructions and an air-gapped console, so
+"paste this" means "type this", and a base64 key is the wrong thing to type.
+
+The file to carry (`roles/it_scripts/files/sshfs.conf.example` is shipped as
+`/etc/stig-build/sshfs.conf.example`):
+
+```
+NAME=sentry_share
+REMOTE=svc_share@10.10.99.100:/E:/Shared Folders/Sentry_Share
+GROUP=sentry
+```
+
+**A path with a space needs the whole `--remote` argument quoted** when given on
+the command line, and the drive letter stays in it:
 
 ```bash
 sudo it-sshfs add --name sentry_share \
