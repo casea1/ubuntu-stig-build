@@ -212,7 +212,10 @@ mode_desc() {
   case "$1" in
     light)   echo "no apt, no image builds, no scan, no container touched" ;;
     full)    echo "packages and images, plus a fresh usg audit and SCAP scan (still no container touched)" ;;
-    scripts) echo "the it_scripts + powerstrux roles only" ;;
+    # --tags matches per TASK, not per role, so this is every task tagged
+    # 'scripts' wherever it lives -- it_scripts, powerstrux, and remote_desktop's
+    # it-rdp. Anything NOT tagged (an xrdp.ini key, say) needs a light pull.
+    scripts) echo "every script-shipping task (it_scripts, powerstrux, it-rdp)" ;;
     ai)      echo "${Y}INCLUDES the AI runtime -- rewrites compose files and may recreate containers${R}" ;;
     check)   echo "dry run -- reports what would change, changes nothing" ;;
   esac

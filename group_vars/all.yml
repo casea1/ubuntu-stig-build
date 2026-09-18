@@ -670,6 +670,37 @@ dev_rdp_max_bpp: "24"
 # Set it true for a box reached over a slow or metered link, where the trade
 # runs the other way.
 dev_rdp_bitmap_compression: false
+
+# Compress the whole outgoing PDU stream with MPPC before sending it?
+#
+# FALSE on purpose, for the same reason as bitmap_compression above and it is a
+# SECOND copy of the same trade that was being paid unnoticed: the xrdp package
+# ships bulk_compression=true, this role never managed the key, so every box has
+# been running MPPC over every update PDU on top of the RLE pass we already
+# turned off. libxrdp/xrdp_rdp.c runs it in xrdp's main thread -- the thread
+# that was measured at 70% of a core during a window drag.
+#
+# Set it true for a box reached over a slow or metered link.
+dev_rdp_bulk_compression: false
+
+# TCP socket buffer for the session, in bytes. EMPTY = do not set it, which is
+# both the xrdp default and the shipped xrdp.ini's commented-out state.
+#
+# UNTRIED ON THIS FLEET, and deliberately off until someone measures it.
+# xrdp only calls setsockopt when the key is present (xrdp_listen.c guards on
+# `> 0`), so leaving it empty means the kernel autotunes. The argument for
+# setting it is not throughput -- a LAN has no bandwidth problem -- it is that a
+# window drag hands xrdp several megabytes at once and a small socket buffer
+# makes its SINGLE thread block in write() mid-frame. The argument against is
+# that an explicit SO_SNDBUF turns kernel autotuning OFF for that socket.
+#
+# If you set it, set net.core.wmem_max too or the kernel silently clamps it
+# (Ubuntu's stock wmem_max is 212992, far below the 4194304 usually suggested);
+# the role does that for you. xrdp logs what it actually got at INFO --
+# "send buffer set to <n> bytes" in /var/log/xrdp.log -- and `it-rdp perf`
+# reads it back, so this one can be proven rather than believed.
+dev_rdp_tcp_send_buffer_bytes: ""
+dev_rdp_tcp_recv_buffer_bytes: ""
 # OPTIONAL: restrict RDP logins to members of this group (enforced in PAM). Empty
 # = any local account with a password may RDP (still password- + faillock-gated).
 # Set e.g. "rdpusers" to gate it; the role creates the group and adds the check.

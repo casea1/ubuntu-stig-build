@@ -212,6 +212,18 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   machine-password rotation. `it-smb test --krb5` already covers the
   interactive case.
 
+- **RDP has no fast path on this fleet, and it is a version problem, not a
+  settings problem.** `xrdp_encoder_create()` builds no encoder unless the
+  client offers RemoteFX/H.264 **and** says connection type LAN (0x06) **and**
+  bpp >= 24; Windows 11's mstsc stopped advertising RemoteFX, and noble ships
+  xrdp 0.9.24, which has no GFX/H.264 to replace it. So every session runs the
+  legacy bitmap path single-threaded, and lowering the client's "quality" makes
+  it worse -- that byte IS the gate. Trap 12i has the whole chain. Two real
+  fixes, both non-trivial: build xrdp 0.10.x (GFX + H.264) for the offline
+  repo, or move to `gnome-remote-desktop` (already in noble at 46.3, Wayland,
+  AVC444) -- which replaces the whole xrdp login path this repo hardens, PAM
+  stack, banner and session reaping included. Not started.
+
 - **Rotate the leaked credentials.** The old pgvector password, Open WebUI
   session key, and MLflow password were committed while the repo was public.
   Scrubbed from the working tree, still in history. An `it-rotate-secrets`

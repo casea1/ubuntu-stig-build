@@ -176,23 +176,48 @@ A pass cannot be trusted because trap 42 is precisely the case where a GET to th
 
 **It is an HTTP request, not a TCP connect.** A transparent proxy, or a firewall that accepts and then drops, completes the handshake and reports success for a host that is unreachable: measured in a proxied sandbox, an unroutable address "connected" in 6 ms. Nothing already enabled is affected either way -- this changes how long a pull takes, not the box's posture.
 
-**12i. Choppy RDP with `xrdp` itself burning CPU is the server ENCODING, and the tuning that helps a slow link hurts here.** Measure before touching anything: `top` during a window drag says which process is busy, and the three answers need three different fixes.
+**12i. On Windows 11 + Ubuntu 24.04 there IS no fast path, and turning the client's quality DOWN is what turns it off.** This is the ceiling every other RDP setting sits under, and it is decided before any of them are read. `xrdp/xrdp_encoder.c:xrdp_encoder_create()` refuses to build an encoder unless **all three** hold:
 
-**A lighter session is not available here.** GNOME Flashback was tried on dev-16 and withdrawn: its panel and the **classification banner** want the same screen edge, and the banner covered the toolbars. On this fleet the banner wins, so `gnome-shell`'s cost has to be reduced rather than removed -- and the lever that does that without touching the desktop is **resolution**, which cuts compositing and encoding together.
+```c
+if (client_info->mcs_connection_type != CONNECTION_TYPE_LAN) { return 0; }   /* 0x06 */
+if (client_info->bpp < 24)                                   { return 0; }
+/* ...then: jpeg_codec_id, or rfx_codec_id, or h264_codec_id — else return 0 */
+```
 
-**Choppy redraw and late typing are different faults.** Redraw is compositing plus encoding; typing is the input path, and none of the redraw levers touch it. The two on the input side are `use_fastpath=both` in `xrdp.ini` -- the lighter input PDU, now set by the role, previously left to whatever the package shipped -- and **ibus**, which puts an input-method hop on every keystroke and can be removed with `im-config -n none` where no non-Latin input is needed. `it-rdp perf` reports both, along with the redraw settings, and is meant to be run in the lab before a box ships.
+When it returns 0 there is no encoder thread at all: every update goes down the **legacy bitmap path in xrdp's single main thread**, RLE-compressed per bitmap and MPPC-compressed per PDU. That is why applications still *open* fast — opening a window is a small damage region — while **dragging** one is choppy. Dragging is the largest sustained damage region a desktop produces.
+
+Three consequences, each of which contradicts the obvious move:
+
+1. **`mcs_connection_type` is the client's Experience setting**, read verbatim from `connectionType` in TS_UD_CS_CORE (`libxrdp/xrdp_sec.c`). Only `0x06` — "LAN (10 Mbps or higher)" — counts. Windows 11's default is *Detect connection quality automatically*, which sends `0x07`. So **the shipped default already disables the encoder, and every step "down" the quality list disables it harder.** Anyone tuning the Windows side by lowering quality is making it worse and will never find this by experiment.
+2. **`max_bpp` below 24 disables the encoder outright.** It is not the bandwidth dial it looks like. `max_bpp: 16` is a *last resort for a genuinely slow link*, not a responsiveness setting.
+3. **Windows 11's mstsc no longer advertises RemoteFX at all** ([xrdp #2400](https://github.com/neutrinolabs/xrdp/issues/2400)) — Win 10 logged `xrdp_caps_process_codecs: RemoteFX, codec id 3`, Win 11 logs nothing. It offers NSCodec instead, which xrdp 0.9.24 records in `ns_codec_id` and **never uses**. Ubuntu 24.04 ships `xrdp 0.9.24-4` / `xorgxrdp 0.9.19-1`, and GFX/H.264 — the replacement for RemoteFX — arrived in **xrdp 0.10**, which is not in noble or noble-backports.
+
+**So on this fleet, today, no client-side or `xrdp.ini` setting can produce an accelerated session.** Say that out loud before anyone spends a day on the Experience tab. `it-rdp perf` now reads it off the box instead of guessing: `LogLevel=INFO` is the shipped default and `xrdp_caps_process_codecs:` lines are logged at INFO, so `/var/log/xrdp.log` already says which codecs the last client offered.
+
+**What is still worth doing on the legacy path**, in order:
+
+| lever | why |
+|---|---|
+| **`bulk_compression=false`** | the *second* compressor, and it was missed for a year. `bitmap_compression` is per-bitmap RLE; `bulk_compression` is MPPC over every outgoing PDU (`libxrdp/xrdp_rdp.c`), in the same single thread. The package ships it **true** and this role never set the key, so the fleet was paying both. Now `dev_rdp_bulk_compression`, default false |
+| **resolution**, and `use multimon:i:0` | still the cheapest lever, and the only one that cuts compositing and encoding at once. A second monitor doubles every pixel |
+| **`connection type:i:6` + `networkautodetect:i:0`** | does not unlock a codec on Win 11, but stops mstsc throttling itself and is the precondition the day the server is upgraded. `it-rdp client` prints the whole `.rdp` |
+| **`tcp_send_buffer_bytes`** | untried here. xrdp only calls `setsockopt` when the key is **present** (`xrdp_listen.c` guards on `> 0`), so today the kernel autotunes. The case for setting it is not bandwidth — it is that a drag hands xrdp megabytes at once and a small socket buffer makes its single thread block in `write()` mid-frame ([xrdp #1483](https://github.com/neutrinolabs/xrdp/issues/1483): "seamless window dragging" at 4 MiB). The case against is that an explicit `SO_SNDBUF` disables autotuning. `dev_rdp_tcp_send_buffer_bytes`, default empty. **Set `net.core.wmem_max` with it** — Ubuntu ships it at 212992 and the clamp is silent; xrdp logs what the kernel actually gave back at INFO and `it-rdp perf` reads it |
+
+**Choppy redraw and late typing are different faults.** Redraw is compositing plus encoding; typing is the input path, and none of the redraw levers touch it. The two on the input side are `use_fastpath=both` in `xrdp.ini` -- the lighter input PDU, now set by the role -- and **ibus**, which puts an input-method hop on every keystroke and can be removed with `im-config -n none` where no non-Latin input is needed.
+
+**A lighter session is not available here.** GNOME Flashback was tried on dev-16 and withdrawn: its panel and the **classification banner** want the same screen edge, and the banner covered the toolbars. On this fleet the banner wins.
 
 | busy process | cause | lever |
 |---|---|---|
-| `gnome-shell` / `Xorg` | software rendering -- xorgxrdp has no GPU path, so a full GNOME Shell is llvmpipe | lower the resolution; a lighter session is ruled out by the banner, above |
-| `xrdp` | encoding and compressing every update | `bitmap_compression`, `max_bpp` -- below |
-| nothing much | the link | `max_bpp: 16` |
+| `gnome-shell` / `Xorg` | software rendering -- xorgxrdp has no GPU path, so a full GNOME Shell is llvmpipe | lower the resolution |
+| `xrdp` | encoding and compressing every update, single-threaded | `bulk_compression`, `bitmap_compression`, `max_bpp` |
+| nothing much | the link, or xrdp blocked in `write()` | `tcp_send_buffer_bytes` |
 
-Measured on a deployed box: **`xrdp` at 70%** with gnome-shell and Xorg idle. So the cost was compression, and `bitmap_compression=true` was buying bandwidth this fleet does not need -- every box is on a switched LAN. It now defaults **false** (`dev_rdp_bitmap_compression`); set it true only for a genuinely slow or metered link.
-
-**`max_bpp` is not purely a bandwidth dial either.** Capping at 24 while the client asks for 32 makes xrdp convert every tile, and that conversion is CPU on the process that is already the bottleneck -- so **raising** it to 32 can be faster than capping it. Counterintuitive, and worth trying on a CPU-bound box before reaching for a lighter desktop.
+Measured on a deployed box: **`xrdp` at 70%** with gnome-shell and Xorg idle — consistent with the legacy path above, since that is where the compression happens.
 
 Note what did NOT help, since it rules out a whole family of guesses: disabling GNOME animations, and unchecking font smoothing on the Windows client. Neither touches the encode path.
+
+**The real fixes, neither of them small**, are in CLAUDE.md's open threads: an xrdp 0.10.x build (GFX + H.264, so Win 11 gets an accelerated codec again) or `gnome-remote-desktop`, which is already in noble at 46.3, is Wayland-native, and does AVC444 — but replaces the whole xrdp login path this repo hardens, PAM stack included.
 
 **12j. `apt autoremove` silently takes FIPS off a deployed box.** Confirmed on dev-13/14/15. `pro enable fips-updates` installs `ubuntu-fips` as a **dependency**, so apt marks it auto-installed; nothing depends on it afterwards; and a routine `apt autoremove` -- the one `apt upgrade` suggests, in the sentence everyone agrees to -- decides it is unused and removes it.
 

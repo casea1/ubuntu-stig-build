@@ -19,6 +19,9 @@
 #   it-rdp perf            is RDP configured to feel quick? Read-only. Run it in
 #                          the LAB before deploying -- separates CHOPPY REDRAW
 #                          from LATE TYPING, which have different fixes.
+#   it-rdp client          the .rdp settings to use on the WINDOWS side. Half of
+#                          this problem is decided by the client, and the
+#                          obvious knob ("quality") makes it WORSE.
 #   it-rdp                 sessions, orphans, and the sesman settings (default)
 #   it-rdp status          the same
 #   it-rdp reset [user]    end that user's sessions and sweep what is left
@@ -375,8 +378,57 @@ INI=/etc/xrdp/xrdp.ini
 ini_get() { sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$INI" 2>/dev/null | tail -1; }
 note() { printf '       %s%s%s\n' "$DIM" "$*" "$R"; }
 
+XRDP_LOG=/var/log/xrdp.log
+
+# Which codecs did the CLIENT offer, the last time one connected?
+#
+# This is the question every other setting depends on and the only one the box
+# can answer for itself. xrdp logs it at INFO, which is the shipped LogLevel,
+# so it is already in the log -- nobody had read it.
+codecs_offered() {
+  sed -nE 's/.*xrdp_caps_process_codecs: ([A-Za-z0-9]+),.*/\1/p' "$XRDP_LOG" 2>/dev/null \
+    | tail -8 | sort -u | tr '\n' ' '
+}
+
 cmd_perf() {
   local v
+
+  # -------------------------------------------------------------------------
+  # THE CEILING. Everything below this is trimming; this decides which of two
+  # completely different code paths a session runs on.
+  #
+  # xrdp/xrdp_encoder.c:xrdp_encoder_create() refuses to build an encoder
+  # unless ALL THREE hold:
+  #   1. the client offered jpeg, RemoteFX or H.264       (codec selection)
+  #   2. client_info->mcs_connection_type == CONNECTION_TYPE_LAN  (0x06)
+  #   3. client_info->bpp >= 24
+  # When it refuses, every update goes down the legacy bitmap path in xrdp's
+  # SINGLE main thread. That is what a choppy drag is.
+  # -------------------------------------------------------------------------
+  head2 "Codec the client negotiated  (the ceiling on everything else)"
+  local offered
+  offered="$(codecs_offered)"
+  if [ ! -r "$XRDP_LOG" ]; then
+    warn "cannot read $XRDP_LOG -- run this as root"
+  elif [ -z "$offered" ]; then
+    say "  ${DIM}no client has connected since this log was rotated -- connect once, re-run${R}"
+  elif printf '%s' "$offered" | grep -qi 'RemoteFX'; then
+    ok "client offered: $offered"
+    note "RemoteFX is present, so an accelerated encoder is possible."
+    note "It is still only USED when the client says LAN and bpp is 24 or more --"
+    note "see the client settings under 'it-rdp client'."
+  else
+    bad "client offered: $offered  -- no RemoteFX, no H.264"
+    say  "  ${DIM}This session is on the LEGACY BITMAP PATH. xrdp builds no encoder${R}"
+    say  "  ${DIM}at all, so every update is RLE bitmaps in its single main thread.${R}"
+    say  "  ${DIM}Dragging a window is the worst case for it, which is why dragging is${R}"
+    say  "  ${DIM}what people complain about while applications still open fast.${R}"
+    say ""
+    note "Windows 11's mstsc.exe stopped advertising RemoteFX (xrdp issue #2400),"
+    note "and 0.9.24 -- what Ubuntu 24.04 ships -- has no GFX/H.264 to fall back on."
+    note "NOTHING in $INI changes this. The fix is a newer xrdp or a different"
+    note "server; see reference.md trap 12i before anyone spends a day on settings."
+  fi
 
   head2 "Redraw path (choppy windows)"
   v="$(ini_get bitmap_compression)"
@@ -387,9 +439,23 @@ cmd_perf() {
     *)     warn "bitmap_compression=$v -- spends CPU to save bandwidth"
            note "this fleet is LAN-attached and xrdp is the bottleneck. Set it false." ;;
   esac
+  # The second compressor. bitmap_compression is per-bitmap RLE; this one is
+  # MPPC over the whole outgoing PDU stream, and it runs in the same thread.
+  v="$(ini_get bulk_compression)"
+  case "$v" in
+    false) ok "bulk_compression=false -- right for a LAN" ;;
+    "")    warn "bulk_compression not set (xrdp defaults it TRUE)"
+           note "MPPC over every PDU, in the thread that is already the bottleneck." ;;
+    *)     warn "bulk_compression=$v -- a second compressor on the same thread" ;;
+  esac
   v="$(ini_get max_bpp)"
-  ok "max_bpp=${v:-<unset>}"
-  [ "${v:-24}" != 32 ] && note "if the client asks for 32, xrdp converts EVERY tile. Raising this to 32 can be faster."
+  if [ "${v:-24}" -lt 24 ] 2>/dev/null; then
+    bad "max_bpp=$v -- BELOW 24 disables xrdp's encoder outright (xrdp_encoder.c)"
+    note "not a quality trade: at 16 there is no codec path to fall back from."
+  else
+    ok "max_bpp=${v:-<unset>}"
+    [ "${v:-24}" != 32 ] && note "if the client asks for 32, xrdp converts EVERY tile. Raising this to 32 can be faster."
+  fi
   for k in bitmap_cache new_cursors tcp_nodelay; do
     v="$(ini_get "$k")"
     [ "$v" = true ] && ok "$k=true" || warn "$k=${v:-<unset>} -- should be true"
@@ -414,6 +480,29 @@ cmd_perf() {
     ok "no ibus input-method hop"
   fi
 
+  head2 "TCP socket buffer  (untried on this fleet)"
+  v="$(ini_get tcp_send_buffer_bytes)"
+  if [ -z "$v" ]; then
+    say "  ${DIM}unset -- the kernel autotunes, which is xrdp's default and today's state${R}"
+    note "A drag hands xrdp megabytes at once; a small socket buffer makes its"
+    note "single thread block in write() mid-frame. Worth ONE experiment:"
+    note "  sudo sed -i 's/^#tcp_send_buffer_bytes=.*/tcp_send_buffer_bytes=4194304/' $INI"
+    note "  sudo sysctl -w net.core.wmem_max=4194304 && sudo systemctl restart xrdp"
+    note "Reconnect, then re-run this -- the line below says what it actually got."
+    note "If it helps, set dev_rdp_tcp_send_buffer_bytes so a pull keeps it."
+  else
+    ok "tcp_send_buffer_bytes=$v"
+    # xrdp logs the value the KERNEL gave back, which is the one that matters:
+    # SO_SNDBUF is clamped to net.core.wmem_max and the clamp is silent.
+    local got
+    got="$(grep -a 'send buffer set to' "$XRDP_LOG" 2>/dev/null | tail -1 | grep -oE '[0-9]+ bytes' | head -1)"
+    if [ -n "$got" ]; then
+      note "xrdp.log says the kernel gave it $got (it doubles what you ask for)"
+      note "much smaller than asked -> net.core.wmem_max clamped it."
+    fi
+    printf '       %snet.core.wmem_max = %s%s\n' "$DIM" "$(sysctl -n net.core.wmem_max 2>/dev/null)" "$R"
+  fi
+
   head2 "What the session is spending it on"
   if command -v ps >/dev/null 2>&1; then
     ps -eo pcpu,user,comm --sort=-pcpu 2>/dev/null | awk 'NR==1 || NR<=6' | sed 's/^/       /'
@@ -431,8 +520,52 @@ cmd_perf() {
   say ""
 }
 
+# ---------------------------------------------------------------------------
+# `client` -- what to put in the .rdp file on the Windows box.
+#
+# This exists because the intuitive move is the wrong one. mstsc's "Experience"
+# tab sets the connectionType byte in TS_UD_CS_CORE, and xrdp's encoder refuses
+# to start unless that byte is exactly CONNECTION_TYPE_LAN (0x06). Choosing a
+# slower connection type -- or leaving the Windows 11 default, "Detect
+# connection quality automatically", which sends 0x07 -- puts the session on
+# the legacy bitmap path. Turning the quality DOWN is what turns the fast path
+# OFF, which is why nobody finds this by experimenting.
+# ---------------------------------------------------------------------------
+cmd_client() {
+  head2 "Windows-side .rdp settings"
+  say "  Save as dev-XX.rdp next to the shortcut and open THAT, or paste these"
+  say "  into an existing .rdp with Notepad. The Experience tab cannot express"
+  say "  the first two, which is the point."
+  say ""
+  cat <<'RDP'
+       full address:s:dev-XX
+       connection type:i:6
+       networkautodetect:i:0
+       bandwidthautodetect:i:0
+       bitmapcachepersistenable:i:1
+       use multimon:i:0
+       desktopwidth:i:1600
+       desktopheight:i:900
+       audiomode:i:2
+RDP
+  say ""
+  note "connection type 6 = LAN. It is the ONLY value that lets xrdp build an"
+  note "encoder at all; 7 (autodetect, the Windows 11 default) does not count."
+  note "networkautodetect MUST be 0 or mstsc overrides the line above with 7."
+  note "use multimon 0 -- a second monitor doubles every pixel xrdp encodes."
+  note "desktopwidth/height are the cheapest lever there is on a box with no GPU."
+  note "audiomode 2 = do not play remote audio; drop it if anyone needs sound."
+  say ""
+  say "  ${DIM}On this fleet, with a Windows 11 client and xrdp 0.9.24, the encoder${R}"
+  say "  ${DIM}still will not start -- mstsc no longer offers RemoteFX. These make${R}"
+  say "  ${DIM}the legacy path as cheap as it gets and stop the client throttling${R}"
+  say "  ${DIM}itself. Run 'it-rdp perf' to see which path a session actually took.${R}"
+  say ""
+}
+
 case "${1:-status}" in
   perf)       cmd_perf ;;
+  client)     cmd_client ;;
   status|"")  cmd_status ;;
   sweep)      cmd_sweep ;;
   reset)      shift; cmd_reset "$@" ;;
