@@ -2775,6 +2775,90 @@ Three reasons, all of which bite on a hardened box:
 - it mounts on first access and unmounts when idle, so a server that is down costs nothing until something wants the share;
 - `systemctl status` and the journal give a real error, where a bad fstab line gives a boot-time message nobody sees.
 
+### Getting the PowerStrux reports to the auditors
+
+The requirement is not "copy files to the admin PC". It is: **the boxes can
+deposit evidence, only the auditors can read it, and nobody can quietly alter
+it.** A share the Linux boxes mount read-write gives you none of that — any box
+that can write can also read every other box's reports and delete last quarter's.
+
+Use a **create-only drop box** over SFTP.
+
+**On the Windows machine, as Administrator.** Two principals: a service account
+that can only drop files, and an auditor group that can only read them.
+
+```powershell
+New-LocalUser  -Name svc_powerstrux -Description "PowerStrux evidence drop"
+New-LocalGroup -Name Auditors -Description "May read collected evidence"
+# Add-LocalGroupMember -Group Auditors -Member <each auditor>
+
+New-Item -ItemType Directory -Path C:\Evidence\PowerStrux -Force
+
+# Stop inheritance, keep an explicit copy to edit from
+icacls "C:\Evidence\PowerStrux" /inheritance:d
+
+# The boxes: traverse, create folders, create files. NOT read, NOT delete.
+icacls "C:\Evidence\PowerStrux" /remove svc_powerstrux
+icacls "C:\Evidence\PowerStrux" /grant "svc_powerstrux:(OI)(CI)(WD,AD,X)"
+
+# The auditors: read only.
+icacls "C:\Evidence\PowerStrux" /grant "Auditors:(OI)(CI)(RX)"
+
+# Everyone else off.
+icacls "C:\Evidence\PowerStrux" /remove "Users" /remove "Authenticated Users"
+icacls "C:\Evidence\PowerStrux"
+```
+
+> **A local administrator can still take ownership and read anything.** That is
+> how Windows works and no ACL prevents it. What you can do is make it
+> *evident*: turn on object-access auditing for the folder so a read or an
+> ownership change lands in the Security log, and say so in the SSP. "Only
+> auditors have access" is defensible; "not even an administrator can look" is
+> not, and an assessor will know.
+>
+> Turn the auditing on with `auditpol /set /subcategory:"File System"
+> /success:enable /failure:enable` plus a SACL on the folder, and make sure the
+> admin PC has BitLocker on — evidence at rest on an unencrypted disk undoes
+> the rest of this.
+
+**On each Linux box**, one key per box so a compromised box is revoked on its
+own:
+
+```bash
+sudo install -d -m 0700 /etc/stig-build/ssh
+sudo ssh-keygen -t ed25519 -N '' -f /etc/stig-build/ssh/powerstrux-offload \
+  -C "powerstrux $(hostname -s)"
+sudo ssh-keyscan -H 10.10.99.100 | sudo tee -a /etc/stig-build/ssh/known_hosts
+sudo cat /etc/stig-build/ssh/powerstrux-offload.pub
+```
+
+Check the host-key fingerprint against the server before you accept it, then put
+that public key in `C:\Users\svc_powerstrux\.ssh\authorized_keys` (a normal
+user, **not** an administrator — administrators' keys live in
+`C:\ProgramData\ssh\administrators_authorized_keys` instead, which is the
+commonest reason key auth appears to do nothing).
+
+Then in `/opt/it/site.yml`:
+
+```yaml
+powerstrux_offload_transport: sftp
+powerstrux_offload_sftp_dest: "svc_powerstrux@10.10.99.100:/C:/Evidence/PowerStrux"
+```
+
+and `sudo it-powerstrux offload test`.
+
+**Why this is defensible.** Each week's folder already carries a sha256
+`MANIFEST.txt` naming host, profile and baseline, and the box keeps its own copy
+under `/opt/ia/powerstrux-offload/` until `ia_retention` prunes it. So an
+auditor can verify the hashes, and a report altered on the server disagrees with
+the box that produced it. The transport uses FIPS-approved crypto, the private
+key never leaves the box, and there is no password anywhere.
+
+**What it does not give you.** Non-repudiation. If you need the boxes to *prove*
+they produced a given report, sign the manifest — a per-box GPG key, public
+halves handed to the auditors — rather than relying on the copy comparison.
+Worth doing if an assessor asks; not worth doing pre-emptively.
+
 ### Mounting a file share on a FIPS box (SSH, not SMB)
 
 SMB does not work on a FIPS box against a server that is not domain-joined —
