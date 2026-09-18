@@ -212,6 +212,12 @@ So the box reboots onto a generic kernel and looks completely normal. `uname -r`
 
 **Recovering a box that has already lost it** is `sudo it-fips` -> `fix` -> `boot` -> reboot -> `confirm`, written up in procedures 4.2b, and it works in the space *provided the kernel images are still there*. It recreates `fips.cfg` with `fips=1`, marks the packages manual, sets `GRUB_RECORDFAIL_TIMEOUT`, and switches with a **one-shot** `grub-reboot` so a failed boot self-recovers. If the kernel images are gone too, it cannot be fixed offline at all: that kernel comes from Ubuntu Pro and `pro enable` needs Canonical.
 
+**12s. Being IN the group can be what denies you: `drwx---rwx` is 0707.** A share mounted over sshfs came back `root:sentry` with mode **0707** — owner `rwx`, **group `---`**, other `rwx`. A member of `sentry` got permission denied; a user *not* in `sentry` could have walked in. Unix permission checking stops at the FIRST matching class — owner, then group, then other — so group membership selects the empty group bits and never falls through to `other`. Membership made it worse, which is why it reads as a broken ACL rather than a mode.
+
+The mode came from the server. sshfs has **no `file_mode`/`dir_mode`** (those are cifs options), so with `default_permissions` the kernel enforces whatever the remote reports, and Windows OpenSSH synthesises modes from NTFS ACLs that do not map cleanly. `umask` cannot repair it either: it clears bits, it cannot add the group bits that are missing.
+
+So `it-sshfs` does not use `default_permissions`. Access is gated by the PARENT directory instead — the mount lives at `/media/<group>/<name>` with `/media/<group>` at `0750 root:<group>`. Traversal is checked locally against real group membership, which is the thing we actually control; the remote side stays authorised by the service account's NTFS rights.
+
 **12r. Ubuntu's FIPS parameter is `bootdev=`, not Red Hat's `boot=`, and a box needs BOTH it and `fips=1`.** The FIPS check runs from the initramfs and verifies itself against `.hmac` files on `/boot`; where `/boot` is a separate filesystem -- which LVM + LUKS leaves it -- it has to be told where. Ubuntu's name for that is `bootdev=/dev/disk/by-uuid/<uuid>`, written into `99-fips.cfg` by `ubuntu-fips` when `pro enable fips-updates` runs. A working box shows both:
 
 ```

@@ -189,12 +189,22 @@ $(usage)" ;;
     *'"'*) die "the remote path contains a double quote, which cannot be passed
 safely to sftp. Rename the folder on the server." ;;
   esac
-  [ -n "$mp" ] || mp="$MOUNT_ROOT/$name"
 
   head2 "Adding $name"
+  local ggid
+  if [ -n "$group" ]; then
+    ggid=$(getent group "$group" 2>/dev/null | cut -d: -f3)
+    [ -n "$ggid" ] || die "group '$group' does not exist on this box"
+    gid="$ggid"
+    [ -n "$mp" ] || mp="$MOUNT_ROOT/$group/$name"
+  fi
+  [ -n "$mp" ] || mp="$MOUNT_ROOT/$name"
+
   printf '  %-12s %s\n' "remote" "$R_USER@$R_HOST:$R_PATH"
   printf '  %-12s %s\n' "port" "$port"
   printf '  %-12s %s\n' "mountpoint" "$mp"
+  [ -n "$group" ] && printf '  %-12s %s\n' "access" "members of $group (via $(dirname "$mp") at 0750)"
+
 
   # ---- key ----------------------------------------------------------------
   local key; key="$(key_of "$name")"
@@ -232,32 +242,42 @@ safely to sftp. Rename the folder on the server." ;;
   fi
 
   # ---- access model -------------------------------------------------------
-  # allow_other is what makes ONE machine-authenticated mount usable by every
-  # entitled person; without it only root sees the mount. default_permissions
-  # makes the kernel enforce the uid/gid/modes below rather than letting the
-  # remote server's idea of ownership decide.
-  local fmode=0640 dmode=0750
-  if [ -n "$group" ]; then
-    local ggid; ggid=$(getent group "$group" 2>/dev/null | cut -d: -f3)
-    [ -n "$ggid" ] || die "group '$group' does not exist on this box"
-    gid="$ggid"
-    if [ "$ro" -eq 1 ]; then fmode=0640; dmode=0750; else fmode=0664; dmode=0775; fi
-  fi
+  # ACCESS IS GATED BY THE PARENT DIRECTORY, NOT BY THE MOUNT'S OWN MODES.
+  #
+  # sshfs has no file_mode/dir_mode -- those are cifs options. With
+  # `default_permissions` the kernel enforces whatever the SERVER reports, and
+  # Windows OpenSSH reports modes derived from NTFS ACLs that do not map: a
+  # share came back 0707, group `---` and other `rwx`. Unix stops at the first
+  # matching class, so being IN the entitled group got the empty group bits and
+  # never fell through to other -- membership made it worse, and a user not in
+  # the group could walk in. `umask` cannot fix that: it clears bits, it cannot
+  # add the group bits that are missing.
+  #
+  # So: no default_permissions, and the mount goes inside a directory owned by
+  # the group at 0750. Traversal into the mount requires traversing that parent,
+  # which the kernel checks locally against real group membership. The remote
+  # side is authorised by the service account's NTFS rights, as before.
   if ! grep -qE '^[[:space:]]*user_allow_other' /etc/fuse.conf 2>/dev/null; then
     printf 'user_allow_other\n' >> /etc/fuse.conf
     ok "enabled user_allow_other in /etc/fuse.conf (needed for allow_other)"
   fi
 
   local opts="IdentityFile=$key,UserKnownHostsFile=$KNOWN_HOSTS,StrictHostKeyChecking=yes"
-  opts="$opts,port=$port,allow_other,default_permissions,uid=$uid,gid=$gid"
+  opts="$opts,port=$port,allow_other,uid=$uid,gid=$gid,umask=022"
   opts="$opts,idmap=none,reconnect,ServerAliveInterval=15,ServerAliveCountMax=3"
   opts="$opts,_netdev,nofail"
   [ "$ro" -eq 1 ] && opts="$opts,ro"
   [ -n "$extra" ] && opts="$opts,$extra"
 
   install -d -m 0755 "$MOUNT_ROOT"
-  if [ -n "$group" ]; then install -d -m 0755 -g "$group" "$mp" 2>/dev/null || install -d -m 0755 "$mp"
-  else install -d -m 0750 "$mp"; fi
+  if [ -n "$group" ]; then
+    # 0750 root:<group> on the PARENT is the access control. Members traverse
+    # it; nobody else can, whatever the mounted filesystem claims about itself.
+    install -d -m 0750 -o root -g "$group" "$(dirname "$mp")"
+    install -d -m 0755 -o root -g "$group" "$mp"
+  else
+    install -d -m 0750 "$mp"
+  fi
 
   local mu au; mu="$UNIT_DIR/$(unit_of "$mp")"; au="$UNIT_DIR/$(amount_of "$mp")"
   cat > "$mu" <<EOF
