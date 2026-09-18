@@ -1,0 +1,315 @@
+<!doctype html>
+<!--
+  GR FIPS recovery. Source of truth for the steps is docs/procedures.md 4.2b.
+
+  This file is a COMPLETE document so it renders correctly when opened straight
+  from disk. Without the doctype a browser opens it in quirks mode, which is how
+  it was shipped before and why local copies did not match the published page.
+
+  Published as an Artifact by stripping the wrapper, since that service supplies
+  its own <head>:
+    sed -e '/^<!doctype/,/^<title>/{/^<title>/!d}' -e '/^<\/head>$/d' \
+        -e '/^<body>$/d' -e '/^<\/body>$/d' -e '/^<\/html>$/d' \
+        tools/kb/fips-recovery.html > fragment.html
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GR - Ubuntu FIPS Mode Recovery</title>
+<style>
+/* Light only, deliberately. This page is pasted into a ServiceNow Knowledge
+   article, which is a light surface: following the reader's OS theme put dark
+   article text on a light KB page. Every color is stated here rather than
+   inherited, so the page holds wherever it is rendered. */
+:root{
+  color-scheme: light;
+  --bg:#ffffff; --fg:#1c1c1c; --muted:#5a5a5a;
+  --line:#c8c8c8; --pre-bg:#f4f4f4; --warn:#8c1d18; --link:#1a4f8a;
+}
+/* The gutter is PADDING, not a max-width. A max-width does nothing until the
+   container is wider than the cap, and neither the ServiceNow content area nor
+   an embedded preview usually is -- so capping the measure changed nothing
+   visible and only looked like it should. A percentage gutter is proportional
+   and therefore always applies; clamped so it cannot collapse on a phone or run
+   away on a wide monitor.
+
+   The measure itself is deliberately uncapped. 46rem, a reading measure for a
+   standalone page, reads as a narrow indented column once ServiceNow's own
+   padding is added to it. */
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:Arial,Helvetica,sans-serif;
+  font-size:15px; line-height:1.5;
+  margin:0;
+  /* No side padding here. The gutter is an INLINE style on #article instead,
+     because that is the element whose markup gets pasted into ServiceNow: a
+     rule in this stylesheet is left behind by the copy and can never affect the
+     KB article, which is why three rounds of changing it here did nothing. */
+  padding:1rem 0 2rem;
+}
+#article{max-width:none;margin:0}
+h1{font-size:1.6rem;line-height:1.25;margin:0 0 .35rem}
+h2{font-size:1.15rem;margin:1.25rem 0 .4rem;padding-bottom:.2rem;border-bottom:1px solid var(--line)}
+h3{font-size:1rem;margin:.9rem 0 .3rem}
+p{margin:.4rem 0}
+ol,ul{margin:.4rem 0;padding-left:1.35rem}
+li{margin:.25rem 0}
+li > ul, li > ol{margin:.2rem 0}
+pre{
+  background:var(--pre-bg); border:1px solid var(--line);
+  font-family:Consolas,"Courier New",monospace; font-size:.85rem;
+  padding:.5rem .6rem; margin:.4rem 0; overflow-x:auto; white-space:pre;
+}
+code{font-family:Consolas,"Courier New",monospace;font-size:.9em}
+table{border-collapse:collapse;margin:.6rem 0;width:100%}
+th,td{border:1px solid var(--line);padding:.4rem .55rem;text-align:left;font-size:.92rem;vertical-align:top}
+th{background:var(--pre-bg);font-weight:bold}
+hr{border:0;border-top:1px solid var(--line);margin:1.5rem 0}
+.warn{color:var(--warn)}
+.seam{margin:2rem 0;padding:.4rem 0;border-top:2px dashed var(--line);
+  border-bottom:2px dashed var(--line);text-align:center;
+  font-size:.8rem;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+#tools{max-width:none;margin:2rem 0 0;padding-top:1rem;border-top:1px solid var(--line)}
+#tools p{font-size:.85rem;color:var(--muted)}
+#tools button{font:inherit;font-size:.85rem;padding:.35rem .7rem;cursor:pointer;
+  background:var(--pre-bg);color:var(--fg);border:1px solid var(--line)}
+#tools button:hover{border-color:var(--fg)}
+#tools button:focus-visible{outline:2px solid var(--link);outline-offset:2px}
+#tools .grab{margin-top:.9rem}
+#tools textarea{width:100%;height:11rem;margin-top:.6rem;font-family:Consolas,"Courier New",monospace;
+  font-size:.75rem;background:var(--pre-bg);color:var(--fg);border:1px solid var(--line);padding:.5rem}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+
+<div id="article">
+
+<div id="intro" style="padding:0 4%;">
+
+<h1>GR - Ubuntu FIPS Mode Recovery</h1>
+
+<p><strong>Audience:</strong> Grand Rapids DT.<br>
+<strong>Time:</strong> 20 minutes, plus one reboot. Console access required.</p>
+
+<p>Use this when a machine has lost FIPS mode, or boots the FIPS kernel and then
+fails. Both faults are caused by <code>apt autoremove</code> removing FIPS packages.</p>
+
+<h2>Symptoms</h2>
+
+<table>
+  <tr><th>What you see</th><th>Fault</th></tr>
+  <tr><td><code>/proc/sys/crypto/fips_enabled</code> missing, or reads <code>0</code></td><td>Either</td></tr>
+  <tr><td><code>uname -r</code> does not end in <code>-fips</code></td><td>Either</td></tr>
+  <tr><td>At boot: <code>not a valid LUKS device</code>, <code>No used slots detected</code>, and every passphrase rejected</td><td>A</td></tr>
+  <tr><td>At boot: a missing <code>bootdev</code> argument, then the machine returns to the normal kernel</td><td>B</td></tr>
+</table>
+
+<p>A machine can have both. Fixing one and not the other looks the same as fixing
+neither.</p>
+
+<p class="warn">The passphrase rejection in fault A is not a wrong passphrase. The
+machine cannot read the encrypted disk at all, so it never reaches the point of
+checking one. Do not reset the passphrase.</p>
+
+<h2>Before You Start</h2>
+
+<ul>
+  <li><strong>Console access</strong> (monitor and keyboard). Do not attempt this
+      remotely. If the machine does not come up you must be able to pick a menu entry.</li>
+  <li>The <strong>LUKS passphrase</strong> for the machine.</li>
+  <li>For fault A, the file <code>openssl-fips-module-3_*.deb</code>, collected
+      from a machine that is working. Step 3 covers this.</li>
+</ul>
+
+</div><!-- /intro -->
+
+<p class="seam">End of the Introduction field. Everything below goes in Instructions.</p>
+
+<div id="instructions" style="padding:0 4%;">
+
+<h2>1. Confirm the Fault</h2>
+
+<p>Run on the affected machine:</p>
+
+<pre>sudo it-fips</pre>
+
+<p>Read the two lines below. They identify which fault you have.</p>
+
+<table>
+  <tr><th>Line in the output</th><th>Meaning</th><th>Go to</th></tr>
+  <tr><td><code>no OpenSSL FIPS provider installed on this box</code></td><td>Fault A</td><td>Step 3</td></tr>
+  <tr><td><code>nothing sets bootdev=</code></td><td>Fault B</td><td>Step 4</td></tr>
+  <tr><td>Both lines</td><td>Both faults</td><td>Step 3, then 4</td></tr>
+  <tr><td>Neither, and everything reads <code>OK</code></td><td>No fault found</td><td>Step 5</td></tr>
+</table>
+
+<h2>2. Confirm Against a Working Machine</h2>
+
+<p>Run this on the affected machine and on one that boots FIPS correctly, and
+compare:</p>
+
+<pre>cat /proc/cmdline | tr ' ' '\n' | grep -E 'fips|bootdev'
+dpkg -l | awk '/fips/ {print $2, $3}'</pre>
+
+<p>A working machine shows <code>fips=1</code> <strong>and</strong>
+<code>bootdev=/dev/disk/by-uuid/...</code>, and lists
+<code>openssl-fips-module-3</code>. Anything the affected machine is missing is
+what you are restoring.</p>
+
+<h2>3. Fault A: Restore the OpenSSL FIPS Provider</h2>
+
+<p><strong>On a machine that is working and has network access</strong>, collect
+the file. This installs nothing and restarts nothing:</p>
+
+<pre>mkdir -p ~/fips-debs &amp;&amp; cd ~/fips-debs
+sudo apt-get download openssl-fips-module-3
+sudo chown "$USER":"$USER" ./*.deb
+ls -l</pre>
+
+<p class="warn">Do not run <code>pro enable fips-updates</code> on a machine to
+collect these files. It cannot be enabled for downloads only and will convert that
+machine to FIPS.</p>
+
+<p>Copy the file to the affected machine, then:</p>
+
+<pre>sudo apt-get install ./openssl-fips-module-3_*.deb
+ls -l /usr/lib/x86_64-linux-gnu/ossl-modules/fips.so</pre>
+
+<p>The second command must list a file. If it does not, stop and escalate.</p>
+
+<h2>4. Fault B: Restore the Boot Parameter</h2>
+
+<pre>sudo it-fips fix</pre>
+
+<p>This writes both <code>fips=1</code> and <code>bootdev=</code>, marks the FIPS
+packages so they cannot be removed automatically, and rebuilds the boot
+configuration. It changes nothing about which kernel the machine boots.</p>
+
+<p>Confirm it worked:</p>
+
+<pre>sudo it-fips</pre>
+
+<p>Every line should now read <code>OK</code> except the first section, which will
+still report that the machine is not running the FIPS kernel. That is expected
+until step 5.</p>
+
+<h2>5. Switch to the FIPS Kernel</h2>
+
+<pre>sudo it-fips boot
+sudo reboot</pre>
+
+<p class="warn">Stay at the console for this reboot. The machine is set to try the
+FIPS kernel once, but it will not fall back on its own. If it does not come up,
+power cycle it and select the entry <strong>without</strong> <code>-fips</code> in
+the name from the boot menu, then escalate.</p>
+
+<p>If the machine stops at a passphrase prompt, enter the LUKS passphrase. This is
+normal on the first FIPS boot after a repair.</p>
+
+<h2>6. Make It Permanent</h2>
+
+<p>Once the machine is back up:</p>
+
+<pre>sudo it-fips confirm
+sudo it-fips</pre>
+
+<p><code>confirm</code> sets the FIPS kernel as the default. Until it runs, the
+machine is only running FIPS for this one boot.</p>
+
+<h2>7. Verify</h2>
+
+<pre>uname -r
+cat /proc/sys/crypto/fips_enabled</pre>
+
+<table>
+  <tr><th>Command</th><th>Required output</th></tr>
+  <tr><td><code>uname -r</code></td><td>Ends in <code>-fips</code></td></tr>
+  <tr><td><code>cat /proc/sys/crypto/fips_enabled</code></td><td><code>1</code></td></tr>
+  <tr><td><code>sudo it-fips</code></td><td>Every line <code>OK</code></td></tr>
+</table>
+
+<p>Reboot once more without touching anything and confirm the machine returns to
+FIPS on its own. That is the test that it is fixed rather than temporarily
+working.</p>
+
+<h2>8. Prevent It Happening Again</h2>
+
+<p class="warn">Never run <code>sudo apt autoremove</code> on these machines. That
+command is the cause of this fault.</p>
+
+<p><code>it-fips fix</code> in step 4 already marked the packages as protected.
+Confirm it:</p>
+
+<pre>apt-config dump APT::NeverAutoRemove | grep -i fips</pre>
+
+<p>This must list several entries. If it lists nothing, run <code>sudo it-pull</code>
+and check again.</p>
+
+<h2>Common Issues</h2>
+
+<table>
+  <tr><th>Symptom</th><th>Cause</th><th>Action</th></tr>
+  <tr><td>Boot stops at <code>not a valid LUKS device</code></td><td>Fault A not fixed</td><td>Step 3. Do not reset the passphrase</td></tr>
+  <tr><td>Boot reports a missing <code>bootdev</code> argument</td><td>Fault B not fixed</td><td>Step 4</td></tr>
+  <tr><td>Machine boots, but to the normal kernel</td><td><code>it-fips boot</code> was not run, or <code>confirm</code> was skipped</td><td>Steps 5 and 6</td></tr>
+  <tr><td>Boot menu asks for a user name and password</td><td>Menu entry is password protected</td><td><code>sudo it-fips fix</code>, then step 5 again</td></tr>
+  <tr><td><code>it-fips</code> is not found</td><td>Machine has an older baseline</td><td><code>sudo it-pull scripts</code></td></tr>
+  <tr><td>Step 3 reports <code>401 Unauthorized</code></td><td><code>apt-get download</code> was run without <code>sudo</code></td><td>Re-run it with <code>sudo</code></td></tr>
+</table>
+
+<p>Escalate if the machine does not return to FIPS after step 6, or if step 3
+cannot produce the file.</p>
+
+</div><!-- /instructions -->
+
+</div><!-- /article -->
+
+<div id="tools">
+  <p>Plain HTML: headings, lists, tables and code blocks only, with nothing the
+  ServiceNow editor will strip. Take each block with its button and paste it into
+  that field's <strong>source view</strong>.</p>
+  <p><strong>Re-paste after any change to this page.</strong> What is in ServiceNow
+  is a copy taken when you pasted it; updating this page does not reach back into
+  the article.</p>
+
+  <div class="grab">
+    <button type="button" data-target="intro">Show Introduction HTML</button>
+    <textarea readonly hidden aria-label="Introduction HTML source"></textarea>
+  </div>
+
+  <div class="grab">
+    <button type="button" data-target="instructions">Show Instructions HTML</button>
+    <textarea readonly hidden aria-label="Instructions HTML source"></textarea>
+  </div>
+</div>
+
+<script>
+(function () {
+  // outerHTML, not innerHTML: the gutter is an inline style on each wrapper,
+  // and innerHTML would leave the wrapper -- and the gutter -- behind.
+  document.querySelectorAll('#tools .grab').forEach(function (grab) {
+    var btn = grab.querySelector('button');
+    var box = grab.querySelector('textarea');
+    var name = btn.dataset.target;
+    var label = name.charAt(0).toUpperCase() + name.slice(1);
+    btn.addEventListener('click', function () {
+      if (box.hidden) {
+        box.value = document.getElementById(name).outerHTML.trim();
+        box.hidden = false;
+        box.focus();
+        box.select();
+        btn.textContent = 'Hide ' + label + ' HTML';
+      } else {
+        box.hidden = true;
+        btn.textContent = 'Show ' + label + ' HTML';
+      }
+    });
+  });
+})();
+</script>
+
+</body>
+</html>
