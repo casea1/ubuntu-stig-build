@@ -158,6 +158,59 @@
   # transfers (USG keeps usb-storage disabled there), so skip the dta USB rules.
   when: local_usb_transfer_enabled | default(true) | bool
 
+# ---------------------------------------------------------------------------
+# NETWORK SETTINGS FOR NON-ADMINS.
+#
+# NetworkManager authorises through POLKIT, not group membership. Putting
+# someone in `netdev` or `systemd-network` changes nothing: netdev is a Debian
+# convention NetworkManager does not consult, and systemd-network belongs to
+# systemd-networkd, which is not what manages these boxes. The symptom is an
+# authentication dialog asking for an ADMIN password, which is polkit's
+# auth_admin_keep default for a user who is not in `sudo`.
+#
+# Only two actions are granted, and deliberately not the whole
+# org.freedesktop.NetworkManager.* namespace: modifying system connections and
+# bringing them up or down. Not checkpoint-rollback, not the Wi-Fi secrets
+# actions, not enable/disable of networking itself.
+#
+# This is a privilege grant and should be recorded as such -- it lets a
+# non-administrator change a deployed machine's address. Off by default.
+- name: ACCOUNTS | Network-settings group exists ({{ network_admin_group }})
+  ansible.builtin.group:
+    name: "{{ network_admin_group }}"
+    state: present
+  when: network_admin_enabled | default(false) | bool
+
+- name: ACCOUNTS | polkit -- let '{{ network_admin_group }}' change network settings
+  ansible.builtin.copy:
+    dest: /etc/polkit-1/rules.d/49-{{ network_admin_group }}-network.rules
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      // Managed by ansible (local_accounts) -- do not edit by hand.
+      // NetworkManager asks polkit, not the group database. netdev and
+      // systemd-network grant nothing here.
+      polkit.addRule(function(action, subject) {
+          var nm = [
+              "org.freedesktop.NetworkManager.settings.modify.system",
+              "org.freedesktop.NetworkManager.network-control"
+          ];
+          if (nm.indexOf(action.id) !== -1 &&
+              subject.isInGroup("{{ network_admin_group }}") && subject.active) {
+              return polkit.Result.YES;
+          }
+      });
+  when: network_admin_enabled | default(false) | bool
+
+- name: ACCOUNTS | Remove the network polkit rule when the feature is off
+  # Ansible only ever CREATES (trap 3). Turning the flag back off has to remove
+  # the grant, or a box keeps it forever.
+  ansible.builtin.file:
+    path: /etc/polkit-1/rules.d/49-{{ network_admin_group }}-network.rules
+    state: absent
+  when: not (network_admin_enabled | default(false) | bool)
+
 - name: ACCOUNTS | polkit -- allow udisks2 (USB) mounting only for the '{{ usb_access_group }}' group
   ansible.builtin.copy:
     dest: /etc/polkit-1/rules.d/49-{{ usb_access_group }}-usb.rules

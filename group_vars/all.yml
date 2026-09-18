@@ -1862,3 +1862,18 @@ ia_retention_targets:
     patterns: ["*.cklb", "*.ckl"]
   - dir: "{{ usg_report_dir }}"                 # `usg audit` report + results
     patterns: ["*.html", "*.xml"]
+
+# ---- network settings for non-administrators --------------------------------
+# NetworkManager authorises through polkit, NOT group membership: `netdev` is a
+# Debian convention it does not consult and `systemd-network` belongs to
+# systemd-networkd, which does not manage these boxes. So adding someone to
+# either changes nothing and they still get an admin password prompt.
+#
+# Setting this true creates the group below and grants its ACTIVE members two
+# polkit actions: modify system connections, and bring them up or down. Nothing
+# else in the NetworkManager namespace.
+#
+# THIS IS A PRIVILEGE GRANT. A member can change a deployed machine's address
+# without sudo. Record it as a deviation before enabling it on anything fielded.
+network_admin_enabled: false
+network_admin_group: netadmin

@@ -71,4 +71,16 @@ fi
 export LD_LIBRARY_PATH="{{ compat_dir }}:/usr/lib/i386-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 {%- endif %}
 
+# START IN THE USER'S HOME, NOT WHEREVER THE SESSION HAPPENED TO BE.
+#
+# An app-grid launcher inherits the session's working directory, which on GNOME
+# is `/`. FlashPro Express defaults a new project to the current directory, so
+# the engineer gets a permission error on / or /tmp and has to know to browse to
+# their own home -- which reads as the tool being broken. Vivado and Libero do
+# the same with their project defaults.
+#
+# `cd` is not fatal if it fails: an unreadable home is a different problem and
+# should not stop the tool starting.
+cd "${HOME:-/}" 2>/dev/null || true
+
 exec "$BIN" "$@"
