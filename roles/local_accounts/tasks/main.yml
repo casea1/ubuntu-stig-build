@@ -147,16 +147,34 @@
 #         non-desktop path (manual `mount`, `dd`) is also group-gated.
 #    root (e.g. `sudo mount`) bypasses both -> a break-glass path remains.
 # ---------------------------------------------------------------------------
-- name: ACCOUNTS | Ensure polkit rules.d exists
+# polkitd DROPS PRIVILEGES. /usr/lib/systemd/system/polkit.service carries
+# `User=polkitd`, so the daemon never runs as root and reads
+# /etc/polkit-1/rules.d as uid polkitd. The package therefore ships that
+# directory root:polkitd 0750. Handing it root:root 0750 -- which this task
+# used to do -- leaves polkitd unable to traverse it, and EVERY rule in it is
+# ignored with nothing logged: the USB rule below, the network rule above and
+# remote_desktop's colord/packagekit rule all silently stop applying and polkit
+# falls back to each action's default (auth_admin_keep -> a password prompt the
+# user cannot satisfy). Not gated on a profile flag, because three roles write
+# into this directory.
+- name: ACCOUNTS | Look up the polkitd service group
+  ansible.builtin.getent:
+    database: group
+    key: polkitd
+    fail_key: false
+
+- name: ACCOUNTS | Ensure polkit rules.d exists and polkitd can read it
   ansible.builtin.file:
     path: /etc/polkit-1/rules.d
     state: directory
     owner: root
-    group: root
-    mode: "0750"
-  # USB data-transfer policy is development-only; the AI servers never do USB
-  # transfers (USG keeps usb-storage disabled there), so skip the dta USB rules.
-  when: local_usb_transfer_enabled | default(true) | bool
+    group: "{{ _polkitd_group }}"
+    # 0750 only once the group is right; otherwise stay readable rather than
+    # lock the daemon out of its own rules.
+    mode: "{{ '0750' if _polkitd_group == 'polkitd' else '0755' }}"
+  vars:
+    _polkitd_group: "{{ 'polkitd' if (ansible_facts.getent_group | default({})).get('polkitd') else 'root' }}"
+  notify: restart polkit
 
 # ---------------------------------------------------------------------------
 # NETWORK SETTINGS FOR NON-ADMINS.

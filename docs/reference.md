@@ -254,7 +254,26 @@ sudo journalctl -k | grep -i '\[UFW LIMIT BLOCK\]' | tail
 
 The fix is an `allow` **inserted ahead of** the limit rule — ufw evaluates in order, so appending one does nothing. `stig_firewall_limit_exempt_sources` does this for every rate-limited port plus RDP. The trade is real: a listed source has no brute-force throttle at all, so list management hosts as `/32`, not a LAN.
 
-**12u. `netdev` and `systemd-network` grant nothing: NetworkManager asks polkit.** A user added to both still gets an authentication dialog asking for an ADMIN password when changing an IP. `netdev` is a Debian convention NetworkManager does not consult, and `systemd-network` belongs to systemd-networkd, which does not manage these boxes. The prompt is polkit's `auth_admin_keep` default for a subject that is not in `sudo`. The grant is a JS rule in `/etc/polkit-1/rules.d/`, and `local_accounts` writes one for `network_admin_group` when `network_admin_enabled` is true — scoped to `settings.modify.system` and `network-control` only, not the whole `org.freedesktop.NetworkManager.*` namespace. Off by default, and it **is** a privilege grant: a member can renumber a fielded machine without sudo, so record it as a deviation before enabling it. polkitd reads `rules.d` live, so no restart.
+**12x. `/etc/polkit-1/rules.d` owned root:root silently disables EVERY polkit rule.** polkitd does not run as root: `/usr/lib/systemd/system/polkit.service` carries `User=polkitd`, so the daemon reads its rules as uid `polkitd`. The package ships the directory **root:polkitd 0750** for exactly that reason. `local_accounts` used to enforce `root:root 0750`, which the daemon cannot traverse — so every JS rule in it was ignored: the `dta` USB rule, the `network_admin_group` rule, and `remote_desktop`'s colord/packagekit rule. Nothing is logged. polkit just falls back to each action's shipped default, which for NetworkManager is `auth_admin_keep` — an admin password prompt a non-sudo user cannot satisfy, i.e. the exact symptom the rule was written to remove.
+
+It presents as "the rule is not matching", and the give-away is `pkcheck` answering with the **default action's** annotation rather than a grant:
+
+```bash
+pkcheck --action-id org.freedesktop.NetworkManager.settings.modify.system --process $$
+# polkit\56retains_authorization_after_challenge=1
+# -> non-zero; that annotation belongs to auth_admin_keep, so no rule returned YES
+ls -ld /etc/polkit-1/rules.d          # want: drwxr-x--- root polkitd
+```
+
+Repair without a pull, then restart the daemon — polkitd watches the directory, but only once it can open it, so a box being fixed does not notice on its own:
+
+```bash
+sudo chgrp polkitd /etc/polkit-1/rules.d && sudo systemctl restart polkit
+```
+
+Restarting polkit is safe on a live box: it is dbus-activated, holds no session state, and every caller re-resolves it on the next check. Do not "fix" this by loosening the mode to 0755 while the group is still wrong — the rules are policy and the package's 0750 is correct; it is the **group** that was wrong.
+
+**12u. `netdev` and `systemd-network` grant nothing: NetworkManager asks polkit.** A user added to both still gets an authentication dialog asking for an ADMIN password when changing an IP. `netdev` is a Debian convention NetworkManager does not consult, and `systemd-network` belongs to systemd-networkd, which does not manage these boxes. The prompt is polkit's `auth_admin_keep` default for a subject that is not in `sudo`. The grant is a JS rule in `/etc/polkit-1/rules.d/`, and `local_accounts` writes one for `network_admin_group` when `network_admin_enabled` is true — scoped to `settings.modify.system` and `network-control` only, not the whole `org.freedesktop.NetworkManager.*` namespace. Off by default, and it **is** a privilege grant: a member can renumber a fielded machine without sudo, so record it as a deviation before enabling it. polkitd reads `rules.d` live, so no restart is needed once the directory is readable by it — see trap 12x, which is why the rule appeared to do nothing on the first fleet that got it.
 
 **12t. "Please install software as a super user" does NOT mean run FlashPro with sudo.** The full message is `cannot search for FP6 programmers, cyusb.conf file not present under /etc folder. Please install software as a super user`, and the obvious response is the wrong one. Run as root the tool then fails with:
 

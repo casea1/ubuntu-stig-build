@@ -5,3 +5,13 @@
   # storage attached.
   ansible.builtin.shell: udevadm control --reload-rules && udevadm trigger --subsystem-match=block
   changed_when: true
+
+- name: restart polkit
+  # polkitd watches its rules directory, but it can only do that once it is able
+  # to READ the directory -- so a box being repaired from root:root 0750 needs a
+  # restart before it notices the rules that were there all along. Safe on a live
+  # box: polkit is dbus-activated, holds no session state, and every caller
+  # (NetworkManager, udisks2, systemd) re-resolves it on the next check.
+  ansible.builtin.systemd_service:
+    name: polkit
+    state: restarted
