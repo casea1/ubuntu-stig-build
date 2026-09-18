@@ -97,6 +97,33 @@
     direction: outgoing
     policy: allow
 
+# MANAGEMENT HOSTS GO FIRST, AND THE ORDER IS THE POINT.
+#
+# `ufw limit` drops a SOURCE IP after six connections in thirty seconds, and it
+# does not care which account or which service. A management box that opens
+# several SSH sessions in a row -- a toolkit running it-pull across the fleet,
+# say -- trips it, and then the operator's own SSH and RDP from that same
+# machine are dropped too. It DROPS rather than rejects, so the symptom is a
+# timeout with nothing in the ssh log: the packets never reached sshd.
+#
+# ufw evaluates in order, so these allow rules must be inserted before the limit
+# rules to have any effect. Sources listed here bypass the brute-force throttle
+# entirely, which is the trade: keep the list to management hosts you control.
+- name: "FW | Allow management sources ahead of the rate limit"
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ item.0 }}"
+    port: "{{ item.1.port }}"
+    proto: "{{ item.1.proto | default('tcp') }}"
+    insert: 1
+    comment: "management source, exempt from rate limit"
+  loop: "{{ (stig_firewall_limit_exempt_sources | default([])) | product(_fw_limit_all) | list }}"
+  vars:
+    _rdp_fw: "{{ [{'port': dev_rdp_port | default(3389), 'proto': 'tcp'}] if (dev_rdp_enabled | default(true) | bool) else [] }}"
+    _fw_limit_all: "{{ (stig_firewall_limit_ports | default([{'port': 'ssh', 'proto': 'tcp'}])) + _rdp_fw }}"
+  loop_control:
+    label: "{{ item.0 }} -> {{ item.1.port }}"
+
 # `limit` is right ONLY for single-connection protocols -- SSH, RDP. It drops a
 # source after 6 connections in 30 seconds, which any HTTP service exceeds on
 # its first real page load. Do not add a web port to stig_firewall_limit_ports.

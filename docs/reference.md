@@ -244,6 +244,16 @@ Two things that made this expensive to find. The running system cannot show it: 
 
 **12n. Microchip's `check_linux_req` is a RHEL script and reports Ubuntu as broken.** It tests the distro against RHEL/AlmaLinux and then looks for RPM package names, so on a box where everything is installed it prints the OS as unsupported and the dependencies as missing. An engineer reading that wall of FAILs acts on it. `it-fpga check` therefore does **not** run it by default: it runs `ldd` against Libero, FlashPro Express and Vivado instead, which asks the question the vendor script is really asking -- does this binary have every library it needs -- and answers it against the box's own linker, where a package name cannot be wrong. `it-fpga check --vendor` still runs the vendor script, with the caveat printed underneath its output rather than above it.
 
+**12w. `ufw limit` locks out the management host, and it presents as a timeout.** SSH and RDP are opened with `ufw limit`, which **drops a source IP after six connections in thirty seconds** — not per account, not per service. A toolkit that runs `it-pull` across the fleet opens several sessions in a row from one address, trips it, and then the operator's own SSH *and* RDP from that same machine are dropped too. Because ufw **DROPs** rather than rejects, the symptom is a connection timeout with **nothing in the ssh log**: the packets never reached sshd, so every log an admin thinks to check is silent. It looks intermittent because it depends on how many connections happened to fall inside the window.
+
+Confirm it from the kernel log, which is the only place it appears:
+
+```bash
+sudo journalctl -k | grep -i '\[UFW LIMIT BLOCK\]' | tail
+```
+
+The fix is an `allow` **inserted ahead of** the limit rule — ufw evaluates in order, so appending one does nothing. `stig_firewall_limit_exempt_sources` does this for every rate-limited port plus RDP. The trade is real: a listed source has no brute-force throttle at all, so list management hosts as `/32`, not a LAN.
+
 **12u. `netdev` and `systemd-network` grant nothing: NetworkManager asks polkit.** A user added to both still gets an authentication dialog asking for an ADMIN password when changing an IP. `netdev` is a Debian convention NetworkManager does not consult, and `systemd-network` belongs to systemd-networkd, which does not manage these boxes. The prompt is polkit's `auth_admin_keep` default for a subject that is not in `sudo`. The grant is a JS rule in `/etc/polkit-1/rules.d/`, and `local_accounts` writes one for `network_admin_group` when `network_admin_enabled` is true — scoped to `settings.modify.system` and `network-control` only, not the whole `org.freedesktop.NetworkManager.*` namespace. Off by default, and it **is** a privilege grant: a member can renumber a fielded machine without sudo, so record it as a deviation before enabling it. polkitd reads `rules.d` live, so no restart.
 
 **12t. "Please install software as a super user" does NOT mean run FlashPro with sudo.** The full message is `cannot search for FP6 programmers, cyusb.conf file not present under /etc folder. Please install software as a super user`, and the obvious response is the wrong one. Run as root the tool then fails with:

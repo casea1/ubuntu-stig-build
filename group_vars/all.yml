@@ -890,6 +890,21 @@ ssh_banner_path: /etc/issue.net
 stig_firewall_limit_ports:
   - { port: ssh, proto: tcp }      # OpenSSH; rate-limited brute-force throttle
 
+# Sources that get a plain `allow` INSERTED AHEAD of the rate limit, for every
+# port above plus RDP. Empty by default.
+#
+# `ufw limit` drops a source IP after six connections in thirty seconds,
+# regardless of account or service. A management host that opens several
+# sessions in a row -- a toolkit running `it-pull` across the fleet -- trips it,
+# and then the operator's own SSH AND RDP from that same machine are dropped as
+# well. It DROPS rather than rejects, so it presents as a timeout with nothing
+# in the ssh log: the packets never reached sshd.
+#
+# THE TRADE: a source listed here has no brute-force throttle on SSH or RDP.
+# List management hosts you control, as /32 or a tight CIDR, not a whole LAN.
+stig_firewall_limit_exempt_sources: []
+#   - 10.10.99.50            # ADM-Toolkit
+
 # NOTE on time sync: there are no numeric tunables here -- chrony's NTP source
 # pool is set by the distro default /etc/chrony/chrony.conf (or your site's
 # pool drop-in). Override pool/server lines in a separate chrony drop-in if your
