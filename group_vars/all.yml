@@ -1600,6 +1600,50 @@ ai_stacks_need_fips:
   system1: [vllm-gptoss, vllm-granite]
   system2: [vllm-embed, vllm-reranker, vllm-vision, vllm-gpt-oss-20b, docling]
 
+# ---- AI architect / ops read access (ai profile) ----------------------------
+# The team that reviews the AI stack's configuration but administers nothing.
+# /opt/stacks is root:{{ ia_it_group }} 2750 and every file in it is 0640, so a
+# SECOND group cannot be expressed in the mode. This is a POSIX ACL, the same
+# mechanism the shared folders use -- with one difference that matters:
+#
+#   ANSIBLE'S EXPLICIT `mode:` STRIPS AN INHERITED ACL. A default ACL on the
+#   directory is not enough: a file created by `touch` inherits the named-group
+#   entry, but one created with an explicit mode (which is every file this role
+#   writes) comes out with NO named entry at all. So the ACL is applied to the
+#   FILES as well, after they are written, on every run.
+#
+# WHAT THE GROUP GETS: read on the stack directories and on every compose and
+# config file in them.
+#
+# WHAT IT DOES NOT GET, deliberately:
+#   .env              root:root 0600 -- POSTGRES_PASSWORD, WEBUI_SECRET_KEY,
+#                     MLFLOW_DB_PASSWORD, the API keys. Compose files reference
+#                     these as ${VAR}, so the configuration is fully reviewable
+#                     without the values. Verified: a 0600 file in a directory
+#                     carrying the default ACL still comes out group::--- .
+#   /opt/it/site.yml  the out-of-band secret store (oikb API key, GitLab token,
+#                     HF token, magpie git token).
+#   the `docker` group  membership is ROOT EQUIVALENT -- `docker run -v /:/host`
+#                     is a root shell on this host, which on a STIG box is a
+#                     privilege escalation and a finding. The sudo grant below
+#                     is command-scoped and logged; the group is neither.
+ai_ops_enabled: false
+ai_ops_group: aiops
+# true also grants WRITE on the compose/config files. Read is the default
+# because ansible overwrites every one of them on the next pull anyway (gotcha
+# 2) -- an edit made on the box is lost, so write access mostly buys confusion.
+# The supported way for this team to change something is a repo change, or
+# compose.override.yaml, which nothing manages.
+ai_ops_write: false
+# The it-* commands the group may run through sudo. Each re-execs itself under
+# sudo, so without this they cannot run at all. NOTE `it-docker` is not purely
+# read-only -- it can restart, start and stop containers. Drop it from this list
+# if the team should only be able to look.
+ai_ops_sudo_commands:
+  - /usr/local/sbin/it-docker
+  - /usr/local/sbin/it-stack-diff
+  - /usr/local/sbin/it-baseline
+
 # ---- Custom image builds (ai_compose) ---------------------------------------
 # Three services use images not on any registry, so ansible builds them ON THE
 # BOX during imaging (needs internet: the oikb Dockerfile git-clones at build).

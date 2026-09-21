@@ -1,0 +1,129 @@
+---
+# =============================================================================
+# ai_compose :: ai_ops_access.yml -- read access to /opt/stacks for a NON-ADMIN
+# review team, without handing them root.
+#
+# Runs LAST in the role, because the ACL has to be applied after the files it
+# covers have been written: ansible's explicit `mode:` strips an inherited ACL,
+# so a default ACL on the directory alone would be removed from every file on
+# every pull. See the block comment on ai_ops_enabled in group_vars.
+# =============================================================================
+
+- name: "AI-OPS | Group exists ({{ ai_ops_group }})"
+  ansible.builtin.group:
+    name: "{{ ai_ops_group }}"
+    state: present
+  when: ai_ops_enabled | default(false) | bool
+
+- name: "AI-OPS | Find the stack directories"
+  ansible.builtin.find:
+    paths: "{{ dockge_stacks_dir }}"
+    recurse: true
+    file_type: directory
+  register: _ai_ops_stack_dirs
+  when: ai_ops_enabled | default(false) | bool
+
+# rx, not rwx: traverse and list. Plus the DEFAULT entry so a file created here
+# by hand (an override, a note) is readable without another pull.
+- name: "AI-OPS | Read + traverse on the stack directories"
+  ansible.posix.acl:
+    path: "{{ item.0 }}"
+    entity: "{{ ai_ops_group }}"
+    etype: group
+    permissions: "{{ 'rwx' if (ai_ops_write | default(false) | bool) else 'rx' }}"
+    default: "{{ item.1 }}"
+    state: present
+  loop: "{{ ([dockge_stacks_dir] + _ai_ops_stack_dirs.files | map(attribute='path') | list)
+            | product([false, true]) | list }}"
+  loop_control:
+    label: "{{ item.0 }}{{ ' (default)' if item.1 else '' }}"
+  when: ai_ops_enabled | default(false) | bool
+
+# Every file EXCEPT .env. The exclusion is belt-and-braces: a 0600 file comes
+# out group::--- even inside a directory carrying the default ACL, so the
+# secrets are unreachable either way -- but naming it here means a future change
+# to that mode cannot quietly open them.
+- name: "AI-OPS | Find the config files the group may read"
+  ansible.builtin.find:
+    paths: "{{ dockge_stacks_dir }}"
+    recurse: true
+    file_type: file
+    excludes: [".env", "*.env"]
+  register: _ai_ops_files
+  when: ai_ops_enabled | default(false) | bool
+
+- name: "AI-OPS | Read on each config file"
+  ansible.posix.acl:
+    path: "{{ item }}"
+    entity: "{{ ai_ops_group }}"
+    etype: group
+    permissions: "{{ 'rw' if (ai_ops_write | default(false) | bool) else 'r' }}"
+    state: present
+  loop: "{{ _ai_ops_files.files | default([]) | map(attribute='path') | list }}"
+  loop_control:
+    label: "{{ item | basename }} ({{ item | dirname | basename }})"
+  when: ai_ops_enabled | default(false) | bool
+
+# If an ACL ever did reach a .env -- a hand-run setfacl -R, a mode changed to
+# 0640 and back -- take it off again. This is the one file whose exposure would
+# matter, so it is asserted rather than assumed.
+- name: "AI-OPS | Find any .env carrying an ACL"
+  ansible.builtin.find:
+    paths: "{{ dockge_stacks_dir }}"
+    recurse: true
+    file_type: file
+    patterns: [".env", "*.env"]
+    hidden: true
+  register: _ai_ops_envs
+  when: ai_ops_enabled | default(false) | bool
+
+- name: "AI-OPS | Strip {{ ai_ops_group }} from every .env"
+  ansible.posix.acl:
+    path: "{{ item }}"
+    entity: "{{ ai_ops_group }}"
+    etype: group
+    state: absent
+  loop: "{{ _ai_ops_envs.files | default([]) | map(attribute='path') | list }}"
+  loop_control:
+    label: "{{ item | dirname | basename }}/.env"
+  when: ai_ops_enabled | default(false) | bool
+
+# The it-* scripts re-exec themselves under sudo, so without this the group
+# cannot run them at all. Command-scoped and logged, which membership of the
+# `docker` group is not -- that would be a root shell away via `-v /:/host`.
+- name: "AI-OPS | sudo grant for the read-only it-* commands"
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/40-{{ ai_ops_group }}
+    owner: root
+    group: root
+    mode: "0440"
+    validate: "visudo -cf %s"
+    content: |
+      # Managed by ansible (ai_compose) -- do not edit by hand.
+      # The AI review team administers nothing; these commands let them SEE the
+      # stack. it-docker can also restart/start/stop a container -- drop it from
+      # ai_ops_sudo_commands if that is more than this team should have.
+      %{{ ai_ops_group }} ALL=(root) NOPASSWD: {{ ai_ops_sudo_commands | join(', ') }}
+  when: ai_ops_enabled | default(false) | bool
+
+# Ansible only ever CREATES (trap 3). Turning the flag off has to take the
+# access away, or a box keeps it forever.
+- name: "AI-OPS | Remove the sudo grant when the feature is off"
+  ansible.builtin.file:
+    path: /etc/sudoers.d/40-{{ ai_ops_group }}
+    state: absent
+  when: not (ai_ops_enabled | default(false) | bool)
+
+- name: "AI-OPS | Remove the ACLs when the feature is off"
+  # setfacl -x on a group that is not present is a no-op, so this is safe to run
+  # on a box that never had the grant.
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    getent group {{ ai_ops_group }} >/dev/null 2>&1 || exit 0;
+    setfacl -R -x "g:{{ ai_ops_group }}" -x "d:g:{{ ai_ops_group }}" {{ dockge_stacks_dir }} 2>/dev/null || true
+  args:
+    executable: /bin/bash
+  changed_when: false
+  when:
+    - not (ai_ops_enabled | default(false) | bool)
+    - dockge_stacks_dir is defined

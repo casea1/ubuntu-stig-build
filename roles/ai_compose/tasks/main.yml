@@ -482,3 +482,11 @@
       {{ 'Deployed (docker compose up -d per stack).' if (ai_compose_deploy | default(false) | bool)
          else ('NOT deployed. ' ~ ('Populate the model into the `vllm` volume first, then ' if ai_node_role == 'system1' else '')
                ~ 'bring them all up with `it-ai up` (or set ai_compose_deploy=true).') }}
+
+# ---------------------------------------------------------------------------
+# LAST: read access to /opt/stacks for the non-admin AI review team. It has to
+# come after every file above has been written -- ansible's explicit `mode:`
+# strips an inherited ACL, so the entries are applied to the files themselves.
+# ---------------------------------------------------------------------------
+- name: "AI-COMPOSE | AI review-team access to the stacks"
+  ansible.builtin.include_tasks: ai_ops_access.yml

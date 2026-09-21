@@ -297,6 +297,21 @@ The same capture found three things worth naming separately:
 
 The repo's version mounts `prometheus-data:/prometheus`, external, which survives all three. The second fault is the config: the box mounts `/opt/it/docker/grafana/prometheus.yml` by **absolute path**, while `ai_compose` templates the scrape config to `/opt/stacks/prometheus/prometheus.yml` and nowhere else. So the managed file is ignored and the file actually in use is hand-made and unmanaged. That file is the one that carries System 1's address — meaning **after `it-set-ip` renumbers the node, Prometheus keeps scraping the old address**, and the template that exists to prevent exactly that is being read by nobody.
 
+**12aa. Ansible's explicit `mode:` strips an inherited ACL, so a default ACL does not grant what you think.** Giving a second, non-admin group read access to `/opt/stacks` cannot be done in the file mode — the directories are `root:sudo 2750` and a mode carries one group. A POSIX ACL is the mechanism, and this is the trap in it:
+
+```
+touch          file  -> inherits  group:aiops:r--   from the directory's default ACL
+install -m 0640 file -> NO named entry at all
+```
+
+Every file `ai_compose` writes has an explicit `mode:`, which is the second case — so a default ACL on the directory is removed from each file on **every pull**. The entries therefore have to be applied to the FILES as well, after they are written, which is why `ai_ops_access.yml` runs last in the role.
+
+The same mechanic is what protects the secrets, and it was verified rather than assumed: a `0600` file inside a directory carrying the default ACL comes out `user::rw-`, `group::---`, `other::---` — no named entry, no mask to raise. So `.env` cannot leak even by inheritance. It is still stripped explicitly, because a future change to that mode should not quietly open them.
+
+Tested with a real unprivileged account in the group: `compose.yaml` readable, `.env` denied.
+
+**Do not solve this with the `docker` group.** Membership is root-equivalent — `docker run -v /:/host` is a root shell on the host — so on a STIG box it is a privilege escalation and a finding, and it is not logged. `ai_ops_sudo_commands` is command-scoped and goes through sudo's audit trail instead.
+
 **12z-bis. A direct node-to-node cable needs NO compose change, and `it-net ip` cannot configure one.** Both mistakes are natural and both are wrong in an instructive way.
 
 *Why no compose change.* Every service publishes on `0.0.0.0`, which means it already listens on **every** interface including a new direct link. Nothing about the bind decides which cable a packet takes — the **destination address the client uses** does, plus routing. So the only thing that has to change is the peer address (`SYSTEM2_ADDR` on System 1, `OPEN_WEBUI_URL` / `SYSTEM1_HOSTS_ENTRY` on System 2), which is exactly what `it-set-ip --peer` rewrites. The only compose files that need touching are the ones with a literal address typed in — `it-set-ip scan` finds those.
