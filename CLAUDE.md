@@ -312,19 +312,26 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   9. **`openwiki` / `openwiki-view` are in the repo and on NEITHER box**, though
      they predate the boxes' baseline. A pull will create them.
   10. `/opt/stacks/ai` and `ai-system1`/`ai-system2` are stale pre-split dirs.
-  11. **THE ADOPTION IS ONE STACK SHORT.** `it-docker ps --all` on dev-ai2,
-      minutes after the capture, showed a RUNNING `vllm-gpt-oss-20b` out of
-      `/opt/stacks/vllm-gpt-oss-20b` -- a second chat model on the node that is
-      supposed to be embeddings/extraction only. `it-stack-diff` enumerates
-      every directory under /opt/stacks, so it did not skip it: the directory
-      was not there when the capture ran. Someone is still building on that
-      box. Re-capture before trusting the repo as complete, and re-do the GPU
-      budget while you are there -- docling ~55% + vllm-embed 45% + reranker
-      10% did not account for a 20B model.
-      It also prints TWICE, under two project names for one directory, because
-      the compose file's `name:` (`vllm-gptoss-20b`) differs from the directory
-      (`vllm-gpt-oss-20b`). Anything keying on the directory reports "nothing
-      created" for a stack that is running.
+  11. **CLOSED -- `vllm-gpt-oss-20b` is now in the repo** (:8005, alias
+      `chat-llm-20b`, gptq-quantised, its own external `gpt-oss-20b` volume).
+      It was running on dev-ai2 and absent from the capture taken minutes
+      earlier, so it was created in between. Two things it brought with it:
+      - **The live container and its own compose file disagree on the project
+        name** -- the container is labelled `vllm-gptoss-20b`, the file says
+        `vllm-gpt-oss-20b`. A project name is how compose finds what it already
+        created, so `down` there does not see the running container and `up -d`
+        tries to make a second one, which then fails on the container_name
+        already being taken. It is also why `it-docker` lists the stack twice.
+      - **System 2's GPU is fully booked.** vllm-embed 45% + vllm-reranker 10%
+        + this 45% = 100% before docling, which has no explicit cap, gets any.
+        vllm-vision would be another 35% if started. It works today only
+        because of the order things happened to start in -- and docling is the
+        one with `restart: no` (item 4), so a reboot is the moment this bites.
+        Budget it with the architects before the nodes move.
+  12. **CONFIRMED CLEAR, do not re-raise:** both `oikb:0.3.6-RG` and
+      `oikb:latest` exist on dev-ai2, so recreating oikb works. And the audit
+      rules are fine -- `it-checklist` item 6 PASSES on both nodes at 60 of 65
+      loaded. The "68" in an earlier version of this file was stale.
   The per-stack detail is in `docs/reference.md` -> "AI nodes -- as-built".
 
 - **The audit-rule gap WAS fleet-wide, and the cause is found (2026-08-28).**

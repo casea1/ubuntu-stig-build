@@ -1,0 +1,74 @@
+# System 2 -- gpt-oss-20B chat model (:8005), reachable on the `chat-llm-20b`
+# alias. Adopted as-built from dev-ai2 on 2026-09-21.
+#
+# THE RUNNING CONTAINER AND THIS FILE DISAGREE ON THE PROJECT NAME. The live
+# container carries the compose label `vllm-gptoss-20b`; this file says
+# `vllm-gpt-oss-20b`. A project name is how compose finds what it already
+# created, so `docker compose down` here does not see the running container,
+# and `up -d` tries to create a second one -- which then fails on the
+# container_name already being taken. That is also why it-docker lists this
+# stack twice. Whoever recreates it first should settle on one name.
+#
+# GPU BUDGET: this asks for 45% of System 2's single card, on top of
+# vllm-embed's 45% and vllm-reranker's 10% -- 100% before docling gets any.
+# See CLAUDE.md; not resolved, and start order is load-bearing after a reboot.
+name: vllm-gpt-oss-20b
+networks:
+  oi:
+    external: true
+volumes:
+  gpt-oss-20b:
+    external: true
+  encodings:
+    external: true
+services:
+  vllm-gpt-oss-20b:
+    image: vllm/vllm-openai:v0.29.0-cu129-ubuntu2404
+    container_name: vllm-gpt-oss-20b
+    ipc: host
+    ports:
+    - 8005:8005
+    volumes:
+    - gpt-oss-20b:/gpt20b
+    - encodings:/etc/encodings
+    - ./fips_off:/proc/sys/crypto/fips_enabled:ro
+    environment:
+      TIKTOKEN_ENCODINGS_BASE: /etc/encodings
+      TIKTOKEN_RS_CACHE_DIR: /etc/encodings
+      OTEL_SERVICE_NAME: vllm-gpt-oss-20b
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://192.168.1.110:4317
+    command:
+    - --model=/gpt20b
+    - --served-model-name=gpt-oss-20b
+    - --gpu-memory-utilization=0.45
+    - --quantization=gptq
+    - --max-model-len=16384
+    - --port=8005
+    - --enable-auto-tool-choice
+    - --tool-call-parser=openai
+    - --otlp-traces-endpoint=http://192.168.1.110:4317
+    - --max-num-seqs=64
+    - --max-num-batched-tokens=16384
+    - --max-num-queued-reqs=128
+    - --max-num-queued-tokens=32768
+    - --enable-prefix-caching
+    - --prefix-caching-hash-algo=sha256_cbor
+    - --block-size=16
+    networks:
+      oi:
+        aliases:
+        - chat-llm-20b
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: nvidia
+            count: all
+            capabilities:
+            - gpu
