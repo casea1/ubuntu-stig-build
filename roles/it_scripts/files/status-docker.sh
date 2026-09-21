@@ -6,6 +6,15 @@
 #   it-docker check            the faults that bite here: not-running, unhealthy,
 #                              restart-looping, no restart policy, LAN-published
 #                              ports, disk
+#   it-docker audit            DRIFT: what is RUNNING vs what the files say.
+#                              A reboot does NOT apply a compose edit -- the
+#                              daemon restarts the stored container and never
+#                              reads compose.yaml -- so the two routinely
+#                              disagree and only `compose up -d` closes it.
+#                              Checks the GPU budget, restart policies, Open
+#                              WebUI's live endpoints, port collisions,
+#                              anonymous volumes, project/dir mismatches,
+#                              literal IPs and missing ${VAR:?} guards.
 #   it-docker ports            every published port, and what that means for ufw
 #   it-docker logs NAME [N]    last N lines from one container (default 60)
 #   it-docker restart NAME | --project P | --all
@@ -295,6 +304,162 @@ cmd_config() {
   return "$rc"
 }
 
+# ---------------------------------------------------------------------------
+# `audit` -- drift between what is RUNNING and what the files say.
+#
+# The distinction this exists for: **a reboot does not apply a compose edit.**
+# The docker daemon restarts the EXISTING container from the configuration
+# stored when it was created; it never reads compose.yaml -- the daemon does
+# not know compose exists. Only `docker compose up -d` (or Dockge's deploy)
+# recreates a container with new settings. So an edited file and a running
+# container routinely disagree, a reboot faithfully restores the OLD value,
+# and reading the file tells you nothing about what is serving traffic.
+#
+# Everything below therefore reports BOTH sides wherever both exist.
+# Read-only: nothing is started, stopped or recreated.
+# ---------------------------------------------------------------------------
+# Pull a flag's value straight out of the container's JSON. Crude on purpose:
+# the flag can live in .Args, .Config.Cmd or .Config.Entrypoint depending on
+# how the image was built, and grepping the lot is more reliable than guessing.
+runtime_flag() {   # $1 = container, $2 = flag name -> value
+  docker inspect "$1" 2>/dev/null | grep -o -- "$2=[^\",]*" | head -1 | cut -d= -f2-
+}
+file_flag() {      # $1 = file, $2 = flag name -> value
+  grep -ho -- "$2=[^\"' ,]*" "$1" 2>/dev/null | head -1 | cut -d= -f2-
+}
+
+cmd_audit() {
+  local p d f n rt fl rc=0
+
+  head2 "GPU budget -- running value vs the file"
+  note "a reboot keeps the RUNNING value; only 'docker compose up -d' applies a file"
+  local total=0 any=0
+  for p in $(projects); do
+    d="$(project_dir "$p")"; f=""
+    [ -n "$d" ] && for c in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
+      [ -f "$d/$c" ] && { f="$d/$c"; break; }
+    done
+    for n in $(project_containers "$p"); do
+      rt="$(runtime_flag "$n" '--gpu-memory-utilization')"
+      fl="$([ -n "$f" ] && file_flag "$f" '--gpu-memory-utilization')"
+      [ -z "$rt" ] && [ -z "$fl" ] && continue
+      any=1
+      if [ -n "$rt" ] && [ -n "$fl" ] && [ "$rt" != "$fl" ]; then
+        bad "$n  running=${rt}  file=${fl}  <-- NOT APPLIED (needs compose up -d)"
+        rc=1
+      else
+        printf '    %-26s running=%-6s file=%-6s\n' "$n" "${rt:--}" "${fl:--}"
+      fi
+      case "$rt" in ''|*[!0-9.]*) ;; *) total="$(awk -v a="$total" -v b="$rt" 'BEGIN{print a+b}')" ;; esac
+    done
+  done
+  if [ "$any" = 1 ]; then
+    printf '    %-26s %s\n' "TOTAL of running caps" "$total"
+    awk -v t="$total" 'BEGIN{ if (t+0 >= 0.95) exit 0; exit 1 }' && {
+      warn "the caps claim the whole card. Anything WITHOUT a cap (docling) is"
+      note "working from what is left, which is nothing. Start order decides who"
+      note "wins after a reboot -- and docling is the one that does not retry."
+      rc=1
+    }
+    command -v nvidia-smi >/dev/null 2>&1 &&
+      nvidia-smi --query-gpu=index,memory.used,memory.total,utilization.gpu \
+                 --format=csv,noheader 2>/dev/null | sed 's/^/    gpu /'
+  else
+    note "no GPU services on this node"
+  fi
+
+  head2 "Restart policy"
+  local sect=0
+  for n in $(docker ps --format '{{.Names}}'); do
+    case "$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$n" 2>/dev/null)" in
+      ''|no) bad "$n has NO restart policy -- it will not come back after a reboot"; rc=1; sect=1 ;;
+    esac
+  done
+  [ "$sect" = 0 ] && ok "every running container restarts by itself"
+
+  head2 "Open WebUI -- the endpoints it is ACTUALLY using"
+  if docker inspect open-webui >/dev/null 2>&1; then
+    docker inspect open-webui --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null |
+      grep -E '^(OPENAI_API_BASE_URLS|RAG_RERANKING_ENGINE|RAG_EXTERNAL_RERANKER_URL|RAG_OPENAI_API_BASE_URL|DOCLING_SERVER_URL)=' |
+      sed 's/^/    /'
+    note "every chat endpoint listed above must resolve to a RUNNING service"
+  else
+    note "not this node"
+  fi
+
+  head2 "Port collisions between projects"
+  local dupes
+  dupes="$(docker ps -a --format '{{.Names}}|{{.Ports}}' |
+           grep -oE '0\.0\.0\.0:[0-9]+' | cut -d: -f2 | sort | uniq -d)"
+  # A published port that two DEFINED stacks both want is invisible while one of
+  # them is stopped, which is exactly how it gets to deployment unnoticed.
+  local filep
+  filep="$(grep -hoE '^\s+-\s+"?[0-9]+:[0-9]+' "$STACKS"/*/compose.y*ml 2>/dev/null |
+           grep -oE '[0-9]+:' | tr -d ':' | sort | uniq -d)"
+  if [ -n "$dupes$filep" ]; then
+    for n in $dupes $filep; do
+      bad "host port $n is claimed more than once:"
+      grep -lE "^\s+-\s+\"?$n:" "$STACKS"/*/compose.y*ml 2>/dev/null | sed 's|.*/stacks/|          |;s|/compose.*||'
+      rc=1
+    done
+  else
+    ok "no host port is claimed twice"
+  fi
+
+  head2 "Storage that does not survive a recreate"
+  for n in $(docker ps -a --format '{{.Names}}'); do
+    docker inspect "$n" --format '{{range .Mounts}}{{.Type}} {{.Name}} {{.Destination}}{{println}}{{end}}' 2>/dev/null |
+      awk -v c="$n" '$1=="volume" && length($2)==64 { print "  " c " -> " $3 }'
+  done | while read -r line; do
+    bad "ANONYMOUS volume:$line"
+    note "tied to this one container: recreate it and the data is gone, silently"
+  done
+  ok "(any line above is a finding; no lines means none)"
+
+  head2 "Project name vs directory"
+  for n in $(docker ps -a --format '{{.Names}}'); do
+    p="$(docker inspect -f "{{index .Config.Labels \"$L_PROJ\"}}" "$n" 2>/dev/null)"
+    d="$(docker inspect -f "{{index .Config.Labels \"$L_WDIR\"}}" "$n" 2>/dev/null)"
+    [ -n "$p" ] && [ -n "$d" ] || continue
+    if [ "$p" != "$(basename "$d")" ]; then
+      bad "$n: project '$p' but directory '$(basename "$d")'"
+      note "compose in that directory will not find this container, and 'up -d'"
+      note "tries to create a second one -- which then fails on the name."
+      rc=1
+    fi
+  done
+
+  head2 "Literal addresses in compose files"
+  local lit
+  # An image TAG is a false positive here -- apache/tika:3.3.1.0 matches an IPv4
+  # perfectly well -- so image lines are dropped before anything is reported.
+  lit="$(grep -nE '([0-9]{1,3}\.){3}[0-9]{1,3}' "$STACKS"/*/compose.y*ml 2>/dev/null |
+         grep -vE '127\.0\.0\.1|0\.0\.0\.0|([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]+' |
+         grep -vE ':[0-9]+:[[:space:]]*image:')"
+  if [ -n "$lit" ]; then
+    warn "it-set-ip cannot update these when the box is renumbered:"
+    printf '%s\n' "$lit" | sed "s|$STACKS/||" | sed 's/^/          /'
+  else
+    ok "no literal addresses -- a renumber will reach everything"
+  fi
+
+  head2 "Missing \${VAR:?} guards on secrets"
+  local g
+  g="$(grep -nE '\$\{[A-Z_]*(PASSWORD|SECRET|KEY)[A-Z_]*\}' "$STACKS"/*/compose.y*ml 2>/dev/null |
+       grep -v ':?')"
+  if [ -n "$g" ]; then
+    warn "an unset value is accepted SILENTLY here (blank password, not an error):"
+    printf '%s\n' "$g" | sed "s|$STACKS/||" | sed 's/^/          /'
+  else
+    ok "every secret reference fails loudly when unset"
+  fi
+
+  say ""
+  [ "$rc" = 0 ] && ok "no drift found" || warn "findings above; nothing was changed"
+  say ""
+  return "$rc"
+}
+
 cmd_df()  { head2 "Docker disk usage"; docker system df -v 2>/dev/null | sed 's/^/  /'; say ""; }
 cmd_top() {
   head2 "Live resource use"
@@ -307,6 +472,7 @@ cmd_top() {
 case "${1:-ps}" in
   ps|status|"") shift 2>/dev/null; cmd_ps "${1:-}" ;;
   check)        cmd_check ;;
+  audit)        cmd_audit ;;
   ports)        cmd_ports ;;
   logs)         shift; cmd_logs "$@" ;;
   restart)      shift; cmd_restart "$@" ;;

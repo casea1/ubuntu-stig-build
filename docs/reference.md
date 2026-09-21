@@ -555,6 +555,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `it-model-export` | Gather models + images onto a USB (online box) |
 | `it-model-import` | Load them on the fielded box |
 | `it-stack-diff` | On-box compose files vs the `ansible-pull` clone |
+| `it-docker audit` | **Running containers vs the compose files on disk.** A reboot does NOT apply a compose edit — the daemon restarts the stored container and never reads `compose.yaml` — so the two routinely disagree and only `docker compose up -d` closes the gap. Reports both sides of the GPU budget, restart policies, Open WebUI's live endpoints, host-port collisions between stacks, anonymous volumes, project/directory mismatches, literal addresses `it-set-ip` cannot reach, and secrets referenced without a `${VAR:?}` guard |
 
 ---
 
