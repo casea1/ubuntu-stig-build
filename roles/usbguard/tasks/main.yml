@@ -13,9 +13,23 @@
 # the control. An external keyboard therefore needs authorising once, from the
 # console, with `it-usb allow <id> --permanent`.
 #
-# RECOVERY, if a box is ever locked out: boot to recovery / single-user and run
-#   systemctl disable --now usbguard
-# then re-generate the policy with the right devices attached (`it-usb regenerate`).
+# RECOVERY, if a box is ever locked out. The obvious route -- boot to recovery /
+# single-user and `systemctl disable --now usbguard` -- DOES NOT WORK on this
+# fleet: single-user runs sulogin, sulogin wants the ROOT password, and root is
+# locked here by design. It would hand you a prompt you cannot answer.
+#
+# What does work, and needs only the GRUB password (which IS set):
+#   1. At the GRUB menu press `e`. The keyboard works here -- GRUB runs long
+#      before USBGuard is loaded, which is the whole reason this is recoverable.
+#   2. Append to the `linux` line:   systemd.mask=usbguard.service
+#   3. Ctrl-X. The box boots normally with USBGuard masked for THAT BOOT only,
+#      so you log in as yourself, with your own password, and no shell trick.
+#   4. Fix the policy (`it-usb enroll`, or `it-usb trust <vid:pid>`), then
+#      reboot to get USBGuard back. Nothing persists.
+#
+# BETTER: do not need it. `it-usb trust <vid:pid> [serial]` pre-authorises a
+# keyboard WITHOUT it being plugged in, so the keyboard waiting at the far site
+# can be allow-listed before the box leaves this one.
 # =============================================================================
 
 - name: "USBGUARD | Configure device allow-listing"

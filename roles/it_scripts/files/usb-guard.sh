@@ -10,6 +10,16 @@
 #   it-usb list --raw             usbguard's own output, unformatted
 #   it-usb blocked                only the devices currently being blocked
 #
+# LOCKED OUT AT A CONSOLE? A server has no built-in keyboard, so the policy
+# only ever allowed the one that was attached when it was generated. A
+# different keyboard at a different site is BLOCKED and you cannot type.
+# Do NOT reach for single-user: it runs sulogin, which wants the ROOT
+# password, and root is locked on this fleet. Instead, at the GRUB menu
+# (where the keyboard still works -- GRUB runs before USBGuard):
+#   press `e`, append  systemd.mask=usbguard.service  to the linux line,
+#   Ctrl-X, log in as yourself, fix the policy, reboot.
+# Avoid the whole thing with `it-usb trust <vid:pid>` BEFORE the box moves.
+#
 # `list` decodes the USB class byte (hub / HID / MASS STORAGE / network / ...)
 # and nests each device under what it is plugged into, so a flash drive behind
 # a dock is visibly behind that dock. A "!" marks the classes that can act on

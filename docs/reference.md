@@ -297,6 +297,25 @@ The same capture found three things worth naming separately:
 
 The repo's version mounts `prometheus-data:/prometheus`, external, which survives all three. The second fault is the config: the box mounts `/opt/it/docker/grafana/prometheus.yml` by **absolute path**, while `ai_compose` templates the scrape config to `/opt/stacks/prometheus/prometheus.yml` and nowhere else. So the managed file is ignored and the file actually in use is hand-made and unmanaged. That file is the one that carries System 1's address — meaning **after `it-set-ip` renumbers the node, Prometheus keeps scraping the old address**, and the template that exists to prevent exactly that is being read by nobody.
 
+**12ab. The console is not a fallback on these servers, because USBGuard blocks the keyboard — and the documented recovery does not work here.** Worth settling before a box is moved, not after.
+
+What does *not* block a console login: there is no `securetty`, no `pam_access`, and the `ai` profile installs no desktop (`dev_rdp_enabled` is development-only), so a normal local account logs in at tty1 with its own password. PAM is not the problem.
+
+**USBGuard is.** Its policy is generated from the devices attached *at that moment*, and a server has no built-in keyboard — so the allow-list only ever contained the keyboard that happened to be plugged in during the build (dev-ai1 carries 6 allow-rules, dev-ai2 five). External HID is deliberately not blanket-allowed, because a keystroke-injection device presents as a keyboard. Plug a different keyboard or a KVM in at the far site and **nothing types**.
+
+The recovery the role used to document — boot to recovery/single-user and `systemctl disable --now usbguard` — **cannot work on this fleet**: single-user runs `sulogin`, `sulogin` wants the **root** password, and root is locked here by design. It hands you a prompt you cannot answer.
+
+What works needs only the GRUB password, which is set:
+
+1. At the GRUB menu press `e`. **The keyboard works here** — GRUB runs long before USBGuard is loaded, which is the whole reason this is recoverable at all.
+2. Append to the `linux` line: `systemd.mask=usbguard.service`
+3. `Ctrl-X`. The box boots normally with USBGuard masked **for that boot only**, so you log in as yourself, with your own password, and no shell trick.
+4. Fix the policy, reboot, USBGuard is back. Nothing persists.
+
+**Better: do not need it.** `it-usb trust <vid:pid> [serial]` pre-authorises a device **without it being plugged in**, so the keyboard waiting at the far site can be allow-listed before the box leaves this one. Disabling USBGuard for the move is the worse trade — it leaves the boxes unprotected in transit, which is exactly when physical custody is weakest.
+
+**And you may not need the console at all:** a reboot applies netplan. A box staged with `it-net`, powered off, moved, cabled and powered on comes up on the new address with no keyboard involved. The console is the fallback, which is precisely why it has to actually work.
+
 **12aa. Ansible's explicit `mode:` strips an inherited ACL, so a default ACL does not grant what you think.** Giving a second, non-admin group read access to `/opt/stacks` cannot be done in the file mode — the directories are `root:sudo 2750` and a mode carries one group. A POSIX ACL is the mechanism, and this is the trap in it:
 
 ```
