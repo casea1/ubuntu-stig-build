@@ -20,6 +20,14 @@
 #   sudo it-set-ip --self 10.0.5.11/24 --gateway 10.0.5.1 --peer 10.0.5.20 --yes
 #   sudo it-set-ip --peer 10.0.5.20 --no-recreate   # files only; containers untouched
 #
+#   sudo it-set-ip --peer <ip> --as lan|link   record WHICH of the peer's two
+#                           addresses this is, so --use can find it again
+#   sudo it-set-ip --use lan|link   switch the peer to the stored LAN or link
+#                           address. THIS IS THE FAILOVER: when the direct
+#                           cable dies the peer's link address is simply
+#                           unreachable -- it does not fall back to the LAN,
+#                           because that is a different address.
+#
 #   sudo it-set-ip scan     list every literal address in the compose files
 #   sudo it-set-ip fix      replace them, one address at a time, after asking.
 #                           Suggests the .env variable that already holds that
@@ -68,6 +76,10 @@ compose_literals() {
   done
 }
 
+# Not previously defined in this script, while several call sites used it --
+# a `die` that does not exist prints "die: command not found" and CARRIES ON,
+# which is the opposite of what every one of those call sites wanted.
+die(){ printf '%s\n' "$*" >&2; exit 1; }
 bak(){ [ -e "$1" ] && cp -a "$1" "$1.bak-$TS" && echo "  backup: $1.bak-$TS"; }
 # escape dots so an IP is matched literally, bounded by non-digits (so .10 != .104)
 ipswap(){ # file old new
@@ -247,16 +259,47 @@ if [ -n "$ENVF" ] && [ -f "$ENVF" ]; then
   elif [ "$ROLE" = system2 ]; then CUR_PEER=$(grep -E '^OPEN_WEBUI_URL=' "$ENVF" | sed -E 's#.*://([^:/]+).*#\1#'); fi
 fi
 
+# ---- the peer's TWO addresses -------------------------------------------
+# A node has one peer but two ways to reach it: the LAN, and the direct cable.
+# Only one can be active -- the peer var is a single address and every consumer
+# (SYSTEM2_ADDR, OPEN_WEBUI_URL, the hosts entries, prometheus' scrape target)
+# takes exactly one. So BOTH are remembered in site.yml and `--use` switches
+# between them.
+#
+# This is the failover. There is no automatic one and there cannot easily be:
+# when the link drops, the kernel withdraws the connected /30 route and the
+# peer's LINK address becomes unreachable -- it does not fall back to the LAN,
+# because the LAN address is a DIFFERENT address. Making one address reachable
+# both ways needs a routing protocol or a bond, and a bond cannot span a switch
+# port and a direct cable. For two boxes in one rack, where the failure is a
+# visible physical thing, one command is the better trade.
+LAN_VAR="${PEER_VAR%_addr}_lan_addr"
+LINK_VAR="${PEER_VAR%_addr}_link_addr"
+site_get() {   # $1 = key
+  sed -nE "s/^[[:space:]]*$1:[[:space:]]*\"?([^\"#]*)\"?.*/\1/p" "$SITE" 2>/dev/null |
+    tail -1 | tr -d ' '
+}
+site_set() {   # $1 = key, $2 = value
+  [ -f "$SITE" ] || return 0
+  if grep -qE "^[[:space:]]*#?[[:space:]]*$1:" "$SITE"; then
+    sed -i -E "s|^[[:space:]]*#?[[:space:]]*$1:.*|$1: \"$2\"|" "$SITE"
+  else
+    printf '\n%s: "%s"\n' "$1" "$2" >> "$SITE"
+  fi
+}
+
 # ---- args ----
 case "${1:-}" in
   scan)             cmd_scan; exit 0 ;;
   fix|fix-literals) cmd_fix;  exit 0 ;;
 esac
 
-NEW_PEER=""; NEW_SELF=""; GW=""; DNS=""; YES=0; RECREATE=1
+NEW_PEER=""; NEW_SELF=""; GW=""; DNS=""; YES=0; RECREATE=1; PEER_AS=""; PEER_USE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --peer) NEW_PEER="$2"; shift 2 ;;
+    --as)   PEER_AS="${2:?--as needs lan or link}"; shift 2 ;;
+    --use)  PEER_USE="${2:?--use needs lan or link}"; shift 2 ;;
     --no-recreate) RECREATE=0; shift ;;
     --self) NEW_SELF="$2"; shift 2 ;;
     --gateway) GW="$2"; shift 2 ;;
@@ -266,6 +309,33 @@ while [ $# -gt 0 ]; do
     *) echo "unknown arg: $1"; usage 1 ;;
   esac
 done
+
+# --use lan|link: take the address out of site.yml so nobody has to remember it.
+# This is the failover command, and it is deliberately one word plus a side.
+if [ -n "$PEER_USE" ]; then
+  [ -n "$PEER_VAR" ] || die "hostname is not dev-ai1/dev-ai2 -- cannot tell which peer to switch"
+  case "$PEER_USE" in
+    lan)  NEW_PEER="$(site_get "$LAN_VAR")";  _src="$LAN_VAR" ;;
+    link) NEW_PEER="$(site_get "$LINK_VAR")"; _src="$LINK_VAR" ;;
+    *)    die "--use takes 'lan' or 'link' (got '$PEER_USE')" ;;
+  esac
+  [ -n "$NEW_PEER" ] || die "$_src is not set in $SITE.
+Record both addresses once, then --use switches between them:
+  sudo it-set-ip --peer <peer LAN address>  --as lan
+  sudo it-set-ip --peer <peer link address> --as link"
+  echo ">> --use $PEER_USE: peer = $NEW_PEER  (from $_src)"
+fi
+
+# --as lan|link: remember which of the two this address IS, so --use can find it
+# again. Recording it does not change which one is active; --peer does that.
+if [ -n "$PEER_AS" ] && [ -n "$NEW_PEER" ]; then
+  case "$PEER_AS" in
+    lan)  site_set "$LAN_VAR"  "$NEW_PEER"; echo "   site.yml: $LAN_VAR = $NEW_PEER" ;;
+    link) site_set "$LINK_VAR" "$NEW_PEER"; echo "   site.yml: $LINK_VAR = $NEW_PEER" ;;
+    *)    die "--as takes 'lan' or 'link' (got '$PEER_AS')" ;;
+  esac
+fi
+
 
 echo "== it-set-ip =="
 echo "  node        : $HN ($ROLE)"

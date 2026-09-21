@@ -1485,6 +1485,24 @@ ai_mlflow_db_password: "{{ lookup('ansible.builtin.password', ai_mlflow_db_passw
 # hostnames -- set IPs in site.yml if names don't resolve across the two boxes.
 ai_system1_addr: "dev-ai1"
 ai_system2_addr: "dev-ai2"
+# A node has ONE peer but can have TWO ways to reach it: the LAN, and a direct
+# cable between the boxes (see `it-net link`). The vars above are the ACTIVE
+# one -- every consumer takes a single address -- so the alternative is parked
+# here and `it-set-ip --use lan|link` switches between them.
+#
+# THIS IS THE FAILOVER, AND IT IS MANUAL BY DESIGN. When the direct cable dies
+# the kernel withdraws the connected route and the peer's LINK address becomes
+# unreachable; it does NOT fall back to the LAN, because the LAN address is a
+# different address. Making one address reachable both ways needs a routing
+# protocol or a bond, and a bond cannot span a switch port and a direct cable.
+# For two boxes in one rack, where the failure is a cable you can see, a single
+# command beats the machinery that would avoid it:
+#   sudo it-set-ip --use lan     # on BOTH boxes, ~1 minute, containers recreate
+# Record them once, with `it-set-ip --peer <ip> --as lan|link`.
+ai_system1_lan_addr: ""
+ai_system1_link_addr: ""
+ai_system2_lan_addr: ""
+ai_system2_link_addr: ""
 # When the peer address above is an IP, ai_compose auto-maps the peer's canonical
 # hostname -> that IP in the host's /etc/hosts, and the cross-node containers get the
 # same mapping via extra_hosts (from .env) -- so a box needs NO working DNS or manual
