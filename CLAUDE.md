@@ -320,18 +320,26 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
       `chat-llm-20b`, gptq-quantised, its own external `gpt-oss-20b` volume).
       It was running on dev-ai2 and absent from the capture taken minutes
       earlier, so it was created in between. Two things it brought with it:
-      - **The live container and its own compose file disagree on the project
-        name** -- the container is labelled `vllm-gptoss-20b`, the file says
-        `vllm-gpt-oss-20b`. A project name is how compose finds what it already
-        created, so `down` there does not see the running container and `up -d`
-        tries to make a second one, which then fails on the container_name
-        already being taken. It is also why `it-docker` lists the stack twice.
-      - **System 2's GPU is fully booked.** vllm-embed 45% + vllm-reranker 10%
-        + this 45% = 100% before docling, which has no explicit cap, gets any.
-        vllm-vision would be another 35% if started. It works today only
-        because of the order things happened to start in -- and docling is the
-        one with `restart: no` (item 4), so a reboot is the moment this bites.
-        Budget it with the architects before the nodes move.
+      - **RESOLVED 2026-09-21.** The live container was labelled
+        `vllm-gptoss-20b` while the file said `vllm-gpt-oss-20b`, so compose in
+        that directory could not see what it had created. It has since been
+        recreated and the label now matches the directory; a project/directory
+        sweep across every container on both nodes comes back clean.
+      - **System 2's GPU: the arithmetic says full, the card says 64%.**
+        MEASURED 2026-09-21: 31,666 of 49,140 MiB in use on dev-ai2 with the
+        20B, reranker, embed and docling all running -- about 17.5 GB free.
+        The caps sum to 1.00 (0.45 + 0.10 + 0.45) yet nothing is near its
+        share, so vLLM is not reserving the full fraction of total memory
+        here. An earlier version of this file called the card "fully booked"
+        on the arithmetic alone; the measurement disproves it, and the
+        start-order worry that followed from it was overstated.
+        What remains true: docling still has NO cap, so its share is whatever
+        is left rather than something reserved; and `vllm-vision` (exited,
+        stored cap 0.35) would take a third of the card if anyone started it.
+        `restart: unless-stopped` will NOT bring it back on reboot -- that
+        policy skips containers stopped deliberately -- so the risk is a
+        person, not a power cycle. dev-ai1 for comparison: 2 GPUs at
+        42,128 / 49,140 MiB each, matching vllm-server's 0.85.
   13. **THE DOCUMENTED LLM ROUTING IS NOT WHAT THE BOX DOES.** The architects'
       DEPLOYMENT_SUMMARY / DEPLOYMENT_DIAGRAM (2026-09-21) describe MLflow as a
       MANDATORY gateway -- every chat request going Open WebUI -> MLflow
