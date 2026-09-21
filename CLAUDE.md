@@ -292,6 +292,19 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   9. **`openwiki` / `openwiki-view` are in the repo and on NEITHER box**, though
      they predate the boxes' baseline. A pull will create them.
   10. `/opt/stacks/ai` and `ai-system1`/`ai-system2` are stale pre-split dirs.
+  11. **THE ADOPTION IS ONE STACK SHORT.** `it-docker ps --all` on dev-ai2,
+      minutes after the capture, showed a RUNNING `vllm-gpt-oss-20b` out of
+      `/opt/stacks/vllm-gpt-oss-20b` -- a second chat model on the node that is
+      supposed to be embeddings/extraction only. `it-stack-diff` enumerates
+      every directory under /opt/stacks, so it did not skip it: the directory
+      was not there when the capture ran. Someone is still building on that
+      box. Re-capture before trusting the repo as complete, and re-do the GPU
+      budget while you are there -- docling ~55% + vllm-embed 45% + reranker
+      10% did not account for a 20B model.
+      It also prints TWICE, under two project names for one directory, because
+      the compose file's `name:` (`vllm-gptoss-20b`) differs from the directory
+      (`vllm-gpt-oss-20b`). Anything keying on the directory reports "nothing
+      created" for a stack that is running.
   The per-stack detail is in `docs/reference.md` -> "AI nodes -- as-built".
 
 - **The audit-rule gap WAS fleet-wide, and the cause is found (2026-08-28).**

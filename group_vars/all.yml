@@ -1585,10 +1585,14 @@ ai_compose_images:               # name -> tag + Dockerfile (context copied from
   openwiki: { tag: "openwiki:latest",          dockerfile: "Dockerfile" }
   openwiki-view: { tag: "openwiki-view:latest", dockerfile: "Dockerfile" }   # nginx + vendored viewer libs
 # TWO IMAGES THE REPO CANNOT REBUILD, as of the 2026-09-21 capture:
-#   oikb   -- the stacks pin `oikb:0.3.6-RG`, this builds `oikb:latest`. Not
-#             renamed here, because the Dockerfile git-clones with NO ref, so
-#             tagging its output 0.3.6-RG would assert a version it does not
-#             pin. Fix the Dockerfile's ref first, then the tag.
+#   oikb   -- the Dockerfile DOES exist and its base IS pinned
+#             (FROM ghcr.io/open-webui/oikb:0.3.6). What is not pinned is the
+#             `git clone` of the patch source layered on top, so two builds a
+#             month apart are not the same image. The stacks ask for
+#             `oikb:0.3.6-RG` and this builds `oikb:latest`, so a rebuilt node
+#             finds no image at all. Pin the clone to a ref, THEN rename the
+#             tag -- renaming first would just make an unpinned build look
+#             reproducible.
 #   magpie -- `magpie:9.19.26` is on dev-ai2 and there is no Dockerfile for it
 #             in roles/ai_compose/files/images/ at all. The stack is in the
 #             repo; the image it needs cannot be produced from this repo.

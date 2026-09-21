@@ -286,8 +286,16 @@ The same capture found three things worth naming separately:
 | what | effect |
 |---|---|
 | **oikb moved 8081 -> 8082, which is also magpie's port** | both publish `8082:8080` on dev-ai2. Whichever starts second fails to bind. They are independent stacks, so nothing sequences them |
-| **`prometheus` lost its `prometheus-data` volume** | `--storage.tsdb.path=/prometheus` with no mount is an ANONYMOUS volume: every metric is discarded on the next recreate. It also mounts `/opt/it/docker/grafana/prometheus.yml` by absolute path, so the templated `./prometheus.yml` beside it is ignored |
+| **`prometheus` lost its `prometheus-data` volume** | see below -- it is two separate faults, not one |
 | **`vllm-vision`'s `logging:` is nested under `deploy:`** | a key in the wrong place is silently ignored by compose, so that one service has no log rotation while the file looks like it does |
+
+**Prometheus, in detail, because both halves are invisible.** The upstream image declares `VOLUME [ "/prometheus" ]` (confirmed in `prometheus/prometheus` v3.14.0's Dockerfile), and the as-built compose mounts nothing there. Docker therefore creates an **anonymous volume** — a random 64-hex name, bound to that one container. So:
+
+- every `docker compose up -d` that recreates the container starts with an **empty TSDB**. No error, no warning; the graphs simply begin at "now".
+- the previous volumes are not removed, they are **orphaned**. They accumulate as dangling volumes, and a later `docker volume prune` deletes the history nobody knew was still there.
+- `docker compose down -v` does remove them, so the one command gotcha 6 says is safe against named external volumes is *not* safe here.
+
+The repo's version mounts `prometheus-data:/prometheus`, external, which survives all three. The second fault is the config: the box mounts `/opt/it/docker/grafana/prometheus.yml` by **absolute path**, while `ai_compose` templates the scrape config to `/opt/stacks/prometheus/prometheus.yml` and nowhere else. So the managed file is ignored and the file actually in use is hand-made and unmanaged. That file is the one that carries System 1's address — meaning **after `it-set-ip` renumbers the node, Prometheus keeps scraping the old address**, and the template that exists to prevent exactly that is being read by nobody.
 
 **12y. `it-set-ip` renumbers everything except the address someone typed into a compose file.** It rewrites `.env` (`SYSTEM2_ADDR`, `OPEN_WEBUI_URL`), `/opt/it/site.yml`, `/etc/hosts` and the ufw rules, then recreates the containers — and reports success. An address written **into** `compose.yaml` instead of left as `${SYSTEM2_ADDR}` is reached by none of that, so the endpoint silently keeps pointing at the lab subnet after the box has moved. dev-ai2 has exactly this: `vllm-gptoss` carries a literal `192.168.1.110`.
 
