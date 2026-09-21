@@ -585,7 +585,7 @@ link_remove() {
 }
 
 link_set() {
-  local cidr="${1:-}" ifc="" mtu="" peer=""
+  local cidr="${1:-}" ifc="" mtu="" peer="" force=0
   shift || true
   [ -n "$cidr" ] || die "usage: it-net link <CIDR> --iface <NAME> [--mtu N] [--peer <IP>]"
   case "$cidr" in */*) ;; *) die "address must include the prefix, e.g. 10.10.200.1/30 (got '$cidr')" ;; esac
@@ -594,6 +594,7 @@ link_set() {
       --iface) ifc="${2:-}"; shift 2 ;;
       --mtu)   mtu="${2:-}"; shift 2 ;;
       --peer)  peer="${2:-}"; shift 2 ;;
+      --force) force=1; shift ;;
       *) die "unknown option: $1" ;;
     esac
   done
@@ -605,9 +606,17 @@ $(ip -o link show | awk -F': ' '{print "  "$2}' | grep -vE 'lo|docker|br-|veth')
   # The one mistake that costs a site visit: configuring the LAN NIC by
   # accident and losing the box.
   local dflt; dflt="$(default_iface 2>/dev/null || true)"
-  [ "$ifc" = "$dflt" ] && die "$ifc carries this box's DEFAULT ROUTE -- that is the LAN
-interface, not a direct link. Configuring it here would strip its gateway and
-take the box off the network. Use 'it-net ip' for that interface."
+  if [ "$ifc" = "$dflt" ] && [ "$force" != 1 ]; then
+    die "$ifc carries this box's DEFAULT ROUTE right now -- that is the LAN
+interface today. Applying this would strip its gateway and take the box off the
+network.
+
+If you are STAGING a move (this NIC becomes the direct link, and a different one
+becomes the LAN), that is legitimate and --force allows it. NOTHING IS APPLIED
+either way -- but be aware a REBOOT before the move would apply it and strand the
+box. Stage the LAN interface first, with: it-net ip ... --iface <the other NIC>"
+  fi
+  [ "$ifc" = "$dflt" ] && warn "$ifc carries the default route TODAY -- staging only (--force)."
 
   head2 "Direct link on $ifc"
   printf '  %-10s %s\n' "address" "$cidr"

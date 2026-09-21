@@ -326,14 +326,23 @@ Record both addresses once, then --use switches between them:
   echo ">> --use $PEER_USE: peer = $NEW_PEER  (from $_src)"
 fi
 
-# --as lan|link: remember which of the two this address IS, so --use can find it
-# again. Recording it does not change which one is active; --peer does that.
-if [ -n "$PEER_AS" ] && [ -n "$NEW_PEER" ]; then
+# --as lan|link: RECORD ONLY, and then stop.
+#
+# Recording is what you do in the lab, weeks before the cable exists. Activating
+# an address that is not reachable yet would rewrite every .env, /etc/hosts and
+# the ufw rules, recreate the containers, and leave the stack pointing at
+# nothing. So --as writes the slot and exits; --use activates, later, deliberately.
+if [ -n "$PEER_AS" ]; then
+  [ -n "$NEW_PEER" ] || die "--as needs --peer <address> to record"
+  [ -n "$PEER_VAR" ] || die "hostname is not dev-ai1/dev-ai2 -- cannot tell whose peer this is"
   case "$PEER_AS" in
     lan)  site_set "$LAN_VAR"  "$NEW_PEER"; echo "   site.yml: $LAN_VAR = $NEW_PEER" ;;
     link) site_set "$LINK_VAR" "$NEW_PEER"; echo "   site.yml: $LINK_VAR = $NEW_PEER" ;;
     *)    die "--as takes 'lan' or 'link' (got '$PEER_AS')" ;;
   esac
+  echo "   recorded only -- nothing else was changed."
+  echo "   Activate it when the path exists:  sudo it-set-ip --use $PEER_AS"
+  exit 0
 fi
 
 
