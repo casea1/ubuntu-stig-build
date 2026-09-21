@@ -255,34 +255,45 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   reads it is still a manual three-step.
 - **granite-docling VLM** is not deployed; it needs a custom docling image with
   the weights baked in. `external_granite_vision` is not a valid preset name.
-- **BOTH AI nodes have drifted from the repo. Full as-built record is in
-  `docs/reference.md` -> "AI nodes -- as-built".** Captured read-only
-  2026-08-28; NOTHING has been changed on either box, the engineers are still
-  testing. The headlines:
-  - **`pgbouncer` publishes `5432:5432` on BOTH nodes** (System 1's Open WebUI
-    DB, System 2's MLflow DB). The repo publishes nothing. A published container
-    port cannot be filtered by ufw (gotcha 1), so Postgres is genuinely on the
-    LAN twice. Raise before the next accreditation pass.
-  - **The ufw allow for 8002 names the wrong host.** Both nodes carry
-    `8002/tcp ALLOW IN 192.168.1.102`, but System 1 is **192.168.1.104**.
-    Embeddings work today only because the published port bypasses ufw --
-    the day `DOCKER-USER` rules land (the fix for gotcha 1), RAG breaks unless
-    this is corrected first. Fix the rule BEFORE the firewall fix.
-  - **`docling`'s `restart: unless-stopped` is commented out on dev-ai2**, so it
-    does not come back after a reboot. Runtime confirms `restart=no`.
-  - **`oikb`'s `profiles: ["oikb"]` guard is commented out**, so it starts
-    unguarded and has been crash-looping (Exited 1) for two weeks.
-  - **`vllm-vision` is stopped**, while System 1's Open WebUI still lists
-    `192.168.1.110:8003` as a chat endpoint -- a dead endpoint in the UI.
-  - `open-webui` also publishes `8050:8050`; `vllm-gptoss` hardcodes
-    `192.168.1.110` where the repo uses `${SYSTEM2_ADDR}` (so `it-set-ip`
-    cannot renumber it) and drops `--override-generation-config`;
-    `pgvector`'s memory limit is 2G on the box, 4G in the repo;
-    `prometheus` runs as `prometheus-standalone` off an ANONYMOUS volume and
-    the stale `/opt/it/docker/grafana/prometheus.yml` path.
-  - `/opt/stacks/ai` and `ai-system1`/`ai-system2` are the stale pre-split dirs.
-  - The two nodes are on DIFFERENT baselines (`06d49fc` / `6b458b1`), both
-    behind main.
+- **The AI nodes were adopted AS-BUILT on 2026-09-21; the repo's compose files
+  now match them.** Captured with `it-baseline` + `it-stack-diff --full` while
+  both boxes were at `05d3096` (22 commits behind main). All 15 shared stacks
+  were rewritten from the boxes and verified semantically identical, and two
+  stacks that existed only on dev-ai2 were added: **`vllm-reranker`** (:8004,
+  wired into Open WebUI as `RAG_RERANKING_ENGINE=external`) and **`magpie`**
+  (git-repo harvesting that feeds oikb through the shared `magpie_artifacts`
+  volume). `open-webui` gained an **nginx sidecar** that is now the only thing
+  publishing :3000 and :8050.
+  **What the adoption did NOT resolve, and must not be forgotten:**
+  1. **Two sidecar config files exist on the boxes and in no template** --
+     `open-webui/nginx.conf` and `magpie/magpie_config.yaml`. A missing
+     bind-mount source becomes a DIRECTORY, so a rebuilt node starts nginx
+     against a folder. `it-stack-diff` cannot see this (trap 12z).
+  2. **Two images cannot be rebuilt from this repo** -- the stacks pin
+     `oikb:0.3.6-RG` while the repo builds `oikb:latest` from an unpinned
+     `git clone`, and `magpie:9.19.26` has no Dockerfile here at all.
+  3. **`oikb` and `magpie` both publish 8082.** They cannot both run.
+  4. **`docling` lost `restart: unless-stopped`** -- it does not survive a
+     reboot -- and also lost `DOCLING_SERVE_ENABLE_REMOTE_SERVICES` /
+     `ALLOW_CUSTOM_VLM_CONFIG`.
+  5. **`prometheus` writes to an anonymous volume** (metrics discarded on
+     recreate) and reads its config from the stale absolute
+     `/opt/it/docker/grafana/prometheus.yml`.
+  6. **`vllm-gptoss` hardcodes `192.168.1.110`** in two places, so `it-set-ip`
+     cannot renumber it -- `it-set-ip` now REPORTS this rather than silently
+     missing it (trap 12y). It also dropped `--override-generation-config`.
+  7. **Postgres is on the LAN twice**: System 1's `pgbouncer` and System 2's
+     mlflow `pg-bouncer` both publish `5432:5432`, and a published port cannot
+     be filtered by ufw (gotcha 1). mlflow's DB password also lost its
+     `:?set in .env` guard, so an unset var is now an EMPTY password.
+  8. **`vllm-vision` is stopped** while Open WebUI still lists
+     `192.168.1.110:8003` as a chat endpoint, and its `logging:` block is
+     nested under `deploy:`, where compose ignores it.
+  9. **`openwiki` / `openwiki-view` are in the repo and on NEITHER box**, though
+     they predate the boxes' baseline. A pull will create them.
+  10. `/opt/stacks/ai` and `ai-system1`/`ai-system2` are stale pre-split dirs.
+  The per-stack detail is in `docs/reference.md` -> "AI nodes -- as-built".
+
 - **The audit-rule gap WAS fleet-wide, and the cause is found (2026-08-28).**
   This was recorded here as ASP-2-specific on the strength of dev-ai1 loading
   60 of 68 rules; that reading was wrong. dev-13 showed the same 1-of-68 with

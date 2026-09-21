@@ -1,0 +1,55 @@
+# System 2 -- Granite reranker vLLM (RAG reranking, :8004). Own stack.
+# Open WebUI reaches it directly: RAG_RERANKING_ENGINE=external +
+# RAG_EXTERNAL_RERANKER_URL=http://<system2>:8004/rerank.
+# Third tenant on System 2's single GPU: docling ~55%, vllm-embed 45%, this 10%.
+# Those sum over 100 -- they rely on vLLM releasing what it does not touch, so a
+# change to any one of the three has to be checked against the other two.
+name: vllm-reranker
+networks:
+  oi:
+    external: true
+volumes:
+  granite-reranker:
+    external: true
+services:
+  vllm-reranker:
+    image: vllm/vllm-openai:v0.29.0-cu129-ubuntu2404
+    container_name: vllm-reranker
+    ipc: host
+    ports:
+    - 8004:8004
+    volumes:
+    - granite-reranker:/granite-reranker
+    - ./fips_off:/proc/sys/crypto/fips_enabled:ro
+    command:
+    - --model=/granite-reranker
+    - --served-model-name=granite-embedding-reranker-english-r2
+    - --runner=pooling
+    - --tensor-parallel-size=1
+    - --max-model-len=8192
+    - --gpu-memory-utilization=0.10
+    - --port=8004
+    - --pooler-config={"pooling_type":"CLS","use_activation":true}
+    - --max-num-seqs=64
+    - --max-num-batched-tokens=32768
+    - --max-num-queued-reqs=128
+    - --max-num-queued-tokens=65536
+    - --block-size=16
+    - --disable-log-stats
+    - --trust-remote-code
+    networks:
+    - oi
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: nvidia
+            count: all
+            capabilities:
+            - gpu

@@ -279,6 +279,16 @@ sudo journalctl -k | grep -i '\[UFW LIMIT BLOCK\]' | tail
 
 The fix is an `allow` **inserted ahead of** the limit rule — ufw evaluates in order, so appending one does nothing. `stig_firewall_limit_exempt_sources` does this for every rate-limited port plus RDP. The trade is real: a listed source has no brute-force throttle at all, so list management hosts as `/32`, not a LAN.
 
+**12z. `it-stack-diff` covers compose files and nothing else, so the sidecar configs are the gap.** Several stacks bind-mount a file next to `compose.yaml` — `open-webui/nginx.conf`, `mlflow/nginx.conf`, `prometheus/prometheus.yml`, `oikb/.oikb.yaml`, `magpie/magpie_config.yaml`, `grafana-otel/grafana/*`. A missing bind-mount source is **not** an error: Docker creates a **directory** at that path and the container starts against it, so nginx fails on a config that is a folder and the fault reads as an image problem. The 2026-09-21 capture surfaced two of these that exist on a box and in no template: `open-webui/nginx.conf` (the new `open-webui-proxy`, which is now the only thing publishing 3000) and `magpie/magpie_config.yaml`. Capture them by hand — the compose diff will never show them missing.
+
+The same capture found three things worth naming separately:
+
+| what | effect |
+|---|---|
+| **oikb moved 8081 -> 8082, which is also magpie's port** | both publish `8082:8080` on dev-ai2. Whichever starts second fails to bind. They are independent stacks, so nothing sequences them |
+| **`prometheus` lost its `prometheus-data` volume** | `--storage.tsdb.path=/prometheus` with no mount is an ANONYMOUS volume: every metric is discarded on the next recreate. It also mounts `/opt/it/docker/grafana/prometheus.yml` by absolute path, so the templated `./prometheus.yml` beside it is ignored |
+| **`vllm-vision`'s `logging:` is nested under `deploy:`** | a key in the wrong place is silently ignored by compose, so that one service has no log rotation while the file looks like it does |
+
 **12y. `it-set-ip` renumbers everything except the address someone typed into a compose file.** It rewrites `.env` (`SYSTEM2_ADDR`, `OPEN_WEBUI_URL`), `/opt/it/site.yml`, `/etc/hosts` and the ufw rules, then recreates the containers — and reports success. An address written **into** `compose.yaml` instead of left as `${SYSTEM2_ADDR}` is reached by none of that, so the endpoint silently keeps pointing at the lab subnet after the box has moved. dev-ai2 has exactly this: `vllm-gptoss` carries a literal `192.168.1.110`.
 
 It now **reports** such lines before the recreate, and flags the case where one of them is the old peer address. It does not edit them — every file `ai_compose` places is a plain copy (gotcha 2), so an on-box edit is a deliberate exception and this script is not what gets to overwrite it. `--no-recreate` renumbers the files and leaves the containers alone, for a move where nothing should be restarted yet.

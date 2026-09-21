@@ -2,37 +2,38 @@
 # for Open WebUI; Tika is the fallback. See docs/ai-stack.md.
 name: docling
 networks:
-  oi: { external: true }
+  oi:
+    external: true
+volumes:
+  docling-models:
+    external: true
 services:
   docling-serve:
     image: ghcr.io/docling-project/docling-serve-cu128:v1.24.0
     container_name: docling-serve
-    ports: ["5001:5001"]
+    ports:
+    - 5001:5001
     volumes:
-      # This image's OpenCV aborts the FIPS selftest on the FIPS host. Host stays FIPS.
-      - ./fips_off:/proc/sys/crypto/fips_enabled:ro
-      # NO model volume. Models are baked into the image and runtime downloads are
-      # off; mounting over the cache dir hides them and docling crash-loops. To add
-      # a model, mount its own subdir under .../docling/models, never the parent.
+    - ./fips_off:/proc/sys/crypto/fips_enabled:ro
     environment:
-      - DOCLING_SERVE_MAX_SYNC_WAIT=6000
-      - DOCLING_SERVE_ENABLE_UI=false
-      - OMP_NUM_THREADS=4
-      - MKL_NUM_THREADS=4
-      - DOCLING_NUM_THREADS=4
-      # 4 workers: Open WebUI submits a whole knowledge base at once and one
-      # worker serialised the batch.
-      - UVICORN_WORKERS=4
-      # Permit a network-hosted VLM (both default false upstream).
-      - DOCLING_SERVE_ENABLE_REMOTE_SERVICES=true
-      - DOCLING_SERVE_ALLOW_CUSTOM_VLM_CONFIG=true
-      # VLM conversion is NOT configured. docling's built-in remote presets all
-      # hardcode localhost, so reaching vllm-vision needs a custom preset -- see
-      # docs/operate.md. Plain extraction (what Open WebUI uses) is unaffected.
-    networks: [oi]
-    restart: unless-stopped
+    - DOCLING_SERVE_MAX_SYNC_WAIT=6000
+    - DOCLING_SERVE_ENABLE_UI=false
+    - DOCLING_NUM_THREADS=4
+    - OMP_NUM_THREADS=4
+    - MKL_NUM_THREADS=4
+    - UVICORN_WORKERS=4
+    networks:
+    - oi
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
     deploy:
       resources:
         reservations:
           devices:
-            - { driver: nvidia, count: all, capabilities: [gpu] }
+          - driver: nvidia
+            count: all
+            capabilities:
+            - gpu

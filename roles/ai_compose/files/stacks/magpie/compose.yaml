@@ -1,0 +1,66 @@
+# System 2 -- MAGPIE: syncs git repos on a schedule, packages them, and feeds the
+# artifacts to oikb, which pushes them into Open WebUI's knowledge base.
+#
+# Captured from dev-ai2 on 2026-09-21. Three things about it are as-built, not
+# as-designed, and are NOT cleaned up here because the box is the source of truth:
+#   1. `networks: [oi]` is commented out on the box, so magpie runs on this
+#      stack's DEFAULT network. It reaches oikb through the shared
+#      magpie_artifacts volume, not over the network, so it works -- but
+#      anything that needs to talk to it by name will not resolve.
+#   2. It publishes 8082 -- the SAME host port oikb now publishes. Whichever
+#      starts second fails to bind. See docs/reference.md trap 12z.
+#   3. ./magpie_config.yaml and ${SSH_KEY_DIR:-./ssh} are bind-mounted and
+#      nothing in this repo creates them. A stack deployed without them starts
+#      with a directory where the config should be.
+name: magpie
+networks:
+  oi:
+    external: true
+services:
+  magpie:
+    image: magpie:9.19.26
+    container_name: magpie
+    working_dir: /app
+    ports:
+    - 8082:8080
+    environment:
+      GIT_TOKEN: ${GIT_TOKEN:-}
+      GIT_USERNAME: ${GIT_USERNAME:-}
+      GIT_SSH_KEY_PATH: ${GIT_SSH_KEY_PATH:-}
+      GITLAB_URL: ${GITLAB_URL:-}
+      GITLAB_TOKEN: ${GITLAB_TOKEN:-}
+      MAGPIE_API_KEY: ${MAGPIE_API_KEY:-}
+      EXTERNAL_OIKB_URL: ${EXTERNAL_OIKB_URL:-}
+      EXTERNAL_OIKB_API_KEY: ${EXTERNAL_OIKB_API_KEY:-}
+    volumes:
+    - ./magpie_config.yaml:/app/magpie_config.yaml:ro
+    - magpie_repos:/app/repos
+    - magpie_artifacts:/app/artifacts
+    - magpie_logs:/app/logs
+    - magpie_state:/app/state
+    - ${SSH_KEY_DIR:-./ssh}:/app/secrets:ro
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8080/health/ready
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+volumes:
+  magpie_repos:
+    external: true
+  magpie_artifacts:
+    external: true
+  magpie_logs:
+    external: true
+  magpie_state:
+    external: true

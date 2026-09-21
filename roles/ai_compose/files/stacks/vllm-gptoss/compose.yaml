@@ -2,44 +2,59 @@
 # `oi` network + the chat-llm alias with vllm-granite (only one runs at a time).
 name: vllm-gptoss
 networks:
-  oi: { external: true }
+  oi:
+    external: true
 volumes:
-  vllm: { external: true }
-  encodings: { external: true }
+  vllm:
+    external: true
+  encodings:
+    external: true
 services:
   vllm:
-    image: vllm/vllm-openai:v0.22.1-cu129-ubuntu2404
+    image: vllm/vllm-openai:v0.29.0-cu129-ubuntu2404
     container_name: vllm-server
     ipc: host
-    ports: ["8000:8000"]
+    ports:
+    - 8000:8000
     volumes:
-      - vllm:/gpt120b
-      - encodings:/etc/encodings
-      - ./fips_off:/proc/sys/crypto/fips_enabled:ro
+    - vllm:/gpt120b
+    - encodings:/etc/encodings
+    - ./fips_off:/proc/sys/crypto/fips_enabled:ro
     environment:
-      TIKTOKEN_ENCODINGS_BASE: "/etc/encodings"
-      TIKTOKEN_RS_CACHE_DIR: "/etc/encodings"
-      # Traces -> the LGTM stack on System 2. SYSTEM2_ADDR comes from .env, so
-      # `it-set-ip --peer` renumbers this with everything else.
-      OTEL_SERVICE_NAME: "vllm-server"
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://${SYSTEM2_ADDR:?set in .env}:4317"
+      TIKTOKEN_ENCODINGS_BASE: /etc/encodings
+      TIKTOKEN_RS_CACHE_DIR: /etc/encodings
+      OTEL_SERVICE_NAME: vllm-server
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://192.168.1.110:4317
     command:
-      - --model=/gpt120b
-      - --served-model-name=gpt-oss-120b
-      - --gpu-memory-utilization=0.90
-      - --tensor-parallel-size=2
-      - --max-model-len=32768
-      - --port=8000
-      - --enable-auto-tool-choice
-      - --tool-call-parser=openai
-      - '--override-generation-config={"temperature": 1.0, "top_p": 1.0, "repetition_penalty": 1.1}'
-      - "--otlp-traces-endpoint=http://${SYSTEM2_ADDR:?set in .env}:4317"
+    - --model=/gpt120b
+    - --served-model-name=gpt-oss-120b
+    - --gpu-memory-utilization=0.85
+    - --tensor-parallel-size=2
+    - --max-model-len=32768
+    - --port=8000
+    - --enable-auto-tool-choice
+    - --tool-call-parser=openai
+    - --otlp-traces-endpoint=http://192.168.1.110:4317
+    - --max-num-seqs=64
+    - --max-num-batched-tokens=32768
+    - --enable-prefix-caching
+    - --prefix-caching-hash-algo=sha256_cbor
+    - --block-size=16
     networks:
       oi:
-        aliases: [chat-llm]
+        aliases:
+        - chat-llm
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
     deploy:
       resources:
         reservations:
           devices:
-            - { driver: nvidia, count: all, capabilities: [gpu] }
+          - driver: nvidia
+            count: all
+            capabilities:
+            - gpu

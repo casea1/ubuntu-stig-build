@@ -2,32 +2,41 @@
 # OpenAI-compatible; reached from System 1's Open WebUI as a second model.
 name: vllm-vision
 networks:
-  oi: { external: true }
+  oi:
+    external: true
 volumes:
-  granite-vision: { external: true }
+  granite-vision:
+    external: true
 services:
   vllm-vision:
     image: vllm/vllm-openai:v0.22.1-cu129-ubuntu2404
     container_name: vllm-vision
     ipc: host
-    ports: ["8003:8003"]
+    ports:
+    - 8003:8003
     volumes:
-      - granite-vision:/granite-vision
-      - ./fips_off:/proc/sys/crypto/fips_enabled:ro
+    - granite-vision:/granite-vision
+    - ./fips_off:/proc/sys/crypto/fips_enabled:ro
     command:
-      - --model=/granite-vision
-      - --served-model-name=granite-vision-4.1-4b
-      - --tensor-parallel-size=1
-      - --gpu-memory-utilization=0.35
-      - --max-model-len=16384
-      - --port=8003
-      # granite-vision-4.1-4b ships as a LoRA adapter on Granite-4.1-3B. If vLLM
-      # won't serve the adapter repo directly, use `--enable-lora` with the 3B
-      # base, or swap for the merged `ibm-granite/granite-4.0-3b-vision`.
-    networks: [oi]
+    - --model=/granite-vision
+    - --served-model-name=granite-vision-4.1-4b
+    - --tensor-parallel-size=1
+    - --gpu-memory-utilization=0.35
+    - --max-model-len=16384
+    - --port=8003
+    networks:
+    - oi
     restart: unless-stopped
     deploy:
       resources:
         reservations:
           devices:
-            - { driver: nvidia, count: all, capabilities: [gpu] }
+          - driver: nvidia
+            count: all
+            capabilities:
+            - gpu
+      logging:
+        driver: json-file
+        options:
+          max-size: 10m
+          max-file: '3'

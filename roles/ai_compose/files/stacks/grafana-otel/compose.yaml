@@ -2,21 +2,28 @@
 # from System 1's Open WebUI. ansible places the grafana/ dashboards beside this file.
 name: grafana-otel
 networks:
-  oi: { external: true }
+  oi:
+    external: true
 volumes:
-  lgtm-data: { external: true }
+  lgtm-data:
+    external: true
 services:
   lgtm:
     image: grafana/otel-lgtm:0.29.0
     container_name: open-webui-lgtm
     ports:
-      - "3001:3000"        # Grafana UI (admins)
-      - "4317:4317"        # OTLP gRPC  (from System 1's Open WebUI)
-      - "4318:4318"        # OTLP HTTP
+    - 3001:3000
+    - 4317:4317
+    - 4318:4318
     volumes:
-      - lgtm-data:/data
-      # Auto-loaded at startup; edits made in the UI persist to lgtm-data.
-      - ./grafana/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/ubuntu-stig-build.yaml:ro
-      - ./grafana/openwebui-dashboard.json:/otel-lgtm/grafana/conf/provisioning/dashboards/custom/openwebui-dashboard.json:ro
-    networks: [oi]
+    - lgtm-data:/data
+    - ./grafana/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/ubuntu-stig-build.yaml:ro
+    - ./grafana/openwebui-dashboard.json:/otel-lgtm/grafana/conf/provisioning/dashboards/custom/openwebui-dashboard.json:ro
+    networks:
+    - oi
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'

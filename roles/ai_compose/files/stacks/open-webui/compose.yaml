@@ -4,85 +4,127 @@
 # come from the sibling root-only .env; no secrets live in this file.
 name: open-webui
 networks:
-  oi: { external: true }
+  oi:
+    external: true
 volumes:
-  open-webui: { external: true }
+  open-webui:
+    external: true
+  nginx-cache:
+    driver: local
 services:
   open-webui:
     image: ghcr.io/open-webui/open-webui:v0.10.2
     container_name: open-webui
-    # Resolves dev-ai2 in-container when SYSTEM2_ADDR is an IP; no-op otherwise.
     extra_hosts:
-      - "${SYSTEM2_HOSTS_ENTRY:-localhost:127.0.0.1}"
+    - ${SYSTEM2_HOSTS_ENTRY:-localhost:127.0.0.1}
     volumes:
-      - open-webui:/app/backend/data
+    - open-webui:/app/backend/data
     environment:
-      DATABASE_URL: "postgresql://postgres:${POSTGRES_PASSWORD:?set in .env}@pg-bouncer:5432/openwebui"
-      AIOHTTP_CLIENT_TIMEOUT: "6000"
-      VECTOR_DB: "pgvector"
-      VECTOR_DB_URL: "postgresql://postgres:${POSTGRES_PASSWORD:?set in .env}@pg-bouncer:5432/openwebui"
-      ENV: "dev"
-      # Chat: local vLLM via the `chat-llm` alias (survives a model switch) + vision on S2.
-      OPENAI_API_BASE_URLS: "http://chat-llm:8000/v1;http://${SYSTEM2_ADDR:?set in .env}:8003/v1"
-      OPENAI_API_KEYS: "sk-noauth;sk-noauth"
-      # RAG embeddings (System 2)
-      RAG_EMBEDDING_ENGINE: "openai"
-      RAG_EMBEDDING_MODEL: "granite-embedding-small-english-r2"
-      RAG_OPENAI_API_BASE_URL: "http://${SYSTEM2_ADDR:?set in .env}:8002/v1"
-      RAG_OPENAI_API_KEY: "sk-noauth"
-      RAG_EMBEDDING_BATCH_SIZE: "15"
-      # RAG retrieval / chunking. PersistentConfig: these seed a FRESH database
-      # only -- on an existing box the stored value wins, so change them in the UI.
-      ENABLE_RAG_HYBRID_SEARCH: "true"
-      RAG_HYBRID_BM25_WEIGHT: "0.5"
-      RAG_TOP_K: "3"
-      RAG_TOP_K_RERANKER: "3"
-      RAG_RELEVANCE_THRESHOLD: "0.0"
-      CHUNK_SIZE: "2048"
-      CHUNK_OVERLAP: "200"
-      # Optional reranker -- needs a real rerank endpoint (NOT the embedding model):
-      # RAG_RERANKING_ENGINE: "external"
-      # RAG_RERANKING_MODEL: "<reranker-served-name>"
-      # RAG_EXTERNAL_RERANKER_URL: "http://${SYSTEM2_ADDR}:8002/v1"
-      # RAG_EXTERNAL_RERANKER_API_KEY: "sk-noauth"
-      # Executes code from KB content -- off by default on a hardened box:
-      # ENABLE_KB_EXEC: "true"
-      # Extraction. For Tika: CONTENT_EXTRACTION_ENGINE=tika + TIKA_SERVER_URL=...:9998
-      CONTENT_EXTRACTION_ENGINE: "docling"
-      DOCLING_SERVER_URL: "http://${SYSTEM2_ADDR:?set in .env}:5001"
-      # OTel -> Grafana/LGTM on System 2
-      ENABLE_OTEL: "true"
-      ENABLE_OTEL_TRACES: "true"
-      ENABLE_OTEL_METRICS: "true"
-      ENABLE_OTEL_LOGS: "true"
-      OTEL_SERVICE_NAME: "open-webui"
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://${SYSTEM2_ADDR:?set in .env}:4317"
-      OTEL_EXPORTER_OTLP_INSECURE: "true"
-      OTEL_METRICS_EXPORTER_ENDPOINT: "http://${SYSTEM2_ADDR:?set in .env}:4317"
-      OTEL_METRICS_EXPORTER_OTLP_INSECURE: "true"
-      OTEL_LOGS_EXPORTER_OTLP: "http://${SYSTEM2_ADDR:?set in .env}:4317"
-      OTEL_LOGS_EXPORTER_OTLP_INSECURE: "true"
-      OTEL_METRICS_EXPORT_INTERVAL_MILLIS: "10000"
-      # Per-worker pool, sized against PgBouncer's 400-client ceiling:
-      # 9 workers x (12 + 18) = 270 connections, leaving headroom for other clients.
-      DATABASE_POOL_SIZE: "12"
-      DATABASE_POOL_MAX_OVERFLOW: "18"
-      DATABASE_ENABLE_SESSION_SHARING: "true"
-      DATABASE_POOL_TIMEOUT: "90"
-      DATABASE_POOL_RECYCLE: "1800"
-      DATABASE_POOL_PRE_PING: "true"
-      WEBUI_SECRET_KEY: "${WEBUI_SECRET_KEY:?set in .env}"
-      REDIS_URL: "redis://redis:6379/0"
-      ENABLE_WEBSOCKET_SUPPORT: "true"
-      WEBSOCKET_MANAGER: "redis"
-      WEBSOCKET_REDIS_URL: "redis://redis:6379/1"
-      UVICORN_WORKERS: "9"
-      CORS_ALLOW_ORIGIN: "${OI_ORIGIN:-*}"
-      REDIS_SOCKET_KEEPALIVE: "true"
-      # Audit trail (AU controls) -> /app/backend/data/audit.log. METADATA logs no
-      # prompt text, so it stays unclassified; REQUEST/REQUEST_RESPONSE do not.
-      AUDIT_LOG_LEVEL: "${AUDIT_LOG_LEVEL:-METADATA}"
-    ports:
-      - "3000:8080"
-    networks: [oi]
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?set in .env}@pg-bouncer:5432/openwebui
+      AIOHTTP_CLIENT_TIMEOUT: '300'
+      VECTOR_DB: pgvector
+      VECTOR_DB_URL: postgresql://postgres:${POSTGRES_PASSWORD:?set in .env}@pg-bouncer:5432/openwebui
+      ENV: dev
+      OPENAI_API_BASE_URLS: http://chat-llm:8000/v1;http://${SYSTEM2_ADDR:?set in .env}:8003/v1
+      OPENAI_API_KEYS: sk-noauth;sk-noauth
+      RAG_EMBEDDING_ENGINE: openai
+      RAG_EMBEDDING_MODEL: granite-embedding-small-english-r2
+      RAG_OPENAI_API_BASE_URL: http://${SYSTEM2_ADDR:?set in .env}:8002/v1
+      RAG_OPENAI_API_KEY: sk-noauth
+      RAG_EMBEDDING_BATCH_SIZE: '64'
+      ENABLE_RAG_HYBRID_SEARCH: 'true'
+      RAG_HYBRID_BM25_WEIGHT: '0.5'
+      RAG_TOP_K: '30'
+      RAG_TOP_K_RERANKER: '15'
+      RAG_RELEVANCE_THRESHOLD: '0.2'
+      CHUNK_SIZE: '2048'
+      CHUNK_OVERLAP: '200'
+      RATE_LIMIT_ENABLED: 'true'
+      RATE_LIMIT_PER_MINUTE: '120'
+      RATE_LIMIT_PER_HOUR: '3600'
+      MAX_CONCURRENT_REQUESTS: '128'
+      RAG_RERANKING_ENGINE: external
+      RAG_RERANKING_MODEL: granite-embedding-reranker-english-r2
+      RAG_EXTERNAL_RERANKER_URL: http://${SYSTEM2_ADDR}:8004/rerank
+      CONTENT_EXTRACTION_ENGINE: docling
+      DOCLING_SERVER_URL: http://${SYSTEM2_ADDR:?set in .env}:5001
+      ENABLE_OTEL: 'true'
+      ENABLE_OTEL_TRACES: 'true'
+      ENABLE_OTEL_METRICS: 'true'
+      ENABLE_OTEL_LOGS: 'true'
+      OTEL_SERVICE_NAME: open-webui
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://${SYSTEM2_ADDR:?set in .env}:4317
+      OTEL_EXPORTER_OTLP_INSECURE: 'true'
+      OTEL_METRICS_EXPORTER_ENDPOINT: http://${SYSTEM2_ADDR:?set in .env}:4317
+      OTEL_METRICS_EXPORTER_OTLP_INSECURE: 'true'
+      OTEL_LOGS_EXPORTER_OTLP: http://${SYSTEM2_ADDR:?set in .env}:4317
+      OTEL_LOGS_EXPORTER_OTLP_INSECURE: 'true'
+      OTEL_METRICS_EXPORT_INTERVAL_MILLIS: '10000'
+      DATABASE_POOL_SIZE: '12'
+      DATABASE_POOL_MAX_OVERFLOW: '18'
+      DATABASE_ENABLE_SESSION_SHARING: 'true'
+      DATABASE_POOL_TIMEOUT: '90'
+      DATABASE_POOL_RECYCLE: '1800'
+      DATABASE_POOL_PRE_PING: 'true'
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?set in .env}
+      REDIS_URL: redis://redis:6379/0
+      ENABLE_WEBSOCKET_SUPPORT: 'true'
+      WEBSOCKET_MANAGER: redis
+      WEBSOCKET_REDIS_URL: redis://redis:6379/1
+      UVICORN_WORKERS: '9'
+      CORS_ALLOW_ORIGIN: ${OI_ORIGIN:-*}
+      REDIS_SOCKET_KEEPALIVE: 'true'
+      ENABLE_AUDIT_LOGS_FILE: 'true'
+      AUDIT_LOGS_FILE_PATH: /app/backend/data/audit.log
+      AUDIT_LOG_FILE_ROTATION_SIZE: 10MB
+      ENABLE_AUDIT_STDOUT: 'false'
+      MAX_BODY_LOG_SIZE: '2048'
+      AUDIT_LOG_LEVEL: ${AUDIT_LOG_LEVEL:-METADATA}
+      THREAD_POOL_SIZE: '2000'
+      DATABASE_USER_ACTIVE_STATUS_UPDATE_INTERVAL: '120'
+      WEBSOCKET_HEARTBEAT_INTERVAL: '60'
+      REDIS_RESPONSE_STREAM_TTL: '3600'
+      AIOHTTP_CLIENT_ASYNC_DNS_RESOLVER: 'true'
+      ENABLE_PROFILE_IMAGE_URL_FORWARDING: 'false'
+      GLOBAL_LOG_LEVEL: WARNING
+      FORWARDED_ALLOW_IPS: '*'
+      PROXY_HEADER_FORWARDING: 'true'
+    networks:
+    - oi
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  open-webui-proxy:
+    image: nginx:1.30.4-alpine
+    container_name: open-webui-proxy
+    ports:
+    - 3000:3000
+    - 8050:8050
+    volumes:
+    - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    - nginx-cache:/var/cache/nginx
+    depends_on:
+    - open-webui
+    networks:
+    - oi
+    restart: unless-stopped
+    healthcheck:
+      test:
+      - CMD
+      - wget
+      - --quiet
+      - --tries=1
+      - --spider
+      - http://localhost:3000/health
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'

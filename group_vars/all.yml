@@ -1514,7 +1514,9 @@ ai_oikb_gitlab_token: ""
 # model weights / DB survive `down -v`). Empty list = role creates none.
 ai_compose_volumes:
   system1: [vllm, granite32b, encodings, pgvector-data, open-webui, redis-data]
-  system2: [granite-embed, granite-vision, lgtm-data, prometheus-data, mlflow-artifacts, postgres_mlflow_data, openwiki-out]
+  system2: [granite-embed, granite-reranker, granite-vision, lgtm-data, prometheus-data,
+            mlflow-artifacts, postgres_mlflow_data, openwiki-out,
+            magpie_repos, magpie_artifacts, magpie_logs, magpie_state]
 
 # NOTE (docling VLM / granite-docling-258M): NOT wired in. The -cu128 docling
 # image runs with --artifacts-path (runtime downloads DISABLED) and ships its
@@ -1560,13 +1562,14 @@ ai_mlflow_allow_cidrs:
 ai_stack_network: oi
 ai_stacks_by_role:
   system1: [vllm-gptoss, vllm-granite, pgvector, pgbouncer, redis, open-webui]
-  system2: [vllm-embed, vllm-vision, docling, tika, grafana-otel, prometheus, mlflow, oikb, hfcli, openwiki, openwiki-view]
+  system2: [vllm-embed, vllm-reranker, vllm-vision, docling, tika, grafana-otel, prometheus,
+            mlflow, oikb, magpie, hfcli, openwiki, openwiki-view]
 # Stacks whose compose bind-mounts ./fips_off (the host-FIPS carve-out for the
 # vLLM / OpenCV-bearing containers). The `fips_off` file is placed into each of
 # these stack dirs so the relative mount resolves.
 ai_stacks_need_fips:
   system1: [vllm-gptoss, vllm-granite]
-  system2: [vllm-embed, vllm-vision, docling]
+  system2: [vllm-embed, vllm-reranker, vllm-vision, docling]
 
 # ---- Custom image builds (ai_compose) ---------------------------------------
 # Three services use images not on any registry, so ansible builds them ON THE
@@ -1581,6 +1584,15 @@ ai_compose_images:               # name -> tag + Dockerfile (context copied from
   mlflow:   { tag: "mlflow:v3.15.1-psycopg2",  dockerfile: "Dockerfile" }
   openwiki: { tag: "openwiki:latest",          dockerfile: "Dockerfile" }
   openwiki-view: { tag: "openwiki-view:latest", dockerfile: "Dockerfile" }   # nginx + vendored viewer libs
+# TWO IMAGES THE REPO CANNOT REBUILD, as of the 2026-09-21 capture:
+#   oikb   -- the stacks pin `oikb:0.3.6-RG`, this builds `oikb:latest`. Not
+#             renamed here, because the Dockerfile git-clones with NO ref, so
+#             tagging its output 0.3.6-RG would assert a version it does not
+#             pin. Fix the Dockerfile's ref first, then the tag.
+#   magpie -- `magpie:9.19.26` is on dev-ai2 and there is no Dockerfile for it
+#             in roles/ai_compose/files/images/ at all. The stack is in the
+#             repo; the image it needs cannot be produced from this repo.
+# Both mean a REBUILT System 2 comes up without those two containers.
 ai_compose_build_by_role:        # which images each node builds
   system1: []                    # System 1 uses only registry images
   system2: [oikb, hfcli, repomix, mlflow, openwiki, openwiki-view]

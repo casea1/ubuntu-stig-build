@@ -3,16 +3,21 @@
 #   cd /opt/stacks/hfcli && docker compose run --rm hfcli hf download <repo> --local-dir /<vol>
 name: hfcli
 networks:
-  oi: { external: true }
+  oi:
+    external: true
 volumes:
-  granite-embed: { external: true }
-  granite-vision: { external: true }
+  granite-embed:
+    external: true
+  granite-vision:
+    external: true
 services:
   hfcli:
-    image: hfcli:latest         # built on the box by ansible (ai_compose)
+    image: hfcli:latest
     container_name: hfcli
-    profiles: ["tools"]
+    profiles:
+    - tools
     volumes:
-      - granite-embed:/granite-embed
-      - granite-vision:/granite-vision
-    networks: [oi]
+    - granite-embed:/granite-embed
+    - granite-vision:/granite-vision
+    networks:
+    - oi

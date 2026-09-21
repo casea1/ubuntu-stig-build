@@ -1,27 +1,48 @@
 # System 1 -- Redis (Open WebUI websocket coordination + cache).
 name: redis
 networks:
-  oi: { external: true }
+  oi:
+    external: true
 volumes:
-  redis-data: { external: true }
+  redis-data:
+    external: true
 services:
   redis:
     image: redis:7.2.14-bookworm
+    entrypoint:
+    - redis-server
     container_name: redis
-    entrypoint: ["redis-server"]
-    command: "--save 30 1 --appendonly yes --maxclients 10000 --timeout 1800 --maxmemory-policy noeviction"
+    command: --save 30 1 --appendonly yes --maxclients 10000 --timeout 0 --maxmemory 512mb --maxmemory-policy
+      allkeys-lru --tcp-backlog 8192 --hz 100 --client-output-buffer-limit "pubsub 64mb 16mb 60" --tcp-keepalive
+      300 --lazyfree-lazy-eviction yes --lazyfree-lazy-expire yes --lazyfree-lazy-server-del yes
     volumes:
-      - redis-data:/data
+    - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+      - CMD
+      - redis-cli
+      - ping
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
-    cap_drop: [ALL]
-    cap_add: [SETGID, SETUID, DAC_OVERRIDE]
+    cap_drop:
+    - ALL
+    cap_add:
+    - SETGID
+    - SETUID
+    - DAC_OVERRIDE
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 256M
     logging:
-      driver: "json-file"
-      options: { max-size: "1m", max-file: "1" }
-    networks: [oi]
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: '1'
+    networks:
+    - oi
     restart: unless-stopped
