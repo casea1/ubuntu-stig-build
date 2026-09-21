@@ -173,8 +173,21 @@ cmd_check() {
   for n in $(docker ps --format '{{.Names}}'); do
     rp="$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$n" 2>/dev/null)"
     case "$rp" in
-      ''|no) bad "$n has NO restart policy -- it will not come back after a reboot"; rc=1; sect=1 ;;
+      ''|no) ;;
+      *) continue ;;
     esac
+    # A systemd unit of the same name is the OTHER valid answer, and it is the
+    # right one for clamav-container: the host engine cannot hash under FIPS,
+    # so a unit owns that container's lifecycle and a docker policy would fight
+    # it for the same job. Crying wolf every run is how a real finding gets
+    # scrolled past.
+    if systemctl list-unit-files "${n}.service" >/dev/null 2>&1 &&
+       systemctl is-enabled --quiet "${n}.service" 2>/dev/null; then
+      ok "$n has no docker restart policy, but ${n}.service is enabled -- systemd owns it"
+      continue
+    fi
+    bad "$n has NO restart policy and no systemd unit -- it will not come back after a reboot"
+    rc=1; sect=1
   done
   [ "$sect" = 0 ] && ok "every running container restarts by itself"
 
