@@ -124,7 +124,20 @@ cmd_ps() {
   if [ -n "$c" ]; then
     say ""
     printf '  %s(no compose project)%s\n' "$B" "$R"
-    note "started by hand, so nothing in this repo recreates them after a wipe"
+    # NOT necessarily orphans. clamav-container is deliberately outside compose:
+    # a systemd unit owns it (clamav-container.service, WantedBy=multi-user.target,
+    # Restart=on-failure), so `restart=no` on the container is CORRECT -- a docker
+    # policy would fight systemd for the same job. Say which ones have a unit
+    # rather than implying every loose container is unmanaged.
+    note "outside compose. A systemd unit may still own it -- checked below."
+    for _n in $c; do
+      if systemctl list-unit-files "${_n}.service" >/dev/null 2>&1 &&
+         systemctl is-enabled --quiet "${_n}.service" 2>/dev/null; then
+        note "  $_n: ${_n}.service is enabled -- systemd starts it at boot"
+      else
+        note "  $_n: no enabled systemd unit -- nothing recreates it after a wipe"
+      fi
+    done
     for n in $c; do row "$n"; done
   fi
   say ""
