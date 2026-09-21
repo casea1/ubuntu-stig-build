@@ -70,8 +70,11 @@ compose_literals() {
   for f in "$STACKS_DIR"/*/compose*.y*ml "$STACKS_DIR"/*/docker-compose*.y*ml; do
     [ -f "$f" ] || continue
     rel="${f#$STACKS_DIR/}"
+    # An image TAG parses as an IPv4 -- apache/tika:3.3.1.0 -- so drop image
+    # lines before reporting anything as an address that needs renumbering.
     grep -nE '([0-9]{1,3}\.){3}[0-9]{1,3}' "$f" 2>/dev/null \
       | grep -vE '127\.0\.0\.1|0\.0\.0\.0|([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]+' \
+      | grep -vE '^[0-9]+:[[:space:]]*image:' \
       | sed "s|^|  $rel:|"
   done
 }
@@ -403,10 +406,16 @@ if [ -n "$NEW_PEER" ]; then
     [ "$_env_n" -gt 0 ] && echo "   .env updated ($_env_n file(s))"
     # host-side peer resolution
     bak /etc/hosts
-    if grep -qE "[[:space:]]${PEER_HOST}([[:space:]]|\$)" /etc/hosts; then
-      sed -i -E "s|^[0-9.]+([[:space:]]+.*[[:space:]]${PEER_HOST}([[:space:]]|\$).*)|${NEW_PEER}\1|" /etc/hosts
-    else
-      printf '%s %s\n' "$NEW_PEER" "$PEER_HOST" >> /etc/hosts
+    # Delete then append, rather than substitute. The previous version used | as
+    # the s/// delimiter while its own regex contained | as an ERE alternation,
+    # so sed saw the command end early and died with "unknown option to `s'" --
+    # and the success line printed anyway, so /etc/hosts was never updated and
+    # nothing said so. Delete-and-append needs no delimiter gymnastics and is
+    # idempotent whether or not an entry was there.
+    sed -i -E "/[[:space:]]${PEER_HOST}([[:space:]]|$)/d" /etc/hosts
+    printf '%s %s\n' "$NEW_PEER" "$PEER_HOST" >> /etc/hosts
+    if ! grep -qE "^${NEW_PEER}[[:space:]]+${PEER_HOST}([[:space:]]|$)" /etc/hosts; then
+      echo "   !! /etc/hosts update FAILED -- check it by hand" >&2
     fi
     echo "   /etc/hosts: $PEER_HOST -> $NEW_PEER"
     # firewall: swap the old peer IP in ufw rules, then reload

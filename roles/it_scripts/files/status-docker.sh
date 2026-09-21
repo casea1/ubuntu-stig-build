@@ -357,23 +357,45 @@ cmd_audit() {
       fl="$([ -n "$f" ] && file_flag "$f" '--gpu-memory-utilization')"
       [ -z "$rt" ] && [ -z "$fl" ] && continue
       any=1
+      # `docker inspect` answers for a STOPPED container too, so the value above
+      # is what the container was CREATED with, not proof it is holding memory.
+      # Summing a stopped service's cap is how this reported a card as
+      # oversubscribed while nvidia-smi showed it half empty.
+      local live="no"
+      [ "$(docker inspect -f '{{.State.Running}}' "$n" 2>/dev/null)" = true ] && live="yes"
       if [ -n "$rt" ] && [ -n "$fl" ] && [ "$rt" != "$fl" ]; then
-        bad "$n  running=${rt}  file=${fl}  <-- NOT APPLIED (needs compose up -d)"
+        bad "$n  created=${rt}  file=${fl}  <-- NOT APPLIED (needs compose up -d)"
         rc=1
       else
-        printf '    %-26s running=%-6s file=%-6s\n' "$n" "${rt:--}" "${fl:--}"
+        printf '    %-26s created=%-6s file=%-6s %s\n' "$n" "${rt:--}" "${fl:--}" \
+          "$([ "$live" = yes ] && echo 'RUNNING' || echo '(stopped -- reserves nothing)')"
       fi
+      [ "$live" = yes ] || continue
       case "$rt" in ''|*[!0-9.]*) ;; *) total="$(awk -v a="$total" -v b="$rt" 'BEGIN{print a+b}')" ;; esac
     done
   done
   if [ "$any" = 1 ]; then
-    printf '    %-26s %s\n' "TOTAL of running caps" "$total"
-    awk -v t="$total" 'BEGIN{ if (t+0 >= 0.95) exit 0; exit 1 }' && {
-      warn "the caps claim the whole card. Anything WITHOUT a cap (docling) is"
-      note "working from what is left, which is nothing. Start order decides who"
-      note "wins after a reboot -- and docling is the one that does not retry."
-      rc=1
-    }
+    printf '    %-26s %s   %s\n' "TOTAL (running only)" "$total" \
+      "$(command -v nvidia-smi >/dev/null 2>&1 && echo '<- compare with the card below' || true)"
+    # Only worth warning when the CAPS are full AND the card actually is. vLLM
+    # does not necessarily take its whole fraction, so the arithmetic alone has
+    # already produced one false alarm here.
+    local used_pct=""
+    if command -v nvidia-smi >/dev/null 2>&1; then
+      used_pct="$(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null |
+                  head -1 | awk -F', *' '{ if ($2>0) printf "%.2f", $1/$2 }')"
+    fi
+    if awk -v t="$total" 'BEGIN{ exit !(t+0 >= 0.95) }'; then
+      if [ -n "$used_pct" ] && awk -v u="$used_pct" 'BEGIN{ exit !(u+0 < 0.85) }'; then
+        note "caps sum to $total but the card is only ${used_pct} used -- vLLM is not"
+        note "taking its whole fraction, so this is headroom, not oversubscription."
+      else
+        warn "caps sum to $total AND the card is ${used_pct:-?} used. Anything WITHOUT"
+        note "a cap (docling) is working from what is left. Start order then decides"
+        note "who wins after a reboot."
+        rc=1
+      fi
+    fi
     command -v nvidia-smi >/dev/null 2>&1 &&
       nvidia-smi --query-gpu=index,memory.used,memory.total,utilization.gpu \
                  --format=csv,noheader 2>/dev/null | sed 's/^/    gpu /'
