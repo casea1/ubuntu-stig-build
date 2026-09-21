@@ -445,14 +445,26 @@ if [ -n "$NEW_PEER" ]; then
       echo "   until something recreates them:  sudo it-ai up"
       _rc_n=-1
     else
-      _rc_n=0
+      _rc_n=0; _rc_fail=""
       for d in $(stack_dirs); do
-        ( cd "$d" && docker compose up -d ) >/dev/null 2>&1 && _rc_n=$((_rc_n+1)) || true
+        # Errors were sent to /dev/null and only successes counted, so a stack
+        # that could not come up -- a port already taken, a GPU with nothing
+        # left, an image that is gone -- was reported as a smaller number and
+        # nothing else. The containers it left behind then kept the OLD peer
+        # address, which is exactly the fault this command exists to fix.
+        if _out="$( cd "$d" && docker compose up -d 2>&1 )"; then
+          _rc_n=$((_rc_n + 1))
+        else
+          _rc_fail="$_rc_fail $(basename "${d%/}")"
+          printf '   !! %s FAILED to come up:\n' "$(basename "${d%/}")"
+          printf '%s\n' "$_out" | sed 's/^/        /' | head -6
+        fi
       done
-      if [ "$_rc_n" -gt 0 ]; then
-        echo "   containers recreated ($_rc_n stack(s), docker compose up -d)"
-      else
-        echo "   NOTE: no stacks recreated -- run 'it-ai up' by hand"
+      echo "   containers recreated ($_rc_n stack(s), docker compose up -d)"
+      if [ -n "$_rc_fail" ]; then
+        echo "   !! STILL ON THE OLD ADDRESS -- these stacks did not restart:$_rc_fail"
+        echo "      Their containers keep the peer address they were CREATED with."
+        echo "      Fix the cause, then:  cd /opt/stacks/<stack> && docker compose up -d"
       fi
     fi
     _thisip="${NEW_SELF%%/*}"; [ -n "$_thisip" ] || _thisip="$SELF_IP"
