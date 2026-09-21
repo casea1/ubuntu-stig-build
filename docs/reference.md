@@ -297,6 +297,21 @@ The same capture found three things worth naming separately:
 
 The repo's version mounts `prometheus-data:/prometheus`, external, which survives all three. The second fault is the config: the box mounts `/opt/it/docker/grafana/prometheus.yml` by **absolute path**, while `ai_compose` templates the scrape config to `/opt/stacks/prometheus/prometheus.yml` and nowhere else. So the managed file is ignored and the file actually in use is hand-made and unmanaged. That file is the one that carries System 1's address — meaning **after `it-set-ip` renumbers the node, Prometheus keeps scraping the old address**, and the template that exists to prevent exactly that is being read by nobody.
 
+**12z-bis. A direct node-to-node cable needs NO compose change, and `it-net ip` cannot configure one.** Both mistakes are natural and both are wrong in an instructive way.
+
+*Why no compose change.* Every service publishes on `0.0.0.0`, which means it already listens on **every** interface including a new direct link. Nothing about the bind decides which cable a packet takes — the **destination address the client uses** does, plus routing. So the only thing that has to change is the peer address (`SYSTEM2_ADDR` on System 1, `OPEN_WEBUI_URL` / `SYSTEM1_HOSTS_ENTRY` on System 2), which is exactly what `it-set-ip --peer` rewrites. The only compose files that need touching are the ones with a literal address typed in — `it-set-ip scan` finds those.
+
+*Why not `it-net ip --iface <second NIC>`.* Two reasons, both expensive:
+- it **requires** `--gateway` and always writes `routes: - to: default`. A second default route is not a faster path, it is a coin toss over which one the kernel picks.
+- `write_netplan()` does `cat > 99-it-net.yaml` — it **replaces** the file with a single interface stanza, so pointing it at the second NIC **deletes the LAN interface's address**. On a deployed box that is a site visit.
+
+`it-net link` writes a separate `98-it-link.yaml` (netplan merges the directory, and the two files describe different interfaces so nothing collides) carrying an address and nothing else: no gateway, no default route, no DNS, `optional: true` so a missing cable cannot hold up boot for two minutes. It refuses the default-route interface outright. `write_netplan` now warns before discarding a second interface rather than doing it silently.
+
+Three things that bite after the link is up:
+1. **The allow-lists.** `ai_mlflow_allow_cidrs` / `ai_openwebui_allow_cidrs` end in `deny all`. A cross-node request now arrives from the LINK subnet, not the LAN one, so anything going through those proxies is denied until that subnet is added.
+2. **A pulled cable takes RAG down with no fallback**, because the peer name now resolves only to the link. Rollback is one command: `it-set-ip --peer <the LAN address>`.
+3. **Jumbo frames must match on both ends.** A mismatch does not fail cleanly — small packets work, large ones vanish, and it presents as "embeddings work but document upload hangs". `ping -M do -s <mtu-28> <peer>` settles it.
+
 **12y-bis. `it-set-ip` could not run at all, and nothing noticed.** `ENVF` was read at the `CUR_PEER` probe near the top but only ever *assigned* much further down, as the loop variable of the `.env` rewrite. The script runs under `set -u`, so referencing it killed the process on startup — `it-set-ip: line 233: ENVF: unbound variable` — before any argument was parsed. It would have been found at the worst possible moment: standing at a box on the new network, with the renumber as the thing that has to work. Found by running the script against a fixture rather than reading it. `ENVF` is now assigned from `env_files | head -1` beside the probe that uses it.
 
 **12y. `it-set-ip` renumbers everything except the address someone typed into a compose file.** It rewrites `.env` (`SYSTEM2_ADDR`, `OPEN_WEBUI_URL`), `/opt/it/site.yml`, `/etc/hosts` and the ufw rules, then recreates the containers — and reports success. An address written **into** `compose.yaml` instead of left as `${SYSTEM2_ADDR}` is reached by none of that, so the endpoint silently keeps pointing at the lab subnet after the box has moved. dev-ai2 has exactly this: `vllm-gptoss` carries a literal `192.168.1.110`.
@@ -557,6 +572,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `it-model-export` | Gather models + images onto a USB (online box) |
 | `it-model-import` | Load them on the fielded box |
 | `it-stack-diff` | On-box compose files vs the `ansible-pull` clone |
+| `it-net link` | A direct node-to-node cable: address only, no gateway, no default route, no DNS, `optional: true`. Its own netplan file so `it-net ip` cannot delete it, and it refuses the default-route interface. `link status` shows the unaddressed NICs to choose from |
 | `it-set-ip scan` / `fix` | Literal addresses typed **into** a compose file — the one thing a renumber cannot reach. `fix` suggests the `.env` variable already carrying that address, so the value stays current afterwards, backs up each file, and says the two things that catch people out: the running container is unchanged until `docker compose up -d`, and the next pull overwrites the file |
 | `it-docker audit` | **Running containers vs the compose files on disk.** A reboot does NOT apply a compose edit — the daemon restarts the stored container and never reads `compose.yaml` — so the two routinely disagree and only `docker compose up -d` closes the gap. Reports both sides of the GPU budget, restart policies, Open WebUI's live endpoints, host-port collisions between stacks, anonymous volumes, project/directory mismatches, literal addresses `it-set-ip` cannot reach, and secrets referenced without a `${VAR:?}` guard |
 

@@ -11,6 +11,11 @@
 #                              static address via netplan
 #   it-net dhcp [--iface <NAME>]
 #                              back to DHCP on that interface
+#   it-net link <CIDR> --iface <NAME> [--mtu N] [--peer <IP>]
+#                              a DIRECT node-to-node cable: address only, no
+#                              gateway, no default route, no DNS. Its own
+#                              netplan file, so `it-net ip` cannot delete it.
+#   it-net link status | link remove --iface <NAME>
 #   it-net dns <a,b> [--search dom]
 #                              nameservers only, leaving the address alone
 #   it-net ntp <a,b>           chrony time source (STIG: server + maxpoll)
@@ -145,6 +150,19 @@ cmd_status() {
 write_netplan() {   # $1 iface  $2 stanza
   local ifc="$1" body="$2" rend
   rend=$(detect_renderer)
+  # This REPLACES the file with one interface stanza. On a box with a second
+  # configured interface in here, that deletes it -- so say so rather than
+  # discovering it after `netplan apply`. A direct link lives in its own file
+  # (see `it-net link`) precisely so it is never the casualty.
+  if [ -f "$NETPLAN_FILE" ] && [ "$(grep -cE '^    [a-zA-Z0-9_-]+:' "$NETPLAN_FILE")" -gt 1 ]; then
+    warn "$NETPLAN_FILE currently describes more than one interface."
+    warn "Writing it will keep ONLY $ifc. The others:"
+    grep -E '^    [a-zA-Z0-9_-]+:' "$NETPLAN_FILE" | tr -d ' :' | grep -v "^$ifc$" | sed 's/^/          /'
+    if [ -t 0 ]; then
+      printf '  Type YES to continue: '
+      local a; read -r a; [ "$a" = YES ] || die "not confirmed -- nothing was written"
+    fi
+  fi
   backup "$NETPLAN_FILE"
   cat > "$NETPLAN_FILE" <<EOF
 # Managed by it-net. Edit with \`sudo it-net ...\`, not by hand.
@@ -491,6 +509,152 @@ cmd_check() {
   [ "$FOUND" -eq 0 ] || return 1
 }
 
+# ---------------------------------------------------------------------------
+# `link` -- a direct point-to-point cable between the two AI nodes.
+#
+# This is NOT `it-net ip` with a different interface, for two reasons that both
+# end badly:
+#   1. `it-net ip` REQUIRES --gateway and always writes `routes: - to: default`.
+#      A second default route on a box is not a faster path, it is a coin toss
+#      over which one the kernel picks.
+#   2. write_netplan() REPLACES $NETPLAN_FILE with a single interface stanza,
+#      so pointing it at the second NIC would delete the LAN NIC's address --
+#      on a deployed box, that is the remote hands call.
+# So the link gets its OWN netplan file. Netplan merges every file in the
+# directory and these describe different interfaces, so nothing collides.
+#
+# What it writes is deliberately minimal: an address, no gateway, no default
+# route, no DNS, no DHCP. A point-to-point link should not be able to win a
+# routing decision it was never meant to be part of.
+LINK_FILE=/etc/netplan/98-it-link.yaml
+
+iface_exists() { ip -o link show "$1" >/dev/null 2>&1; }
+
+cmd_link() {
+  case "${1:-status}" in
+    status)  shift 2>/dev/null; link_status ;;
+    remove)  shift; link_remove "$@" ;;
+    *)       link_set "$@" ;;
+  esac
+}
+
+link_status() {
+  head2 "Direct link"
+  if [ ! -f "$LINK_FILE" ]; then
+    say "  ${DIM}not configured -- $LINK_FILE does not exist${R}"
+    say ""
+    say "  To set one up (run the mirror-image command on the other box):"
+    say "    ${B}sudo it-net link 10.10.200.1/30 --iface <NAME> --mtu 9000${R}"
+    say ""
+    say "  Interfaces on this box with no address:"
+    ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | while read -r i; do
+      case "$i" in lo|docker*|br-*|veth*|*@*) continue ;; esac
+      [ -z "$(ip -o -4 addr show "$i" 2>/dev/null)" ] &&
+        printf '    %-14s %s\n' "$i" "$(ip -o link show "$i" | grep -o 'state [A-Z]*')"
+    done
+    say ""
+    return 0
+  fi
+  sed 's/^/  /' "$LINK_FILE"
+  local ifc
+  ifc="$(awk '/^    [a-z0-9]+:/ {gsub(/[ :]/,""); print; exit}' "$LINK_FILE")"
+  if [ -n "$ifc" ]; then
+    say ""
+    printf '  %-14s %s\n' "state" "$(ip -o link show "$ifc" 2>/dev/null | grep -o 'state [A-Z]*' || echo 'no such interface')"
+    printf '  %-14s %s\n' "address" "$(ip -o -4 addr show "$ifc" 2>/dev/null | awk '{print $4}' | tr '\n' ' ')"
+    printf '  %-14s %s\n' "mtu" "$(cat "/sys/class/net/$ifc/mtu" 2>/dev/null || echo '?')"
+  fi
+  say ""
+  note "The link carries traffic only because the PEER ADDRESS points down it."
+  note "Set that with:  sudo it-set-ip --peer <the other box's link address>"
+  say ""
+}
+
+link_remove() {
+  local ifc=""
+  while [ $# -gt 0 ]; do
+    case "$1" in --iface) ifc="${2:-}"; shift 2 ;; *) shift ;; esac
+  done
+  [ -f "$LINK_FILE" ] || die "no link is configured ($LINK_FILE does not exist)"
+  backup "$LINK_FILE"
+  rm -f "$LINK_FILE"
+  ok "removed $LINK_FILE"
+  warn "the peer address still points down the link until you change it back:"
+  note "  sudo it-set-ip --peer <the other box's LAN address>"
+  confirm_apply
+}
+
+link_set() {
+  local cidr="${1:-}" ifc="" mtu="" peer=""
+  shift || true
+  [ -n "$cidr" ] || die "usage: it-net link <CIDR> --iface <NAME> [--mtu N] [--peer <IP>]"
+  case "$cidr" in */*) ;; *) die "address must include the prefix, e.g. 10.10.200.1/30 (got '$cidr')" ;; esac
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --iface) ifc="${2:-}"; shift 2 ;;
+      --mtu)   mtu="${2:-}"; shift 2 ;;
+      --peer)  peer="${2:-}"; shift 2 ;;
+      *) die "unknown option: $1" ;;
+    esac
+  done
+  [ -n "$ifc" ] || die "--iface is required. A direct link is never the default-route
+interface, so there is nothing sensible to guess. Candidates:
+$(ip -o link show | awk -F': ' '{print "  "$2}' | grep -vE 'lo|docker|br-|veth')"
+  iface_exists "$ifc" || die "no such interface: $ifc"
+
+  # The one mistake that costs a site visit: configuring the LAN NIC by
+  # accident and losing the box.
+  local dflt; dflt="$(default_iface 2>/dev/null || true)"
+  [ "$ifc" = "$dflt" ] && die "$ifc carries this box's DEFAULT ROUTE -- that is the LAN
+interface, not a direct link. Configuring it here would strip its gateway and
+take the box off the network. Use 'it-net ip' for that interface."
+
+  head2 "Direct link on $ifc"
+  printf '  %-10s %s\n' "address" "$cidr"
+  printf '  %-10s %s\n' "gateway" "none -- deliberate (see below)"
+  printf '  %-10s %s\n' "dns" "none -- the LAN interface keeps resolving"
+  [ -n "$mtu" ] && printf '  %-10s %s\n' "mtu" "$mtu"
+  [ -n "$peer" ] && printf '  %-10s %s\n' "peer" "$peer"
+  say ""
+  note "No gateway and no default route: a point-to-point cable must not be able"
+  note "to win a routing decision. Only traffic ADDRESSED to the far end uses it."
+  note "optional: true so a missing cable cannot hold up boot for two minutes."
+
+  backup "$LINK_FILE"
+  {
+    printf '# Managed by it-net. Edit with `sudo it-net link ...`, not by hand.\n'
+    printf '# Direct node-to-node link. Written %s on %s.\n' "$(date -Is)" "$(hostname)"
+    printf '# SEPARATE from 99-it-net.yaml on purpose: that file is rewritten whole\n'
+    printf '# by `it-net ip`, which would otherwise delete this stanza.\n'
+    printf 'network:\n  version: 2\n  renderer: %s\n  ethernets:\n' "$(detect_renderer)"
+    printf '    %s:\n' "$ifc"
+    printf '      dhcp4: false\n      dhcp6: false\n      accept-ra: false\n'
+    printf '      optional: true\n'
+    printf '      addresses:\n        - %s\n' "$cidr"
+    [ -n "$mtu" ] && printf '      mtu: %s\n' "$mtu"
+  } > "$LINK_FILE"
+  chmod 0600 "$LINK_FILE"
+  ok "wrote $LINK_FILE"
+
+  say ""
+  say "  ${B}On the OTHER box, the mirror image:${R}"
+  say "    sudo it-net link <its address>/${cidr#*/} --iface <its NIC>${mtu:+ --mtu $mtu}"
+  say ""
+  say "  ${B}Then point the peer at it, on BOTH boxes:${R}"
+  say "    sudo it-set-ip --peer <the other box's link address>"
+  note "that rewrites SYSTEM2_ADDR / OPEN_WEBUI_URL, /etc/hosts and the ufw"
+  note "rules, and recreates the containers so they pick it up."
+  say ""
+  if [ -n "$mtu" ] && [ "$mtu" -gt 1500 ] 2>/dev/null; then
+    warn "MTU $mtu must be set on BOTH ends. A mismatch does not fail cleanly --"
+    note "small packets work, large ones vanish, and it presents as 'embeddings"
+    note "work but document upload hangs'. Verify after applying:"
+    note "  ping -M do -s $(( mtu - 28 )) <peer>"
+  fi
+  confirm_apply
+}
+
+
 case "${1:-status}" in
   status|"") cmd_status ;;
   check)     cmd_check ;;
@@ -498,6 +662,7 @@ case "${1:-status}" in
   dhcp)      shift; cmd_dhcp "$@" ;;
   dns)       shift; cmd_dns "$@" ;;
   ntp)       shift; cmd_ntp "$@" ;;
+  link)      shift; cmd_link "$@" ;;
   apply)     cmd_apply ;;
   *)         die "unknown command: $1
 $(usage)" ;;
