@@ -20,6 +20,11 @@
 #   sudo it-set-ip --self 10.0.5.11/24 --gateway 10.0.5.1 --peer 10.0.5.20 --yes
 #   sudo it-set-ip --peer 10.0.5.20 --no-recreate   # files only; containers untouched
 #
+#   sudo it-set-ip scan     list every literal address in the compose files
+#   sudo it-set-ip fix      replace them, one address at a time, after asking.
+#                           Suggests the .env variable that already holds that
+#                           address, so the value stays current from then on.
+#
 # A literal address written into a compose file is NOT updated (and not edited)
 # -- it is reported, because nothing else on the box would notice it.
 set -uo pipefail
@@ -72,6 +77,154 @@ ipswap(){ # file old new
 
 usage(){ sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
+# ---------------------------------------------------------------------------
+# `scan` / `fix` -- literal addresses typed INTO a compose file.
+#
+# Everything the renumber above rewrites -- .env, site.yml, /etc/hosts, ufw --
+# is invisible to an address written directly into compose.yaml, so the move
+# reports success and that endpoint quietly keeps pointing at the old network.
+#
+# `fix` is the one place in this repo that edits a compose file, and it only
+# does it when a person picks a replacement and confirms. Two things it always
+# says, because both have caught people out:
+#   1. Editing a compose file does NOT change the running container. The daemon
+#      restarts the container it already has and never re-reads the file --
+#      `docker compose up -d` in that directory is what applies it.
+#   2. ai_compose OVERWRITES these files on the next pull (gotcha 2). A fix made
+#      only here lasts until then; it has to go into the baseline as well.
+# ---------------------------------------------------------------------------
+compose_files() {
+  local f
+  for f in "$STACKS_DIR"/*/compose.y*ml "$STACKS_DIR"/*/docker-compose.y*ml; do
+    [ -f "$f" ] && printf '%s\n' "$f"
+  done
+}
+
+# Lines carrying a literal IPv4, minus the ones that are never an endpoint:
+# loopback, the wildcard bind, a CIDR in a networks: block, and image TAGS --
+# apache/tika:3.3.1.0 parses as an address perfectly well.
+literal_lines() {
+  local f
+  while read -r f; do
+    grep -nE '([0-9]{1,3}\.){3}[0-9]{1,3}' "$f" 2>/dev/null |
+      grep -vE '127\.0\.0\.1|0\.0\.0\.0|([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]+' |
+      grep -vE '^[0-9]+:[[:space:]]*image:' |
+      sed "s|^|$f:|"
+  done < <(compose_files)
+}
+literal_addrs() { literal_lines | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | sort -u; }
+
+# The replacement worth suggesting is a variable ALREADY carrying this address
+# in one of the stacks' .env files -- that is the form the rest of the compose
+# uses, and it is the one it-set-ip can keep current from then on.
+suggest_vars() {   # $1 = address
+  local f v val
+  for f in "$STACKS_DIR"/*/.env "$COMPOSE_DIR/.env"; do
+    [ -f "$f" ] || continue
+    while IFS='=' read -r v val; do
+      case "$v" in ''|\#*) continue ;; esac
+      case "$val" in *"$1"*) printf '%s\n' "$v" ;; esac
+    done < "$f"
+  done | sort -u
+}
+
+show_addr() {   # $1 = address -- where it is used, and what could replace it
+  local n
+  printf '\n  %s\n' "$1"
+  literal_lines | grep -F "$1" | sed "s|$STACKS_DIR/||" | sed 's/^/      /'
+  n="$(suggest_vars "$1")"
+  if [ -n "$n" ]; then
+    printf '      %ssuggested: %s%s\n' "" \
+      "$(printf '%s' "$n" | sed 's/^/${/;s/$/}/' | tr '\n' ' ')" ""
+  else
+    printf '      %sno .env variable on this node carries that address --%s\n' "" ""
+    printf '      %sit is probably this node itself, so a container name on the%s\n' "" ""
+    printf '      %s`oi` network (e.g. open-webui-lgtm:4317) is the stabler fix.%s\n' "" ""
+  fi
+}
+
+cmd_scan() {
+  local a n=0
+  echo ">> Literal addresses in $STACKS_DIR/*/compose.yaml"
+  for a in $(literal_addrs); do show_addr "$a"; n=$((n + 1)); done
+  if [ "$n" = 0 ]; then
+    echo "   none -- a renumber reaches everything on this node."
+  else
+    echo
+    echo "   $n address(es). None of these are updated by a renumber."
+    echo "   Change them with:  sudo it-set-ip fix"
+  fi
+  echo
+}
+
+cmd_fix() {
+  local a repl n sel f files bak_made="" touched=""
+  [ -t 0 ] || { echo "fix is interactive -- run it from a terminal." >&2; exit 1; }
+
+  echo ">> Literal addresses in $STACKS_DIR/*/compose.yaml"
+  [ -n "$(literal_addrs)" ] || { echo "   none -- nothing to do."; echo; return 0; }
+
+  for a in $(literal_addrs); do
+    show_addr "$a"
+    n="$(suggest_vars "$a")"
+    echo
+    local i=1
+    for v in $n; do printf '      %d) ${%s}\n' "$i" "$v"; i=$((i + 1)); done
+    printf '      t) type a replacement myself\n'
+    printf '      s) skip this address\n'
+    printf '      %sReplace %s with? [s] %s' "" "$a" ""
+    read -r sel
+    repl=""
+    case "$sel" in
+      ''|s|S) echo "      skipped"; continue ;;
+      t|T) printf '      New value (a name, an address, or ${VAR}): '; read -r repl ;;
+      *)
+        case "$sel" in
+          ''|*[!0-9]*) echo "      not a choice -- skipped"; continue ;;
+        esac
+        repl="$(printf '%s\n' $n | sed -n "${sel}p")"
+        [ -n "$repl" ] || { echo "      not a choice -- skipped"; continue; }
+        repl="\${$repl}"
+        ;;
+    esac
+    [ -n "$repl" ] || { echo "      empty -- skipped"; continue; }
+
+    files="$(literal_lines | grep -F "$a" | cut -d: -f1 | sort -u)"
+    echo "      $a -> $repl  in:"
+    printf '%s\n' "$files" | sed "s|$STACKS_DIR/||" | sed 's/^/        /'
+    printf '      %sApply? [y/N] %s' "" ""
+    read -r yn
+    case "$yn" in y|Y) ;; *) echo "      not applied"; continue ;; esac
+
+    for f in $files; do
+      bak "$f"
+      # ipswap bounds the match with non-digits so .10 never eats .104, and the
+      # replacement is a shell VARIABLE's value -- the shell does not expand it
+      # a second time, so ${SYSTEM2_ADDR} lands as literal text.
+      ipswap "$f" "$a" "$repl"
+      touched="$touched $(dirname "$f")"
+    done
+    echo "      replaced in $(printf '%s\n' "$files" | grep -c .) file(s)"
+  done
+
+  [ -n "$touched" ] || { echo; echo "   nothing was changed."; echo; return 0; }
+
+  echo
+  echo "   >> THESE FILES ARE EDITED. THE RUNNING CONTAINERS ARE NOT."
+  echo "      The daemon restarts the container it already has and never"
+  echo "      re-reads compose.yaml. A reboot keeps the OLD value. Apply with:"
+  for d in $(printf '%s\n' $touched | sort -u); do
+    echo "        cd $d && docker compose up -d"
+  done
+  echo
+  echo "   >> AND THE NEXT PULL OVERWRITES THEM."
+  echo "      ai_compose places every compose.yaml as a plain copy, so this"
+  echo "      lasts until the next 'it-pull ai'. Make the same change in the"
+  echo "      baseline, or keep it in compose.override.yaml, which nothing manages."
+  echo
+}
+
+
 # ---- identify this node + its peer ----
 HN=$(hostname)
 case "$HN" in
@@ -81,13 +234,25 @@ case "$HN" in
 esac
 IFACE=$(ip -o route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1);exit}}')
 SELF_IP=$(ip -o -4 addr show "${IFACE:-lo}" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+# The .env to READ the current peer out of. Any of them will do -- they all
+# carry the same peer vars -- but it MUST be assigned before the probe below:
+# this script runs under `set -u`, ENVF was only ever assigned at the top of the
+# rewrite loop further down, and referencing it here therefore killed the script
+# on startup with "ENVF: unbound variable" before it could do anything at all.
+ENVF="$(env_files | head -1)"
+
 CUR_PEER=""
-if [ -f "$ENVF" ]; then
+if [ -n "$ENVF" ] && [ -f "$ENVF" ]; then
   if [ "$ROLE" = system1 ]; then CUR_PEER=$(grep -E '^SYSTEM2_ADDR=' "$ENVF" | cut -d= -f2-)
   elif [ "$ROLE" = system2 ]; then CUR_PEER=$(grep -E '^OPEN_WEBUI_URL=' "$ENVF" | sed -E 's#.*://([^:/]+).*#\1#'); fi
 fi
 
 # ---- args ----
+case "${1:-}" in
+  scan)             cmd_scan; exit 0 ;;
+  fix|fix-literals) cmd_fix;  exit 0 ;;
+esac
+
 NEW_PEER=""; NEW_SELF=""; GW=""; DNS=""; YES=0; RECREATE=1
 while [ $# -gt 0 ]; do
   case "$1" in
