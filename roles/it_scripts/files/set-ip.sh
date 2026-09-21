@@ -18,6 +18,10 @@
 #   sudo it-set-ip --peer 10.0.5.20             # just the peer/cross-node update
 #   sudo it-set-ip --self 10.0.5.11/24 --gateway 10.0.5.1 --dns 10.0.5.2
 #   sudo it-set-ip --self 10.0.5.11/24 --gateway 10.0.5.1 --peer 10.0.5.20 --yes
+#   sudo it-set-ip --peer 10.0.5.20 --no-recreate   # files only; containers untouched
+#
+# A literal address written into a compose file is NOT updated (and not edited)
+# -- it is reported, because nothing else on the box would notice it.
 set -uo pipefail
 [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
@@ -34,6 +38,29 @@ env_files() {
 # Stack dirs holding a compose.yaml (for the recreate step).
 stack_dirs() {
   for d in "$STACKS_DIR"/*/; do [ -f "${d}compose.yaml" ] && echo "$d"; done
+}
+
+# Literal IPv4 addresses written INTO a compose file.
+#
+# Everything this script rewrites -- .env, /etc/hosts, ufw, site.yml -- is
+# invisible to an address that was typed into compose.yaml instead of left as
+# ${SYSTEM2_ADDR}. The renumber then reports success, the containers are
+# recreated, and the endpoint still points at the lab. dev-ai2 has exactly
+# that: vllm-gptoss carries 192.168.1.110 where the repo uses the variable.
+#
+# REPORTED, NEVER EDITED. Every file ai_compose places is a plain copy, an
+# on-box edit is the operator's deliberate exception, and this script is not
+# the thing that gets to overwrite it. Loopback and wildcard binds are not
+# interesting; a CIDR in a networks: block is not either.
+compose_literals() {
+  local f rel
+  for f in "$STACKS_DIR"/*/compose*.y*ml "$STACKS_DIR"/*/docker-compose*.y*ml; do
+    [ -f "$f" ] || continue
+    rel="${f#$STACKS_DIR/}"
+    grep -nE '([0-9]{1,3}\.){3}[0-9]{1,3}' "$f" 2>/dev/null \
+      | grep -vE '127\.0\.0\.1|0\.0\.0\.0|([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]+' \
+      | sed "s|^|  $rel:|"
+  done
 }
 
 bak(){ [ -e "$1" ] && cp -a "$1" "$1.bak-$TS" && echo "  backup: $1.bak-$TS"; }
@@ -61,10 +88,11 @@ if [ -f "$ENVF" ]; then
 fi
 
 # ---- args ----
-NEW_PEER=""; NEW_SELF=""; GW=""; DNS=""; YES=0
+NEW_PEER=""; NEW_SELF=""; GW=""; DNS=""; YES=0; RECREATE=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --peer) NEW_PEER="$2"; shift 2 ;;
+    --no-recreate) RECREATE=0; shift ;;
     --self) NEW_SELF="$2"; shift 2 ;;
     --gateway) GW="$2"; shift 2 ;;
     --dns) DNS="$2"; shift 2 ;;
@@ -143,15 +171,36 @@ if [ -n "$NEW_PEER" ]; then
       ipswap /etc/ufw/user.rules "$CUR_PEER" "$NEW_PEER"
       ufw reload >/dev/null 2>&1 && echo "   ufw: rules for $CUR_PEER -> $NEW_PEER (reloaded)"
     fi
+    # An address typed into a compose file is the one thing none of the above
+    # reaches. Check before the recreate, so it is on screen when the operator
+    # is still standing at the box.
+    _lit="$(compose_literals)"
+    if [ -n "$_lit" ]; then
+      echo
+      echo "   !! LITERAL ADDRESSES IN COMPOSE FILES -- not updated, not touched:"
+      printf '%s\n' "$_lit" | sed 's/^/  /'
+      if [ -n "$CUR_PEER" ] && printf '%s' "$_lit" | grep -q "$CUR_PEER"; then
+        echo "   !! One of them IS the old peer ($CUR_PEER). That endpoint is now dead."
+      fi
+      echo "   Fix them in the repo and pull, or edit the file and recreate that"
+      echo "   stack by hand. This script does not edit compose files."
+      echo
+    fi
     # recreate containers so they pick up the new env (each stack is its own project)
-    _rc_n=0
-    for d in $(stack_dirs); do
-      ( cd "$d" && docker compose up -d ) >/dev/null 2>&1 && _rc_n=$((_rc_n+1)) || true
-    done
-    if [ "$_rc_n" -gt 0 ]; then
-      echo "   containers recreated ($_rc_n stack(s), docker compose up -d)"
+    if [ "$RECREATE" -eq 0 ]; then
+      echo "   --no-recreate: containers left alone. They keep the OLD peer address"
+      echo "   until something recreates them:  sudo it-ai up"
+      _rc_n=-1
     else
-      echo "   NOTE: no stacks recreated -- run 'it-ai up' by hand"
+      _rc_n=0
+      for d in $(stack_dirs); do
+        ( cd "$d" && docker compose up -d ) >/dev/null 2>&1 && _rc_n=$((_rc_n+1)) || true
+      done
+      if [ "$_rc_n" -gt 0 ]; then
+        echo "   containers recreated ($_rc_n stack(s), docker compose up -d)"
+      else
+        echo "   NOTE: no stacks recreated -- run 'it-ai up' by hand"
+      fi
     fi
     _thisip="${NEW_SELF%%/*}"; [ -n "$_thisip" ] || _thisip="$SELF_IP"
     echo "   PEER update done. On $PEER_HOST, point it back at THIS box:  sudo it-set-ip --peer ${_thisip}"
