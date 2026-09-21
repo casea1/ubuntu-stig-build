@@ -265,13 +265,33 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   volume). `open-webui` gained an **nginx sidecar** that is now the only thing
   publishing :3000 and :8050.
   **What the adoption did NOT resolve, and must not be forgotten:**
-  1. **Two sidecar config files exist on the boxes and in no template** --
-     `open-webui/nginx.conf` and `magpie/magpie_config.yaml`. A missing
-     bind-mount source becomes a DIRECTORY, so a rebuilt node starts nginx
-     against a folder. `it-stack-diff` cannot see this (trap 12z).
-  2. **Two images cannot be rebuilt from this repo** -- the stacks pin
-     `oikb:0.3.6-RG` while the repo builds `oikb:latest` from an unpinned
-     `git clone`, and `magpie:9.19.26` has no Dockerfile here at all.
+  1. **CLOSED.** The two sidecar configs are now templated:
+     `openwebui-nginx.conf.j2` (allow-list from `ai_openwebui_allow_cidrs`) and
+     `magpie-config.yaml.j2` (force:false, like `.oikb.yaml`). `env.j2` also
+     renders magpie's seven variables, which it did not before -- so a pull
+     would have overwritten dev-ai2's `.env` and silently dropped magpie's
+     entire configuration (gotcha 2). Verified: every variable both boxes carry
+     is now rendered.
+     **STILL OPEN here: `mlflow/nginx.conf` DIVERGES and the pull overwrites the
+     box's copy.** The repo's template resolves the upstream through Docker DNS
+     (`resolver 127.0.0.11` + a variable) precisely because mlflow runs 5
+     replicas; the box replaced it with a literal `upstream` block, which nginx
+     resolves ONCE at startup and never again -- so a recreated replica becomes
+     a black hole rather than being re-resolved. The repo's version is the
+     better one, but the next `it-pull ai` changes that box's behaviour without
+     anyone asking for it. Decide deliberately.
+  2. **Images.** `magpie:9.19.26` has no Dockerfile anywhere in this repo --
+     a full-tree grep finds "magpie" only in files this adoption wrote. oikb IS
+     buildable and its BASE is pinned (`FROM ghcr.io/open-webui/oikb:0.3.6`);
+     what is unpinned is the `git clone` of the patch source layered on it, and
+     the repo tags the result `oikb:latest` while the stacks ask for
+     `oikb:0.3.6-RG`. The exited container on dev-ai2 is running `oikb:latest`,
+     so the pinned tag has never actually been used -- recreating oikb fails
+     outright unless that tag exists locally.
+     Note what "local" means: `oikb`, `magpie`, `mlflow`, `hfcli`, `openwiki`
+     and `openwiki-view` have NO registry prefix, so Docker resolves them as
+     Docker Hub official images, which do not exist. They are not pointing at
+     the internet -- they resolve from that box's local image store or fail.
   3. **`oikb` and `magpie` both publish 8082.** They cannot both run.
   4. **`docling` lost `restart: unless-stopped`** -- it does not survive a
      reboot -- and also lost `DOCLING_SERVE_ENABLE_REMOTE_SERVICES` /

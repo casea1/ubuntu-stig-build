@@ -1,0 +1,104 @@
+# Placed by ansible (ai_compose) with force:false -- YOUR EDITS SURVIVE A PULL.
+# Same treatment as .oikb.yaml, and for the same reason: the repository list is
+# per-site operational data, not baseline config. magpie bind-mounts this as
+# ./magpie_config.yaml, so it must exist before `up` or Docker creates a
+# DIRECTORY there and magpie starts against a folder (trap 12z).
+#
+# As captured from dev-ai2 on 2026-09-21 this was still the upstream EXAMPLE --
+# placeholder repository URLs, external_oikb disabled. magpie was defined and
+# never started, which is consistent. Replace the git.repositories block with
+# real repos before enabling it.
+
+scheduler:
+  # Cron: "minute hour day month day_of_week"
+  interval: "{{ ai_magpie_interval | default('0 */6 * * *') }}"
+  timezone: "{{ ai_magpie_timezone | default('UTC') }}"
+  run_on_startup: false
+
+git:
+  repositories:
+    # EXAMPLES -- replace. auth_type: token | ssh | none
+    - name: "project-main"
+      url: "https://github.com/organization/project"
+      branch: "main"
+      auth_type: "token"
+      kb_id: "project-main-kb"
+      sync_endpoint: "/api/v1/knowledge-bases/project-main/sync"
+
+    - name: "docs-repo"
+      url: "https://gitlab.company.com/docs/technical"
+      tag: "v1.0.0"
+      auth_type: "ssh"
+      kb_id: "${DOCS_KB_ID}"
+      sync_endpoint: "/api/v2/kb/docs/artifacts"
+
+    - name: "public-docs"
+      url: "https://github.com/open-source/documentation"
+      branch: "main"
+      auth_type: "none"
+
+  clone_depth: 1
+  timeout: 300
+  retry_attempts: 3
+  retry_delay: 10
+
+directory_grouper:
+  max_files_per_group: 1000
+  ignore_extensions:
+    - "pdf"
+    - "png"
+    - "jpg"
+    - "jpeg"
+    - "gif"
+    - "mp4"
+    - "zip"
+    - "tar"
+    - "gz"
+  sort_by: "count"
+  follow_symlinks: true
+
+repomix:
+  output_dir: "/app/artifacts"
+  name_prefix_depth: 2
+  options:
+    style: "xml"
+
+# Artifacts land in /app/artifacts/<repository-name>/ -- the magpie_artifacts
+# volume, which oikb mounts READ-ONLY. That volume is the whole interface
+# between the two; they do not talk over the network.
+external_oikb:
+  enabled: {{ ai_magpie_external_oikb_enabled | default(false) | lower }}
+  api_url: "${EXTERNAL_OIKB_URL}"
+  api_key: "${EXTERNAL_OIKB_API_KEY}"
+  sync_endpoint: "/api/sync/artifacts"
+  timeout: 30
+  fail_on_error: false
+
+logging:
+  level: "{{ ai_magpie_log_level | default('INFO') }}"
+  format: "json"
+  file: "/app/logs/magpie.log"
+  max_size_mb: 10
+  backup_count: 3
+
+health:
+  check_interval: 30
+  port: 8080
+  enable_api: true
+
+state:
+  file: "/app/state/magpie_state.json"
+  save_on_success: true
+
+security:
+  api_authentication: false
+  install_certificates: true
+  certificate_urls:
+{% for url in ai_magpie_certificate_urls | default([]) %}
+    - "{{ url }}"
+{% endfor %}
+
+performance:
+  parallel_repos: false
+  max_workers: 2
+  min_free_space_mb: 1024

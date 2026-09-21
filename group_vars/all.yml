@@ -1546,6 +1546,35 @@ ai_mlflow_allow_cidrs:
   - "192.168.1.0/24"
   - "10.10.99.0/24"
 
+# Open WebUI is reached through an nginx sidecar that owns :3000 and :8050 --
+# the container itself publishes nothing -- so this allow-list is the only thing
+# restricting the UI, for the same reason as the MLflow one above: ufw cannot
+# filter a published container port. Empty list = deny everyone.
+ai_openwebui_allow_cidrs: "{{ ai_mlflow_allow_cidrs }}"
+
+# ---- magpie (System 2) ------------------------------------------------------
+# Repo harvesting -> the magpie_artifacts volume -> oikb -> Open WebUI's KB.
+# The repository LIST lives in /opt/stacks/magpie/magpie_config.yaml, which is
+# placed force:false so an operator's edits survive. These are the credentials
+# and knobs that belong in site.yml. A token is a TRUE secret: set it there,
+# never here. Empty token = public repos only.
+ai_magpie_git_username: ""
+ai_magpie_git_token: ""
+ai_magpie_git_ssh_key_path: ""
+ai_magpie_ssh_key_dir: "./ssh"
+ai_magpie_api_key: ""
+ai_magpie_external_oikb_url: ""
+ai_magpie_external_oikb_api_key: ""
+ai_magpie_external_oikb_enabled: false
+ai_magpie_interval: "0 */6 * * *"
+ai_magpie_timezone: "UTC"
+ai_magpie_log_level: "INFO"
+# Fetched and installed into the container's trust store at startup. The second
+# entry the box carried was an upstream placeholder (pki.company.com) and is
+# dropped; add real intermediates here.
+ai_magpie_certificate_urls:
+  - "http://pki.geaerospace.com/certs/GEAerospace-Root-CA.crt"
+
 # ---- Dockge-native per-service stacks (ai_compose) --------------------------
 # The stack is split into one directory PER SERVICE under dockge_stacks_dir
 # (/opt/stacks/<stack>/compose.yaml), so each shows up as its own manageable

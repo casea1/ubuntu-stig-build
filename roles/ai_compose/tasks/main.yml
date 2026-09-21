@@ -225,6 +225,45 @@
     label: "{{ item }}"
   no_log: true
 
+- name: "AI-COMPOSE | Render the Open WebUI reverse-proxy nginx.conf (open-webui stack)"
+  # open-webui-proxy bind-mounts ./nginx.conf and is the ONLY thing publishing
+  # 3000 and 8050 -- so a missing file here does not just break the proxy, it
+  # takes the UI off the network. Docker would create a DIRECTORY at that path
+  # and nginx fails on a config that is a folder (trap 12z). Overwritten on each
+  # run so the allow-list tracks ai_openwebui_allow_cidrs.
+  ansible.builtin.template:
+    src: openwebui-nginx.conf.j2
+    dest: "{{ dockge_stacks_dir }}/open-webui/nginx.conf"
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "0640"
+  when: ai_node_role == 'system1'
+
+- name: "AI-COMPOSE | Place the magpie config skeleton (magpie stack; not overwritten on re-run)"
+  # magpie bind-mounts ./magpie_config.yaml, same directory trap as above.
+  # force:false for the same reason as .oikb.yaml: the repository list is
+  # per-site operational data an operator edits, not baseline config.
+  ansible.builtin.template:
+    src: magpie-config.yaml.j2
+    dest: "{{ dockge_stacks_dir }}/magpie/magpie_config.yaml"
+    owner: root
+    group: "{{ ia_it_group | default('sudo') }}"
+    mode: "0640"
+    force: false
+  when: ai_node_role == 'system2'
+
+- name: "AI-COMPOSE | Create magpie's SSH key directory (bind-mounted as ./ssh)"
+  # ${SSH_KEY_DIR:-./ssh} is bind-mounted read-only. Docker creates it as a
+  # directory owned by root if absent, which is what we want -- but make it
+  # explicit and 0700 rather than leaving it to the daemon's default.
+  ansible.builtin.file:
+    path: "{{ dockge_stacks_dir }}/magpie/ssh"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: ai_node_role == 'system2'
+
 - name: "AI-COMPOSE | Render the MLflow reverse-proxy nginx.conf (mlflow stack)"
   # mlflow-proxy bind-mounts ./nginx.conf, so it must exist before `up` (else
   # Docker creates a DIRECTORY there and nginx fails to start). Overwritten on
