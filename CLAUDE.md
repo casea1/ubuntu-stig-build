@@ -280,8 +280,12 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
      a black hole rather than being re-resolved. The repo's version is the
      better one, but the next `it-pull ai` changes that box's behaviour without
      anyone asking for it. Decide deliberately.
-  2. **Images.** `magpie:9.19.26` has no Dockerfile anywhere in this repo --
-     a full-tree grep finds "magpie" only in files this adoption wrote. oikb IS
+  2. **Images.** magpie's Dockerfile EXISTS -- in the architects' deployment
+     repo (`docker/deployed/system-2/magpie/Dockerfile`, per their 2026-09-08
+     image audit), just not vendored here, so THIS repo cannot rebuild it.
+     Their audit builds `magpie:latest` / `oikb:latest` while the boxes pin
+     `magpie:9.19.26` / `oikb:0.3.6-RG`, so its build commands produce tags the
+     stacks do not ask for. oikb IS
      buildable and its BASE is pinned (`FROM ghcr.io/open-webui/oikb:0.3.6`);
      what is unpinned is the `git clone` of the patch source layered on it, and
      the repo tags the result `oikb:latest` while the stacks ask for
@@ -328,6 +332,39 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
         because of the order things happened to start in -- and docling is the
         one with `restart: no` (item 4), so a reboot is the moment this bites.
         Budget it with the architects before the nodes move.
+  13. **THE DOCUMENTED LLM ROUTING IS NOT WHAT THE BOX DOES.** The architects'
+      DEPLOYMENT_SUMMARY / DEPLOYMENT_DIAGRAM (2026-09-21) describe MLflow as a
+      MANDATORY gateway -- every chat request going Open WebUI -> MLflow
+      (S2:5000, 5 replicas behind nginx) -> vLLM. Open WebUI's actual config is:
+      `OPENAI_API_BASE_URLS: http://chat-llm:8000/v1;http://${SYSTEM2_ADDR}:8003/v1`
+      No :5000 anywhere, so **MLflow is not in the chat path at all** -- and
+      their own older IMPLEMENTATION_SUMMARY (2026-09-15) agrees, calling vLLM
+      a "direct connection" and MLflow "available but not in LLM request path".
+      The three documents contradict each other; the box matches the older one.
+      Two things follow:
+      - **`vllm-gpt-oss-20b` is unreachable.** It is documented as the
+        light-task model behind MLflow, it is running, it holds 45% of a
+        contended GPU, and nothing is configured to send it a request.
+      - **The second chat endpoint is a stopped service.** `:8003` is
+        vllm-vision, which is deliberately down -- so Open WebUI offers a model
+        that cannot answer.
+      Do not "fix" either by editing compose until the architects say which
+      architecture is the real one; it is a design question, not a typo.
+  14. **Some findings were answered by the architects' docs, and the answers
+      change them:**
+      - prometheus reading `/opt/it/docker/grafana/prometheus.yml` is
+        DELIBERATE and documented. The collision is with OUR template writing
+        to `/opt/stacks/prometheus/prometheus.yml`, which is therefore dead --
+        two owners, one file, to be settled. The ANONYMOUS VOLUME is a separate
+        fault and appears in none of their docs.
+      - The 8082 collision is box drift from their own design, which puts oikb
+        on **8081** and magpie on 8082. Putting oikb back is the fix.
+      - The GPU rebalance was DESIGNED but never applied: their docs say embed
+        should drop to ~40% and docling sit at ~5%, while the box still has
+        embed at 0.45 and docling with no cap at all.
+      - docling's `docling-models` volume being declared and NOT mounted is
+        CORRECT (gotcha 4), even though their docs describe it as mounted.
+        Do not "fix" it.
   12. **CONFIRMED CLEAR, do not re-raise:** both `oikb:0.3.6-RG` and
       `oikb:latest` exist on dev-ai2, so recreating oikb works. And the audit
       rules are fine -- `it-checklist` item 6 PASSES on both nodes at 60 of 65

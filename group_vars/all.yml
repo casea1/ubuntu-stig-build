@@ -1622,9 +1622,14 @@ ai_compose_images:               # name -> tag + Dockerfile (context copied from
 #             finds no image at all. Pin the clone to a ref, THEN rename the
 #             tag -- renaming first would just make an unpinned build look
 #             reproducible.
-#   magpie -- `magpie:9.19.26` is on dev-ai2 and there is no Dockerfile for it
-#             in roles/ai_compose/files/images/ at all. The stack is in the
-#             repo; the image it needs cannot be produced from this repo.
+#   magpie -- the Dockerfile EXISTS, in the architects' deployment repo at
+#             docker/deployed/system-2/magpie/Dockerfile (their 2026-09-08
+#             image audit records it). It is simply not vendored here, so THIS
+#             repo cannot rebuild the image. Their audit also builds
+#             `magpie:latest` and `oikb:latest`, while the compose files on the
+#             boxes pin `magpie:9.19.26` and `oikb:0.3.6-RG` -- so following
+#             that audit's build commands produces tags the stacks do not ask
+#             for. Vendor the Dockerfiles in and settle the tags together.
 # Both mean a REBUILT System 2 comes up without those two containers.
 ai_compose_build_by_role:        # which images each node builds
   system1: []                    # System 1 uses only registry images
