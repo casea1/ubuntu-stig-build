@@ -88,9 +88,20 @@
         group: root
         mode: "0644"
 
+    - name: "NMAP-CTR | Docker asset root"
+      # Explicit, because creating it implicitly as a parent of the build dir
+      # leaves it with whatever mode the umask gives. Same mode as the AI nodes'
+      # copy, so the two profiles do not disagree about one path.
+      ansible.builtin.file:
+        path: "{{ docker_assets_dir | default('/opt/docker') }}"
+        state: directory
+        owner: root
+        group: "{{ ia_it_group | default('sudo') }}"
+        mode: "2750"
+
     - name: "NMAP-CTR | Build directory"
       ansible.builtin.file:
-        path: /opt/it/docker/nmap
+        path: "{{ nmap_container_build_dir }}"
         state: directory
         owner: root
         group: "{{ ia_it_group | default('sudo') }}"
@@ -99,7 +110,7 @@
     - name: "NMAP-CTR | Dockerfile"
       ansible.builtin.copy:
         src: Dockerfile
-        dest: /opt/it/docker/nmap/Dockerfile
+        dest: "{{ nmap_container_build_dir }}/Dockerfile"
         owner: root
         group: root
         mode: "0644"
@@ -120,7 +131,7 @@
         cmd: >-
           docker build --ulimit nofile={{ nmap_container_nofile | default('1024:65536') }}
           --build-arg BASE={{ nmap_container_base }}
-          -t {{ nmap_container_image }} /opt/it/docker/nmap
+          -t {{ nmap_container_image }} {{ nmap_container_build_dir }}
       register: _nc_build
       changed_when: _nc_build.rc == 0
       failed_when: false

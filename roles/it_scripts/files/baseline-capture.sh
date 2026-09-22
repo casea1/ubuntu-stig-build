@@ -230,7 +230,7 @@ LIMIT=25 run "it-smb 2>&1"
 # Contents are NEVER printed for these.
 sec "SECRET-BEARING FILES (name, mode, size only)"
 shape /etc/stig-build/*.pw /etc/stig-build/*.cred /etc/stig-build/smb/*.cred \
-      /etc/ubuntu-advantage/pro-token /etc/krb5.keytab /opt/it/docker/*/.env \
+      /etc/ubuntu-advantage/pro-token /etc/krb5.keytab /opt/docker/.env /opt/docker/*/.env \
       /etc/stig-build/fpga/License.dat
 note "  (contents deliberately omitted -- this capture is meant to leave the box)"
 

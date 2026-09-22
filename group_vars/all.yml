@@ -1457,7 +1457,27 @@ ai_firewall_allow_ports:
   # - { port: 5000, proto: tcp, rule: allow, from: "10.0.0.0/24" }   # MLflow UI/API (System 2) -- open to your lab subnet
 
 # =============================================================================
-# AI DOCKER COMPOSE  (ai_compose role -> bakes the stack into /opt/it/docker)
+# DOCKER ASSET ROOT  (build contexts + the dormant consolidated fallback)
+# =============================================================================
+# This used to be /opt/it/docker, and that was the wrong place for it. /opt/it
+# is root:sudo 2770 -- no traverse bit for anyone else -- so nothing under it
+# can be reached by a non-admin, however the files themselves are owned. The AI
+# team reviews these, so they were walled off from the one group that needs
+# them (see ai_ops_enabled).
+#
+# NOT under /opt/stacks either: that is Dockge's DOCKGE_STACKS_DIR and it
+# presents every subdirectory as a stack, so build/ and grafana/ would show up
+# in the UI as entries nobody can deploy.
+#
+# /opt/docker is a sibling of both, created 2750 root:<ai_ops_group> when that
+# feature is on and root:sudo otherwise. Nothing LIVE is served from here --
+# every stack's own assets (fips_off, .env, nginx.conf, prometheus.yml) live in
+# /opt/stacks/<stack>/ and are mounted relatively. See docs/procedures.md
+# "Moving the docker asset root" for the one-time migration.
+docker_assets_dir: /opt/docker
+
+# =============================================================================
+# AI DOCKER COMPOSE  (ai_compose role -> bakes the stack into docker_assets_dir)
 # =============================================================================
 # ai profile only. Places the node's docker-compose.yaml (+ a root-only .env for
 # secrets/site values) under ai_compose_dir, creates the named volumes, and can
@@ -1492,7 +1512,7 @@ ai_node_role: >-
   {{ (ai_node_role_by_hostname[ansible_hostname]
       | default('system1' if ('ai1' in ansible_hostname)
                 else ('system2' if ('ai2' in ansible_hostname) else ''))) | trim }}
-ai_compose_dir: /opt/it/docker
+ai_compose_dir: "{{ docker_assets_dir }}"
 ai_compose_deploy: false         # true = also `docker compose pull && up -d`
 # DB password (System 1 only). Auto-generated + persisted root-only on first
 # run, so nothing to type and no secret in the repo. Pin it in site.yml ONLY to
@@ -1678,6 +1698,12 @@ ai_ops_group: aiops
 # The supported way for this team to change something is a repo change, or
 # compose.override.yaml, which nothing manages.
 ai_ops_write: false
+# The roots the grant covers. /opt/stacks is the live stacks; docker_assets_dir
+# is the build contexts and the dormant consolidated compose. Both are
+# root:sudo 2750 -- this group reaches them by ACL, not by ownership.
+ai_ops_paths:
+  - "{{ dockge_stacks_dir }}"
+  - "{{ docker_assets_dir }}"
 # The it-* commands the group may run through sudo. Each re-execs itself under
 # sudo, so without this they cannot run at all. NOTE `it-docker` is not purely
 # read-only -- it can restart, start and stop containers. Drop it from this list

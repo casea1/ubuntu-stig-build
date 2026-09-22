@@ -295,7 +295,9 @@ The same capture found three things worth naming separately:
 - the previous volumes are not removed, they are **orphaned**. They accumulate as dangling volumes, and a later `docker volume prune` deletes the history nobody knew was still there.
 - `docker compose down -v` does remove them, so the one command gotcha 6 says is safe against named external volumes is *not* safe here.
 
-The repo's version mounts `prometheus-data:/prometheus`, external, which survives all three. The second fault is the config: the box mounts `/opt/it/docker/grafana/prometheus.yml` by **absolute path**, while `ai_compose` templates the scrape config to `/opt/stacks/prometheus/prometheus.yml` and nowhere else. So the managed file is ignored and the file actually in use is hand-made and unmanaged. That file is the one that carries System 1's address — meaning **after `it-set-ip` renumbers the node, Prometheus keeps scraping the old address**, and the template that exists to prevent exactly that is being read by nobody.
+The repo's version mounts `prometheus-data:/prometheus`, external, which survives all three. That half is still open.
+
+**The config half is CLOSED (2026-09-22).** The box mounted `/opt/it/docker/grafana/prometheus.yml` by **absolute path** while `ai_compose` templated the scrape config to `/opt/stacks/prometheus/prometheus.yml` and nowhere else — so the managed file was ignored and the file actually in use was hand-made and unmanaged. That file carries System 1's address, so **after `it-set-ip` renumbered the node, Prometheus kept scraping the old one**, and the template that exists to prevent exactly that was read by nobody. The mount is now the relative `./prometheus.yml`, which is the rendered file. Note that the architects' docs described the absolute path as deliberate; this resolves that disagreement in favour of the managed file and they should be told. Migration steps: [procedures.md §5.9](procedures.md#59-moving-the-docker-asset-root-one-time-off-optitdocker).
 
 **12ad. A sudoers command written with no arguments permits ANY arguments, so a "narrow" grant can be wide open and still read as narrow.** Caught while testing the `it-serial` grant, and it applies to every `sudoers.d` drop-in in this repo.
 
@@ -817,7 +819,7 @@ Stack name ≠ container name for `docker logs`: `vllm-gptoss` → `vllm-server`
 
 **Postgres is reached through PgBouncer.** Open WebUI runs 9 uvicorn workers, each with its own pool, which exhausted Postgres' connection slots — so `DATABASE_URL` and `VECTOR_DB_URL` point at `pg-bouncer:5432`. The pooler runs in **transaction** mode, so session state does not persist between statements: anything needing it (session-level `SET`, advisory locks, `LISTEN`/`NOTIFY`) must talk to `pgvector:5432` directly. Neither publishes a port — the `oi` network is the only way in, deliberately, since ufw cannot filter a published container port (trap 1).
 
-**Break-glass.** The pre-split single-file compose stays at `/opt/it/docker/docker-compose.consolidated.yaml`, not deployed and deliberately not named `docker-compose.yaml`. Same volumes, so `docker compose -f ... up -d` brings the node up as one project with no data move.
+**Break-glass.** The pre-split single-file compose stays at `/opt/docker/docker-compose.consolidated.yaml` (was `/opt/it/docker/...` before 2026-09-22), not deployed and deliberately not named `docker-compose.yaml`. Same volumes, so `docker compose -f ... up -d` brings the node up as one project with no data move.
 
 ### How the nodes talk
 
@@ -955,13 +957,13 @@ Every item below is the **box** differing from `roles/ai_compose/files/stacks/`.
 | `docling` | `restart: unless-stopped` | commented out | **Docling does not come back after a reboot.** Runtime confirms `restart=no`. |
 | `oikb` | `profiles: ["oikb"]` | commented out | Starts unguarded, crash-loops. |
 | `vllm-vision` | no `logging:` block | `logging:` **misindented under `deploy:`** | Not a valid service key there, so the container has **no log rotation**. |
-| `prometheus` | `container_name: prometheus`, named volume `prometheus-data`, `./prometheus.yml` | `prometheus-standalone`, **anonymous** volume, `/opt/it/docker/grafana/prometheus.yml` | TSDB is in an unnamed volume nothing tracks; config comes from the stale pre-split path. |
+| `prometheus` | `container_name: prometheus`, named volume `prometheus-data`, `./prometheus.yml` | `prometheus-standalone`, **anonymous** volume, `/opt/it/docker/grafana/prometheus.yml` | TSDB is in an unnamed volume nothing tracks — **still open**. Config path **closed 2026-09-22**: the repo's mount is now `./prometheus.yml` and the asset root moved to `/opt/docker`. |
 
 **Both nodes**
 
 | Item | State |
 |---|---|
-| `/opt/stacks/ai` | symlink → `/opt/it/docker`; holds `docker-compose.consolidated.yaml`, `docker-compose.yaml.bac`, `.env`, `fips_off` — the pre-split layout |
+| `/opt/stacks/ai` | symlink → `/opt/it/docker`; holds `docker-compose.consolidated.yaml`, `docker-compose.yaml.bac`, `.env`, `fips_off` — the pre-split layout. **Both it and the target are retired** as of 2026-09-22; the asset root is `/opt/docker` and the symlink is removed by hand in [procedures.md §5.9](procedures.md#59-moving-the-docker-asset-root-one-time-off-optitdocker) |
 | `/opt/stacks/ai-system1` / `ai-system2` | empty directories, no compose file |
 | `DOCKER-USER` chain | `-N DOCKER-USER` — **empty**, confirming trap 1 fleet-wide |
 

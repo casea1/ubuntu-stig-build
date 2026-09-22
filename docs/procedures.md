@@ -3436,7 +3436,90 @@ sudo it-stack-diff                       # unchanged from before the run
 nvidia-smi
 ```
 
-## 5.9 Connect an IDE
+## 5.9 Moving the docker asset root (one-time, off /opt/it/docker)
+
+The build contexts and the dormant consolidated compose used to live in
+`/opt/it/docker`. They now live in `/opt/docker` (`docker_assets_dir`).
+
+**Why.** `/opt/it` is `root:sudo 2770` — no traverse bit for anyone else — so
+nothing under it can be reached by a non-admin, however the files themselves are
+owned. The AI team reviews these, so they were walled off from the one group
+that needs them. Not `/opt/stacks` either: that is Dockge's `DOCKGE_STACKS_DIR`
+and every subdirectory in it is presented as a stack, so `build/` and `grafana/`
+would appear in the UI as entries nobody can deploy.
+
+**What is live in there.** Almost nothing. Every stack's own assets — `fips_off`,
+`.env`, `nginx.conf`, `prometheus.yml` — live in `/opt/stacks/<stack>/` and are
+mounted relatively, so the FIPS carve-out does **not** depend on this path. The
+one exception was `prometheus`, which bind-mounted
+`/opt/it/docker/grafana/prometheus.yml` by absolute path. That is now
+`./prometheus.yml`, which is the file `ai_compose` has been rendering all along.
+
+### The one file that is not reproducible
+
+`grafana/prometheus.yml` on the box is **hand-maintained**. It was never the
+rendered one — the template wrote to `/opt/stacks/prometheus/prometheus.yml` and
+the compose read the other path, so the managed file was dead text. A pull
+recreates everything else in the new root from templates; it cannot recreate
+that. **Copy it before you remove anything**, and diff it against the template's
+output so nothing hand-added is lost:
+
+```bash
+sudo diff -u /opt/it/docker/grafana/prometheus.yml \
+             /opt/stacks/prometheus/prometheus.yml
+```
+
+Differences to expect: the rendered one points `vllm-metrics` at
+`ai_system1_addr` (so `it-set-ip --peer` renumbers it) where the hand-made one
+carries a literal address. That difference is the bug being fixed. **Any other
+scrape job in the live file is one somebody added and the template does not
+know about** — add it to `roles/ai_compose/templates/prometheus.yml.j2` and push
+before you go further, or it is lost at the recreate.
+
+### Steps
+
+```bash
+# 1. Keep a copy of the live config, off the box if you can.
+sudo cp -a /opt/it/docker/grafana/prometheus.yml /root/prometheus.yml.asbuilt
+
+# 2. Pull. This creates /opt/docker and renders everything into it. Nothing is
+#    deleted and no container is touched.
+sudo it-pull
+
+# 3. Check the new root looks right, and that the old one is only what you
+#    expect to lose.
+ls -la /opt/docker /opt/docker/build
+sudo diff -r /opt/it/docker /opt/docker 2>&1 | head -40
+
+# 4. Apply the prometheus mount change. A reboot does NOT do this -- the daemon
+#    restarts the container it already has and never re-reads compose.yaml.
+cd /opt/stacks/prometheus && sudo docker compose up -d
+sudo docker exec prometheus-standalone cat /etc/prometheus/prometheus.yml | head
+curl -s localhost:9091/api/v1/targets | head -c 400     # every target 'up'
+
+# 5. Only now, and only once 4 is confirmed, retire the old tree.
+sudo rm -f  /opt/stacks/ai                              # a symlink to the old root
+sudo rm -rf /opt/it/docker
+```
+
+Step 5 also clears the stale `/opt/stacks/ai` symlink, which pointed at the old
+root and would otherwise be a dead entry in Dockge and an EACCES for the AI
+team's group.
+
+> **The failure mode if you skip step 4.** Nothing breaks today: a running
+> container holds the bind-mounted inode in its mount namespace, so moving the
+> source underneath it changes nothing until the container is recreated. It
+> breaks at the next recreate or reboot, and it breaks badly — a bind mount
+> whose source is missing makes Docker create a **directory** at that path, so
+> Prometheus starts against a folder where its config should be and the fault
+> reads as an image problem (trap 12z).
+
+### Afterwards
+
+`ai_ops_paths` covers both roots, so if `ai_ops_enabled` is on, the AI team can
+read `/opt/docker` as soon as the pull has run — which was the point.
+
+## 5.10 Connect an IDE
 
 Client-side setup. Point Continue (VS Code) at System 1's OpenAI-compatible endpoint:
 

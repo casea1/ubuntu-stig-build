@@ -320,14 +320,37 @@
   loop_control:
     label: "{{ item }}"
 
-# ---- Dormant fallback: keep the old single-file compose on the box ----------
-- name: "AI-COMPOSE | Ensure the fallback dir exists ({{ ai_compose_dir }})"
+# ---- Docker asset root: build contexts + the dormant consolidated compose ---
+- name: "AI-COMPOSE | Ensure the docker asset root exists ({{ ai_compose_dir }})"
   ansible.builtin.file:
     path: "{{ ai_compose_dir }}"
     state: directory
     owner: root
     group: "{{ ia_it_group | default('sudo') }}"
-    mode: "2750"
+    mode: "2750"          # admins by mode; the AI team by ACL (ai_ops_access.yml)
+
+# This root used to be /opt/it/docker. The pull cannot simply delete the old
+# tree, because ONE file in it is not reproducible from this repo: the live
+# grafana/prometheus.yml, which was hand-maintained precisely because the
+# template that should have owned it wrote somewhere nothing read. Deleting the
+# old tree before that file is accounted for destroys the only copy.
+#
+# So: detect, report, and leave it. Removal is a step in docs/procedures.md,
+# taken once, by a person who has looked.
+- name: "AI-COMPOSE | Is the retired /opt/it/docker still on this box?"
+  ansible.builtin.stat:
+    path: /opt/it/docker
+  register: _ai_old_docker_dir
+
+- name: "AI-COMPOSE | Report the retired asset root (not removed automatically)"
+  ansible.builtin.debug:
+    msg: >-
+      /opt/it/docker still exists. The asset root is now {{ ai_compose_dir }};
+      everything here is re-rendered there by this run EXCEPT the live
+      grafana/prometheus.yml, which this repo has never owned. Compare it with
+      {{ dockge_stacks_dir }}/prometheus/prometheus.yml before removing anything
+      -- see docs/procedures.md, "Moving the docker asset root".
+  when: _ai_old_docker_dir.stat.exists | default(false)
 
 - name: "AI-COMPOSE | Stage the consolidated compose as a dormant fallback"
   # The pre-split single-file compose, kept for break-glass use (one `docker

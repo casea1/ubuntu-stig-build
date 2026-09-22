@@ -16,6 +16,11 @@ nmap_container_enabled: true
 # Built on the box during the build (needs internet, like the other custom
 # images). Pinned by base tag; rebuild by bumping it.
 nmap_container_image: "stig-build/nmap:24.04"
+
+# Build context. Under the shared docker asset root rather than /opt/it/docker,
+# which no non-admin can traverse -- see docker_assets_dir in group_vars. EMI
+# only, so this never coexists with ai_compose's use of the same root.
+nmap_container_build_dir: "{{ docker_assets_dir | default('/opt/docker') }}/nmap"
 nmap_container_base: "ubuntu:24.04"
 
 # Recorded here for it-vulnscan to find. Absent = no containerised nmap.

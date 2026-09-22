@@ -249,7 +249,7 @@
       when: is_ai
     - role: emi_firewall            # emi: open the imaging/VPN service ports AFTER USG's default-deny
       when: is_emi
-    - role: ai_compose              # ai: bake the node's docker-compose + .env into /opt/it/docker (opt-in `up`)
+    - role: ai_compose              # ai: bake the node's docker-compose + .env into docker_assets_dir (opt-in `up`)
       tags: [ai-runtime]            # rewrites every compose.yaml/.env; recreates containers if ai_compose_deploy
       when:
         - is_ai

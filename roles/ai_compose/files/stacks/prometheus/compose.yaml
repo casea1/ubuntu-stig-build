@@ -2,7 +2,11 @@
 # Separate from the Prometheus inside grafana-otel: that one receives metrics
 # PUSHED over OTLP, this one PULLS from services that only expose a scrape
 # endpoint. Add it as a Grafana data source at http://prometheus:9090.
-# prometheus.yml is rendered next to this file by ansible.
+# prometheus.yml is rendered next to this file by ansible and mounted RELATIVELY.
+# It used to be mounted from an absolute /opt/it/docker path, which meant the
+# rendered file was dead text and the live config was hand-maintained -- so a
+# renumber (it-set-ip) updated the file nothing read and Prometheus carried on
+# scraping the old address.
 services:
   prometheus-standalone:
     image: prom/prometheus:v3.14.0
@@ -10,7 +14,7 @@ services:
     ports:
     - 9091:9090
     volumes:
-    - /opt/it/docker/grafana/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
     command:
     - --config.file=/etc/prometheus/prometheus.yml
     - --storage.tsdb.path=/prometheus

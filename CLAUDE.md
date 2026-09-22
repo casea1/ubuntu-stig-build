@@ -17,6 +17,7 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
 | `group_vars/all.yml` | nearly all configuration and profile gating |
 | `roles/` | one role per concern (`ai_compose`, `ai_stack`, `usg_harden`, `local_accounts`, …) |
 | `roles/ai_compose/files/stacks/<stack>/compose.yaml` | the per-service Docker stacks, deployed to `/opt/stacks/<stack>/` |
+| `/opt/docker` (`docker_assets_dir`) | build contexts + the dormant consolidated compose. Was `/opt/it/docker`, which no non-admin could traverse (`/opt/it` is `root:sudo 2770`); not `/opt/stacks`, which Dockge presents one-stack-per-subdirectory. Nothing LIVE is served from here -- every stack's `fips_off`, `.env`, `nginx.conf` and `prometheus.yml` sit in its own `/opt/stacks/<stack>/` and are mounted relatively |
 | `docs/` | operator + IA documentation |
 
 ## Working conventions
@@ -309,8 +310,12 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
      reboot -- and also lost `DOCLING_SERVE_ENABLE_REMOTE_SERVICES` /
      `ALLOW_CUSTOM_VLM_CONFIG`.
   5. **`prometheus` writes to an anonymous volume** (metrics discarded on
-     recreate) and reads its config from the stale absolute
-     `/opt/it/docker/grafana/prometheus.yml`.
+     recreate) -- STILL OPEN. The config half is **CLOSED (2026-09-22)**: the
+     mount is now the relative `./prometheus.yml`, so the file ansible renders
+     is the file prometheus reads, and the asset root moved off
+     `/opt/it/docker` to `/opt/docker`. Applying it needs
+     `docker compose up -d` on that stack -- a reboot does not. See
+     procedures.md §5.9.
   6. **`vllm-gptoss` hardcodes `192.168.1.110`** in two places, so `it-set-ip`
      cannot renumber it -- `it-set-ip` now REPORTS this rather than silently
      missing it (trap 12y). It also dropped `--override-generation-config`.
@@ -324,6 +329,10 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   9. **`openwiki` / `openwiki-view` are in the repo and on NEITHER box**, though
      they predate the boxes' baseline. A pull will create them.
   10. `/opt/stacks/ai` and `ai-system1`/`ai-system2` are stale pre-split dirs.
+      `/opt/stacks/ai` is a symlink to the retired `/opt/it/docker`; both are
+      removed by hand in procedures.md §5.9, not by the pull -- the live
+      `grafana/prometheus.yml` in there was hand-made and is the one file this
+      repo cannot regenerate.
   11. **CLOSED -- `vllm-gpt-oss-20b` is now in the repo** (:8005, alias
       `chat-llm-20b`, gptq-quantised, its own external `gpt-oss-20b` volume).
       It was running on dev-ai2 and absent from the capture taken minutes
@@ -369,10 +378,14 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   14. **Some findings were answered by the architects' docs, and the answers
       change them:**
       - prometheus reading `/opt/it/docker/grafana/prometheus.yml` is
-        DELIBERATE and documented. The collision is with OUR template writing
-        to `/opt/stacks/prometheus/prometheus.yml`, which is therefore dead --
-        two owners, one file, to be settled. The ANONYMOUS VOLUME is a separate
-        fault and appears in none of their docs.
+        DELIBERATE and documented on their side. **Settled 2026-09-22 in favour
+        of the managed file** -- the mount is now `./prometheus.yml` and the
+        asset root moved to `/opt/docker`, because the absolute path meant a
+        renumber updated a file nothing read and prometheus kept scraping the
+        old address. This goes AGAINST their documented design, so tell them;
+        it is a reversible one-line mount change if they object. The ANONYMOUS
+        VOLUME is a separate fault, still open, and appears in none of their
+        docs.
       - The 8082 collision is box drift from their own design, which puts oikb
         on **8081** and magpie on 8082. Putting oikb back is the fix.
       - The GPU rebalance was DESIGNED but never applied: their docs say embed

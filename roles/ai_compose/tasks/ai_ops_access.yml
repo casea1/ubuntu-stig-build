@@ -15,9 +15,13 @@
     state: present
   when: ai_ops_enabled | default(false) | bool
 
-- name: "AI-OPS | Find the stack directories"
+# Two roots now: the stacks themselves, and the docker asset root (build
+# contexts + the dormant consolidated compose), which moved out of /opt/it
+# precisely so this group could reach it -- /opt/it is 2770 root:sudo and has no
+# traverse bit for anyone else, so no ACL under it could ever have worked.
+- name: "AI-OPS | Find the directories under each root"
   ansible.builtin.find:
-    paths: "{{ dockge_stacks_dir }}"
+    paths: "{{ ai_ops_paths }}"
     recurse: true
     file_type: directory
   register: _ai_ops_stack_dirs
@@ -33,7 +37,7 @@
     permissions: "{{ 'rwx' if (ai_ops_write | default(false) | bool) else 'rx' }}"
     default: "{{ item.1 }}"
     state: present
-  loop: "{{ ([dockge_stacks_dir] + _ai_ops_stack_dirs.files | map(attribute='path') | list)
+  loop: "{{ (ai_ops_paths + _ai_ops_stack_dirs.files | map(attribute='path') | list)
             | product([false, true]) | list }}"
   loop_control:
     label: "{{ item.0 }}{{ ' (default)' if item.1 else '' }}"
@@ -45,7 +49,7 @@
 # to that mode cannot quietly open them.
 - name: "AI-OPS | Find the config files the group may read"
   ansible.builtin.find:
-    paths: "{{ dockge_stacks_dir }}"
+    paths: "{{ ai_ops_paths }}"
     recurse: true
     file_type: file
     excludes: [".env", "*.env"]
@@ -69,7 +73,7 @@
 # matter, so it is asserted rather than assumed.
 - name: "AI-OPS | Find any .env carrying an ACL"
   ansible.builtin.find:
-    paths: "{{ dockge_stacks_dir }}"
+    paths: "{{ ai_ops_paths }}"
     recurse: true
     file_type: file
     patterns: [".env", "*.env"]
@@ -120,10 +124,10 @@
   ansible.builtin.shell: >-
     set -o pipefail;
     getent group {{ ai_ops_group }} >/dev/null 2>&1 || exit 0;
-    setfacl -R -x "g:{{ ai_ops_group }}" -x "d:g:{{ ai_ops_group }}" {{ dockge_stacks_dir }} 2>/dev/null || true
+    setfacl -R -x "g:{{ ai_ops_group }}" -x "d:g:{{ ai_ops_group }}" {{ ai_ops_paths | join(' ') }} 2>/dev/null || true
   args:
     executable: /bin/bash
   changed_when: false
   when:
     - not (ai_ops_enabled | default(false) | bool)
-    - dockge_stacks_dir is defined
+    - ai_ops_paths | default([]) | length > 0
