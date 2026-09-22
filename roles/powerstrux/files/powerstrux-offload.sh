@@ -17,6 +17,8 @@
 #   it-powerstrux offload push on | off   enable/disable the copy to the share
 #   it-powerstrux offload audit on|off    also include the auditd archive
 #   it-powerstrux offload containers on|off   also include `docker logs`
+#   it-powerstrux offload transport smb|sftp  which way the week folder travels
+#   it-powerstrux offload sftp <user@host:/path>   set the sftp destination
 #   it-powerstrux offload opts <cifs,opts>    mount options (vers=2.1 for old servers)
 #   it-powerstrux offload where           the four paths this uses
 #
@@ -134,6 +136,12 @@ ansible_var() {
     SMB_SUBDIR)         echo powerstrux_offload_smb_subdir ;;
     SMB_AUTH)           echo powerstrux_offload_smb_auth ;;
     SMB_OPTS)           echo powerstrux_offload_smb_options ;;
+    TRANSPORT)          echo powerstrux_offload_transport ;;
+    SFTP_DEST)          echo powerstrux_offload_sftp_dest ;;
+    SFTP_KEY)           echo powerstrux_offload_sftp_key ;;
+    SFTP_PORT)          echo powerstrux_offload_sftp_port ;;
+    SFTP_SUBDIR)        echo powerstrux_offload_sftp_subdir ;;
+    SFTP_KNOWN_HOSTS)   echo powerstrux_offload_sftp_known_hosts ;;
   esac
 }
 
@@ -481,6 +489,16 @@ push_week_sftp() {   # $1 = local week dir
   return 1
 }
 
+# Where a week folder goes, for messages and for the "is it configured" check.
+# Empty = not configured, which is the only thing callers test it for.
+push_dest() {
+  if [ "$TRANSPORT" = sftp ]; then
+    [ -n "$SFTP_DEST" ] && printf '%s/%s' "$SFTP_DEST" "$SFTP_SUBDIR"
+  else
+    [ -n "$SMB_SHARE" ] && printf '%s/%s' "$SMB_SHARE" "$SMB_SUBDIR"
+  fi
+}
+
 push_week() {   # $1 = local week dir
   local wdir="$1" week dst
   week="$(basename "$wdir")"
@@ -541,12 +559,17 @@ cmd_run() {
 
   prune_local
 
-  if [ "$push" -eq 1 ] && [ "$SMB_ON" = true ] && [ -z "$SMB_SHARE" ]; then
-    bad "push is ON but no share is set -- it-powerstrux offload setup"
-    log "ERROR: SMB_ENABLED=true with an empty SMB_SHARE"
+  # SMB_ENABLED is the "push at all" switch for BOTH transports -- it predates
+  # sftp and kept its name so an existing conf keeps working. What it must not
+  # do is demand an SMB share when the transport is sftp: that guard used to
+  # abort the push before push_week() ever reached its transport branch, so a
+  # correctly configured sftp box staged every week locally and pushed nothing.
+  if [ "$push" -eq 1 ] && [ "$SMB_ON" = true ] && [ -z "$(push_dest)" ]; then
+    bad "push is ON but no destination is set -- it-powerstrux offload setup"
+    log "ERROR: push enabled with no $( [ "$TRANSPORT" = sftp ] && echo SFTP_DEST || echo SMB_SHARE )"
     rc=1
   elif [ "$push" -eq 1 ] && [ "$SMB_ON" = true ]; then
-    head2 "Pushing to $SMB_SHARE/$SMB_SUBDIR/$week"
+    head2 "Pushing to $(push_dest)/$week"
     if push_week "$wdir"; then ok "pushed"
     else bad "push FAILED -- the local copy is kept at $wdir"; rc=1; fi
   elif [ "$push" -eq 1 ]; then
@@ -597,7 +620,20 @@ cmd_status() {
 
   head2 "Where it goes"
   printf '  %-20s %s (keeps %s weeks)\n' "staged locally" "$DEST_ROOT" "$KEEP"
-  if [ "$SMB_ON" = true ]; then
+  printf '  %-20s %s\n' "transport" "$TRANSPORT"
+  if [ "$SMB_ON" = true ] && [ "$TRANSPORT" = sftp ]; then
+    local sh="${SFTP_DEST%%:*}"; sh="${sh#*@}"
+    if [ -n "$SFTP_DEST" ]; then ok "destination          $SFTP_DEST/$SFTP_SUBDIR/<week>"
+    else bad "destination          NOT SET -- it-powerstrux offload sftp <user@host:/path>"; fi
+    if [ -r "$SFTP_KEY" ]; then ok "key                  $SFTP_KEY ($(stat -c %a "$SFTP_KEY"))"
+    else bad "key                  MISSING at $SFTP_KEY -- the push will FAIL"; fi
+    if [ -n "$sh" ] && [ -r "$SFTP_KNOWN" ] && ssh-keygen -F "$sh" -f "$SFTP_KNOWN" >/dev/null 2>&1; then
+      ok "host key             pinned"
+    else
+      bad "host key             NOT pinned in $SFTP_KNOWN -- the push will FAIL"
+    fi
+    ok "in transit           SSH (FIPS-approved), nothing left mounted"
+  elif [ "$SMB_ON" = true ]; then
     ok "share                $SMB_SHARE/$SMB_SUBDIR/<week>"
     printf '  %-20s %s\n' "auth" "$SMB_AUTH"
     if [ "$SMB_AUTH" = guest ]; then
@@ -640,7 +676,7 @@ cmd_status() {
   if [ -r "$RUN_LOG" ]; then tail -6 "$RUN_LOG" | sed 's/^/  /'
   else say "  ${DIM}never run, or no log yet at $RUN_LOG${R}"; fi
   say ""
-  say "  ${DIM}Prove the share works:  it-powerstrux offload test${R}"
+  say "  ${DIM}Prove the destination works:  it-powerstrux offload test${R}"
   say ""
 }
 
@@ -768,6 +804,89 @@ cmd_setup() {
   say "  ${DIM}Then the first real folder:  it-powerstrux offload run${R}"
 }
 
+# What actually fails on an sftp offload, in the order it fails: no key, no
+# pinned host key, the service account is an administrator (so its key is in the
+# wrong authorized_keys), the remote path does not exist. Each is checked
+# separately because "sftp: connection closed" covers all four.
+#
+# No write probe. The far-side account is meant to be CREATE-ONLY, so anything
+# this dropped could never be deleted again -- `offload run` is the write test.
+test_sftp() {
+  local rc=0 host port
+  head2 "SFTP  $SFTP_DEST"
+  [ -n "$SFTP_DEST" ] || { bad "no destination -- it-powerstrux offload sftp <user@host:/path>"; return 1; }
+
+  host="${SFTP_DEST%%:*}"; host="${host#*@}"
+  port="$SFTP_PORT"
+
+  if [ -r "$SFTP_KEY" ]; then
+    ok "key          $SFTP_KEY ($(stat -c %a "$SFTP_KEY"))"
+    [ "$(stat -c %a "$SFTP_KEY")" = 600 ] || warn "the key should be 0600 -- ssh refuses a group-readable key"
+  else
+    bad "key          MISSING at $SFTP_KEY"
+    say "               ssh-keygen -t ed25519 -N '' -f $SFTP_KEY -C \"powerstrux $(hostname -s)\""
+    return 1
+  fi
+
+  if [ -r "$SFTP_KNOWN" ] && ssh-keygen -F "$host" -f "$SFTP_KNOWN" >/dev/null 2>&1; then
+    ok "host key     pinned for $host"
+  elif [ -r "$SFTP_KNOWN" ] && [ "$port" != 22 ] && ssh-keygen -F "[$host]:$port" -f "$SFTP_KNOWN" >/dev/null 2>&1; then
+    ok "host key     pinned for [$host]:$port"
+  else
+    bad "host key     NOT pinned in $SFTP_KNOWN"
+    say "               StrictHostKeyChecking stays on for an unattended job, so"
+    say "               the push will refuse to connect. Pin it, after checking the"
+    say "               fingerprint against the server:"
+    say "               ssh-keyscan -p $port -H $host | sudo tee -a $SFTP_KNOWN"
+    rc=1
+  fi
+  [ "$rc" = 0 ] || return 1
+
+  say "  connecting..."
+  if printf 'quit\n' | sftp -q -b - -o BatchMode=yes -o ConnectTimeout=20 \
+        -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$SFTP_KNOWN" \
+        -i "$SFTP_KEY" -P "$port" "${SFTP_DEST%%:*}" >>"$RUN_LOG" 2>&1; then
+    ok "key auth     OK"
+  else
+    bad "key auth     FAILED"
+    say ""
+    say "  Last lines of $RUN_LOG:"
+    tail -4 "$RUN_LOG" 2>/dev/null | sed 's/^/    /'
+    say ""
+    say "  In the order this actually happens:"
+    say "    * the public key is not in the service account's authorized_keys"
+    say "    * the service account is an ADMINISTRATOR on the Windows box, so"
+    say "      OpenSSH reads C:\\ProgramData\\ssh\\administrators_authorized_keys"
+    say "      instead and ignores the user's own file. Make it a normal user."
+    say "    * authorized_keys permissions -- it must not be writable by others"
+    say "    * sshd is not running, or port $port is filtered"
+    return 1
+  fi
+
+  # -mkdir twice, exactly as the push does: harmless if they exist, and it
+  # proves the account can create where it is supposed to.
+  local path base
+  path="${SFTP_DEST#*:}"; base="$path/$SFTP_SUBDIR"
+  if printf -- '-mkdir "%s"\n-mkdir "%s"\ncd "%s"\nquit\n' "$path" "$base" "$base" |
+     sftp -q -b - -o BatchMode=yes -o ConnectTimeout=20 \
+          -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$SFTP_KNOWN" \
+          -i "$SFTP_KEY" -P "$port" "${SFTP_DEST%%:*}" >>"$RUN_LOG" 2>&1; then
+    ok "remote path  $base reachable"
+  else
+    bad "remote path  cannot reach or create $base"
+    tail -4 "$RUN_LOG" 2>/dev/null | sed 's/^/    /'
+    say "               a Windows path is /C:/Evidence/PowerStrux -- note the"
+    say "               LEADING slash; without it sftp resolves it relative to"
+    say "               the account's home and silently drops files there."
+    rc=1
+  fi
+
+  say ""
+  [ "$rc" = 0 ] && ok "The destination is usable. Build this week's folder: it-powerstrux offload run"
+  say ""
+  return "$rc"
+}
+
 cmd_test() {
   local rc=0 probe
   head2 "Checking the offload"
@@ -780,14 +899,27 @@ cmd_test() {
                  || warn "reports      none in the last $WINDOW days (run one: it-powerstrux)"
 
   if [ "$SMB_ON" != true ]; then
-    head2 "Share"
+    head2 "Destination"
     warn "push is OFF -- nothing to test. Set one up: it-powerstrux offload setup"
     return "$rc"
   fi
+
+  if [ "$TRANSPORT" = sftp ]; then
+    test_sftp || rc=1
+    return "$rc"
+  fi
+
   if [ -z "$SMB_SHARE" ]; then
     head2 "Share"
     bad "push is ON but no share is set -- it-powerstrux offload setup"
     return 1
+  fi
+  if [ "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null || echo 0)" = 1 ]; then
+    warn "this box is FIPS and the transport is SMB"
+    say  "  ${DIM}NTLM needs HMAC-MD5 and FIPS has no MD5, so a mount against a server${R}"
+    say  "  ${DIM}this box is not Kerberos-joined to fails with ENOENT -- the same errno${R}"
+    say  "  ${DIM}a missing share returns. Tested at every dialect, guest included, on${R}"
+    say  "  ${DIM}2026-09-16. Use sftp: it-powerstrux offload transport sftp${R}"
   fi
 
   head2 "Share  $SMB_SHARE"
@@ -916,6 +1048,17 @@ case "${1:-status}" in
   push)       cmd_toggle SMB_ENABLED "${2:-}" "remote push" ;;
   audit)      cmd_toggle INCLUDE_AUDIT "${2:-}" "auditd archive" ;;
   containers) cmd_toggle INCLUDE_CONTAINERS "${2:-}" "container logs" ;;
+  transport)  case "${2:-}" in
+                smb)  apply_opt TRANSPORT smb  0 "transport: smb (mount + copy)" ;;
+                sftp) apply_opt TRANSPORT sftp 0 "transport: sftp (scp over SSH)"
+                      say "  ${DIM}Now set the destination: it-powerstrux offload sftp <user@host:/path>${R}" ;;
+                *) die "usage: it-powerstrux offload transport smb|sftp" ;;
+              esac ;;
+  sftp)       [ -n "${2:-}" ] || die "usage: it-powerstrux offload sftp <user@host:/path>  (Windows: /C:/Evidence/PowerStrux)"
+              case "$2" in *:*) ;; *) die "destination needs a path: <user@host:/path>" ;; esac
+              apply_opt SFTP_DEST "$2" 1 "destination: $2"
+              apply_opt TRANSPORT sftp 0 "transport: sftp"
+              say "  ${DIM}Prove it: it-powerstrux offload test${R}" ;;
   opts)       [ -n "${2:-}" ] || die "usage: it-powerstrux offload opts <cifs,mount,options>"
               apply_opt SMB_OPTS "$2" 1 "mount options set: $2" ;;
   where)      printf 'config : %s\ncreds  : %s\nstaged : %s\nlog    : %s\n' \

@@ -191,26 +191,34 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   the reports), because both mount with a credentials file. The remedy is
   `sec=krb5` after an AD join -- and for an unattended job with nobody logged
   in, a machine keytab and `kinit -k`, not a credentials file. Not built yet.
-  **GUEST/ANONYMOUS IS THE FIPS-VIABLE PATH BEFORE THE JOIN**, and it needs
-  `sec=none`: `guest` on its own only means "send no username or password",
-  the client still performs whatever session setup `sec=` asks for, and every
-  default in this repo said `sec=ntlmssp` -- so guest mode failed on FIPS for
-  the same reason a credentials mount did. Both offloads and `it-smb` now force
-  `sec=none` whenever auth is guest, stripping any `sec=` the options carry.
+  **GUEST IS NOT A WAY ROUND IT EITHER, and that belief cost a week.** `guest`
+  alone only means "send no username or password" -- the client still performs
+  whatever session setup `sec=` asks for, and every default here said
+  `sec=ntlmssp`, so guest failed for the same reason a credentials mount did.
+  Forcing `sec=none` (which both offloads and `it-smb` now do for guest) looked
+  like the fix and is not: **SMB2/3 carry even an anonymous session over
+  NTLMSSP.** Tested at every dialect against the deployed server on 2026-09-16.
+  **The transport that works today is SFTP**, on both offloads --
+  `powerstrux_offload_transport: sftp` and `usg_audit_offload_sftp_enabled` --
+  with a per-box ed25519 key, a pinned host key, and a CREATE-ONLY service
+  account on the far side. `docs/procedures.md` "Getting the PowerStrux reports
+  to the auditors" has the Windows ACLs. `sec=krb5` after the AD join remains
+  the SMB answer, if SMB is ever wanted again.
 
 ## Open threads
 
-- **The SMB offloads need `sec=krb5` once the fleet is domain-joined.** Until
-  then the deployed space's file server is open to guests, and guest +
-  `sec=none` is what both offloads use there (`usg_audit_offload_smb_auth:
-  guest`, `it-powerstrux offload creds` -> guest). That is a working transport,
-  not a good one -- the evidence crosses the wire unauthenticated and
-  unencrypted, and anyone on that LAN can read the share. It is a POA&M item,
-  not a solved one. The AD join is weeks after deployment; when it lands, the
-  unattended half still has to be built: `kinit -k` from the machine keytab
-  before the mount, `sec=krb5,cruid=0`, and a keytab refresh that survives a
-  machine-password rotation. `it-smb test --krb5` already covers the
-  interactive case.
+- **Both offloads now travel over SFTP, and SMB is effectively dead here until
+  the AD join.** Guest + `sec=none` was the plan and it does not work on FIPS
+  (see above, tested 2026-09-16), so `it-offload` and `it-powerstrux offload`
+  both grew an sftp transport instead. What that leaves open is operational,
+  not architectural: each box needs its own key generated and its public half
+  installed on the drop box, the far-side ACLs have to be create-only or the
+  boxes can read each other's evidence, and **nothing rotates those keys**.
+  `sec=krb5` after the AD join is still the better answer if the site would
+  rather have a share; the unattended half of that is unbuilt (`kinit -k` from
+  a machine keytab before the mount, `sec=krb5,cruid=0`, and a keytab refresh
+  that survives a machine-password rotation). `it-smb test --krb5` already
+  covers the interactive case.
 
 - **RDP has no fast path on this fleet, and it is a version problem, not a
   settings problem.** `xrdp_encoder_create()` builds no encoder unless the

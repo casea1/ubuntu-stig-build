@@ -297,6 +297,29 @@ The same capture found three things worth naming separately:
 
 The repo's version mounts `prometheus-data:/prometheus`, external, which survives all three. The second fault is the config: the box mounts `/opt/it/docker/grafana/prometheus.yml` by **absolute path**, while `ai_compose` templates the scrape config to `/opt/stacks/prometheus/prometheus.yml` and nowhere else. So the managed file is ignored and the file actually in use is hand-made and unmanaged. That file is the one that carries System 1's address — meaning **after `it-set-ip` renumbers the node, Prometheus keeps scraping the old address**, and the template that exists to prevent exactly that is being read by nobody.
 
+**12ac. On a FIPS box SMB cannot carry the evidence off, and `guest` is not the loophole it looks like.** This cost a week, because each wrong answer looked like the right one.
+
+NTLMv2 is built on HMAC-MD5. A FIPS kernel removes MD5 from the crypto API, so `mount.cifs` cannot allocate the transform and the session setup fails — with **ENOENT, the same errno a missing share returns**. So it presents as a wrong share name or a bad password, and is neither. The log line that names it is `Could not allocate shash TFM 'hmac(md5)'` followed by `Error -2 during NTLMSSP authentication` (dev-14, 2026-09-04).
+
+The repair that seems obvious is `guest`, and it is half a repair. `guest` only means "send no username or password" — the client still performs whatever session setup `sec=` asks for, and every default in this repo said `sec=ntlmssp`. So guest failed for exactly the same reason. Forcing `sec=none` (which `it-offload`, `it-powerstrux offload` and `it-smb` all now do whenever auth is guest, stripping any `sec=` the options carry) is the other half — and **it still does not work**: SMB2 and SMB3 carry even an anonymous session over NTLMSSP. Tested at every dialect against the deployed server on 2026-09-16.
+
+So there is no SMB configuration that moves evidence off a FIPS box that is not Kerberos-joined. **The transport is SFTP**, on both offloads:
+
+| | how to turn it on |
+|---|---|
+| PowerStrux reports | `it-powerstrux offload transport sftp` then `it-powerstrux offload sftp <user@host:/path>` |
+| auditd trail (AU-4) | `usg_audit_offload_sftp_enabled: true` + `usg_audit_offload_sftp_dest` in `site.yml` |
+
+It is also the better fit, independent of FIPS: nothing is left mounted, so a compromised file server has no path back onto the box, and the far-side service account can be given **create-only** rights — a box drops its report and cannot read back, alter or delete what any other box wrote. A mount cannot be constrained that way without the same NTFS work, and tempts someone to browse. `docs/procedures.md` → "Getting the PowerStrux reports to the auditors" has the `icacls` commands.
+
+Three things that fail on the way in, in the order they actually happen:
+
+1. **The service account is a Windows administrator.** OpenSSH then reads `C:\ProgramData\ssh\administrators_authorized_keys` and ignores the account's own `authorized_keys` entirely, so key auth appears to do nothing. Make it a normal user.
+2. **The host key is not pinned.** `StrictHostKeyChecking` stays on and `BatchMode` is set — an unattended job that trusts whatever answers on port 22, or that can sit at a prompt, is not an evidence transport. `ssh-keyscan -H <host> >> /etc/stig-build/ssh/known_hosts`, after checking the fingerprint against the server.
+3. **A Windows path needs a leading slash**: `/C:/Evidence/PowerStrux`. Without it sftp resolves it relative to the account's home directory and the reports land there silently.
+
+And one that was ours: until 2026-09-22 `cmd_run` gated the push on `SMB_ENABLED` **and a non-empty `SMB_SHARE`**, which no sftp box has — so a correctly configured sftp offload built its week folder, reported success, and pushed nothing. `it-powerstrux offload test` was SMB-only for the same reason and could not have caught it. Both are transport-aware now.
+
 **12ab. The console is not a fallback on these servers, because USBGuard blocks the keyboard — and the documented recovery does not work here.** Worth settling before a box is moved, not after.
 
 What does *not* block a console login: there is no `securetty`, no `pam_access`, and the `ai` profile installs no desktop (`dev_rdp_enabled` is development-only), so a normal local account logs in at tty1 with its own password. PAM is not the problem.
@@ -562,6 +585,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `it-checklist` | The org checklist, one line per item. `--fail-only`, `--out FILE`, and **`--fix`** — prints how to close every FAIL and what each MANUAL item needs from a human. Prints steps, changes nothing |
 | `it-oscap` | Run an OpenSCAP DISA-STIG scan now |
 | `it-powerstrux` | Run the PowerStrux audit. `open` copies the newest report to `~/PowerStrux-Reports/` and opens it — **necessary**, because Firefox is a snap and cannot see `/opt` (trap 18). Also `status`, `schedule "<spec>"`, `enable`/`disable`; a schedule change is persisted to `site.yml` |
+| `it-powerstrux offload` | Carries the week's report off the box: one folder per ISO week (`/opt/ia/powerstrux-offload/<YYYY>-W<nn>/` — report + run logs + `PowerStruxLAConfig.txt` + a sha256 `MANIFEST.txt`), pushed to the evidence drop box. `setup`, `status`, `test`, `run [--local]`, `on`/`off`, `push on`/`off`, **`transport smb\|sftp`**, **`sftp <user@host:/path>`**, `opts`, `extra`, `list`, `log`, `where`. **On a FIPS box the transport must be `sftp`** — SMB cannot authenticate without a Kerberos join, guest included (trap 12ac). Every write lands in both `/etc/stig-build/powerstrux-offload.conf` (immediate) and `/opt/it/site.yml` (survives the pull) |
 | `it-powerstrux install` | Install PowerStrux from a staged vendor zip: unpack, place the module under PowerShell's `Modules/`, set the reporting window (8 days) and report directory (`/opt/_AuditFiles`) in `PowerStruxLAConfig.txt`. `--zip`, `--days`, `--dir`, `--days-key`, `--dir-key`, `--force-config`. Finds the module by its entry point rather than an expected folder name, keeps an existing hand-tuned config, and edits a config key only where it already exists — a release that renames one gets a clear failure and a printout of the real keys, never an appended line the tool ignores. `it-powerstrux config` re-runs just the two settings |
 | `it-powerstrux offload` | Carry the week's report off the box. `status` (default), `setup`, `creds`, `test`, `run [--local]`, `extra list\|add\|remove`, `list`, `log [N]`, `on\|off`, `push on\|off`, `audit on\|off`, `containers on\|off`, `opts <cifs-options>`, `where`. Builds one dated folder per ISO week — the report, its run logs, `PowerStruxLAConfig.txt`, a sha256 `MANIFEST.txt` — and copies it to a Windows share. Runs **after** the scheduled audit, not on a clock of its own. Writes both `/etc/stig-build/powerstrux-offload.conf` (immediate) and `/opt/it/site.yml` (survives the pull) |
 | `it-ckl` | Build the DISA `.cklb`/`.ckl` from the scan + `answers.yml` |
