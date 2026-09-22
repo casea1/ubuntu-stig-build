@@ -326,6 +326,67 @@
     - local_usb_transfer_enabled | default(true) | bool
     - offline_repo_dta_load_enabled | default(true) | bool
 
+# ---------------------------------------------------------------------------
+# it-serial -- let the people who use the serial ports take one back.
+#
+# Not an admin capability: a held port blocks a bench, and the workaround people
+# find for themselves is unplugging the adapter, which resets the board on the
+# far end. It needs root only because the kernel makes it need root --
+# /proc/<pid>/fd is 0500 owned by the process owner, so an unprivileged user
+# cannot see who holds a port another user opened, and /run/lock is sticky, so
+# another user's stale lock file cannot be removed.
+#
+# The forms below are exact, with a wildcard only where the device name goes.
+# That wildcard is not what makes this safe: no form takes a PID, the script
+# matches the device against ^tty(USB|ACM|S)[0-9]+$ before touching it, and it
+# refuses PID 1, anything owned by root, and anything under system.slice. So the
+# worst a member of the group can do with it is end a session on a serial port,
+# which is the thing they are being granted.
+#
+# Note the `""` on the first form. A sudoers command written with NO arguments
+# permits ANY arguments -- so a bare `/usr/local/sbin/it-serial` would have made
+# every careful line below it decoration, and this grant would have READ as
+# narrow while being "it-serial, with anything". `""` is how sudoers spells
+# "this command and no arguments". Verified both ways: with the empty string,
+# `it-serial free /dev/sda` is refused by sudo before the script is reached;
+# without it, sudo ran it and only the script's own validation stopped it.
+#
+# Deliberately NOT NOPASSWD, for the same reason as the it-repo grant above:
+# this ends somebody else's session, and it belongs in /var/log/sudo.log with a
+# name against it.
+# ---------------------------------------------------------------------------
+- name: "ACCOUNTS | Let the {{ serial_access_group }} group free a held serial port (it-serial)"
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/60-{{ serial_access_group }}-serial
+    owner: root
+    group: root
+    mode: "0440"
+    content: |
+      ## Managed by ansible (local_accounts) -- do not edit by hand.
+      ## Read-only forms plus `free`. The device argument is validated by the
+      ## script; no form accepts a PID, so this cannot be aimed at anything
+      ## other than a serial port's holder.
+      %{{ serial_access_group }} ALL=(root) /usr/local/sbin/it-serial "", \
+                      /usr/local/sbin/it-serial list, \
+                      /usr/local/sbin/it-serial locks, \
+                      /usr/local/sbin/it-serial locks --yes, \
+                      /usr/local/sbin/it-serial free --all, \
+                      /usr/local/sbin/it-serial free --all --yes, \
+                      /usr/local/sbin/it-serial free --mine, \
+                      /usr/local/sbin/it-serial free --mine --yes, \
+                      /usr/local/sbin/it-serial free tty[a-zA-Z0-9]*, \
+                      /usr/local/sbin/it-serial free tty[a-zA-Z0-9]* --yes
+    validate: "visudo -cf %s"      # a malformed drop-in costs EVERYONE sudo
+  when:
+    - serial_free_enabled | default(true) | bool
+    - serial_access_group | default('') | length > 0
+
+- name: "ACCOUNTS | Remove the serial sudo grant when it is not wanted"
+  ansible.builtin.file:
+    path: /etc/sudoers.d/60-{{ serial_access_group }}-serial
+    state: absent
+  when: not (serial_free_enabled | default(true) | bool)
+
 # Ansible only ever creates, so a box that had the grant and should not (the
 # toggle turned off, or a rebuild as emi-unclass) has to be cleaned up here.
 - name: "ACCOUNTS | Remove the {{ usb_access_group }} offline-repo sudo grant when it is not wanted"

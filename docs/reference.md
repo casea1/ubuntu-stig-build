@@ -297,6 +297,29 @@ The same capture found three things worth naming separately:
 
 The repo's version mounts `prometheus-data:/prometheus`, external, which survives all three. The second fault is the config: the box mounts `/opt/it/docker/grafana/prometheus.yml` by **absolute path**, while `ai_compose` templates the scrape config to `/opt/stacks/prometheus/prometheus.yml` and nowhere else. So the managed file is ignored and the file actually in use is hand-made and unmanaged. That file is the one that carries System 1's address — meaning **after `it-set-ip` renumbers the node, Prometheus keeps scraping the old address**, and the template that exists to prevent exactly that is being read by nobody.
 
+**12ad. A sudoers command written with no arguments permits ANY arguments, so a "narrow" grant can be wide open and still read as narrow.** Caught while testing the `it-serial` grant, and it applies to every `sudoers.d` drop-in in this repo.
+
+This looks like a careful, enumerated grant:
+
+```
+%dialout ALL=(root) /usr/local/sbin/it-serial, \
+                /usr/local/sbin/it-serial list, \
+                /usr/local/sbin/it-serial free --all, \
+                /usr/local/sbin/it-serial free tty[a-zA-Z0-9]*
+```
+
+It is not. The **first** entry names the command with no argument spec, and in sudoers that means *any* arguments are acceptable — so it subsumes every line under it and the real grant is "`it-serial`, with whatever you like". Measured: with that line present, `sudo it-serial free /dev/sda` was **permitted by sudo** and only the script's own validation refused it. The fix is one token — `""` is how sudoers spells "this command and no arguments":
+
+```
+%dialout ALL=(root) /usr/local/sbin/it-serial "", \
+```
+
+With it, the same command is refused with *"Sorry, user eng1 is not allowed to execute..."* before the script is ever reached.
+
+Two things follow. First, a grant whose first entry is the bare command is worth nothing, however carefully the rest is written — and it will pass a review by eye, because it reads as a list of allowed forms. Second, **defence in depth is doing real work here**: the reason the mistake was harmless in practice is that `it-serial` validates its own argument (`^tty(USB|ACM|S)[0-9]+$`) and never accepts a PID. A script that trusted sudoers to have constrained it would have been a root-kills-any-PID primitive handed to a non-admin group. Write both; assume neither.
+
+The existing `it-repo` grant was checked and is fine — every one of its entries carries arguments.
+
 **12ac. On a FIPS box SMB cannot carry the evidence off, and `guest` is not the loophole it looks like.** This cost a week, because each wrong answer looked like the right one.
 
 NTLMv2 is built on HMAC-MD5. A FIPS kernel removes MD5 from the crypto API, so `mount.cifs` cannot allocate the transform and the session setup fails — with **ENOENT, the same errno a missing share returns**. So it presents as a wrong share name or a bad password, and is neither. The log line that names it is `Could not allocate shash TFM 'hmac(md5)'` followed by `Error -2 during NTLMSSP authentication` (dev-14, 2026-09-04).
@@ -582,6 +605,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `it-pro` | The Ubuntu Pro subscription — which USG, FIPS and ESM all come from. `status` (default; flags a **free/personal/trial** contract, which entitles USG and FIPS exactly like a paid one so nothing else looks wrong), `token <file>` (stored token only — governs a REBUILD), `switch <file>` (**this box**: detach, re-attach, re-enable its services, store it), `attach`, `refresh`. `usg_harden` attaches only an UNATTACHED box, so changing the token file alone leaves a trial-attached box on that trial forever — `switch` is the only thing that moves it. The token can be the argument itself, a file containing it, `-` for stdin, or omitted for a prompt that is not echoed — classified by what it is, so a token and a filename cannot be confused. An argument is visible in `ps` and left in shell history; the command says so once |
 | `it-grub` | `status` / `hash` (fleet) / `set` (one box) — GRUB password |
 | `it-usb` | USBGuard: `status`, `list`, `blocked`, `enroll`, `allow`, `trust` |
+| `it-serial` | **Who is holding a serial port, and take it back.** `list` (default) shows every `ttyUSB`/`ttyACM` and populated `ttyS`, the holder's user, PID, how long it has been open and where to find them (`screen -r <session>`, or the tmux pane); `free <dev>` / `free --all` / `free --mine` end it (SIGHUP → SIGTERM → SIGKILL, so screen and minicom close the port and remove their own lock); `locks` finds and clears stale `/run/lock/LCK..*`. **Runnable by the `dialout` group, not just admins** — it self-elevates through a sudoers grant scoped by argv. It needs root because the kernel does: `/proc/<pid>/fd` is `0500` owned by the process owner, so nothing unprivileged can see who holds a port another user opened (`fuser` and `lsof` read the same `/proc` and are equally blind), and `/run/lock` is sticky, so another user's stale lock cannot be removed. Refuses PID 1, anything owned by root, and anything under `system.slice` — a getty on a serial console or ModemManager probing a port is never killed. Every kill is logged to `authpriv` with the invoking user |
 | `it-checklist` | The org checklist, one line per item. `--fail-only`, `--out FILE`, and **`--fix`** — prints how to close every FAIL and what each MANUAL item needs from a human. Prints steps, changes nothing |
 | `it-oscap` | Run an OpenSCAP DISA-STIG scan now |
 | `it-powerstrux` | Run the PowerStrux audit. `open` copies the newest report to `~/PowerStrux-Reports/` and opens it — **necessary**, because Firefox is a snap and cannot see `/opt` (trap 18). Also `status`, `schedule "<spec>"`, `enable`/`disable`; a schedule change is persisted to `site.yml` |

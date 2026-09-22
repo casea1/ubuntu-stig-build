@@ -33,6 +33,10 @@ it_scripts_retired_links:
 # must stay there. Nothing secret lives in these scripts.
 it_scripts_public:
   - { file: offline-repo.sh,       link: it-repo }
+  # Freeing a serial port needs root to SEE the holder at all (/proc/<pid>/fd is
+  # 0500) and to clear another user's lock file (/run/lock is sticky). The people
+  # who need it are engineers, not admins -- see serial_access_group.
+  - { file: serial.sh,             link: it-serial }
 
 # Placed on every profile.
 it_scripts_common:

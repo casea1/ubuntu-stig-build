@@ -207,6 +207,31 @@ offline_repo_dta_load_enabled: true
 # can put them back verbatim on a box that goes back online for a rebuild.
 offline_repo_backup_dir: "{{ it_dir | default('/opt/it') }}/apt-sources-backup"
 
+# ---- Serial ports: who may take one back (it-serial) ------------------------
+# A serial console left open by someone who walked away blocks the port for
+# everyone, and the only remedy people find on their own is unplugging the
+# adapter -- which resets the board on the far end of the cable.
+#
+# `it-serial` is the supported way instead, and it has to run as root for two
+# reasons that are both kernel policy, not a design choice: /proc/<pid>/fd is
+# 0500 owned by the process owner, so an unprivileged user cannot even SEE who
+# holds a port someone else opened; and /run/lock is 1777 with the sticky bit,
+# so a stale lock file belonging to another user cannot be removed. fuser and
+# lsof read the same /proc and are equally blind.
+#
+# The grant is scoped by ARGV, not by trusting the script: no form takes a PID,
+# the device argument is matched against ^tty(USB|ACM|S)[0-9]+$ before it is
+# used, and the script refuses to signal PID 1, anything owned by root, or
+# anything under system.slice (a getty on a serial console, ModemManager
+# probing a port). Every kill is logged to authpriv with the invoking user.
+#
+# dialout because that is already the entitlement for USING a serial port
+# (udev puts the tty nodes in it -- see fpga_tools' 70-fpga-programmers.rules).
+# Anyone who can open the port can take it back; nobody else can do either.
+# Not NOPASSWD: ending another person's session is worth an authentication.
+serial_free_enabled: true
+serial_access_group: dialout
+
 # ---- Common packages (BOTH profiles) ---------------------------------------
 # Installed on every box regardless of profile, before hardening. Keep this list
 # lean (each package is attack surface + a potential STIG finding).
