@@ -114,7 +114,7 @@
     # roles/base_packages/tasks/main.yml.
     # -------------------------------------------------------------------------
     - role: base_packages    # development: clamav/wireshark/python/editor/putty; ai: lean baseline; baseline: common only
-      tags: [packages]          # apt work; skipped by a light `it-pull` (see docs/procedures.md 5.10)
+      tags: [packages]          # apt work; skipped by a light `it-pull` (see docs/procedures.md 1.10)
 
     # -------------------------------------------------------------------------
     # SHARED PROVISIONING  (all profiles)
@@ -220,7 +220,7 @@
     # TAGGED ai-runtime: everything that can disturb a RUNNING container. Skip
     # the tag to bring a live AI node up to date on the STIG/audit/scripts side
     # without touching Docker, the daemon config, or the compose stacks --
-    # `--skip-tags ai-runtime`. See docs/procedures.md 5.9.
+    # `--skip-tags ai-runtime`. See docs/procedures.md 5.8.
     - role: ai_stack                # docker-ce + NVIDIA + selectable Compose stack (vLLM/WebUI/pgvector/Docling)
       when: is_ai
       tags: [ai-runtime]
