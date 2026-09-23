@@ -3479,15 +3479,23 @@ before you go further, or it is lost at the recreate.
 ### Steps
 
 ```bash
+# 0. Confirm the pull will not deploy. If site.yml has flipped this to true,
+#    `it-pull ai` recreates EVERY stack, not just prometheus.
+grep -r ai_compose_deploy /opt/it/site.yml /etc/stig-build/site.yml 2>/dev/null
+docker ps --format '{{.Names}}\t{{.Status}}' | sort > /tmp/before.txt
+
 # 1. Keep a copy of the live config, off the box if you can.
 sudo cp -a /opt/it/docker/grafana/prometheus.yml /root/prometheus.yml.asbuilt
 
-# 2. Pull. This creates /opt/docker and renders everything into it. Nothing is
-#    deleted and no container is touched.
-sudo it-pull
+# 2. Pull. `ai`, NOT a plain `it-pull` -- ai_compose is tagged ai-runtime and a
+#    light pull SKIPS it (--skip-tags ai-runtime,ai-gpu), so nothing would be
+#    created. This renders the new root; it deletes nothing, and with
+#    ai_compose_deploy=false (the default) it recreates no container.
+sudo it-pull ai
 
-# 3. Check the new root looks right, and that the old one is only what you
-#    expect to lose.
+# 3. Check the new root looks right, that nothing moved, and that the old root
+#    holds only what you expect to lose.
+docker ps --format '{{.Names}}\t{{.Status}}' | sort | diff /tmp/before.txt -
 ls -la /opt/docker /opt/docker/build
 sudo diff -r /opt/it/docker /opt/docker 2>&1 | head -40
 
