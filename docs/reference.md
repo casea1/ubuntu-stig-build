@@ -299,6 +299,27 @@ The repo's version mounts `prometheus-data:/prometheus`, external, which survive
 
 **The config half is CLOSED (2026-09-22).** The box mounted `/opt/it/docker/grafana/prometheus.yml` by **absolute path** while `ai_compose` templated the scrape config to `/opt/stacks/prometheus/prometheus.yml` and nowhere else — so the managed file was ignored and the file actually in use was hand-made and unmanaged. That file carries System 1's address, so **after `it-set-ip` renumbered the node, Prometheus kept scraping the old one**, and the template that exists to prevent exactly that was read by nobody. The mount is now the relative `./prometheus.yml`, which is the rendered file. Note that the architects' docs described the absolute path as deliberate; this resolves that disagreement in favour of the managed file and they should be told. Migration steps: [procedures.md §5.9](procedures.md#59-moving-the-docker-asset-root-one-time-off-optitdocker).
 
+**12ae. "Up but not answering" and "starting" look identical, and only the clock tells them apart — a nine-day AV outage on ASP-2 hid behind that.** Found 2026-09-23.
+
+`clamav_container` runs clamd in a container because the host engine cannot detect anything under FIPS. clamd binds its socket only **after** loading the signature set — 60–90 s for ~3.6M signatures — so "the unit is active, the container is in `docker ps`, and the socket does not answer" is the *normal* state right after a restart. It is also exactly what a **hung** container looks like, forever.
+
+`it-clamav` had no time bound on that check, so ASP-2 reported:
+
+> `still starting -- clamd loads the signature set before it binds its socket (~60-90s after a restart). Re-run it in a minute.`
+
+The container's newest log line was **nine days old**. clamd writes a `SelfCheck: Database status OK` every ~10 minutes, so it had stopped doing anything on 14 Sep. Re-running in a minute would never have helped, and every scan in that window had silently fallen back to the host engine — which on a FIPS box reports `OK` for everything including EICAR. **The box had had no working anti-virus for nine days and the diagnostic tool was reassuring the operator each time it was run.**
+
+Two signals fix it, and both are cheap:
+
+- **Container uptime** (`docker inspect -f '{{.State.StartedAt}}'`). Under `CTR_START_GRACE` (300 s) it is starting; past that with a dead socket it is wedged.
+- **Newest log line** (`docker logs --tail 1 --timestamps`). clamd SelfChecks every ~10 minutes, so an hour of silence is a liveness failure independent of the socket — a container can be `Up 9 days` to Docker and have been doing nothing for eight of them.
+
+`it-clamav test` and `it-clamav` now say `WEDGED -- up 9d 0h and the socket has never answered. This is NOT 'still starting'`, name how long the box has been unprotected, and run the postmortem.
+
+**The general lesson is worth more than the ClamAV specifics.** Any "still initialising, try again shortly" state needs a deadline, or it is indistinguishable from failure and reads as reassurance. A check that cannot ever say "this has taken too long" is not a check.
+
+Same pass fixed a second one in that tool: the *"can a non-admin DTA use the daemon?"* section read `/etc/clamav/clamd.conf` unconditionally, so on every containerised box it reported the **host** socket missing and "the daemon is not running" — true of the host daemon, which is masked there on purpose, and wrong about the question being asked. It now reads whichever config is actually serving and says so.
+
 **12ad. A sudoers command written with no arguments permits ANY arguments, so a "narrow" grant can be wide open and still read as narrow.** Caught while testing the `it-serial` grant, and it applies to every `sudoers.d` drop-in in this repo.
 
 This looks like a careful, enumerated grant:

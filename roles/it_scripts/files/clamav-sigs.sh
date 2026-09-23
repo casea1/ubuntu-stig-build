@@ -153,12 +153,62 @@ engine_selftest() {  # -> 0 detects, 1 does not.  Sets SELFTEST_ENGINE/SELFTEST_
   [ "$rc" -eq 1 ]
 }
 
-# Up but not listening yet: the unit is running and the container has not
-# exited. clamd is loading signatures.
-ctr_starting() {
+# clamd binds its socket only AFTER loading the signature set, so "up but not
+# answering" is NORMAL for the first minute or so. It is also exactly what a
+# WEDGED container looks like, and the only thing separating the two is TIME.
+#
+# This used to have no time bound, so a container that had been hung for nine
+# days still reported "still starting -- re-run in a minute" (ASP-2,
+# 2026-09-23). The advice was unfollowable and the box had had no working AV
+# since the container stopped logging. Both checks below are bounded now.
+CTR_START_GRACE=300        # 60-90s is typical for ~3.6M signatures; be generous
+CTR_LOG_STALE=3600         # clamd SelfChecks every ~10 min; an hour of silence is wedged
+
+# Seconds since the container started. Fails if it is not running at all.
+ctr_uptime() {
+  local started t
+  started=$(docker inspect -f '{{.State.StartedAt}}' clamav-container 2>/dev/null) || return 1
+  [ -n "$started" ] || return 1
+  t=$(date -d "$started" +%s 2>/dev/null) || return 1
+  echo $(( $(date +%s) - t ))
+}
+
+# Seconds since its newest log line. clamd logs a SelfCheck every ~10 minutes,
+# so this is a liveness signal independent of the socket -- a container can be
+# "Up 9 days" to docker and have stopped doing anything a week ago.
+ctr_log_age() {
+  local last t
+  last=$(docker logs --tail 1 --timestamps clamav-container 2>/dev/null | awk '{print $1}')
+  [ -n "$last" ] || return 1
+  t=$(date -d "$last" +%s 2>/dev/null) || return 1
+  echo $(( $(date +%s) - t ))
+}
+
+ctr_running() {
   [ "$(systemctl is-active clamav-container 2>/dev/null)" = active ] || return 1
   docker ps --filter name=clamav-container --format '{{.Names}}' 2>/dev/null \
     | grep -q clamav-container
+}
+
+ctr_starting() {
+  ctr_running || return 1
+  local up; up=$(ctr_uptime) || return 1
+  [ "$up" -lt "$CTR_START_GRACE" ]
+}
+
+# Up, past the grace, and still not answering: not starting. Broken.
+ctr_wedged() {
+  ctr_running || return 1
+  ctr_alive && return 1
+  local up; up=$(ctr_uptime) || return 1
+  [ "$up" -ge "$CTR_START_GRACE" ]
+}
+
+human_secs() {   # $1 = seconds -> "9d 2h" / "14m"
+  local s="${1:-0}"
+  if   [ "$s" -ge 86400 ]; then printf '%dd %dh' $(( s / 86400 )) $(( (s % 86400) / 3600 ))
+  elif [ "$s" -ge 3600 ];  then printf '%dh %dm' $(( s / 3600 ))  $(( (s % 3600) / 60 ))
+  else printf '%dm' $(( s / 60 )); fi
 }
 
 # When the containerised daemon is configured but not answering, the useful
@@ -201,14 +251,24 @@ engine_report() {
     if ctr_alive; then
       ok "                      socket answering"
     elif ctr_starting; then
-      # clamd binds its socket only AFTER loading the signature set -- roughly a
-      # minute for 3.6M signatures. Restart-then-test-immediately looks exactly
-      # like a broken container otherwise.
       warn "                      still starting -- clamd loads the signature set"
       warn "                      before it binds the socket (allow ~60-90s after a"
-      warn "                      restart). Re-run this in a minute."
+      warn "                      restart, and it has been $(human_secs "$(ctr_uptime)"))."
+      warn "                      Re-run this in a minute."
       say "  ${DIM}--- docker logs (last 10) ---${R}"
       docker logs --tail 10 clamav-container 2>&1 | sed 's/^/  /' | head -12
+    elif ctr_wedged; then
+      local _up _la
+      _up=$(ctr_uptime 2>/dev/null || echo 0); _la=$(ctr_log_age 2>/dev/null || echo "")
+      bad "                      WEDGED -- up $(human_secs "$_up") and the socket has"
+      bad "                      never answered. This is NOT 'still starting'."
+      if [ -n "$_la" ] && [ "$_la" -ge "$CTR_LOG_STALE" ]; then
+        bad "                      Last log line was $(human_secs "$_la") ago; clamd"
+        bad "                      SelfChecks every ~10 min, so it stopped working then."
+        bad "                      THIS BOX HAS HAD NO WORKING AV SINCE."
+      fi
+      bad "                      Restart it: systemctl restart clamav-container"
+      container_postmortem
     else
       bad "                      socket NOT answering"
       container_postmortem
@@ -379,11 +439,29 @@ cmd_test() {
     say ""
     return 0
   fi
-  if [ -r "$CTR_CONF" ] && ctr_starting && ! ctr_alive; then
+  if [ -r "$CTR_CONF" ] && ctr_starting; then
     warn "The containerised engine is still starting -- clamd loads the signature"
     warn "set before it binds its socket (~60-90s after a restart). This test used"
     warn "$SELFTEST_ENGINE instead, which is not the engine that will do the work."
     warn "Re-run it in a minute."
+    say ""
+  elif [ -r "$CTR_CONF" ] && ctr_wedged; then
+    # The important distinction, and the one this tool used to get wrong: a
+    # container that is UP but has never answered is not starting, and telling
+    # someone to re-run in a minute hides an outage for as long as they believe
+    # it. What ran instead was the host engine, which on FIPS detects nothing.
+    local _la
+    _la=$(ctr_log_age 2>/dev/null || echo "")
+    bad "THE CONTAINERISED ENGINE IS WEDGED, NOT STARTING."
+    bad "It has been up $(human_secs "$(ctr_uptime)") and its socket has never answered."
+    if [ -n "$_la" ] && [ "$_la" -ge "$CTR_LOG_STALE" ]; then
+      bad "Its last log line was $(human_secs "$_la") ago -- clamd SelfChecks every"
+      bad "~10 minutes, so it stopped doing anything then. THIS BOX HAS HAD NO"
+      bad "WORKING ANTI-VIRUS SINCE, and every scan in that window reported OK"
+      bad "because it silently fell back to the host engine, which cannot detect."
+    fi
+    bad "Restart it, wait 90s, then re-run this:"
+    bad "  sudo systemctl restart clamav-container && sleep 90 && sudo it-clamav test"
     say ""
   fi
   bad "FAIL -- $SELFTEST_ENGINE did NOT detect the EICAR test file."
@@ -534,9 +612,16 @@ cmd_check() {
   fi
 
   head2 "Scanner socket (can a non-admin DTA use the daemon?)"
-  local sock mode
-  sock=$(awk '/^LocalSocket[[:space:]]/{print $2; exit}' /etc/clamav/clamd.conf 2>/dev/null)
+  # Read the config of whichever engine is ACTUALLY serving. This used to read
+  # /etc/clamav/clamd.conf unconditionally, so on every containerised box it
+  # reported the host socket missing and "the daemon is not running" -- true of
+  # the host daemon, which is masked on purpose there, and wrong about the DTA
+  # path, which is the question being asked.
+  local sock mode conf=/etc/clamav/clamd.conf
+  [ -r "$CTR_CONF" ] && conf="$CTR_CONF"
+  sock=$(awk '/^LocalSocket[[:space:]]/{print $2; exit}' "$conf" 2>/dev/null)
   sock="${sock:-/run/clamav/clamd.ctl}"
+  printf '  %sfrom %s%s\n' "$DIM" "$conf" "$R"
   if [ -S "$sock" ]; then
     printf '  %s  %s\n' "$sock" "$(stat -c '%A %U:%G' "$sock")"
     mode=$(stat -c %a "$sock")
@@ -553,6 +638,10 @@ cmd_check() {
       warn "to use the daemon instead, set LocalSocketMode 666 (or LocalSocketGroup dta)"
       warn "in /etc/clamav/clamd.conf and restart clamav-daemon"
     fi
+  elif [ "$conf" = "$CTR_CONF" ]; then
+    warn "  $sock does not exist -- the containerised scanner is not serving."
+    warn "  dta-log falls back to standalone clamscan, which on a FIPS box"
+    warn "  DETECTS NOTHING. Fix it: systemctl restart clamav-container"
   else
     warn "  $sock does not exist -- the daemon is not running."
   fi
