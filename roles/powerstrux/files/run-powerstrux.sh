@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-powerstrux -- run the PowerStrux LA audit and say where the report went.
+# it-powerstrux -- run the PowerStrux LA audit and say where the report went.
 #
 # PowerStrux is a PowerShell tool: the work is done by Initiate-PowerstruxLA.ps1,
 # which lives with the ReportHTML module rather than in /opt/_AuditFiles. This
@@ -10,25 +10,25 @@
 # produces a thinner report rather than failing, which is worse than not running.
 #
 # Usage:
-#   run-powerstrux                    run the audit now (the default)
-#   run-powerstrux --quiet            no progress output; used by the schedule
-#   run-powerstrux --where            print script/config/log paths and exit
-#   run-powerstrux install            install PowerStrux from a staged vendor
+#   it-powerstrux                    run the audit now (the default)
+#   it-powerstrux --quiet            no progress output; used by the schedule
+#   it-powerstrux --where            print script/config/log paths and exit
+#   it-powerstrux install            install PowerStrux from a staged vendor
 #                                     zip: unpack it, put the module where
 #                                     PowerShell looks, and set the reporting
 #                                     window + report directory in its config.
 #                                     --zip PATH, --days N, --dir PATH,
 #                                     --force-config (replace a tuned config)
-#   run-powerstrux config             set just the window/directory again:
+#   it-powerstrux config             set just the window/directory again:
 #                                     --days N, --dir PATH
-#   run-powerstrux open               copy the newest report into your home and open it
-#   run-powerstrux status             schedule state, last run, next run
-#   run-powerstrux schedule           show the current schedule
-#   run-powerstrux schedule "<spec>"  change it, e.g. "Wed *-*-* 03:00:00"
-#   run-powerstrux enable | disable   turn the scheduled run on or off
-#   run-powerstrux offload [...]      the weekly copy of the report to a file
+#   it-powerstrux open               copy the newest report into your home and open it
+#   it-powerstrux status             schedule state, last run, next run
+#   it-powerstrux schedule           show the current schedule
+#   it-powerstrux schedule "<spec>"  change it, e.g. "Wed *-*-* 03:00:00"
+#   it-powerstrux enable | disable   turn the scheduled run on or off
+#   it-powerstrux offload [...]      the weekly copy of the report to a file
 #                                     share -- setup, creds, test, run, status.
-#                                     `run-powerstrux offload --help` for those.
+#                                     `it-powerstrux offload --help` for those.
 #
 # A schedule change is written to BOTH the live timer and /opt/it/site.yml, so
 # it survives the next ansible-pull. Change only the timer and the pull puts it
@@ -79,6 +79,31 @@ powerstrux_report_name() {
 
 SITE_YML="${SITE_YML:-/opt/it/site.yml}"
 TIMER=/etc/systemd/system/powerstrux-audit.timer
+
+# The timer and its service are written by ANSIBLE, and the powerstrux role
+# skips them while Initiate-PowerstruxLA.ps1 is absent -- so right after
+# `it-powerstrux install` the tool is there and the units are not. systemd's own
+# "unit file powerstrux-audit.timer does not exist" is true and tells you
+# nothing about why, or what to do. Returns 1 when there is no timer.
+no_timer_yet() {
+  [ -f "$TIMER" ] && return 0
+  systemctl cat powerstrux-audit.timer >/dev/null 2>&1 && return 0
+  cat >&2 <<EOF
+
+There is no scheduled-audit timer on this box yet.
+
+That is expected if you have just run \`it-powerstrux install\`. The timer and
+its service are created by the baseline, and it skips them while PowerStrux
+itself is missing -- which it was, until a moment ago. Nothing is broken; the
+box has not been told yet.
+
+  sudo it-pull scripts        # creates the units (and the desktop icon)
+  sudo it-powerstrux enable   # then this works
+
+\`scripts\` is the light pull: no apt, no scan, no container touched.
+EOF
+  return 1
+}
 CRON=/etc/cron.d/powerstrux-audit
 
 # ---- report helpers --------------------------------------------------------
@@ -120,7 +145,7 @@ cmd_open() {
   src="$(report_newest)"
   if [ -z "$src" ]; then
     echo "No report found under $AUDIT_DIR." >&2
-    echo "Run one first:  run-powerstrux" >&2
+    echo "Run one first:  it-powerstrux" >&2
     return 1
   fi
   if [ ! -r "$src" ]; then
@@ -168,7 +193,7 @@ schedule_status() {
     printf '  schedule  : %s\n' "${spec:-(none)}"
     printf '  file      : %s\n' "$CRON"
   else
-    printf '  NOT SCHEDULED. Enable with: sudo run-powerstrux enable\n'
+    printf '  NOT SCHEDULED. Enable with: sudo it-powerstrux enable\n'
   fi
   echo
   local last; last=$(ls -1t "$LOG_DIR"/powerstrux-*.log 2>/dev/null | head -1)
@@ -190,7 +215,7 @@ set_schedule() {
     fi
   fi
 
-  [ -f "$TIMER" ] || { echo "No timer at $TIMER -- is the schedule enabled?" >&2; return 1; }
+  [ -f "$TIMER" ] || { no_timer_yet; return 1; }
   cp -a "$TIMER" "$TIMER.bak-$(date +%Y%m%d-%H%M%S)"
   sed -i "s|^OnCalendar=.*|OnCalendar=$spec|" "$TIMER"
   systemctl daemon-reload
@@ -203,7 +228,7 @@ set_schedule() {
     if grep -q '^powerstrux_oncalendar:' "$SITE_YML"; then
       sed -i "s|^powerstrux_oncalendar:.*|powerstrux_oncalendar: \"$spec\"|" "$SITE_YML"
     else
-      printf '\n# Set by run-powerstrux on %s\npowerstrux_oncalendar: "%s"\n' \
+      printf '\n# Set by it-powerstrux on %s\npowerstrux_oncalendar: "%s"\n' \
         "$(date -Is)" "$spec" >> "$SITE_YML"
     fi
     echo "Updated $SITE_YML so the next ansible-pull keeps this schedule."
@@ -459,6 +484,7 @@ case "${1:-}" in
     set_schedule "$2"; exit $? ;;
   enable|disable)
     [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
+    no_timer_yet || exit 1
     if [ "$1" = enable ]; then
       systemctl enable --now powerstrux-audit.timer && echo "Scheduled audit ENABLED."
     else
@@ -479,7 +505,14 @@ for a in "$@"; do
       echo "logs   : $LOG_DIR"
       echo "reports: wherever PowerStruxLAConfig.txt puts them (see that file)"
       exit 0 ;;
-    -h|--help) awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"; exit 0 ;;
+    -h|--help)
+      # The header is written as `it-powerstrux`, which is what the role installs
+      # it as -- but print whatever it was actually invoked as. This file is
+      # named run-powerstrux.sh and the header said so for a year, so every line
+      # of --help named a command that does not exist on the box.
+      awk -v self="$(basename "$0")" \
+        'NR>1 && /^#/ { sub(/^# ?/, ""); gsub(/it-powerstrux/, self); print; next } NR>1 { exit }' "$0"
+      exit 0 ;;
     *) echo "unknown option: $a" >&2; exit 2 ;;
   esac
 done
@@ -539,7 +572,7 @@ if [ "$rc" -eq 0 ]; then
       say
       say "Open this copy (the original is under /opt, which the browser cannot see):"
       say "  $staged"
-      say "Or any time:  run-powerstrux open"
+      say "Or any time:  it-powerstrux open"
     fi
   fi
 else
