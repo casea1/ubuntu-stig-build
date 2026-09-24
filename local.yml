@@ -176,8 +176,8 @@
     - role: dev_tools               # compilers/SDKs, /opt/eng-venv, VS Code extensions, docker.io (development + emi)
       # NO role-level `packages` tag (trap 34). A role tag is inherited by every
       # task in the role and --skip-tags BEATS a task's own tag, so this made
-      # `it-pull light` skip the WHOLE role -- including the it-vscode and
-      # it-codeserver installs and the `it-vscode link --all` that repairs
+      # `it-pull light` skip the WHOLE role -- including the it-vscode install,
+      # the code-server removal, and the `it-vscode link --all` that repairs
       # root-owned home directories. A fix could only ship on a full pull, which
       # is exactly what happened on dev-16. The heavy halves carry the tag
       # themselves now; see tasks/main.yml.

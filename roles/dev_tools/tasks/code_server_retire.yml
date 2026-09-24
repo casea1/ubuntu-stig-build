@@ -1,0 +1,136 @@
+---
+# =============================================================================
+# code-server is RETIRED. It is Coder's build of the open-source editor, not
+# Microsoft's VS Code: extensions come from Open VSX, so Pylance, C/C++, C# Dev
+# Kit and Dev Containers were never available in it. Engineers use Remote-SSH
+# from Microsoft's desktop VS Code instead, staged offline by it-vscode-server.
+#
+# This file REMOVES it, on every pull, because Ansible only ever creates (trap
+# 3). Turning the old flag off was not enough and never had been: the install
+# tasks were imported only WHEN ENABLED, so the "take my-ide away when disabled"
+# task inside them could never run, and the firewall range was only managed
+# while enabled too. A box that ever had code-server kept all of it.
+#
+# The old dev_code_server_* variables are read with defaults so a site.yml that
+# still carries them (a non-default port, a restricted allow_from) is honoured
+# -- the ufw rule has to be deleted with the same source it was created with.
+#
+# NOT removed: ~/.local/share/code-server. That holds the engineer's own
+# settings, keybindings and workspace state; deleting someone's data is not a
+# pull's decision. The PASSWORD in ~/.config/code-server IS removed.
+# =============================================================================
+
+# Anyone who ever had an instance: a config dir or an enabled user unit in
+# their home. Enumerated from the homes, not from group membership -- someone
+# removed from the group still has the leftovers.
+- name: "CODE-SERVER-RETIRE | Who has leftovers?"
+  ansible.builtin.shell:
+    cmd: |
+      getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1":"$6}' |
+      while IFS=: read -r u h; do
+        [ -n "$h" ] && [ -d "$h" ] || continue
+        if [ -e "$h/.config/code-server" ] ||
+           [ -e "$h/.config/systemd/user/default.target.wants/code-server.service" ]; then
+          echo "$u:$h"
+        fi
+      done
+      exit 0
+  register: _csr_users
+  changed_when: false
+  check_mode: false
+
+# Stop the running instance in each person's own manager. Only reachable while
+# they are logged in or lingering -- which is exactly when one can be running.
+- name: "CODE-SERVER-RETIRE | Stop and disable each user's instance"
+  ansible.builtin.command: >-
+    systemctl --user --machine={{ item.split(':')[0] }}@.host disable --now code-server.service
+  loop: "{{ _csr_users.stdout_lines | default([]) }}"
+  loop_control:
+    label: "{{ item.split(':')[0] }}"
+  changed_when: false
+  failed_when: false
+
+# AS THE USER, not as root: root deleting inside a home that user controls will
+# follow any symlink they planted there. The enable link has to go too, or their
+# manager logs a missing unit at every login once the unit file is removed.
+- name: "CODE-SERVER-RETIRE | Remove the password file and the enable link"
+  # Absolute paths from the probe: the command module does no shell expansion,
+  # so a `~user` here would reach rm as a literal string and delete nothing.
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ item.split(':')[0] }}"
+      - --
+      - rm
+      - -rf
+      - --
+      - "{{ item.split(':', 1)[1] }}/.config/code-server"
+      - "{{ item.split(':', 1)[1] }}/.config/systemd/user/default.target.wants/code-server.service"
+  loop: "{{ _csr_users.stdout_lines | default([]) }}"
+  loop_control:
+    label: "{{ item.split(':')[0] }}"
+  changed_when: true
+  failed_when: false
+  when: (_csr_users.stdout_lines | default([])) | length > 0
+
+# Lingering was turned on ONLY for the people named here, and only for this.
+# Anyone with linger for another reason is not in that list and is left alone.
+- name: "CODE-SERVER-RETIRE | Turn off the lingering this feature turned on"
+  ansible.builtin.command: "loginctl disable-linger {{ item }}"
+  loop: "{{ dev_code_server_linger_users | default([]) }}"
+  changed_when: false
+  failed_when: false
+
+# The pre-user-unit model: one SYSTEM unit per person, started at boot.
+- name: "CODE-SERVER-RETIRE | Old system instances"
+  ansible.builtin.shell:
+    cmd: |
+      {
+        systemctl list-units --all --plain --no-legend 'code-server@*.service' 2>/dev/null | awk '{print $1}'
+        ls /etc/systemd/system/*.wants/code-server@*.service 2>/dev/null | xargs -r -n1 basename
+      } | sort -u | sed '/^$/d'
+      exit 0
+  register: _csr_sys
+  changed_when: false
+  check_mode: false
+
+- name: "CODE-SERVER-RETIRE | Stop, disable and clear the failed state of each"
+  ansible.builtin.shell: >-
+    systemctl disable --now {{ item }};
+    systemctl reset-failed {{ item }}
+  loop: "{{ _csr_sys.stdout_lines | default([]) }}"
+  changed_when: true
+  failed_when: false
+
+# No `packages` tag, deliberately: a light pull has to remove it too, and an
+# apt REMOVAL needs no network, so there is nothing to skip it for.
+- name: "CODE-SERVER-RETIRE | Remove the package"
+  ansible.builtin.apt:
+    name: code-server
+    state: absent
+    purge: true
+
+- name: "CODE-SERVER-RETIRE | Remove everything else it placed"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/user/code-server.service
+    - /etc/code-server                                   # root-only password store
+    - /usr/local/sbin/it-codeserver
+    - "{{ it_scripts_dir | default('/opt/it/scripts') }}/code-server-status.sh"
+    - /usr/local/bin/my-ide
+    - /usr/share/applications/my-ide.desktop
+    - "/etc/sudoers.d/60-{{ dev_code_server_group | default('sentry') }}-codeserver"
+  register: _csr_files
+  tags: [scripts]
+
+- name: "CODE-SERVER-RETIRE | Reload systemd and the desktop database"
+  ansible.builtin.shell: >-
+    systemctl daemon-reload;
+    update-desktop-database /usr/share/applications 2>/dev/null
+  changed_when: false
+  failed_when: false
+  when: _csr_files is changed
+  tags: [scripts]

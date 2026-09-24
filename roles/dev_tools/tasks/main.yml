@@ -2,7 +2,7 @@
 # Developer tooling. Runs AFTER app_config and BEFORE hardening (usg_harden) — it needs
 # internet and must finish before hardening locks down /tmp / PAM / network.
 
-# dev_tools ships it-vscode and it-codeserver into /opt/it/scripts, but the role
+# dev_tools ships it-vscode into /opt/it/scripts, but the role
 # that CREATES that directory (it_scripts) runs much later in local.yml. On a
 # first build the copy therefore failed outright -- "Destination directory
 # /opt/it/scripts does not exist" -- and because the play stops on the first
@@ -41,6 +41,7 @@
   ansible.builtin.import_tasks: vscode.yml
   when: editor_choice == "vscode"
 
-- name: Install code-server (VS Code in the browser)
-  ansible.builtin.import_tasks: code_server.yml
-  when: dev_code_server_enabled | default(false) | bool
+# Unconditional: it removes code-server from any box that ever had it. See the
+# file for why switching the old flag off never did.
+- name: Retire code-server (replaced by Remote-SSH -- it-vscode-server)
+  ansible.builtin.import_tasks: code_server_retire.yml

@@ -319,15 +319,15 @@ confirm() {   # $1 = prompt
 
 live_sessions() { loginctl list-sessions --no-legend 2>/dev/null | awk -v u="$1" '$3==u' | wc -l; }
 
-# code-server is one systemd instance per person (code-server@<user>.service).
-# A disabled account must not keep an IDE with a shell in it running.
-stop_code_server() {   # $1 = user
-  systemctl list-unit-files "code-server@$1.service" >/dev/null 2>&1 || return 0
-  if systemctl is-enabled --quiet "code-server@$1.service" 2>/dev/null ||
-     systemctl is-active  --quiet "code-server@$1.service" 2>/dev/null; then
-    systemctl disable --now "code-server@$1.service" >/dev/null 2>&1 &&
-      ok "code-server@$1 stopped and disabled"
-  fi
+# A disabled account must not keep an IDE with a shell in it running. A
+# Remote-SSH server outlives the SSH connection that started it -- VS Code keeps
+# it for a 3-hour reconnection grace -- so locking the account does not stop it,
+# and its integrated terminal is a shell as that person. -u confines the match
+# to their own processes, so nothing of anyone else's can be caught by it.
+stop_vscode_server() {   # $1 = user
+  pgrep -u "$1" -f '\.vscode-server/|/opt/vscode-server/' >/dev/null 2>&1 || return 0
+  pkill -u "$1" -f '\.vscode-server/|/opt/vscode-server/' 2>/dev/null &&
+    ok "VS Code server processes for $1 stopped"
 }
 
 # ---------------------------------------------------------------------------
@@ -391,7 +391,7 @@ cmd_lock() {
   passwd -l "$u" >/dev/null 2>&1 && ok "password locked" || warn "passwd -l failed"
   chage -E 1 "$u" 2>/dev/null && ok "account expired (1970-01-02)" || warn "chage -E failed"
   usermod -s "$NOLOGIN" "$u" 2>/dev/null && ok "shell -> $NOLOGIN" || warn "shell unchanged"
-  stop_code_server "$u"
+  stop_vscode_server "$u"
   if [ "$KILL_SESSIONS" -eq 1 ] && [ "$n" -gt 0 ]; then
     loginctl terminate-user "$u" 2>/dev/null && ok "live sessions ended"
   fi
@@ -454,7 +454,7 @@ cmd_delete() {
   baseline_warn "$u" "RECREATE this account, with a fresh empty home"
   confirm "delete $u" || die "not confirmed -- nothing was changed"
 
-  stop_code_server "$u"
+  stop_vscode_server "$u"
   [ "$n" -gt 0 ] && { loginctl terminate-user "$u" 2>/dev/null; sleep 2; }
   crontab -r -u "$u" 2>/dev/null && ok "crontab removed"
   pkill -KILL -u "$u" 2>/dev/null

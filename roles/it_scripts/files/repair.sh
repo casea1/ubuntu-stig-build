@@ -200,11 +200,10 @@ check_net() {
 }
 
 # ---------------------------------------------------------------------------
-# 3. Leftover code-server SYSTEM units. The instance is a systemd USER service
-# now, started by its owner and gone when they log out. Any surviving
-# code-server@<user> system unit is the old model: it starts at boot, for
-# everybody, and races the user's own copy for the same port. Removing it is
-# the migration, and it is safe -- the user service replaces it entirely.
+# 3. Leftover code-server SYSTEM units. code-server is RETIRED (engineers use
+# Remote-SSH -- it-vscode-server) and the pull removes it, but a box that has not
+# pulled since can still start one at boot, for everybody. Stopping it is safe:
+# nothing replaces it on this box, and nothing needs it.
 # ---------------------------------------------------------------------------
 check_codeserver() {
   head2 "code-server instances"
@@ -216,7 +215,7 @@ check_codeserver() {
     if fixing; then
       systemctl disable --now "code-server@$u.service" >/dev/null 2>&1
       systemctl reset-failed "code-server@$u.service" >/dev/null 2>&1
-      did "$u: old system unit retired (they start their own: it-codeserver mine start)"
+      did "$u: old code-server unit stopped (retired -- engineers use Remote-SSH: it-vscode-server)"
     else
       warn "$u: old system unit still starts at boot"
       flag

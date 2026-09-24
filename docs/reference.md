@@ -299,6 +299,27 @@ The repo's version mounts `prometheus-data:/prometheus`, external, which survive
 
 **The config half is CLOSED (2026-09-22).** The box mounted `/opt/it/docker/grafana/prometheus.yml` by **absolute path** while `ai_compose` templated the scrape config to `/opt/stacks/prometheus/prometheus.yml` and nowhere else — so the managed file was ignored and the file actually in use was hand-made and unmanaged. That file carries System 1's address, so **after `it-set-ip` renumbered the node, Prometheus kept scraping the old one**, and the template that exists to prevent exactly that was read by nobody. The mount is now the relative `./prometheus.yml`, which is the rendered file. Note that the architects' docs described the absolute path as deliberate; this resolves that disagreement in favour of the managed file and they should be told. Migration steps: [procedures.md §5.9](procedures.md#59-moving-the-docker-asset-root-one-time-off-optitdocker).
 
+**12af. VS Code offline: Remote-SSH works, the browser build cannot, and the guide that circulates stages it wrong.** Tested 2026-09-25 against 1.139.0 (commit `2242ebbb…`), with the internet blocked.
+
+**The browser build (`code serve-web`) cannot render webviews offline, and nothing configurable changes that.** The editor, terminal, debugger, Pylance and git all work — it passed behind an HTTPS proxy, from a shared read-only install, in headless Chromium. But every **webview** — Markdown preview, notebooks, GitLens and Git Graph panels, the SARIF viewer — is an error frame. Three things, all deliberate on Microsoft's side:
+
+1. The webview address `https://{{uuid}}.vscode-cdn.net/...` is **compiled into** `workbench.js`. Editing `product.json` changes nothing the browser sees.
+2. The server passes only `embedderIdentifier`, `voiceWsUrl` and `extensionsGallery` to the browser. `product.overrides.json` is honoured **only in development builds** (`if(!isBuilt)`).
+3. The webview page itself throws unless its hostname is `sha256(parentOrigin + salt)` in base 32 — Microsoft's origin isolation. Patching the compiled address to the box moves the frame local and then fails this check.
+
+Getting past it would mean editing Microsoft's compiled code on every release, wildcard DNS per box and a wildcard certificate every client trusts. **Desktop VS Code has none of this:** it registers its own secure `vscode-webview://` scheme and never touches the CDN, so Remote-SSH gets every webview offline.
+
+**The widely circulated offline guide is wrong for current VS Code.** It unpacks the *server* into a folder named `~/.vscode-server/code-<commit>`. Microsoft's installer (`linux-exec-server-installer.sh`, Remote-SSH 0.129) defines `CLI_PATH="$VSCODE_AGENT_FOLDER/code-$COMMIT_ID"` and tests it with `if [ ! -f "$CLI_PATH" ]` — **a file**, the CLI from `cli-alpine-x64`. A folder fails the test, and the connection tries to download on a box that cannot. What works:
+
+| PC setting | Box layout | Status |
+|---|---|---|
+| `remote.SSH.useExecServer: false` | `~/.vscode-server/bin/<commit>/` = the server | installer checks `node` + the server script there; **confirmed**, and a server started from it as a normal user |
+| default | `~/.vscode-server/code-<commit>` = the CLI (a file) **and** `~/.vscode-server/cli/servers/Stable-<commit>/server/` | CLI path confirmed from the installer; server path is Microsoft's documented layout, not confirmable without a client |
+
+`it-vscode-server` stages both, so either setting works.
+
+**`localServerDownload: always` does not make this offline-safe** — it makes the *PC* download and copy over SSH. That helps only when the PC has internet. With the files staged, neither download path runs at all.
+
 **12ae. "Up but not answering" and "starting" look identical, and only the clock tells them apart — a nine-day AV outage on ASP-2 hid behind that.** Found 2026-09-23.
 
 `clamav_container` runs clamd in a container because the host engine cannot detect anything under FIPS. clamd binds its socket only **after** loading the signature set — 60–90 s for ~3.6M signatures — so "the unit is active, the container is in `docker ps`, and the socket does not answer" is the *normal* state right after a restart. It is also exactly what a **hung** container looks like, forever.
@@ -590,7 +611,7 @@ Set with `deployment_profile` in `group_vars/all.yml`, or `PROFILE=` on `bootstr
 
 | Profile | For | What it builds |
 |---|---|---|
-| `development` | Engineering workstation | Dev toolchain, GNOME desktop over **RDP**, code-server, Cockpit |
+| `development` | Engineering workstation | Dev toolchain, GNOME desktop over **RDP**, Remote-SSH for VS Code, Cockpit |
 | `ai` | Two-node inference server | Docker + NVIDIA + Dockge + the compose stacks. Headless |
 | `emi` | Imaging / field workstation, **classified-capable** | `development` app set minus RDP, plus VPN/recon/CJK-IME, an imaging firewall (DHCP/TFTP/DNS/OpenVPN), and a camera + mic lockdown. FIPS + LUKS/TPM on, full `usg fix` |
 | `emi-unclass` | Same hardware, **unclassified only** | As `emi` but FIPS/LUKS/TPM off and the disruptive `usg fix` skipped. USG audit + ufw/dconf/banner hardening still apply. No `auto_audit`, no DTA gate on USB |
@@ -650,8 +671,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `it-passwd` | Reset a password, unlock the account, and clear its faillock counter. Asks the same three-way question as `it-adduser`: type one, **generate a temporary one** (`--temp`), or keep the current one. `--list` shows every account's state and expiry; `--unlock-only` skips the password |
 | `it-fpga` *(development only)* | The FPGA toolchains: `status` (default — what is installed, license reachability, cables), `license --server <port>@<host> [--xilinx …]` / `--file <License.dat>` / `--none`, `check`, `fixup`, **`install xilinx`** (unattended, from a staged `.bin` + saved config, under `systemd-run` so it survives a dropped session), `install --save-config`, **`desktop`** (import the vendor's own app tiles system-wide — the installers write them into the installing user's home, so Libero SoC / FPExpress / SmartHLS / PFSoC MSS otherwise belong to one account; each gets a wrapper that sets the environment, because the vendor's Exec line does not), `cables`, `env`. The baseline installs the scaffolding, **not** Vivado or Libero — those are baked into the image. A license change writes both `/etc/profile.d/*.sh` and `/opt/it/site.yml` |
 | `it-vscode` *(development)* | One copy of the VS Code extension set for the box. `status` (default), `link <user>\|--all`, `unlink`, `copy`, `verify`. Users get **symlinks** into `/opt/vscode-extensions`, so an account costs bytes rather than 3 GB; `/etc/skel` holds the same links so `useradd` stays instant. `verify` asks the editor what it can actually see |
-| `my-ide` *(development)* | **What an engineer actually uses**, plus an **IDE (in a browser)** tile in the applications grid that runs it with no arguments. `my-ide` starts their own instance and opens it; `stop`, `status`, `password`, `remote` (the LAN address for a Windows PC), `always`/`never` (start at login). No sudo — it drives the same systemd **user** unit `it-codeserver` manages. Opens `https://localhost:<port>`, which is also what avoids the certificate warning, since the self-signed cert is issued to *localhost* |
-| `it-codeserver` *(development)* | **`mine` is the engineer's half, and needs no privilege at all** — the instance is a systemd **user** service, so `it-codeserver mine start|stop|restart|enable|log` is theirs to run, and `it-codeserver mine` prints their URL, password and state. It takes no username, acting on the caller. Nothing starts at boot because a user manager exists only inside a session; `linger <user> on` is the deliberate per-person exception. Admin forms: `status` (default, shows LINGER), `password <user>`, `url`, `start`/`stop`/`restart` (into that user's manager), `linger`, `log`. code-server is single-user per instance, so each engineer runs their own on `dev_code_server_port + (uid - 1000)`. Entitlement is membership of `dev_code_server_group` — applied by the pull, not by enabling the unit |
+| `it-vscode-server` | **Microsoft's VS Code Server for Remote-SSH, staged offline.** `stage <folder>` installs one read-only copy per version in `/opt/vscode-server/<commit>` — version read from the server's own `product.json`, a CLI from another version or the browser build refused, a start as a non-root user checked — and links every `sentry` member's `~/.vscode-server` to it, **as that user** (root never follows a path inside someone's home). Both Remote-SSH layouts are staged: `bin/<commit>` (`useExecServer: false`, confirmed against Microsoft's installer) and `code-<commit>` + `cli/servers/Stable-<commit>/server` (the default mode). A real file or folder already there is the engineer's own copy and is never replaced. `link` (the pull runs it, so new members are covered), `unlink`, `remove <version>` (refuses while anyone is **executing** that version — by `/proc/<pid>/exe`, not command-line text), `urls <commit>` (the four downloads, including the matching Windows installer), `settings` (what each PC needs), and status: who is linked, and whether sshd allows the forwarding Remote-SSH depends on. Replaces code-server, `my-ide` and `it-codeserver`, which the pull removes |
 | `it-rdp` *(development)* | RDP sessions and the stale ones. `status` (default — live sessions, orphans, the reaping settings, and whether a pull deferred a sesman restart), `sweep` (reap ORPHANS only; never touches a live session), `reset <user>` (end that user's sessions — their desktop closes, so it asks), `restart` (restarts xrdp + sesman, refusing while sessions are live). The fault it exists for is an RDP window that closes a second after authentication |
 | `it-serial` *(development)* | USB serial adapters the kernel does not recognize. `status` (default — plugged in, bound, and whether a normal user can open the port), `bind`, `add <vid:pid>` (bind now **and** persist to `site.yml`), `ports`. `ftdi_sio` only binds IDs in its compiled-in table, so a Sealevel adapter (`0c52:e402`) enumerates and produces no `/dev/ttyUSB*` at all, with nothing logged — it reads as dead hardware. The ID is added to the driver's table by a boot-time oneshot, because that table lives in the module and is lost on every reboot |
 | `it-set-classification` | Set the banner level |
@@ -708,7 +728,7 @@ All self-elevate with `sudo`. Scripts live in `/opt/it/scripts`, symlinked into 
 | `/usr/share/applications/fpga-*.desktop` | App-grid tiles for every user. The vendors' installers do not make usable ones — a `--batch Install` under sudo puts them in `/root/Desktop` |
 | `/etc/stig-build/fpga/License.dat` | Node-locked FPGA license, `0600 root:root`. Absent when a license server is used, which is the fleet default |
 | `/opt/vscode-extensions/` | The box's single copy of the VS Code extension set. Users hold symlinks into it; `/etc/skel` holds the same. root:root 0755 |
-| `/etc/code-server/<user>.password` | Per-user code-server password, `0600 root:root`. Generated once, stable across pulls |
+| `/opt/vscode-server/<commit>/` | One read-only VS Code Server per version (`server/`, the CLI `code`, `MANIFEST` with sha256s), `root:root 0755`. Linked from each engineer's `~/.vscode-server` by `it-vscode-server` |
 | `/opt/stacks/<stack>/` | AI compose stacks — Dockge watches this dir |
 | `/srv/repo/` | The carried offline apt repo. `root:root 0755` |
 | `/etc/stig-build/` | Root-only. Generated `*.pw`, the GRUB hash, `profile` — which records the deployment profile and the **baseline revision** this box last pulled — and the offload configs/credentials |
@@ -773,10 +793,7 @@ The ones worth knowing:
 | `fpga_device_group` | `plugdev` | Who may talk to the JTAG programmers. `dialout` covers USB-serial consoles; both are in `local_users_common_groups` |
 | `fpga_ncurses5_shim` | true | Symlink `libtinfo.so.5`/`libncurses.so.5` onto the ncurses 6 sonames. Vivado hangs at *"Generating installed device list"* without it |
 | `desktop_initial_setup` | false | GNOME's first-login "Welcome!" wizard. Suppressed: the image already sets locale and keyboard, `it-adduser` provisions the account, and a closed-space box has no online accounts to add. Its broken-looking icon is the wizard itself — it ships none the theme resolves |
-| `dev_code_server_group` | `sentry` | Who gets a code-server instance. Every standing account joins `sentry`, so a new engineer gets one on the next pull. Empty = the primary user only |
-| `dev_code_server_exclude` | `[]` | Accounts in that group that should not get one. Locked accounts are skipped already (by shell); this is for `dta`/`audit`, which are in `sentry` too |
-| `dev_code_server_port` / `_uid_base` / `_port_span` | 8080 / 1000 / 20 | `port = base + (uid - uid_base)`. Derived from the UID so it is stable per person; a UID outside the span is skipped rather than colliding. The span is what ufw opens |
-| `dev_code_server_bind_addr` | `0.0.0.0` | **N IDEs on the LAN, one per engineer.** `127.0.0.1` takes them off it (RDP browser or SSH tunnel) and the pull removes the ufw rule |
+| `dev_code_server_*` | — | **Retired** with code-server. Still read, with defaults, by the removal on each pull — so a site.yml that set another port or a restricted `allow_from` still has its firewall rule found and deleted. Remove them from site.yml once every box has pulled |
 | `vscode_shared_extensions_dir` | `/opt/vscode-extensions` | One copy of the extension set for the whole box |
 | `dev_tools_vscode_skel_seed` | false | The old behavior: a real 3 GB copy in `/etc/skel`, so every `useradd` copies it. Superseded by the symlink store |
 | `ai_model_fetch` | — | Fetch model weights during the build |
@@ -1048,7 +1065,7 @@ IA / DCSA inventory. Versions are pinned in `group_vars/all.yml`, the compose fi
 | Python 3.12 + `/opt/eng-venv` | distro | PSF | Shared engineering venv (~140 libs) |
 | Node.js | 22.x LTS | NodeSource | JS runtime |
 | VS Code | latest | Microsoft | Editor (`editor_choice`) |
-| code-server | opt-in | Coder | VS Code in the browser (`development` only) |
+| VS Code Server | pinned per site | Microsoft | Remote-SSH backend, staged offline by `it-vscode-server`. Must equal the PCs' VS Code version exactly |
 | Wireshark / tshark | distro | Wireshark Foundation | Packet capture, gated to `wireshark_users` |
 | PuTTY | distro | PuTTY project | Serial / SSH client |
 | Docker (docker.io) | distro | Docker Inc. | Containers |

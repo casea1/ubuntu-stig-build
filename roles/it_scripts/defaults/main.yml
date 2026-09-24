@@ -20,6 +20,7 @@ it_scripts_emi_enabled: "{{ is_emi | default(false) | bool }}"
 # sudoers grants, which name the current path.
 it_scripts_retired_links:
   - it-offline-repo        # renamed to it-repo, 2026-09-01
+  - it-codeserver          # code-server retired for Remote-SSH, 2026-09-25
 
 # Scripts a NON-ADMIN group is granted sudo on. These are installed as REAL
 # FILES in /usr/local/sbin, not symlinked into /opt/it/scripts like everything
@@ -80,6 +81,10 @@ it_scripts_common:
   - { file: clamav-sigs.sh,        link: it-clamav }
   - { file: go-classified.sh,      link: it-goclassified }
   - { file: users.sh,              link: it-users }
+  # Remote-SSH, offline: one shared copy of Microsoft's VS Code Server per
+  # version in /opt/vscode-server, linked into each engineer's ~/.vscode-server.
+  # Every profile -- the AI architects Remote-SSH into the AI nodes too.
+  - { file: vscode-server.sh,      link: it-vscode-server }
   - { file: adduser.sh,            link: it-adduser }
   # Sourced by it-adduser AND it-passwd -- the policy check, the temporary-
   # password generator and the prompt, in one place so they cannot drift.

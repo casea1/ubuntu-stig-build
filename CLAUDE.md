@@ -157,14 +157,24 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   `extensions.json`, NOT by scanning, so the shared manifest travels with the
   links -- `it-vscode verify` asks the editor rather than the filesystem, and
   `it-vscode copy <user>` is the fallback if a version rejects it.
-- **code-server is single-user per instance.** Every engineer gets their own on
-  `dev_code_server_port + (uid - dev_code_server_uid_base)` -- derived from the
-  UID, never from a list position, or removing one person moves everyone else's
-  port. Entitlement is membership of `dev_code_server_group` (`sentry`), applied
-  by the pull; the pull also DISABLES instances for people no longer in it.
-  Locked accounts are skipped by their shell. Default bind is `0.0.0.0`, so this
-  is N IDEs on the LAN with shell access as that user -- `127.0.0.1` takes them
-  off it and the pull then removes the ufw range.
+- **Engineers use Remote-SSH from Microsoft's desktop VS Code; code-server is
+  RETIRED and the pull removes it** (`dev_tools/code_server_retire.yml`). It was
+  Coder's build, not Microsoft's -- Open VSX only, so no Pylance/C++/C# Dev Kit.
+  `it-vscode-server stage <folder>` installs one read-only server per version in
+  `/opt/vscode-server/<commit>` and links each `sentry` member's `~/.vscode-server`
+  (the pull re-links, so new members are covered). Four things not to undo:
+  1. **Links are made AS THE USER** (`runuser`). Root creating or deleting paths
+     in a home the user controls follows any symlink they planted there.
+  2. **`code-<commit>` must be a FILE** (the CLI). The guide that circulates
+     unpacks the server into a folder by that name; Microsoft's installer tests
+     it with `[ -f ]`, so that fails and tries to download. Trap 12af.
+  3. **Do not build a browser version.** `serve-web` loads every webview from
+     `*.vscode-cdn.net`, compiled in, and the webview page enforces a hashed
+     hostname. Tested to the end in a real browser; trap 12af has the proof.
+  4. **Every PC must run exactly the staged version** (`update.mode: none`).
+  The removal had to be written as its own always-on task: the old install file
+  was imported only WHEN ENABLED, so its "remove when disabled" tasks -- and the
+  ufw range -- could never run. Watch for that shape elsewhere.
 
 - **Never restart `xrdp-sesman` on a live box.** Every session it is managing is
   orphaned by the restart: the per-session processes are reparented to init and

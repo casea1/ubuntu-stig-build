@@ -1830,12 +1830,13 @@ change after a reset; `EXPIRED 10d ago` means they cannot log in until they set 
 `it-passwd --list` is the shorter view with the faillock counter; `it-users` is the one
 with expiry and groups.
 
-## 3.6c VS Code and code-server for the engineers
+## 3.6c VS Code for the engineers
 
 ### One copy of the extensions, not one per person
 
 The extension set lives once in **`/opt/vscode-extensions`**. Each user's
-`~/.vscode/extensions` (and `~/.local/share/code-server/extensions`) holds
+`~/.vscode/extensions` (and `~/.vscode-server/extensions`, where Remote-SSH runs
+them on the box) holds
 **symlinks** into it, so an account costs bytes rather than the 3.0 GB /
 27,395 files a real copy costs — which is what made a single `useradd` take
 65 seconds when the set was seeded into `/etc/skel`.
@@ -1863,135 +1864,75 @@ removes that user's *link*, not the store.
 > for that user — `sudo it-vscode copy <user>` — and the store is still worth
 > having as the source.
 
-### code-server, one per engineer
+### Remote-SSH from the engineers' PCs (offline)
 
-code-server is **single-user per instance** — there is no multi-tenant mode — so
-every user gets their own, on their own port:
+Engineers use **Microsoft's desktop VS Code on their own PC** and connect to the
+box with the Remote - SSH extension. That is the whole VS Code — Pylance, C/C++,
+C# Dev Kit, notebooks, previews — running at local speed, not over RDP.
 
-```
-port = dev_code_server_port + (uid - dev_code_server_uid_base)
-```
+code-server (`my-ide`, `it-codeserver`) is **retired**, and the pull removes it.
+It was Coder's build of the open-source editor, not Microsoft's: extensions came
+from Open VSX, so Microsoft's own extensions never existed in it.
 
-Derived from the UID, not from a position in a list, so removing one engineer
-does not move everyone else's port. With the defaults, uid 1000 → 8080, 1001 →
-8081, and so on.
+Remote-SSH looks on the box for a server built for **exactly** the PC's VS Code
+version, and on an air-gapped box it cannot download one. `it-vscode-server`
+stages it once per version, shared, and links every engineer to it.
 
-**What you hand an engineer: nothing.** There is an **IDE (in a browser)** tile
-in the applications grid. Clicking it starts their instance and opens it — that
-is the whole workflow, and it is all most people ever need.
+**Once per VS Code version** — at the start, and whenever the PCs move:
 
-For anyone who prefers a shell, the command is `my-ide` — no sudo, no admin, and
-nothing named after the IT department:
+1. Find the PCs' commit: VS Code → **Help → About → Commit** (40 hex characters).
+2. On an online machine, print what to download:
+   ```bash
+   sudo it-vscode-server urls <commit>
+   ```
+   Fetch all of it: `vscode-server-linux-x64.tar.gz`,
+   `vscode_cli_alpine_x64_cli.tar.gz`, the matching Windows installer, and the
+   **Remote - SSH** extension (`ms-vscode-remote.remote-ssh`) as a `.vsix`.
+3. Carry it in. On each box:
+   ```bash
+   sudo it-vscode-server stage /media/<usb>/vscode
+   ```
+   It reads the version from the server itself (nothing to type), refuses a CLI
+   from a different version or the browser build, installs **one** read-only copy
+   in `/opt/vscode-server/<commit>`, checks it actually starts as a non-root user,
+   and links every member of `sentry`. One copy is 658 MB unpacked — per box, not
+   per engineer.
+4. On each PC: install that VS Code, then the Remote-SSH `.vsix`
+   (Extensions → `…` → Install from VSIX), then paste in what this prints:
+   ```bash
+   sudo it-vscode-server settings
+   ```
+5. Connect: **Remote-SSH: Connect to Host** → `user@box`.
 
-```bash
-my-ide                # start it if needed, then open it
-my-ide stop
-my-ide status         # running? on this machine? from another PC?
-my-ide password
-my-ide remote         # the address to use from a Windows PC on the LAN
-my-ide always         # ...and start it every time I log in
-```
+**A new engineer:** add them to `sentry`. The next pull links them, or now:
+`sudo it-vscode-server link --user <name>`.
 
-`it-codeserver` still exists and is unchanged, but it is an **admin** tool and
-reads like one. Nobody should have to type it, or know what "code-server" is, to
-open an editor.
+**Upgrading:** stage the new version (the old one stays), move the PCs over, then
+`sudo it-vscode-server remove <old version>`. It refuses while anyone is still
+running the old one, and names who.
 
-> **The tile opens `https://localhost:<port>`, and that matters.** The
-> certificate code-server generates is issued to *localhost*, so reaching it by
-> that name is also what stops the browser warning. `my-ide remote` gives the IP
-> form for another PC, and says to expect the warning there.
+**Checking:** `sudo it-vscode-server` shows what is staged, who is linked, and
+whether sshd allows the forwarding Remote-SSH needs.
 
-**It is a systemd _user_ service**, so it is genuinely theirs — `systemctl
---user` needs no privilege, which is why none is granted. Underneath, `my-ide`
-and `it-codeserver mine` drive the same unit; `mine` takes no username and acts
-on whoever is calling.
-
-This is what makes "nothing at boot" and "engineers help themselves"
-compatible, and they were not before. As a **system** unit the instance could
-only be started by root, so there were two bad choices: enable it for everyone
-and get one node process and one listening port per entitled account for the
-box's whole uptime — dev-16 came up with 11, several for accounts that can
-never log in — or leave it disabled and make every engineer ask an admin. A
-user service exists only inside its owner's session, so there is nothing at
-boot and nothing to grant.
-
-> The command is installed as a **real file** in `/usr/local/sbin`, not a
-> symlink into `/opt/it/scripts`. That directory is `2770 root:sudo`, so an
-> engineer cannot traverse it: `stat()` on the target fails with `EACCES`, bash
-> skips the PATH entry, and the shell reports *"command not found"* for a
-> command they are meant to run. Same trap as `it_scripts_public`.
-
-**The instance stops when its owner logs out.** That is the design, not a
-fault: no session, no service, nothing held overnight. For someone who needs
-their IDE reachable while they are *not* logged in, enable **lingering** for
-them — deliberately, per person:
-
-```bash
-sudo it-codeserver linger <user> on     # this box
-```
-
-```yaml
-# /opt/it/site.yml -- or the next pull turns it back off
-dev_code_server_linger_users: [jane_doe]
-```
-
-Lingering runs that person's user manager from boot, so their instance comes
-back after a reboot and stays up when they log out — one node process and one
-port held for the box's whole uptime. That is exactly what the old boot-start
-default did for *everybody*. Name people who have actually asked.
-
-> **The session environment is not the cure for a slow desktop.** That was
-> tried, on a theory that turned out to be false -- an xrdp session does export
-> `XDG_CURRENT_DESKTOP`, verified on a lab box carrying none of the drop-in.
-> The portal/ibus/keyring failures are downstream of stalled DNS and NSS
-> lookups; fix those. See reference.md trap 12e.
-
-> **`systemctl --user` needs a real login session.** Someone who arrives by
-> `su -` or `sudo -u` has no session bus, and systemd's own error
-> (*"Failed to connect to bus"*) sends people hunting a broken service instead
-> of a missing session. `it-codeserver mine` says so instead.
-
-**The admin view**, over the whole box:
-
-```bash
-sudo it-codeserver                    # who, on what port, up, and lingering
-sudo it-codeserver password <user>    # their password (generated, root-only)
-sudo it-codeserver url <user>
-sudo it-codeserver restart <user>     # reaches into that user's own manager
-sudo it-codeserver linger <user> on
-sudo it-codeserver log <user> 100
-```
-
-The `start`/`stop`/`restart` forms act on the named user's own manager and are
-for helping someone, not the normal route — the normal route is that they run
-`it-codeserver mine start` and need nobody. Without lingering their manager
-only exists while they are logged in, so those forms fail for a user who is
-not; the error says so.
-
-The URL printed is the box's **IP**, not its hostname. On a lab LAN with no DNS
-record for `dev-18`, a browser given the hostname reports *"dev-18 took too long
-to respond"* and it reads as the service being down.
-
-**Entitlement is group membership.** Anyone in `dev_code_server_group`
-(`sentry` by default — the group every standing account joins) gets an
-instance on the next pull. Remove them from the group and the next pull stops
-and disables it. Don't enable the unit by hand; the pull won't know about it.
-
-Two filters apply automatically:
-
-- **Accounts that cannot log in are skipped.** `auto_audit` is in `sentry` and
-  is deliberately locked — a service for it would be a listening port nobody
-  can use.
-- **A UID outside the port span is skipped**, loudly, rather than landing on a
-  port the firewall does not cover or on something else's.
-
-The `dta` and `audit` accounts are in `sentry` too, because every standing
-account is. Exclude them if you would rather they had no IDE:
-
-```yaml
-# /opt/it/site.yml
-dev_code_server_exclude: [bob_smith_dta, amy_lee_aud]
-```
+> **Every PC runs exactly the pinned version.** One auto-update and that engineer
+> cannot connect — the box has no server for the new version. That is what
+> `update.mode: none` in `settings` is for.
+>
+> **The guide that circulates for this is wrong for current VS Code.** It unpacks
+> the server into a folder called `~/.vscode-server/code-<commit>`. That name is
+> the CLI, and Microsoft's installer tests it with `[ -f ]` — it must be a
+> **file**. A folder there fails the test and the connection tries to download.
+> `it-vscode-server` stages both layouts correctly (trap 12af).
+>
+> **Extensions run on the box**, from `~/.vscode-server/extensions`, which
+> `it-vscode` links to the shared store — engineers connect with the curated set
+> already there. Anything platform-specific added by hand (C/C++, C#) must be the
+> **Linux x64** build, not the Windows one.
+>
+> **There is no browser version, and there cannot be one offline.** Microsoft's
+> browser build loads every webview — Markdown preview, notebooks, most extension
+> panels — from `*.vscode-cdn.net`, compiled in, not configurable. See trap 12af
+> before anyone tries.
 
 ### Making the RDP desktop cheaper
 
@@ -2026,21 +1967,17 @@ faster. See reference.md trap 12i.
 
 ### What this puts on the network
 
-Each instance is password-authed over self-signed TLS, with its **own**
-generated password in `/etc/code-server/<user>.password`, root-only. `ufw`
-rate-limits the whole range rather than a single port.
+**Nothing new.** Remote-SSH rides the existing SSH connection: the server listens
+on `127.0.0.1` on the box, and VS Code reaches it through that connection's port
+forward. Authentication is the engineer's own SSH login.
 
-> **These are on the LAN.** N ports, one per engineer, each a full IDE with
-> shell access as that user. That is a real surface and an assessor will ask
-> about it. To take them off the LAN entirely:
-> ```yaml
-> dev_code_server_bind_addr: 127.0.0.1
-> ```
-> The pull then removes the ufw rule as well. Users reach it from the RDP
-> desktop's browser, or over a tunnel: `ssh -L 8080:127.0.0.1:<port> <box>`.
->
-> Keep `dev_code_server_port_span` as tight as the number of engineers — it is
-> exactly what is reachable.
+code-server was one full IDE, with a shell, per engineer on the LAN (ports
+8080–8099). The pull closes that range on every run, whatever source a site had
+restricted it to.
+
+The one requirement is that sshd **allows forwarding**. If the hardening turned
+it off, every connection fails with *administratively prohibited*, which looks
+like a VS Code fault. `sudo it-vscode-server` reports it.
 
 ## 3.7 Create a user account
 
@@ -2655,8 +2592,7 @@ boxes.
 **What it puts at risk**
 
 - **The PAM stack.** `libpam-sss`'s postinst runs `pam-auth-update --package` and regenerates `common-auth`. That is how ASP-2 became unloggable and needed live-USB recovery. It is exactly why `sssd-ad` and friends are **not** in `ad_prep_packages` and are installed only by `it-domain join`, which backs the stack up first and verifies it after. Never `apt install sssd-ad` by hand.
-- **Every local group that grants something.** `dev_code_server_group`, `dev_rdp_allowed_group`, `fpga_tools_access_group`, the sudoers grants -- all name local groups. Domain users are in none of them until that is decided.
-- **code-server ports break for domain users.** The port is `dev_code_server_port + (uid - dev_code_server_uid_base)`, and an AD account's UID is SID-mapped into the hundreds of millions. `uid 1000000001` computes to port 1000007081. The role skips a UID outside the span rather than doing something wrong, so domain users simply get no IDE until the derivation is changed.
+- **Every local group that grants something.** `sentry` (whom `it-vscode-server` links), `dev_rdp_allowed_group`, `fpga_tools_access_group`, the sudoers grants -- all name local groups. Domain users are in none of them until that is decided.
 - **A DC outage becomes a login outage.** Keep at least one **local** admin account that does not depend on the domain, and know its password. sssd caches credentials for users who have logged in before; it does nothing for one who has not.
 
 **Order of operations**

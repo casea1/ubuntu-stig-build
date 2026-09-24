@@ -35,7 +35,7 @@ Pick one with `deployment_profile` (or `PROFILE=` on `bootstrap.sh`). Default: *
 
 | Profile | For | What it builds |
 |---|---|---|
-| **`development`** | Engineering **workstation** | Dev toolchain + **GNOME desktop over RDP** (installs the GUI, so a server base works too) + browser VS Code (code-server) + Cockpit. |
+| **`development`** | Engineering **workstation** | Dev toolchain + **GNOME desktop over RDP** (installs the GUI, so a server base works too) + Microsoft VS Code over Remote-SSH, staged offline (`it-vscode-server`) + Cockpit. |
 | **`ai`** | Local-AI **inference server** | Docker + NVIDIA GPU stack + Cockpit + Dockge, with container ports opened, plus the AI compose stacks (vLLM / Open WebUI / pgvector / Docling / MLflow / …) written to `/opt/stacks/`. Two nodes; the hostname picks the role. |
 | **`baseline`** | An **already-built** box (software already installed) | **Provision + harden only, no app installs, no RDP**: org accounts/groups/ACL'd folders + USB→`dta`, `/opt/ia` + `/opt/it`, Cockpit, USG, and the GUI-preserving fixups (graphical target, GDM banner, GNOME dconf, USB re-enable). For a hand-built Ubuntu **Desktop** endpoint logged into locally. |
 | **`emi`** / **`emi-unclass`** | Local-GUI imaging/**field workstation** | The `development` app set + `dev_tools` **minus RDP**, plus VPN/recon/CJK-IME extras, an imaging-service firewall (DHCP/TFTP/DNS/OpenVPN), and a **camera + microphone lockdown**. Local desktop only, with wallpaper + classification banner. Two variants: **`emi`** is classified-capable (FIPS + LUKS/TPM on, full `usg fix`); **`emi-unclass`** is unclassified-only (FIPS/LUKS off and the disruptive `usg fix` skipped — USG audit + ufw/dconf/banner hardening still apply). |
@@ -136,7 +136,7 @@ ubuntu-stig-build/
     ├── base_packages/     # apt installs + PowerShell + provisioning services
     ├── app_config/        # clamav services, wireshark group
     ├── local_accounts/    # org users/groups, ACL'd shares, USB→dta
-    ├── dev_tools/         # toolchains, /opt/eng-venv, VS Code, code-server
+    ├── dev_tools/         # toolchains, /opt/eng-venv, VS Code (and code-server's removal)
     ├── remote_desktop/    # GNOME + xrdp (development profile)
     ├── ai_stack/          # Docker + NVIDIA host prep (ai profile)
     ├── ai_firewall/       # opens container ports after USG (ai profile)

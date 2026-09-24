@@ -170,6 +170,16 @@
     state: absent
   loop: "{{ it_scripts_retired_links | default([]) }}"
 
+# Someone added to the group since the last stage has no links, and would be
+# told "could not establish connection" with nothing on the box saying why.
+# Cheap: a handful of symlinks per engineer, and it does nothing at all until a
+# version has been staged.
+- name: "IT-SCRIPTS | Link staged VS Code Server versions for everyone entitled"
+  ansible.builtin.command: "{{ it_scripts_dir }}/vscode-server.sh link --quiet"
+  register: _vscs_link
+  changed_when: false
+  failed_when: false
+
 - name: "IT-SCRIPTS | Where the scripts are"
   ansible.builtin.debug:
     msg: >-

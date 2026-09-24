@@ -559,65 +559,18 @@ powershell_version: "7.4.16"
 dev_nodejs_enabled: true
 nodejs_major_version: "22"
 
-# ---- code-server (VS Code in the browser; development profile) --------------
-# Installs code-server (dev_tools) and runs it as a per-user systemd service so
-# users can reach a full VS Code from a browser (in addition to RDP). Served over
-# self-signed TLS with a generated password; desktop_hardening opens the port.
-# Development only: a baseline box installs no dev_tools, so code-server is never
-# present there (and desktop_hardening must not open its port).
-dev_code_server_enabled: "{{ is_development | default(true) | bool }}"
-dev_code_server_version: ""           # "" = latest; pin e.g. "4.100.1" for frozen images
-dev_code_server_bind_addr: "0.0.0.0"  # set 127.0.0.1 to require an SSH tunnel / RDP browser
-dev_code_server_tls: true             # self-signed HTTPS (front with a real cert for prod)
-
-# code-server is SINGLE-USER PER INSTANCE -- there is no multi-tenant mode. So
-# every user who gets one needs their own port, and the port has to be stable
-# per person: derived from the UID, not from a position in a list, or removing
-# one engineer would silently move everyone else's.
+# ---- code-server: RETIRED ---------------------------------------------------
+# code-server was Coder's build of the open-source editor, not Microsoft's VS
+# Code (Open VSX only: no Pylance, C/C++, C# Dev Kit or Dev Containers).
+# Engineers now use Remote-SSH from Microsoft's desktop VS Code, staged offline
+# with `it-vscode-server stage`. dev_tools/code_server_retire.yml removes
+# code-server from any box that has it, on every pull.
 #
-#   port = dev_code_server_port + (uid - dev_code_server_uid_base)
-#
-# With the defaults, uid 1000 -> 8080, uid 1001 -> 8081, and so on. A uid
-# outside the span is skipped rather than colliding with something else.
-dev_code_server_port: 8080            # base; the primary user keeps 8080
-dev_code_server_uid_base: 1000
-dev_code_server_port_span: 20         # how many ports the range covers
-
-# Who gets an instance. Members of this group, which every standing account
-# joins (it also owns /home/shared) -- so `it-adduser` gives a new engineer one
-# without a further step, and removing them from the group takes it away.
-# Empty string = the old behaviour, dev_tools_user only.
-# Who may reach the IDE ports. 'any' keeps them open to the whole LAN, which is
-# what they were. A subnet or a single address here is the real protection --
-# the ufw rule used to be `limit`, which cannot protect a web service (it drops
-# a browser mid-page-load: see reference.md trap 12b) and only broke it.
-dev_code_server_allow_from: any
-
-dev_code_server_group: sentry
-
-# Accounts in that group that should NOT get one. Accounts that cannot log in
-# -- a nologin shell, or a LOCKED PASSWORD like auto_audit -- are skipped
-# automatically, so this is for a login-capable account you simply do not want
-# serving an IDE. The dta and audit accounts are in `sentry` too, because every
-# standing account is.
-dev_code_server_exclude: []
-
-# Who may have their IDE running while they are NOT logged in.
-#
-# The instance is a systemd USER service, so ordinarily it exists only inside
-# its owner's session: nothing at boot, and the engineer starts it themselves
-# with `it-codeserver mine start` -- no sudo, because it is their own service.
-# That is the whole design, and this list is the deliberate exception to it.
-#
-# Naming someone here enables lingering for them: their user manager runs from
-# boot, so their instance comes back after a reboot and stays up when they log
-# out. That is one node process and one listening port held for the box's whole
-# uptime -- which is what the old boot-start default did for EVERYONE, and why
-# dev-16 came up with 11 of them. Name people who have actually asked.
-#
-# `it-codeserver linger <user> on` does the same thing for one box; put them
-# here as well or the next pull turns it back off.
-dev_code_server_linger_users: []
+# The old dev_code_server_* variables are gone from here on purpose. The retire
+# tasks still read them WITH DEFAULTS (port 8080, span 20, group sentry, source
+# any), so a site.yml that set a different port or a restricted allow_from still
+# has its firewall rule found and deleted -- ufw removes a rule only when the
+# source matches. Delete them from site.yml once every box has pulled.
 
 # =============================================================================
 # REMOTE DESKTOP  (development profile -> remote_desktop role)
