@@ -176,11 +176,13 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   was imported only WHEN ENABLED, so its "remove when disabled" tasks -- and the
   ufw range -- could never run. Watch for that shape elsewhere.
 
-- **`aiops` access is `it-aiops`, run by hand; the pull only mirrors it.** An
-  explicit ACL entry WIDENS a `0600` file, so the first grant (everything but
-  `.env`) would have exposed magpie's SSH keys. The rule is "what an admin sees
-  without sudo" -- never a list of exceptions -- and it lives in `aiops.sh`,
-  which `ai_ops_access.yml` runs from the checkout so the two cannot drift.
+- **`aiops` access is `it-aiops`, run by hand; the pull only mirrors it.** The
+  owner has accepted that the group reads EVERYTHING under `/opt/stacks` and
+  `/opt/docker`, `.env` included. The one exception is private keys, and it is
+  not a policy choice: an ACL entry shows in the mode as `0640`, and OpenSSH
+  then refuses the key -- a grant on magpie's `./ssh` would break its git sync
+  live, with no container restarted. The rule lives in `aiops.sh`, which
+  `ai_ops_access.yml` runs from the checkout so the two cannot drift.
 
 - **Never restart `xrdp-sesman` on a live box.** Every session it is managing is
   orphaned by the restart: the per-session processes are reparented to init and

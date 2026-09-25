@@ -11,11 +11,8 @@
 # Runs LAST in the role: ansible writes a changed file as a new inode, which
 # carries no ACL, so the entries are re-applied after everything is written.
 #
-# The first version of this was a `find` that granted every non-hidden file but
-# .env -- which included magpie's SSH keys in /opt/stacks/magpie/ssh (root:root
-# 0700), because an ACL entry widens even a 0600 file. The script's rule is
-# "what an admin sees without sudo", so root-only files are never touched, and
-# it removes any entry that first version left behind.
+# Everything under both roots is granted, .env included, except private keys:
+# OpenSSH refuses a key others can read, and magpie mounts ./ssh live.
 # =============================================================================
 
 - name: "AI-OPS | Grant read access (it-aiops on)"

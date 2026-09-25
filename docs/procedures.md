@@ -3485,16 +3485,20 @@ gives the `aiops` group **read** access to `/opt/stacks` and `/opt/docker`, and
 a short list of **look-only** commands through sudo. It is run by hand: **no
 pull, no compose file rewritten, no container touched.**
 
-**What they get:** what an admin sees *without* sudo — every compose and config
-file, the build contexts — plus `sudo it-docker` (ps, check, audit, ports,
-compose, config, df), `sudo it-stack-diff` (and `--full`),
-`sudo it-baseline --stdout`.
+**What they get:** read access to **everything** under both folders — compose
+and config files, every `.env` (the passwords and keys), hidden files, the
+build contexts, magpie's `ssh` folder — plus `sudo it-docker` (ps, check,
+audit, ports, compose, config, df), `sudo it-stack-diff` (and `--full`),
+`sudo it-baseline --stdout`. Accepted by the site owner, 2026-09-25.
 
-**What they do not get:** anything locked to root — every `.env`, magpie's SSH
-keys (`/opt/stacks/magpie/ssh`), hidden files such as `.oikb.yaml` — nor
-`/opt/it/site.yml`, the `docker` group (root-equivalent), or anything that stops,
-starts or restarts a container. No list of exceptions to keep: a root-only file
-is simply never granted.
+**What they do not get:** write access, `/opt/it/site.yml`, the `docker` group
+(root-equivalent), anything that stops, starts or restarts a container — and
+**private keys** (magpie's `ssh/id_*`, found by content). That last one is not
+a policy choice: an ACL entry makes the key show as `0640`, and OpenSSH refuses
+a key others can read (*"UNPROTECTED PRIVATE KEY FILE"* — verified). magpie
+mounts `./ssh` live, so a grant would break its git sync at the next run
+without any container being restarted. The `.pub` files and `known_hosts` are
+granted.
 
 1. Get the script onto the node. `it-pull scripts` ships scripts and nothing
    else — no apt, no `ai_compose`, no docker:
@@ -3511,10 +3515,10 @@ is simply never granted.
    script, so it applies the same rule.
 3. Check:
    ```bash
-   sudo it-aiops                     # grant, members, and a leak check
+   sudo it-aiops                     # grant, members, what they can read
    ```
-   The leak check lists anything `aiops` can read that it should not, and ends
-   by testing as a member: a `compose.yaml` readable, a `.env` denied.
+   It counts what is readable and the keys held back, flags any private key
+   carrying an `aiops` entry, and ends by reading a `.env` as a member.
 
 > **New files are not covered automatically.** No default ACL is used — under
 > one, a file an admin creates by hand ignores the STIG's `umask 077` and comes

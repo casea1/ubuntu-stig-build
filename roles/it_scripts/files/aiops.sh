@@ -3,7 +3,7 @@
 # team (group `aiops`), applied when an admin runs it and not before.
 #
 # Usage:
-#   it-aiops                 on or off, who is in the group, and a leak check
+#   it-aiops                 on or off, who is in the group, what they can read
 #   it-aiops on              grant it now, and record ai_ops_enabled: true
 #   it-aiops off             take it away now, and record false
 #   it-aiops refresh         re-apply after files were added or rewritten
@@ -15,14 +15,14 @@
 # stack's files -- arming whatever else the repo has changed for the next
 # `docker compose up -d`.
 #
-# THE RULE: the group sees what an admin sees WITHOUT sudo, and nothing more.
-# A file or folder shared with the admin group (sudo) or with everyone is
-# shared with them too; anything locked to root is not, and nothing inside a
-# locked folder is either. So .env (root:root 0600) and magpie's SSH keys
-# (/opt/stacks/magpie/ssh, root:root 0700) stay out without anyone having to
-# keep a list -- and the first version of this, which granted everything but
-# .env, WOULD have handed over those keys: an ACL entry widens even a 0600 file.
-# Hidden files are left out too, and symlinks are never followed.
+# THE RULE: everything under the roots is readable -- compose files, every
+# .env, hidden files, magpie's ssh folder -- EXCEPT private keys. OpenSSH
+# refuses a key that anyone but its owner can read ("Permissions 0640 ... are
+# too open"; verified on noble's 9.6p1), and an ACL entry is exactly that: the
+# mode shows the mask. magpie mounts ./ssh live, so a grant on its key would
+# break its git sync at the next run with no container restarted. Keys are
+# found by content (a PEM or OpenSSH "PRIVATE KEY" header), not by name.
+# Read only; symlinks are never followed (/opt/stacks/ai points into /opt/it).
 #
 # No default ACLs: under one, a file an admin creates by hand stops honouring
 # the STIG's umask 077 and comes out readable. New files are covered by
@@ -78,55 +78,25 @@ command -v setfacl >/dev/null 2>&1 || die "setfacl is not installed (package: ac
 
 # ---------------------------------------------------------------------------
 # Every directory and file under the roots, one per line as "<verdict> <type>
-# <path>" -- verdict `yes` if the rule above lets the group see it. Python for
-# the walk because the pruning is the point: a folder that fails the rule takes
-# everything beneath it out, however that is moded.
+# <path>" -- `yes` to grant, `key` for a private key that must not be.
 walk() {
-  python3 - "$ADMIN_GROUP" "${ROOTS[@]}" <<'PYEOF'
-import os, stat, struct, sys, grp
-admin = sys.argv[1]
-def gname(gid):
-    try: return grp.getgrgid(gid).gr_name
-    except KeyError: return str(gid)
-def owning_group_bits(path, st):
-    # With an ACL present the mode's group bits are the MASK, which our own
-    # entry raises -- a root:sudo 0600 file granted once would then read as
-    # 0640 and pass every later run. The owning group's real bits are the
-    # ACL_GROUP_OBJ entry (tag 0x04) of the access ACL.
-    try: raw = os.getxattr(path, 'system.posix_acl_access', follow_symlinks=False)
-    except OSError: return (st.st_mode >> 3) & 7
-    for i in range(4, len(raw) - 7, 8):
-        tag, perm = struct.unpack_from('<HH', raw, i)
-        if tag == 0x04: return perm & 7
-    return (st.st_mode >> 3) & 7
-def visible(path, st, is_dir):
-    need = 5 if is_dir else 4
-    if st.st_mode & need == need: return True
-    return gname(st.st_gid) == admin and owning_group_bits(path, st) & need == need
-def secret_name(n):
-    return n.startswith('.') or n == 'ssh' or n.endswith('.env')
-for root in sys.argv[2:]:
+  python3 - "${ROOTS[@]}" <<'PYEOF'
+import os, stat, sys
+def is_private_key(p):
+    try:
+        with open(p, 'rb') as f: head = f.read(64)
+    except OSError: return False
+    return head.startswith(b'-----BEGIN') and b'PRIVATE KEY' in head.split(b'\n')[0]
+for root in sys.argv[1:]:
     if not os.path.isdir(root) or os.path.islink(root): continue
     for d, dirs, files in os.walk(root, followlinks=False):
-        st = os.lstat(d)
-        ok = visible(d, st, True) and not (d != root and secret_name(os.path.basename(d)))
-        print(("yes" if ok else "no"), "d", d)
-        if not ok:
-            # Report what is beneath so `off` and the leak check still see it,
-            # but everything in a folder the group cannot see is a no.
-            for sd, sdirs, sfiles in os.walk(d, followlinks=False):
-                if sd != d: print("no d", sd)
-                for f in sfiles:
-                    p = os.path.join(sd, f)
-                    if not os.path.islink(p): print("no f", p)
-            dirs[:] = []
-            continue
+        print("yes d", d)
         for f in files:
             p = os.path.join(d, f)
-            if os.path.islink(p): continue
-            st = os.lstat(p)
-            if not stat.S_ISREG(st.st_mode): continue
-            print(("yes" if visible(p, st, False) and not secret_name(f) else "no"), "f", p)
+            try: st = os.lstat(p)
+            except OSError: continue
+            if not stat.S_ISREG(st.st_mode): continue      # symlinks, sockets
+            print(("key" if is_private_key(p) else "yes"), "f", p)
 PYEOF
 }
 
@@ -145,7 +115,7 @@ cmd_on() {
 
 apply_acls() {
   head2 "Read access for $GROUP"
-  local v t p nd=0 nf=0 stripped=0 root
+  local v t p nd=0 nf=0 nk=0 stripped=0 root
   for root in "${ROOTS[@]}"; do [ -d "$root" ] || note "$root does not exist -- skipped"; done
   while read -r v t p; do
     [ -n "$p" ] || continue
@@ -153,15 +123,16 @@ apply_acls() {
       if [ "$t" = d ]; then setfacl -m "g:$GROUP:rx" -- "$p" && nd=$((nd + 1))
                             setfacl -x "d:g:$GROUP" -- "$p" 2>/dev/null
       else                  setfacl -m "g:$GROUP:r"  -- "$p" && nf=$((nf + 1)); fi
-    elif has_entry "$p"; then
-      # Something the rule says they must not see, carrying an entry -- from the
-      # first version of this grant, or a file that has since been locked down.
+    else
+      nk=$((nk + 1))
+      has_entry "$p" || continue
       setfacl -x "g:$GROUP" -- "$p" 2>/dev/null; setfacl -x "d:g:$GROUP" -- "$p" 2>/dev/null
-      stripped=$((stripped + 1)); warn "removed $GROUP from ${p} (not something they should see)"
+      stripped=$((stripped + 1)); warn "removed $GROUP from ${p} (private key -- ssh refuses it if others can read it)"
     fi
   done < <(walk)
   ok "$nd folder(s), $nf file(s) readable by $GROUP"
-  [ "$stripped" -gt 0 ] && warn "$stripped item(s) had access they should not have had -- removed"
+  [ "$nk" -gt 0 ] && note "$nk private key(s) held back -- ssh refuses a key others can read"
+  [ "$stripped" -gt 0 ] && warn "$stripped private key(s) had an $GROUP entry -- removed"
   return 0
 }
 
@@ -252,7 +223,7 @@ cmd_remove() {
 
 # ---------------------------------------------------------------------------
 cmd_status() {
-  local p v t leaks=0 ngrant=0 site
+  local p v t ngrant=0 site
   head2 "AI review-team access ($GROUP)"
   if [ -e "$SUDOERS" ]; then ok "sudo grant       installed ($SUDOERS)"; else note "sudo grant       not installed"; fi
   site=$(sed -nE 's/^ai_ops_enabled[[:space:]]*:[[:space:]]*//p' "$SITE_YML" 2>/dev/null | tail -1)
@@ -261,25 +232,28 @@ cmd_status() {
   [ -n "$(members)" ] || note "                 nobody yet -- it-aiops add <user>"
 
   head2 "What they can see"
+  local nk=0 nkeyed=0
   while read -r v t p; do
     [ -n "$p" ] || continue
-    if has_entry "$p"; then
-      if [ "$v" = yes ]; then ngrant=$((ngrant + 1))
-      else leaks=$((leaks + 1)); bad "LEAK: $p is readable by $GROUP"; fi
+    if [ "$v" = yes ]; then has_entry "$p" && ngrant=$((ngrant + 1))
+    else nk=$((nk + 1))
+         if has_entry "$p"; then nkeyed=$((nkeyed + 1)); bad "KEY GRANTED: $p -- ssh will refuse it"; fi
     fi
   done < <(walk)
-  printf '  %-16s %s\n' "readable items" "$ngrant"
-  if [ "$leaks" = 0 ]; then ok "no secrets exposed (.env, magpie/ssh, hidden and root-only files: none)"
-  else bad "$leaks item(s) exposed -- 'it-aiops refresh' removes them"; fi
+  printf '  %-16s %s\n' "readable items" "$ngrant (including every .env)"
+  [ "$nk" -gt 0 ] && printf '  %-16s %s\n' "private keys" "$nk held back (ssh refuses a key others can read)"
+  [ "$nkeyed" -gt 0 ] && bad "$nkeyed private key(s) carry an $GROUP entry -- 'it-aiops refresh' removes it"
 
   # Proof, not inference: ask the kernel as one of them.
-  local m e c
+  local m e
   m=$(members | head -1)
   if [ -n "$m" ]; then
-    c=$(ls "${ROOTS[0]}"/*/compose.yaml 2>/dev/null | head -1); e=$(ls "${ROOTS[0]}"/*/.env 2>/dev/null | head -1)
+    e=$(ls "${ROOTS[0]}"/*/.env 2>/dev/null | head -1)
     head2 "Checked as $m"
-    [ -n "$c" ] && { runuser -u "$m" -- test -r "$c" 2>/dev/null && ok "can read   ${c}" || warn "cannot read ${c} (they may need to log in again, or run: it-aiops on)"; }
-    [ -n "$e" ] && { runuser -u "$m" -- test -r "$e" 2>/dev/null && bad "CAN READ   ${e} -- secrets exposed" || ok "cannot read ${e} (correct)"; }
+    if [ -n "$e" ]; then
+      runuser -u "$m" -- test -r "$e" 2>/dev/null && ok "can read   ${e}" \
+        || warn "cannot read ${e} (they may need to log in again, or run: it-aiops on)"
+    fi
   fi
   say ""
 }

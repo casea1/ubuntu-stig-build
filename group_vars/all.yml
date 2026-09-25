@@ -1624,10 +1624,11 @@ ai_stacks_need_fips:
 # later `it-pull ai` agrees instead of reverting it.
 #
 # The rule, the paths and the sudo forms all live in it-aiops
-# (roles/it_scripts/files/aiops.sh), which the pull also runs. The group sees
-# what an admin sees without sudo: never .env, never magpie's SSH keys, never
-# /opt/it/site.yml (the out-of-band secret store). NOT the `docker` group --
-# that is root-equivalent (`docker run -v /:/host`).
+# (roles/it_scripts/files/aiops.sh), which the pull also runs. The group reads
+# everything under both roots, .env included, EXCEPT private keys -- OpenSSH
+# refuses a key others can read, so a grant would break magpie's git sync.
+# Not /opt/it/site.yml. NOT the `docker` group -- that is root-equivalent
+# (`docker run -v /:/host`).
 ai_ops_enabled: false
 
 # ---- Custom image builds (ai_compose) ---------------------------------------
