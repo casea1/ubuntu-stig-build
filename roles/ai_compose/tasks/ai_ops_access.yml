@@ -1,148 +1,45 @@
 ---
 # =============================================================================
-# ai_compose :: ai_ops_access.yml -- read access to /opt/stacks for a NON-ADMIN
-# review team, without handing them root.
+# ai_compose :: ai_ops_access.yml -- read access to /opt/stacks and /opt/docker
+# for the non-admin AI review team (group `aiops`).
 #
-# Runs LAST in the role, because the ACL has to be applied after the files it
-# covers have been written: ansible's explicit `mode:` strips an inherited ACL,
-# so a default ACL on the directory alone would be removed from every file on
-# every pull. See the block comment on ai_ops_enabled in group_vars.
+# The work is done by it-aiops (roles/it_scripts/files/aiops.sh), run from THIS
+# checkout, so a pull applies exactly the rule an admin applies by hand and the
+# two cannot drift. `it-aiops on|off` is the way to change it WITHOUT a pull; it
+# records ai_ops_enabled in site.yml, so this task then agrees with it.
+#
+# Runs LAST in the role: ansible writes a changed file as a new inode, which
+# carries no ACL, so the entries are re-applied after everything is written.
+#
+# The first version of this was a `find` that granted every non-hidden file but
+# .env -- which included magpie's SSH keys in /opt/stacks/magpie/ssh (root:root
+# 0700), because an ACL entry widens even a 0600 file. The script's rule is
+# "what an admin sees without sudo", so root-only files are never touched, and
+# it removes any entry that first version left behind.
 # =============================================================================
 
-- name: "AI-OPS | Group exists ({{ ai_ops_group }})"
-  ansible.builtin.group:
-    name: "{{ ai_ops_group }}"
-    state: present
+- name: "AI-OPS | Grant read access (it-aiops on)"
+  ansible.builtin.command:
+    argv:
+      - bash
+      - "{{ playbook_dir }}/roles/it_scripts/files/aiops.sh"
+      - "on"
+      - --quiet
+      - --no-persist
+  environment:
+    IT_AIOPS_PATHS: "{{ dockge_stacks_dir }} {{ docker_assets_dir }}"
+  register: _ai_ops_on
+  # --quiet prints only warnings: an item stripped, a grant that failed.
+  changed_when: _ai_ops_on.stdout | length > 0
   when: ai_ops_enabled | default(false) | bool
 
-# Two roots now: the stacks themselves, and the docker asset root (build
-# contexts + the dormant consolidated compose), which moved out of /opt/it
-# precisely so this group could reach it -- /opt/it is 2770 root:sudo and has no
-# traverse bit for anyone else, so no ACL under it could ever have worked.
-- name: "AI-OPS | Find the directories under each root"
-  ansible.builtin.find:
-    paths: "{{ ai_ops_paths }}"
-    recurse: true
-    file_type: directory
-  register: _ai_ops_stack_dirs
-  when: ai_ops_enabled | default(false) | bool
-
-# rx, not rwx: traverse and list. Plus the DEFAULT entry so a file created here
-# by hand (an override, a note) is readable without another pull.
-- name: "AI-OPS | Read + traverse on the stack directories"
-  ansible.posix.acl:
-    path: "{{ item.0 }}"
-    entity: "{{ ai_ops_group }}"
-    etype: group
-    permissions: "{{ 'rwx' if (ai_ops_write | default(false) | bool) else 'rx' }}"
-    default: "{{ item.1 }}"
-    state: present
-  loop: "{{ (ai_ops_paths + _ai_ops_stack_dirs.files | map(attribute='path') | list)
-            | product([false, true]) | list }}"
-  loop_control:
-    label: "{{ item.0 }}{{ ' (default)' if item.1 else '' }}"
-  when: ai_ops_enabled | default(false) | bool
-
-# Every file EXCEPT .env. The exclusion is belt-and-braces: a 0600 file comes
-# out group::--- even inside a directory carrying the default ACL, so the
-# secrets are unreachable either way -- but naming it here means a future change
-# to that mode cannot quietly open them.
-- name: "AI-OPS | Find the config files the group may read"
-  ansible.builtin.find:
-    paths: "{{ ai_ops_paths }}"
-    recurse: true
-    file_type: file
-    excludes: [".env", "*.env"]
-  register: _ai_ops_files
-  when: ai_ops_enabled | default(false) | bool
-
-- name: "AI-OPS | Read on each config file"
-  ansible.posix.acl:
-    path: "{{ item }}"
-    entity: "{{ ai_ops_group }}"
-    etype: group
-    permissions: "{{ 'rw' if (ai_ops_write | default(false) | bool) else 'r' }}"
-    state: present
-  loop: "{{ _ai_ops_files.files | default([]) | map(attribute='path') | list }}"
-  loop_control:
-    label: "{{ item | basename }} ({{ item | dirname | basename }})"
-  when: ai_ops_enabled | default(false) | bool
-
-# If an ACL ever did reach a .env -- a hand-run setfacl -R, a mode changed to
-# 0640 and back -- take it off again. This is the one file whose exposure would
-# matter, so it is asserted rather than assumed.
-- name: "AI-OPS | Find any .env carrying an ACL"
-  ansible.builtin.find:
-    paths: "{{ ai_ops_paths }}"
-    recurse: true
-    file_type: file
-    patterns: [".env", "*.env"]
-    hidden: true
-  register: _ai_ops_envs
-  when: ai_ops_enabled | default(false) | bool
-
-- name: "AI-OPS | Strip {{ ai_ops_group }} from every .env"
-  ansible.posix.acl:
-    path: "{{ item }}"
-    entity: "{{ ai_ops_group }}"
-    etype: group
-    state: absent
-  loop: "{{ _ai_ops_envs.files | default([]) | map(attribute='path') | list }}"
-  loop_control:
-    label: "{{ item | dirname | basename }}/.env"
-  when: ai_ops_enabled | default(false) | bool
-
-# The it-* scripts need root, so without this the group cannot run them at all.
-# Command-scoped and logged, which membership of the `docker` group is not --
-# that would be a root shell away via `-v /:/host`.
-#
-# EXACT ARGUMENT FORMS, read-only, and NOT NOPASSWD. The first version of this
-# grant was none of those, and would have been dangerous the day it was turned
-# on:
-#   - It named the commands BARE, and in sudoers a bare command permits ANY
-#     arguments (trap 12ad). `it-stack-diff --out FILE` writes with `tee` AS
-#     ROOT, so `sudo it-stack-diff --out /etc/shadow` would have let a member of
-#     a review group empty the password file.
-#   - `it-docker restart|stop|start` changes the running stack.
-#   - NOPASSWD: the STIG requires sudo to authenticate, and every other grant in
-#     this repo (it-repo, it-serial) is deliberately without it.
-# Members type `sudo it-docker check`: the scripts live in /opt/it, which they
-# cannot traverse, so the bare self-elevating form reports "command not found"
-# (verified). sudo resolves the path as root.
-- name: "AI-OPS | sudo grant for the read-only it-* commands"
-  ansible.builtin.copy:
-    dest: /etc/sudoers.d/40-{{ ai_ops_group }}
-    owner: root
-    group: root
-    mode: "0440"
-    validate: "visudo -cf %s"
-    content: |
-      # Managed by ansible (ai_compose) -- do not edit by hand.
-      # The AI review team administers nothing: every form below only LOOKS.
-      # A form is an exact argument list -- "" means "no arguments at all".
-      %{{ ai_ops_group }} ALL=(root) {{ ai_ops_sudo_forms | join(', \\\n        ') }}
-  when:
-    - ai_ops_enabled | default(false) | bool
-    - ai_ops_sudo_forms | default([]) | length > 0
-
-# Ansible only ever CREATES (trap 3). Turning the flag off has to take the
-# access away, or a box keeps it forever.
-- name: "AI-OPS | Remove the sudo grant when the feature is off"
-  ansible.builtin.file:
-    path: /etc/sudoers.d/40-{{ ai_ops_group }}
-    state: absent
-  when: not (ai_ops_enabled | default(false) | bool)
-
-- name: "AI-OPS | Remove the ACLs when the feature is off"
-  # setfacl -x on a group that is not present is a no-op, so this is safe to run
-  # on a box that never had the grant.
+# Ansible only ever creates (trap 3), so off has to take it away. Skipped on a
+# box that never had it -- no group and no grant -- so it costs nothing there.
+- name: "AI-OPS | Remove it when the feature is off (it-aiops off)"
   ansible.builtin.shell: >-
-    set -o pipefail;
-    getent group {{ ai_ops_group }} >/dev/null 2>&1 || exit 0;
-    setfacl -R -x "g:{{ ai_ops_group }}" -x "d:g:{{ ai_ops_group }}" {{ ai_ops_paths | join(' ') }} 2>/dev/null || true
-  args:
-    executable: /bin/bash
+    getent group aiops >/dev/null || [ -e /etc/sudoers.d/40-aiops ] || exit 0;
+    bash "{{ playbook_dir }}/roles/it_scripts/files/aiops.sh" off --quiet --no-persist
+  environment:
+    IT_AIOPS_PATHS: "{{ dockge_stacks_dir }} {{ docker_assets_dir }}"
   changed_when: false
-  when:
-    - not (ai_ops_enabled | default(false) | bool)
-    - ai_ops_paths | default([]) | length > 0
+  when: not (ai_ops_enabled | default(false) | bool)

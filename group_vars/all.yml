@@ -1422,8 +1422,8 @@ ai_firewall_allow_ports:
 # presents every subdirectory as a stack, so build/ and grafana/ would show up
 # in the UI as entries nobody can deploy.
 #
-# /opt/docker is a sibling of both, created 2750 root:<ai_ops_group> when that
-# feature is on and root:sudo otherwise. Nothing LIVE is served from here --
+# /opt/docker is a sibling of both, 2750 root:sudo; the AI review team reaches
+# it by ACL (it-aiops). Nothing LIVE is served from here --
 # every stack's own assets (fips_off, .env, nginx.conf, prometheus.yml) live in
 # /opt/stacks/<stack>/ and are mounted relatively. See docs/procedures.md
 # "Moving the docker asset root" for the one-time migration.
@@ -1617,72 +1617,18 @@ ai_stacks_need_fips:
   system2: [vllm-embed, vllm-reranker, vllm-vision, vllm-gpt-oss-20b, docling]
 
 # ---- AI architect / ops read access (ai profile) ----------------------------
-# The team that reviews the AI stack's configuration but administers nothing.
-# /opt/stacks is root:{{ ia_it_group }} 2750 and every file in it is 0640, so a
-# SECOND group cannot be expressed in the mode. This is a POSIX ACL, the same
-# mechanism the shared folders use -- with one difference that matters:
+# Read access to /opt/stacks and /opt/docker for the team that reviews the AI
+# stack but administers nothing: group `aiops`, by POSIX ACL, plus a sudo grant
+# of look-only it-* commands. Turn it on or off BY HAND with `it-aiops on|off`
+# -- no pull, no container touched; that also writes this flag to site.yml so a
+# later `it-pull ai` agrees instead of reverting it.
 #
-#   ANSIBLE'S EXPLICIT `mode:` STRIPS AN INHERITED ACL. A default ACL on the
-#   directory is not enough: a file created by `touch` inherits the named-group
-#   entry, but one created with an explicit mode (which is every file this role
-#   writes) comes out with NO named entry at all. So the ACL is applied to the
-#   FILES as well, after they are written, on every run.
-#
-# WHAT THE GROUP GETS: read on the stack directories and on every compose and
-# config file in them.
-#
-# WHAT IT DOES NOT GET, deliberately:
-#   .env              root:root 0600 -- POSTGRES_PASSWORD, WEBUI_SECRET_KEY,
-#                     MLFLOW_DB_PASSWORD, the API keys. Compose files reference
-#                     these as ${VAR}, so the configuration is fully reviewable
-#                     without the values. Verified: a 0600 file in a directory
-#                     carrying the default ACL still comes out group::--- .
-#   /opt/it/site.yml  the out-of-band secret store (oikb API key, GitLab token,
-#                     HF token, magpie git token).
-#   the `docker` group  membership is ROOT EQUIVALENT -- `docker run -v /:/host`
-#                     is a root shell on this host, which on a STIG box is a
-#                     privilege escalation and a finding. The sudo grant below
-#                     is command-scoped and logged; the group is neither.
+# The rule, the paths and the sudo forms all live in it-aiops
+# (roles/it_scripts/files/aiops.sh), which the pull also runs. The group sees
+# what an admin sees without sudo: never .env, never magpie's SSH keys, never
+# /opt/it/site.yml (the out-of-band secret store). NOT the `docker` group --
+# that is root-equivalent (`docker run -v /:/host`).
 ai_ops_enabled: false
-ai_ops_group: aiops
-# true also grants WRITE on the compose/config files. Read is the default
-# because ansible overwrites every one of them on the next pull anyway (gotcha
-# 2) -- an edit made on the box is lost, so write access mostly buys confusion.
-# The supported way for this team to change something is a repo change, or
-# compose.override.yaml, which nothing manages.
-ai_ops_write: false
-# The roots the grant covers. /opt/stacks is the live stacks; docker_assets_dir
-# is the build contexts and the dormant consolidated compose. Both are
-# root:sudo 2750 -- this group reaches them by ACL, not by ownership.
-ai_ops_paths:
-  - "{{ dockge_stacks_dir }}"
-  - "{{ docker_assets_dir }}"
-# What the group may run through sudo, as EXACT argument forms -- a bare command
-# in sudoers permits any arguments (trap 12ad). Every form here only looks.
-# Deliberately left out:
-#   it-docker restart|stop|start   changes the running stack
-#   it-docker logs <name>          application logs can carry secrets
-#   it-stack-diff --out <file>     writes AS ROOT to any path (and the script now
-#                                  refuses it for non-admins regardless)
-#   it-stack-diff <stack>          a wildcard for the name would also match
-#                                  "<stack> --out /etc/shadow" -- sudoers `*`
-#                                  spans spaces. The full diff covers every stack.
-# Members type `sudo` in front: the scripts live in /opt/it, which they cannot
-# traverse, so the bare form says "command not found".
-ai_ops_sudo_forms:
-  - /usr/local/sbin/it-docker ""
-  - /usr/local/sbin/it-docker ps
-  - /usr/local/sbin/it-docker ps --all
-  - /usr/local/sbin/it-docker check
-  - /usr/local/sbin/it-docker audit
-  - /usr/local/sbin/it-docker ports
-  - /usr/local/sbin/it-docker compose
-  - /usr/local/sbin/it-docker config
-  - /usr/local/sbin/it-docker df
-  - /usr/local/sbin/it-stack-diff ""
-  - /usr/local/sbin/it-stack-diff --full
-  - /usr/local/sbin/it-baseline --stdout
-  - /usr/local/sbin/it-baseline --stdout --brief
 
 # ---- Custom image builds (ai_compose) ---------------------------------------
 # Three services use images not on any registry, so ansible builds them ON THE

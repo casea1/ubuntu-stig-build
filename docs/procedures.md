@@ -3460,8 +3460,8 @@ team's group.
 
 ### Afterwards
 
-`ai_ops_paths` covers both roots, so if `ai_ops_enabled` is on, the AI team can
-read `/opt/docker` as soon as the pull has run — which was the point.
+`it-aiops` covers both roots, so once it is on, `sudo it-aiops refresh` makes
+`/opt/docker` readable to the AI team — which was the point.
 
 ## 5.10 Connect an IDE
 
@@ -3480,56 +3480,59 @@ Use vLLM's `--served-model-name`, not the Hugging Face repo path. Names are in [
 
 ## 5.11 Give the AI review team read access (`aiops`)
 
-The architects review the AI configuration but administer nothing. This gives
-the `aiops` group **read** access to `/opt/stacks` and `/opt/docker`, and a short
-list of **look-only** commands through sudo. It does not touch the containers.
+The architects review the AI configuration but administer nothing. `it-aiops`
+gives the `aiops` group **read** access to `/opt/stacks` and `/opt/docker`, and
+a short list of **look-only** commands through sudo. It is run by hand: **no
+pull, no compose file rewritten, no container touched.**
 
-**What they get:** every compose and config file, the build contexts, and
-`sudo it-docker` (ps, check, audit, ports, compose, config, df),
-`sudo it-stack-diff` (and `--full`), `sudo it-baseline --stdout`.
+**What they get:** what an admin sees *without* sudo — every compose and config
+file, the build contexts — plus `sudo it-docker` (ps, check, audit, ports,
+compose, config, df), `sudo it-stack-diff` (and `--full`),
+`sudo it-baseline --stdout`.
 
-**What they do not get:** any `.env` (the passwords and keys — excluded, and
-stripped if an ACL ever reaches one), `/opt/it/site.yml`, the `docker` group
-(root-equivalent), and anything that stops, starts or restarts a container.
+**What they do not get:** anything locked to root — every `.env`, magpie's SSH
+keys (`/opt/stacks/magpie/ssh`), hidden files such as `.oikb.yaml` — nor
+`/opt/it/site.yml`, the `docker` group (root-equivalent), or anything that stops,
+starts or restarts a container. No list of exceptions to keep: a root-only file
+is simply never granted.
 
-1. On **each AI node**, in `/opt/it/site.yml`:
-   ```yaml
-   ai_ops_enabled: true
-   ```
-2. Pull with the AI roles included — a light `it-pull` skips them:
+1. Get the script onto the node. `it-pull scripts` ships scripts and nothing
+   else — no apt, no `ai_compose`, no docker:
    ```bash
-   docker ps --format '{{.Names}}\t{{.Status}}' | sort > /tmp/before.txt
-   sudo it-pull ai
-   docker ps --format '{{.Names}}\t{{.Status}}' | sort | diff /tmp/before.txt -   # must be empty
+   sudo it-pull scripts
    ```
-   It creates the group, applies the ACLs **after** every file is written (an
-   explicit `mode:` strips an inherited ACL, trap 12aa), and installs the grant.
-   With `ai_compose_deploy: false` — the default — no container is recreated.
-3. Add the people. Membership is not managed by the pull:
+2. Turn it on, and add the people:
    ```bash
-   sudo usermod -aG aiops <user>
+   sudo it-aiops on
+   sudo it-aiops add <user>          # effective at their NEXT login
    ```
-   It takes effect at their **next login**.
-4. Check as one of them:
+   `on` also writes `ai_ops_enabled: true` to `/opt/it/site.yml`. That is what
+   stops a later `sudo it-pull ai` from reverting it — the pull runs this same
+   script, so it applies the same rule.
+3. Check:
    ```bash
-   cat /opt/stacks/open-webui/compose.yaml     # readable
-   cat /opt/stacks/open-webui/.env             # Permission denied -- correct
-   sudo it-docker check                        # asks for THEIR password
+   sudo it-aiops                     # grant, members, and a leak check
    ```
+   The leak check lists anything `aiops` can read that it should not, and ends
+   by testing as a member: a `compose.yaml` readable, a `.env` denied.
 
+> **New files are not covered automatically.** No default ACL is used — under
+> one, a file an admin creates by hand ignores the STIG's `umask 077` and comes
+> out readable. After adding a `compose.override.yaml`, run
+> `sudo it-aiops refresh`. The next `it-pull ai` does the same.
+>
 > **They must type `sudo` in front.** The scripts live in `/opt/it`, which a
 > non-admin cannot traverse, so a bare `it-docker` says *command not found* —
 > verified. sudo resolves the path as root.
 >
 > **It asks for their password**, on purpose: the STIG requires sudo to
-> authenticate. The grant is exact argument forms (`ai_ops_sudo_forms`), because
-> a bare command in sudoers permits **any** arguments — and `it-stack-diff --out`
-> writes as root, so the first version of this grant would have let the group
-> empty `/etc/shadow` (trap 12ad). `it-stack-diff` now also refuses `--out` for
-> anyone who is not an admin, so widening the grant later cannot reopen that.
+> authenticate. The grant is exact argument forms, because a bare command in
+> sudoers permits **any** arguments — and `it-stack-diff --out` writes as root
+> (trap 12ad).
 
-To take it away: `ai_ops_enabled: false` and `sudo it-pull ai`. The pull removes
-the grant and every `aiops` ACL entry.
+To take it away: `sudo it-aiops off`. It removes the grant and every `aiops`
+ACL entry, and records `false` in `site.yml`. The group and its members are
+kept, so `on` restores them.
 
 ---
 
