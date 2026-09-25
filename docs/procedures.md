@@ -3478,6 +3478,59 @@ models:
 
 Use vLLM's `--served-model-name`, not the Hugging Face repo path. Names are in [reference.md](reference.md).
 
+## 5.11 Give the AI review team read access (`aiops`)
+
+The architects review the AI configuration but administer nothing. This gives
+the `aiops` group **read** access to `/opt/stacks` and `/opt/docker`, and a short
+list of **look-only** commands through sudo. It does not touch the containers.
+
+**What they get:** every compose and config file, the build contexts, and
+`sudo it-docker` (ps, check, audit, ports, compose, config, df),
+`sudo it-stack-diff` (and `--full`), `sudo it-baseline --stdout`.
+
+**What they do not get:** any `.env` (the passwords and keys — excluded, and
+stripped if an ACL ever reaches one), `/opt/it/site.yml`, the `docker` group
+(root-equivalent), and anything that stops, starts or restarts a container.
+
+1. On **each AI node**, in `/opt/it/site.yml`:
+   ```yaml
+   ai_ops_enabled: true
+   ```
+2. Pull with the AI roles included — a light `it-pull` skips them:
+   ```bash
+   docker ps --format '{{.Names}}\t{{.Status}}' | sort > /tmp/before.txt
+   sudo it-pull ai
+   docker ps --format '{{.Names}}\t{{.Status}}' | sort | diff /tmp/before.txt -   # must be empty
+   ```
+   It creates the group, applies the ACLs **after** every file is written (an
+   explicit `mode:` strips an inherited ACL, trap 12aa), and installs the grant.
+   With `ai_compose_deploy: false` — the default — no container is recreated.
+3. Add the people. Membership is not managed by the pull:
+   ```bash
+   sudo usermod -aG aiops <user>
+   ```
+   It takes effect at their **next login**.
+4. Check as one of them:
+   ```bash
+   cat /opt/stacks/open-webui/compose.yaml     # readable
+   cat /opt/stacks/open-webui/.env             # Permission denied -- correct
+   sudo it-docker check                        # asks for THEIR password
+   ```
+
+> **They must type `sudo` in front.** The scripts live in `/opt/it`, which a
+> non-admin cannot traverse, so a bare `it-docker` says *command not found* —
+> verified. sudo resolves the path as root.
+>
+> **It asks for their password**, on purpose: the STIG requires sudo to
+> authenticate. The grant is exact argument forms (`ai_ops_sudo_forms`), because
+> a bare command in sudoers permits **any** arguments — and `it-stack-diff --out`
+> writes as root, so the first version of this grant would have let the group
+> empty `/etc/shadow` (trap 12ad). `it-stack-diff` now also refuses `--out` for
+> anyone who is not an admin, so widening the grant later cannot reopen that.
+
+To take it away: `ai_ops_enabled: false` and `sudo it-pull ai`. The pull removes
+the grant and every `aiops` ACL entry.
+
 ---
 
 # 6. Recovery

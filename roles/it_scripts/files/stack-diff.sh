@@ -29,6 +29,16 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# --out writes AS ROOT, to any path, with tee. That is fine for an admin, who
+# could do it anyway, and a way to empty /etc/shadow for anyone who reached this
+# through a delegated grant. The aiops grant does not offer --out; this is the
+# second lock, so widening that grant later cannot quietly reopen it.
+if [ -n "$OUT" ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ] \
+   && ! id -nG "$SUDO_USER" 2>/dev/null | tr ' ' '\n' | grep -qxE 'sudo|admin|wheel'; then
+  echo "--out is for administrators: it writes as root. Use: sudo it-stack-diff > ~/diff.txt" >&2
+  exit 2
+fi
+
 # ansible-pull clones to ~/.ansible/pull/<hostname>; running under sudo that is
 # root's home. Without it we can still show the files, just not what changed.
 REPO="$(ls -d /root/.ansible/pull/*/roles/ai_compose/files/stacks 2>/dev/null | head -1)"

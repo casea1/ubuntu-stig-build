@@ -1657,14 +1657,32 @@ ai_ops_write: false
 ai_ops_paths:
   - "{{ dockge_stacks_dir }}"
   - "{{ docker_assets_dir }}"
-# The it-* commands the group may run through sudo. Each re-execs itself under
-# sudo, so without this they cannot run at all. NOTE `it-docker` is not purely
-# read-only -- it can restart, start and stop containers. Drop it from this list
-# if the team should only be able to look.
-ai_ops_sudo_commands:
-  - /usr/local/sbin/it-docker
-  - /usr/local/sbin/it-stack-diff
-  - /usr/local/sbin/it-baseline
+# What the group may run through sudo, as EXACT argument forms -- a bare command
+# in sudoers permits any arguments (trap 12ad). Every form here only looks.
+# Deliberately left out:
+#   it-docker restart|stop|start   changes the running stack
+#   it-docker logs <name>          application logs can carry secrets
+#   it-stack-diff --out <file>     writes AS ROOT to any path (and the script now
+#                                  refuses it for non-admins regardless)
+#   it-stack-diff <stack>          a wildcard for the name would also match
+#                                  "<stack> --out /etc/shadow" -- sudoers `*`
+#                                  spans spaces. The full diff covers every stack.
+# Members type `sudo` in front: the scripts live in /opt/it, which they cannot
+# traverse, so the bare form says "command not found".
+ai_ops_sudo_forms:
+  - /usr/local/sbin/it-docker ""
+  - /usr/local/sbin/it-docker ps
+  - /usr/local/sbin/it-docker ps --all
+  - /usr/local/sbin/it-docker check
+  - /usr/local/sbin/it-docker audit
+  - /usr/local/sbin/it-docker ports
+  - /usr/local/sbin/it-docker compose
+  - /usr/local/sbin/it-docker config
+  - /usr/local/sbin/it-docker df
+  - /usr/local/sbin/it-stack-diff ""
+  - /usr/local/sbin/it-stack-diff --full
+  - /usr/local/sbin/it-baseline --stdout
+  - /usr/local/sbin/it-baseline --stdout --brief
 
 # ---- Custom image builds (ai_compose) ---------------------------------------
 # Three services use images not on any registry, so ansible builds them ON THE

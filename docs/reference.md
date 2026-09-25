@@ -419,7 +419,7 @@ The same mechanic is what protects the secrets, and it was verified rather than 
 
 Tested with a real unprivileged account in the group: `compose.yaml` readable, `.env` denied.
 
-**Do not solve this with the `docker` group.** Membership is root-equivalent — `docker run -v /:/host` is a root shell on the host — so on a STIG box it is a privilege escalation and a finding, and it is not logged. `ai_ops_sudo_commands` is command-scoped and goes through sudo's audit trail instead.
+**Do not solve this with the `docker` group.** Membership is root-equivalent — `docker run -v /:/host` is a root shell on the host — so on a STIG box it is a privilege escalation and a finding, and it is not logged. The sudo grant (`ai_ops_sudo_forms`) is command-scoped and goes through sudo's audit trail instead — and it is **exact argument forms, not bare commands**. The first version named `it-docker`, `it-stack-diff` and `it-baseline` bare and `NOPASSWD`; a bare command permits any arguments (trap 12ad), and `it-stack-diff --out FILE` writes with `tee` as root, so it would have let a member of a *review* group empty `/etc/shadow` without a password. It also granted `it-docker restart|stop|start`. Caught before it was ever enabled; tested with a real member: the old forms are refused by sudo, the look-only forms run, and `it-stack-diff` refuses `--out` for a non-admin on its own. Members type `sudo` in front — the scripts are in `/opt/it`, which they cannot traverse. Procedure: [procedures.md §5.11](procedures.md#511-give-the-ai-review-team-read-access-aiops).
 
 **12z-bis. A direct node-to-node cable needs NO compose change, and `it-net ip` cannot configure one.** Both mistakes are natural and both are wrong in an instructive way.
 
