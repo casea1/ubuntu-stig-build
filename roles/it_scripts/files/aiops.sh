@@ -244,15 +244,21 @@ cmd_status() {
   [ "$nk" -gt 0 ] && printf '  %-16s %s\n' "private keys" "$nk held back (ssh refuses a key others can read)"
   [ "$nkeyed" -gt 0 ] && bad "$nkeyed private key(s) carry an $GROUP entry -- 'it-aiops refresh' removes it"
 
-  # Proof, not inference: ask the kernel as one of them.
-  local m e
+  # Proof, not inference: every granted file, read by the kernel as one of
+  # them, in one pass. Only paths from the walk -- a glob here once picked
+  # /opt/stacks/ai/.env, which is the stale symlink into /opt/it, and reported
+  # a failure the grant never had.
+  local m miss
   m=$(members | head -1)
   if [ -n "$m" ]; then
-    e=$(ls "${ROOTS[0]}"/*/.env 2>/dev/null | head -1)
     head2 "Checked as $m"
-    if [ -n "$e" ]; then
-      runuser -u "$m" -- test -r "$e" 2>/dev/null && ok "can read   ${e}" \
-        || warn "cannot read ${e} (they may need to log in again, or run: it-aiops on)"
+    miss=$(walk | awk '$1=="yes" {sub(/^yes [df] /, ""); print}' |
+           runuser -u "$m" -- bash -c 'n=0; while IFS= read -r p; do [ -r "$p" ] || { n=$((n+1)); [ $n -le 5 ] && echo "$p"; }; done; [ $n -gt 5 ] && echo "... and $((n-5)) more"; exit 0' 2>/dev/null)
+    if [ -z "$miss" ]; then
+      ok "can read all $ngrant granted items (read-only: nothing in the grant allows editing)"
+    else
+      warn "cannot read:"; printf '%s\n' "$miss" | sed 's/^/    /'
+      note "run: it-aiops refresh   (a file rewritten since 'on' loses its entry)"
     fi
   fi
   say ""
