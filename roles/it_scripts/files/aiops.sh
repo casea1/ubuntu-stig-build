@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# it-aiops -- read access to the AI stack's configuration for the AI review
-# team (group `aiops`), applied when an admin runs it and not before.
+# it-aiops -- read AND write access to the AI stack's files for the people who
+# manage it (group `aiops`), applied when an admin runs it and not before.
 #
 # Usage:
-#   it-aiops                 on or off, who is in the group, what they can read
+#   it-aiops                 on or off, who is in the group, what they can edit
 #   it-aiops on              grant it now, and record ai_ops_enabled: true
 #   it-aiops off             take it away now, and record false
 #   it-aiops refresh         re-apply after files were added or rewritten
@@ -15,18 +15,24 @@
 # stack's files -- arming whatever else the repo has changed for the next
 # `docker compose up -d`.
 #
-# THE RULE: everything under the roots is readable -- compose files, every
-# .env, hidden files, magpie's ssh folder -- EXCEPT private keys. OpenSSH
-# refuses a key that anyone but its owner can read ("Permissions 0640 ... are
-# too open"; verified on noble's 9.6p1), and an ACL entry is exactly that: the
-# mode shows the mask. magpie mounts ./ssh live, so a grant on its key would
-# break its git sync at the next run with no container restarted. Keys are
-# found by content (a PEM or OpenSSH "PRIVATE KEY" header), not by name.
-# Read only; symlinks are never followed (/opt/stacks/ai points into /opt/it).
+# THE RULE: everything under the roots is readable AND writable -- compose
+# files, every .env, hidden files, magpie's ssh folder -- EXCEPT private keys.
+# OpenSSH refuses a key anyone but its owner can read ("Permissions 0640 ...
+# are too open"; verified on noble's 9.6p1), and an ACL entry is exactly that:
+# the mode shows the mask. magpie mounts ./ssh live, so a grant on its key
+# would break its git sync at the next run with no container restarted. Keys
+# are found by content (a PEM or OpenSSH "PRIVATE KEY" header), not by name.
+# Symlinks are never followed (/opt/stacks/ai points into /opt/it).
 #
-# No default ACLs: under one, a file an admin creates by hand stops honouring
-# the STIG's umask 077 and comes out readable. New files are covered by
-# `it-aiops refresh` -- or by the next pull, which runs this same script.
+# Folders also get a DEFAULT entry, so a file anyone creates in them later (a
+# compose.override.yaml, a new stack from Dockge) is editable by the group at
+# once. Not on an ssh folder: a key created there would inherit it and be
+# refused. The owning group (sudo) is not widened -- it keeps what its mode says.
+#
+# WHAT A GRANT CANNOT DO: `it-pull ai` rewrites every compose.yaml, .env,
+# nginx.conf and prometheus.yml from the repo (gotcha 2), so an edit to one of
+# those lasts until the next `it-pull ai`. compose.override.yaml is never
+# touched. And an edit changes nothing until the stack is redeployed.
 #
 # `on` and `off` also write ai_ops_enabled to /opt/it/site.yml, so a later
 # `it-pull ai` agrees with what you did here instead of reverting it; the pull
@@ -114,15 +120,21 @@ cmd_on() {
 }
 
 apply_acls() {
-  head2 "Read access for $GROUP"
+  head2 "Read + write access for $GROUP"
   local v t p nd=0 nf=0 nk=0 stripped=0 root
   for root in "${ROOTS[@]}"; do [ -d "$root" ] || note "$root does not exist -- skipped"; done
   while read -r v t p; do
     [ -n "$p" ] || continue
     if [ "$v" = yes ]; then
-      if [ "$t" = d ]; then setfacl -m "g:$GROUP:rx" -- "$p" && nd=$((nd + 1))
-                            setfacl -x "d:g:$GROUP" -- "$p" 2>/dev/null
-      else                  setfacl -m "g:$GROUP:r"  -- "$p" && nf=$((nf + 1)); fi
+      if [ "$t" = d ]; then
+        setfacl -m "g:$GROUP:rwx" -- "$p" && nd=$((nd + 1))
+        case "${p##*/}" in
+          ssh|.ssh) setfacl -x "d:g:$GROUP" -- "$p" 2>/dev/null ;;
+          *)        setfacl -m "d:g:$GROUP:rwx" -- "$p" ;;
+        esac
+      else
+        setfacl -m "g:$GROUP:rw" -- "$p" && nf=$((nf + 1))
+      fi
     else
       nk=$((nk + 1))
       has_entry "$p" || continue
@@ -130,7 +142,7 @@ apply_acls() {
       stripped=$((stripped + 1)); warn "removed $GROUP from ${p} (private key -- ssh refuses it if others can read it)"
     fi
   done < <(walk)
-  ok "$nd folder(s), $nf file(s) readable by $GROUP"
+  ok "$nd folder(s), $nf file(s) readable and editable by $GROUP"
   [ "$nk" -gt 0 ] && note "$nk private key(s) held back -- ssh refuses a key others can read"
   [ "$stripped" -gt 0 ] && warn "$stripped private key(s) had an $GROUP entry -- removed"
   return 0
@@ -170,6 +182,11 @@ cmd_off() {
     while IFS= read -r p; do
       has_entry "$p" || continue
       setfacl -x "g:$GROUP" -- "$p" 2>/dev/null; setfacl -x "d:g:$GROUP" -- "$p" 2>/dev/null
+      # A default ACL left with only its base entries still overrides the umask
+      # for every new file, so drop it once nothing named is left in it.
+      if [ -d "$p" ] && ! getfacl -cpd -- "$p" 2>/dev/null | grep -qE '^(user|group):[^:]+:'; then
+        setfacl -k -- "$p" 2>/dev/null
+      fi
       n=$((n + 1))
     done < <(find "$root" -xdev \( -type d -o -type f \) 2>/dev/null)
   done
@@ -240,7 +257,7 @@ cmd_status() {
          if has_entry "$p"; then nkeyed=$((nkeyed + 1)); bad "KEY GRANTED: $p -- ssh will refuse it"; fi
     fi
   done < <(walk)
-  printf '  %-16s %s\n' "readable items" "$ngrant (including every .env)"
+  printf '  %-16s %s\n' "granted items" "$ngrant (including every .env)"
   [ "$nk" -gt 0 ] && printf '  %-16s %s\n' "private keys" "$nk held back (ssh refuses a key others can read)"
   [ "$nkeyed" -gt 0 ] && bad "$nkeyed private key(s) carry an $GROUP entry -- 'it-aiops refresh' removes it"
 
@@ -253,12 +270,12 @@ cmd_status() {
   if [ -n "$m" ]; then
     head2 "Checked as $m"
     miss=$(walk | awk '$1=="yes" {sub(/^yes [df] /, ""); print}' |
-           runuser -u "$m" -- bash -c 'n=0; while IFS= read -r p; do [ -r "$p" ] || { n=$((n+1)); [ $n -le 5 ] && echo "$p"; }; done; [ $n -gt 5 ] && echo "... and $((n-5)) more"; exit 0' 2>/dev/null)
+           runuser -u "$m" -- bash -c 'n=0; while IFS= read -r p; do { [ -r "$p" ] && [ -w "$p" ]; } || { n=$((n+1)); [ $n -le 5 ] && echo "$p"; }; done; [ $n -gt 5 ] && echo "... and $((n-5)) more"; exit 0' 2>/dev/null)
     if [ -z "$miss" ]; then
-      ok "can read all $ngrant granted items (read-only: nothing in the grant allows editing)"
+      ok "can read AND edit all $ngrant granted items"
     else
-      warn "cannot read:"; printf '%s\n' "$miss" | sed 's/^/    /'
-      note "run: it-aiops refresh   (a file rewritten since 'on' loses its entry)"
+      warn "cannot read or cannot edit:"; printf '%s\n' "$miss" | sed 's/^/    /'
+      note "run: it-aiops refresh   (a file rewritten since 'on', or granted read-only by an older it-aiops)"
     fi
   fi
   say ""

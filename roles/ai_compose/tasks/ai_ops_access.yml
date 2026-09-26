@@ -1,7 +1,7 @@
 ---
 # =============================================================================
-# ai_compose :: ai_ops_access.yml -- read access to /opt/stacks and /opt/docker
-# for the non-admin AI review team (group `aiops`).
+# ai_compose :: ai_ops_access.yml -- read + write on /opt/stacks and /opt/docker
+# for the AI stack managers (group `aiops`).
 #
 # The work is done by it-aiops (roles/it_scripts/files/aiops.sh), run from THIS
 # checkout, so a pull applies exactly the rule an admin applies by hand and the
@@ -11,11 +11,11 @@
 # Runs LAST in the role: ansible writes a changed file as a new inode, which
 # carries no ACL, so the entries are re-applied after everything is written.
 #
-# Everything under both roots is granted, .env included, except private keys:
+# Read + write on everything under both roots, .env included, except private keys:
 # OpenSSH refuses a key others can read, and magpie mounts ./ssh live.
 # =============================================================================
 
-- name: "AI-OPS | Grant read access (it-aiops on)"
+- name: "AI-OPS | Grant read + write access (it-aiops on)"
   ansible.builtin.command:
     argv:
       - bash

@@ -1617,14 +1617,14 @@ ai_stacks_need_fips:
   system2: [vllm-embed, vllm-reranker, vllm-vision, vllm-gpt-oss-20b, docling]
 
 # ---- AI architect / ops read access (ai profile) ----------------------------
-# Read access to /opt/stacks and /opt/docker for the team that reviews the AI
-# stack but administers nothing: group `aiops`, by POSIX ACL, plus a sudo grant
-# of look-only it-* commands. Turn it on or off BY HAND with `it-aiops on|off`
+# Read + write on /opt/stacks and /opt/docker for the people who manage the AI
+# stack: group `aiops`, by POSIX ACL, plus a sudo grant of look-only it-*
+# commands. Turn it on or off BY HAND with `it-aiops on|off`
 # -- no pull, no container touched; that also writes this flag to site.yml so a
 # later `it-pull ai` agrees instead of reverting it.
 #
 # The rule, the paths and the sudo forms all live in it-aiops
-# (roles/it_scripts/files/aiops.sh), which the pull also runs. The group reads
+# (roles/it_scripts/files/aiops.sh), which the pull also runs. The group edits
 # everything under both roots, .env included, EXCEPT private keys -- OpenSSH
 # refuses a key others can read, so a grant would break magpie's git sync.
 # Not /opt/it/site.yml. NOT the `docker` group -- that is root-equivalent

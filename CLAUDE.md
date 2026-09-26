@@ -177,8 +177,10 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   ufw range -- could never run. Watch for that shape elsewhere.
 
 - **`aiops` access is `it-aiops`, run by hand; the pull only mirrors it.** The
-  owner has accepted that the group reads EVERYTHING under `/opt/stacks` and
-  `/opt/docker`, `.env` included. The one exception is private keys, and it is
+  group MANAGES the AI stack: the owner has accepted read + write on EVERYTHING
+  under `/opt/stacks` and `/opt/docker`, `.env` included, plus default ACLs so
+  new files are covered. Their edits to managed files still only last until
+  the next `it-pull ai` (gotcha 2). The one exception is private keys, and it is
   not a policy choice: an ACL entry shows in the mode as `0640`, and OpenSSH
   then refuses the key -- a grant on magpie's `./ssh` would break its git sync
   live, with no container restarted. The rule lives in `aiops.sh`, which

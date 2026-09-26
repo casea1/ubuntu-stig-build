@@ -3460,8 +3460,8 @@ team's group.
 
 ### Afterwards
 
-`it-aiops` covers both roots, so once it is on, `sudo it-aiops refresh` makes
-`/opt/docker` readable to the AI team — which was the point.
+`it-aiops` covers both roots, so once it is on, `sudo it-aiops refresh` opens
+`/opt/docker` to the AI team — which was the point.
 
 ## 5.10 Connect an IDE
 
@@ -3478,27 +3478,40 @@ models:
 
 Use vLLM's `--served-model-name`, not the Hugging Face repo path. Names are in [reference.md](reference.md).
 
-## 5.11 Give the AI review team read access (`aiops`)
+## 5.11 Give the AI stack managers access (`aiops`)
 
-The architects review the AI configuration but administer nothing. `it-aiops`
-gives the `aiops` group **read** access to `/opt/stacks` and `/opt/docker`, and
-a short list of **look-only** commands through sudo. It is run by hand: **no
-pull, no compose file rewritten, no container touched.**
+The `aiops` group manages the AI stack. `it-aiops` gives it **read and write**
+access to `/opt/stacks` and `/opt/docker`, and a short list of look-only
+commands through sudo. It is run by hand: **no pull, no compose file
+rewritten, no container touched.**
 
-**What they get:** read access to **everything** under both folders — compose
+**What they get:** read + write on **everything** under both folders — compose
 and config files, every `.env` (the passwords and keys), hidden files, the
-build contexts, magpie's `ssh` folder — plus `sudo it-docker` (ps, check,
-audit, ports, compose, config, df), `sudo it-stack-diff` (and `--full`),
-`sudo it-baseline --stdout`. Accepted by the site owner, 2026-09-25.
+build contexts, magpie's `ssh` folder — including files and stacks created
+later (a default ACL on each folder). Plus `sudo it-docker` (ps, check, audit,
+ports, compose, config, df), `sudo it-stack-diff` (and `--full`),
+`sudo it-baseline --stdout`. Accepted by the site owner, 2026-09-26.
 
-**What they do not get:** write access, `/opt/it/site.yml`, the `docker` group
-(root-equivalent), anything that stops, starts or restarts a container — and
-**private keys** (magpie's `ssh/id_*`, found by content). That last one is not
-a policy choice: an ACL entry makes the key show as `0640`, and OpenSSH refuses
-a key others can read (*"UNPROTECTED PRIVATE KEY FILE"* — verified). magpie
-mounts `./ssh` live, so a grant would break its git sync at the next run
-without any container being restarted. The `.pub` files and `known_hosts` are
-granted.
+**What they do not get:** `/opt/it/site.yml`, the `docker` group
+(root-equivalent), a sudo command that stops, starts or restarts a container —
+and **private keys** (magpie's `ssh/id_*`, found by content). That last one is
+not a policy choice: an ACL entry makes the key show as `0640`, and OpenSSH
+refuses a key others can read (*"UNPROTECTED PRIVATE KEY FILE"* — verified).
+magpie mounts `./ssh` live, so a grant would break its git sync at the next run
+without any container being restarted. They can still add, replace and remove
+files in that folder; only the existing keys' contents are held back.
+
+> **An edit to a managed file lasts until the next `it-pull ai`.** That pull
+> rewrites every stack's `compose.yaml`, `.env`, `nginx.conf` and
+> `prometheus.yml` from the repo (gotcha 2) — a changed password or setting is
+> silently put back. `compose.override.yaml` is never touched, so a per-box
+> change belongs there. A light `it-pull` and `it-pull scripts` do not touch
+> the stacks at all.
+>
+> **An edit does nothing until the stack is redeployed** (Dockge, or an admin
+> running `docker compose up -d` in that folder). Changing a database password
+> in `.env` does NOT change it in the database — Postgres keeps the password
+> its volume was created with (gotcha 6).
 
 1. Get the script onto the node. `it-pull scripts` ships scripts and nothing
    else — no apt, no `ai_compose`, no docker:
@@ -3512,31 +3525,27 @@ granted.
    ```
    `on` also writes `ai_ops_enabled: true` to `/opt/it/site.yml`. That is what
    stops a later `sudo it-pull ai` from reverting it — the pull runs this same
-   script, so it applies the same rule.
+   script, so it applies the same rule. Running `on` again upgrades a box that
+   had the older read-only grant.
 3. Check:
    ```bash
-   sudo it-aiops                     # grant, members, what they can read
+   sudo it-aiops                     # grant, members, what they can edit
    ```
-   It counts what is readable and the keys held back, flags any private key
-   carrying an `aiops` entry, and ends by reading a `.env` as a member.
+   It opens every granted file as a member and names any it cannot read or
+   edit. If it names some, `sudo it-aiops refresh`.
 
-> **New files are not covered automatically.** No default ACL is used — under
-> one, a file an admin creates by hand ignores the STIG's `umask 077` and comes
-> out readable. After adding a `compose.override.yaml`, run
-> `sudo it-aiops refresh`. The next `it-pull ai` does the same.
->
-> **They must type `sudo` in front.** The scripts live in `/opt/it`, which a
-> non-admin cannot traverse, so a bare `it-docker` says *command not found* —
-> verified. sudo resolves the path as root.
+> **They must type `sudo` in front** of the `it-*` commands. The scripts live in
+> `/opt/it`, which a non-admin cannot traverse, so a bare `it-docker` says
+> *command not found* — verified. sudo resolves the path as root.
 >
 > **It asks for their password**, on purpose: the STIG requires sudo to
 > authenticate. The grant is exact argument forms, because a bare command in
 > sudoers permits **any** arguments — and `it-stack-diff --out` writes as root
 > (trap 12ad).
 
-To take it away: `sudo it-aiops off`. It removes the grant and every `aiops`
-ACL entry, and records `false` in `site.yml`. The group and its members are
-kept, so `on` restores them.
+To take it away: `sudo it-aiops off`. It removes the grant, every `aiops` ACL
+entry and the default ACLs, and records `false` in `site.yml`. The group and
+its members are kept, so `on` restores them.
 
 ---
 

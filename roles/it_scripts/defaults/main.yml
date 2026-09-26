@@ -109,6 +109,6 @@ it_scripts_ai:
   - { file: model-export.sh,   link: it-model-export }
   - { file: model-import.sh,   link: it-model-import }
   - { file: stack-diff.sh,     link: it-stack-diff }
-  # Read access for the AI review team (group aiops), applied by hand -- no
+  # Read + write for the AI stack managers (group aiops), applied by hand -- no
   # pull, no container touched. The pull's ai_ops_access.yml runs the same file.
   - { file: aiops.sh,          link: it-aiops }
