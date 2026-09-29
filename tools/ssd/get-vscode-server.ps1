@@ -12,6 +12,8 @@
 #   vscode-server-linux-x64.tar.gz      \  for the box:
 #   vscode_cli_alpine_x64_cli.tar.gz    /    sudo it-vscode-server stage <folder>
 #   VSCodeSetup-x64-<version>.exe          for the PCs (all-users installer)
+#   code_<version>-<build>_amd64.deb       the desktop VS Code for the Linux
+#                                          boxes, to put them all on one version
 #   extensions\*.vsix                      Remote-SSH + the two it pulls in
 #   README.txt                             version, commit, hashes, next steps
 #
@@ -83,7 +85,8 @@ if ($Want -ne 'latest' -and $Want -notmatch '^\d+\.\d+\.\d+$' -and $Want -cnotma
 $files = @(
   @{ plat = 'server-linux-x64'; name = 'vscode-server-linux-x64.tar.gz' },
   @{ plat = 'cli-alpine-x64';   name = 'vscode_cli_alpine_x64_cli.tar.gz' },
-  @{ plat = 'win32-x64';        name = '' }            # named from its URL
+  @{ plat = 'win32-x64';        name = '' },           # named from its URL
+  @{ plat = 'linux-deb-x64';    name = '' }
 )
 foreach ($f in $files) { $f.info = Get-Info $f.plat }
 $ver    = $files[0].info.productVersion
@@ -116,6 +119,7 @@ function Fetch($url, $dest) {
   return $part
 }
 
+$total = $files.Count + 1
 $n = 0
 foreach ($f in $files) {
   $n++
@@ -123,10 +127,10 @@ foreach ($f in $files) {
   $want = "$($f.info.sha256hash)".ToLower()
   if ((Test-Path -LiteralPath $dest) -and $want -and
       ((Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash.ToLower() -eq $want)) {
-    Ok "[$n/4] $($f.name) -- already here, hash matches"
+    Ok "[$n/$total] $($f.name) -- already here, hash matches"
     continue
   }
-  Say "[$n/4] $($f.name) ..."
+  Say "[$n/$total] $($f.name) ..."
   try { $part = Fetch $f.info.url $dest } catch { Die "download failed: $($f.info.url)`n      $($_.Exception.Message)" }
   $got = (Get-FileHash -LiteralPath $part -Algorithm SHA256).Hash.ToLower()
   if ($want -and $got -ne $want) {
@@ -145,7 +149,7 @@ foreach ($f in $files) {
 # installed first or the install stops.
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 $exts = @('ms-vscode-remote.remote-ssh-edit', 'ms-vscode.remote-explorer', 'ms-vscode-remote.remote-ssh')
-Say "[4/4] Remote-SSH extensions ..."
+Say "[$total/$total] Remote-SSH extensions ..."
 $extNames = @()
 foreach ($e in $exts) {
   $pub, $nm = $e -split '\.', 2
@@ -204,6 +208,19 @@ into your home directory):
 
 It checks the files, installs one shared copy in /opt/vscode-server, and links
 every member of 'sentry'. Check with: sudo it-vscode-server
+
+To put the box's OWN desktop VS Code on this version too (optional -- only
+matters if people Remote-SSH FROM this box, or you want one version fleet-wide):
+
+  echo "code code/add-microsoft-repo boolean false" | sudo debconf-set-selections
+  sudo apt install ~/vscode-$ver/$($files[3].name)
+  sudo apt-mark hold code        # so a later apt upgrade cannot drift it again
+
+The first line answers the package's "add Microsoft's apt repository?" question
+with NO. Left unanswered it adds packages.microsoft.com, and every apt update on
+an air-gapped box then waits on it.
+Extensions are not touched: they live in /opt/vscode-extensions and in each
+user's home, not in the package.
 
 ON EACH ENGINEER'S PC:
 

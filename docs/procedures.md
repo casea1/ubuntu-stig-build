@@ -1911,6 +1911,17 @@ stages it once per version, shared, and links every engineer to it.
 No Windows PC? `sudo it-vscode-server urls <commit>` on any box prints the
 same download addresses.
 
+**Versions must match exactly** — 1.136.1 and 1.136.2 are different builds, and
+a client of one cannot use the other's server. Either stage one server per
+client version (they sit side by side), or put everything on one version: the
+bundle also carries the Linux `code_*.deb`, and its `README.txt` has the three
+lines — answer the package's *add Microsoft's apt repository?* question **no**
+first, or it adds `packages.microsoft.com` and every `apt update` on an
+air-gapped box waits on it (it does that on any non-interactive install, so a
+box that got VS Code from the pull probably has `/etc/apt/sources.list.d/vscode.sources`
+already), then `apt-mark hold code`. Extensions are not touched: they live in
+`/opt/vscode-extensions` and users' homes, not in the package.
+
 **A new engineer:** add them to `sentry`. The next pull links them, or now:
 `sudo it-vscode-server link --user <name>`.
 
