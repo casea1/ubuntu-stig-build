@@ -32,13 +32,15 @@
     force: true
 
 - name: "GUI | Ensure /etc/gdm3/custom.conf has a [daemon] section"
-  # On a minimal/server base the file may not exist yet; create it with the
-  # section so the WaylandEnable edit below has an anchor.
-  ansible.builtin.copy:
-    dest: /etc/gdm3/custom.conf
-    content: "[daemon]\n"
+  # Added when missing, not only when the file is: classification_banner can
+  # create the file first, with no group, and GDM then ignores all of it.
+  ansible.builtin.lineinfile:
+    path: /etc/gdm3/custom.conf
+    regexp: '^\[daemon\]\s*$'
+    line: '[daemon]'
+    insertbefore: BOF
+    create: true
     mode: "0644"
-    force: false          # never clobber an existing config
 
 - name: "GUI | Disable Wayland in GDM (xrdp needs Xorg; also what the banner wants)"
   # Ubuntu 24.04 defaults GDM to Wayland, which xrdp can't drive -> black screen.

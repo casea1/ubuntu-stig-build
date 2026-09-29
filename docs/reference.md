@@ -320,6 +320,8 @@ Getting past it would mean editing Microsoft's compiled code on every release, w
 
 **`localServerDownload: always` does not make this offline-safe** — it makes the *PC* download and copy over SSH. That helps only when the PC has internet. With the files staged, neither download path runs at all.
 
+**12ag. On a server base, `/etc/gdm3/custom.conf` came out with no `[daemon]` group, so GDM ignored all of it.** `classification_banner` runs before `remote_desktop` installs GDM. The file does not exist yet, and its `lineinfile … create: true` wrote a bare `WaylandEnable=false`; the later "add a `[daemon]` section" task only ran when the file was *absent*, so it never fixed it. GDM logs `Unable to load file '/etc/gdm3/custom.conf': Key file does not start with a group` and falls back to its defaults — **Wayland on for local logins**, while RDP, always Xorg, kept working and hid it. Found on asp-lab3, 2026-09-29. Both tasks now add `[daemon]` at the top whenever it is missing, which also repairs a box already built this way on its next pull. By hand: `sudo sed -i '1i [daemon]' /etc/gdm3/custom.conf`.
+
 **12ae. "Up but not answering" and "starting" look identical, and only the clock tells them apart — a nine-day AV outage on ASP-2 hid behind that.** Found 2026-09-23.
 
 `clamav_container` runs clamd in a container because the host engine cannot detect anything under FIPS. clamd binds its socket only **after** loading the signature set — 60–90 s for ~3.6M signatures — so "the unit is active, the container is in `docker ps`, and the socket does not answer" is the *normal* state right after a restart. It is also exactly what a **hung** container looks like, forever.

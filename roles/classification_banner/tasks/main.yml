@@ -33,6 +33,22 @@
 
 # A docked top/bottom banner needs an Xorg session; Wayland (Ubuntu's default)
 # ignores the X11 dock/strut hints, so the bars won't pin. Force GDM to Xorg.
+#
+# The [daemon] header FIRST. This role runs before remote_desktop installs GDM,
+# so on a server base the file does not exist yet, and `create: true` alone
+# wrote a bare `WaylandEnable=false` with no group. GDM rejects that file whole
+# ("Key file does not start with a group") -- so Wayland came back on for LOCAL
+# logins while RDP, always Xorg, kept working. Also repairs a box built that way.
+- name: Ensure /etc/gdm3/custom.conf starts with a [daemon] group
+  ansible.builtin.lineinfile:
+    path: /etc/gdm3/custom.conf
+    regexp: '^\[daemon\]\s*$'
+    line: '[daemon]'
+    insertbefore: BOF
+    create: true
+    mode: "0644"
+  when: classification_banner_force_xorg | default(true)
+
 - name: Force the GDM login session to Xorg (required for the docked banner)
   ansible.builtin.lineinfile:
     path: /etc/gdm3/custom.conf
