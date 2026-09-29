@@ -1880,29 +1880,36 @@ stages it once per version, shared, and links every engineer to it.
 
 **Once per VS Code version** — at the start, and whenever the PCs move:
 
-1. Find the PCs' commit: VS Code → **Help → About → Commit** (40 hex characters).
-2. On an online machine, print what to download:
+1. **On a Windows PC with internet**, double-click
+   `tools/ssd/get-vscode-server.bat` (keep `get-vscode-server.ps1` beside it).
+   With no argument it matches the VS Code installed on that PC — no hash to
+   copy; `get-vscode-server.bat 1.139.1`, a commit, or `latest` also work. It
+   leaves a `vscode-<version>` folder holding the Linux server and CLI, the
+   Windows installer for the PCs, the Remote-SSH `.vsix` files and a
+   `README.txt`, every download checked against the SHA-256 Microsoft
+   publishes.
+   > The Marketplace serves a `.vsix` **gzip-encoded**, and Windows' `curl.exe`
+   > cannot decode it — a hand-downloaded one is often a gzip file VS Code
+   > rejects. The helper unwraps it. Remote-SSH is an extension **pack**:
+   > offline, its two members install first (the README gives the order).
+2. Copy the folder to each box (WinSCP, into your home directory), then:
    ```bash
-   sudo it-vscode-server urls <commit>
-   ```
-   Fetch all of it: `vscode-server-linux-x64.tar.gz`,
-   `vscode_cli_alpine_x64_cli.tar.gz`, the matching Windows installer, and the
-   **Remote - SSH** extension (`ms-vscode-remote.remote-ssh`) as a `.vsix`.
-3. Carry it in. On each box:
-   ```bash
-   sudo it-vscode-server stage /media/<usb>/vscode
+   sudo it-vscode-server stage ~/vscode-<version>
    ```
    It reads the version from the server itself (nothing to type), refuses a CLI
    from a different version or the browser build, installs **one** read-only copy
    in `/opt/vscode-server/<commit>`, checks it actually starts as a non-root user,
    and links every member of `sentry`. One copy is 658 MB unpacked — per box, not
    per engineer.
-4. On each PC: install that VS Code, then the Remote-SSH `.vsix`
+3. On each PC: install that VS Code, then the three `.vsix` in the README's order
    (Extensions → `…` → Install from VSIX), then paste in what this prints:
    ```bash
    sudo it-vscode-server settings
    ```
-5. Connect: **Remote-SSH: Connect to Host** → `user@box`.
+4. Connect: **Remote-SSH: Connect to Host** → `user@box`.
+
+No Windows PC? `sudo it-vscode-server urls <commit>` on any box prints the
+same download addresses.
 
 **A new engineer:** add them to `sentry`. The next pull links them, or now:
 `sudo it-vscode-server link --user <name>`.

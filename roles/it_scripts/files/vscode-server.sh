@@ -426,7 +426,7 @@ cmd_status() {
       "$(du -sh "$ROOT/$c" 2>/dev/null | cut -f1)" \
       "$([ -f "$ROOT/$c/code" ] && echo 'server + CLI' || echo 'server only')"
   done
-  [ "$any" = 1 ] || { warn "nothing staged"; note "on an online machine: it-vscode-server urls <commit>"; note "then here: sudo it-vscode-server stage <folder>"; }
+  [ "$any" = 1 ] || { warn "nothing staged"; note "on an online Windows PC: tools/ssd/get-vscode-server.bat (or: it-vscode-server urls <commit>)"; note "then here: sudo it-vscode-server stage <folder>"; }
 
   head2 "Engineers (${DEFAULT_GROUP})"
   if ! getent group "$DEFAULT_GROUP" >/dev/null 2>&1; then
