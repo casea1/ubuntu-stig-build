@@ -3072,7 +3072,7 @@ whenever there is something new to carry; the mirror is replaced each time.
 | **It shows what is coming** | the commits between what this box runs and what the media holds, before anything changes |
 | **It makes you type `YES`** | the next pull executes that repository as root. This is the only moment to look. `--yes` substitutes for that keystroke when a person is not there — see below |
 | **Admin only** | deliberately **not** in the `dta` sudoers grant that covers `it-repo load` |
-| **Reversible** | delete the `REPO_URL` line from `/etc/stig-build/pull.conf` and the box goes back to the network |
+| **Reversible** | set `REPO_URL=<network url>` in `/etc/stig-build/pull.conf`. **Deleting** the line does not work once a pull has run from the mirror: that pull repoints the checkout's origin at `/srv/baseline.git`, and with no `REPO_URL` `it-pull` falls back to the origin (verified) |
 
 > **On EMI the admin cannot mount the media** (the polkit/udev carve-out restricts that to
 > `dta`), and `it-pull load` is not granted to the DTA — on purpose. Packages carried in on

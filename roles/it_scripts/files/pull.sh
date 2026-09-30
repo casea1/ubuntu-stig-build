@@ -749,7 +749,10 @@ Or point at one directly:  sudo it-pull load /path/to/baseline.git"
   fi
 
   printf '\n  Now run:  sudo it-pull        (or `full`, for packages and a scan)\n'
-  printf '  To go back to the network:  remove REPO_URL from %s\n\n' "$CONF_FILE"
+  # NOT "delete the REPO_URL line": the first pull from the mirror repoints the
+  # checkout's origin at it, and with no REPO_URL this script falls back to that
+  # origin -- so the box would keep pulling from the mirror. Verified.
+  printf '  To go back to the network:  set REPO_URL=<network url> in %s\n\n' "$CONF_FILE"
 }
 
 head2_load() { printf '\n%s%s%s\n' "$B" "$*" "$R"; }
