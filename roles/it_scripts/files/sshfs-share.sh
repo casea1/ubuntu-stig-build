@@ -511,10 +511,18 @@ What= reads: ${what:-<empty>}" ;;
   note "what authenticates and the password is not used again."
   say ""
 
+  # The folder and the FILE get separate icacls calls. One recursive call
+  # (/T) with the folder's (OI)(CI) flags stripped the file's inherited ACEs
+  # and gave it nothing back, locking the account out of its own
+  # authorized_keys ("Access to the path ... is denied", asp-lab3). The
+  # resulting set -- the user, SYSTEM, Administrators -- is what Win32-OpenSSH
+  # accepts.
+  #
   # -T: no pty wanted, we are piping a script. StrictHostKeyChecking stays on --
   # the host key was pinned by `add`, and turning it off here to save a prompt
   # would undo the one thing that makes this transport trustworthy.
-  if printf '%s\n' \
+  local out
+  if out="$(printf '%s\n' \
       '$ErrorActionPreference = "Stop"' \
       '$d = "$env:USERPROFILE\.ssh"' \
       '$f = "$d\authorized_keys"' \
@@ -522,18 +530,31 @@ What= reads: ${what:-<empty>}" ;;
       'New-Item -ItemType Directory -Force -Path $d | Out-Null' \
       'if (-not (Test-Path $f)) { New-Item -ItemType File -Path $f | Out-Null }' \
       'if (-not (Select-String -Path $f -SimpleMatch $k -Quiet)) { Add-Content -Path $f -Value $k -Encoding ascii }' \
-      'icacls $d /inheritance:r /grant "$($env:USERNAME):(OI)(CI)F" /grant "SYSTEM:(OI)(CI)F" /T | Out-Null' \
+      'icacls $d /inheritance:r /grant:r "$($env:USERNAME):(OI)(CI)F" /grant:r "SYSTEM:(OI)(CI)F" /grant:r "Administrators:(OI)(CI)F" | Out-Null' \
+      'icacls $f /inheritance:r /grant:r "$($env:USERNAME):F" /grant:r "SYSTEM:F" /grant:r "Administrators:F" | Out-Null' \
       'Write-Output ("keys now installed: " + (Get-Content $f).Count)' \
      | ssh -T -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
-           -p "$port" "$user@$host" "powershell -NoProfile -Command -" 2>&1 | sed 's/^/  /'
+           -p "$port" "$user@$host" "powershell -NoProfile -Command -" 2>&1)"
   then
+    printf '%s\n' "$out" | sed 's/^/  /'
     ok "key installed"
     logline "installed key for $n on $user@$host"
     say ""
     note "verify with:  sudo it-sshfs test $n"
     say ""
   else
+    printf '%s\n' "$out" | sed 's/^/  /'
     bad "could not install the key"
+    case "$out" in
+      *"Access to the path"*|*"is denied"*)
+        note "Windows refused a FILE permission, not the login. As an administrator:"
+        note "  icacls C:\\Users\\$user\\.ssh\\authorized_keys /inheritance:r /grant:r \"$user:F\" /grant:r \"SYSTEM:F\" /grant:r \"Administrators:F\""
+        note "then run this again."
+        return 1 ;;
+      *"Permission denied"*)
+        note "the password was rejected -- it is ${user}'s WINDOWS password."
+        return 1 ;;
+    esac
     note "the password prompt is ${user}'s Windows password. If it was accepted"
     note "and this still failed, that account may be an ADMINISTRATOR -- sshd"
     note "then reads C:\\ProgramData\\ssh\\administrators_authorized_keys instead"
