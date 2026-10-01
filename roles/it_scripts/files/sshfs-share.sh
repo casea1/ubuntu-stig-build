@@ -269,8 +269,23 @@ safely to sftp. Rename the folder on the server." ;;
     say ""
     local tmp; tmp="$(mktemp)"
     # shellcheck disable=SC2046
-    ssh-keyscan $(keyscan_types) -p "$port" -H "$R_HOST" > "$tmp" 2>/dev/null
-    [ -s "$tmp" ] || { rm -f "$tmp"; die "no SSH server answered on $R_HOST:$port"; }
+    local kerr
+    kerr="$(ssh-keyscan $(keyscan_types) -T 8 -p "$port" -H "$R_HOST" 2>&1 >"$tmp")"
+    if [ ! -s "$tmp" ]; then
+      rm -f "$tmp"
+      # Two different failures used to share one message: nothing listening,
+      # and a server that answered but offered no host key this client accepts.
+      if timeout 5 bash -c ">/dev/tcp/$R_HOST/$port" 2>/dev/null; then
+        printf '%s\n' "$kerr" | grep -v '^#' | sed '/^$/d; s/^/    /'
+        die "port $port on $R_HOST is OPEN, but no usable host key came back.
+  The output above is ssh-keyscan's own. On a FIPS box only ecdsa and rsa host
+  keys are usable -- check C:\\ProgramData\\ssh\\ for ssh_host_ecdsa_key.pub.
+  Compare:  ssh -v -o BatchMode=yes $R_USER@$R_HOST -p $port exit"
+      fi
+      die "nothing answered on $R_HOST:$port from THIS box.
+  Reaching it from another machine does not prove this one can: check the
+  Windows firewall rule's allowed addresses, and this box's route to $R_HOST."
+    fi
     ssh-keygen -lf "$tmp" | sed 's/^/    /'
     say ""
     read -r -p "  Accept this host key? [y/N] " a
