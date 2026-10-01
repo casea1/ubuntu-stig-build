@@ -98,6 +98,18 @@ die()  { printf '%s%s%s\n' "$RED" "$*" "$R" >&2; logline "ERROR: $*"; exit 1; }
 usage(){ awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"; }
 case "${1:-}" in -h|--help|help) usage; exit 0 ;; esac
 
+# ECDSA P-384, NOT ed25519. A FIPS-mode OpenSSH refuses ed25519 outright --
+# "ED25519 keys are not allowed in FIPS mode", seen on asp-lab3 -- so an
+# ed25519 default meant it-sshfs could never add a share on a FIPS box, which
+# is the one place it exists for. P-384 is FIPS-approved, Windows' OpenSSH
+# accepts it, and one type for every box means a key survives FIPS being
+# switched on later.
+KEYGEN=(-t ecdsa -b 384)
+FIPS_FILE="${IT_SSHFS_FIPS_FILE:-/proc/sys/crypto/fips_enabled}"
+fips_on() { [ "$(cat "$FIPS_FILE" 2>/dev/null)" = 1 ]; }
+# Host-key types the client will actually negotiate: no ed25519 under FIPS.
+keyscan_types() { fips_on && printf '%s' "-t ecdsa,rsa" || printf '%s' ""; }
+
 unit_of()  { systemd-escape -p --suffix=mount "$1"; }
 amount_of(){ systemd-escape -p --suffix=automount "$1"; }
 key_of()   { printf '%s/%s\n' "$KEY_DIR" "$1"; }
@@ -238,7 +250,7 @@ safely to sftp. Rename the folder on the server." ;;
   if [ -f "$key" ]; then
     ok "reusing the existing key at $key"
   else
-    ssh-keygen -t ed25519 -N '' -C "it-sshfs $name $(hostname -s)" -f "$key" >/dev/null \
+    ssh-keygen "${KEYGEN[@]}" -N '' -C "it-sshfs $name $(hostname -s)" -f "$key" >/dev/null \
       || die "could not generate a key"
     chmod 0600 "$key"; chmod 0644 "$key.pub"
     ok "generated $key  (private key stays on this box)"
@@ -251,10 +263,13 @@ safely to sftp. Rename the folder on the server." ;;
   if ! ssh-keygen -F "[$R_HOST]:$port" -f "$KNOWN_HOSTS" >/dev/null 2>&1; then
     say ""
     say "  Fetching the server's host key. CHECK THIS FINGERPRINT against the"
-    say "  server before accepting it -- on Windows:  ssh-keygen -lf C:\\ProgramData\\ssh\\ssh_host_ed25519_key.pub"
+    say "  server before accepting it. On Windows, for each type listed below:"
+    say "    ssh-keygen -lf C:\\ProgramData\\ssh\\ssh_host_<type>_key.pub"
+    fips_on && say "  (FIPS box: ed25519 host keys are not fetched -- this client cannot use them)"
     say ""
     local tmp; tmp="$(mktemp)"
-    ssh-keyscan -p "$port" -H "$R_HOST" > "$tmp" 2>/dev/null
+    # shellcheck disable=SC2046
+    ssh-keyscan $(keyscan_types) -p "$port" -H "$R_HOST" > "$tmp" 2>/dev/null
     [ -s "$tmp" ] || { rm -f "$tmp"; die "no SSH server answered on $R_HOST:$port"; }
     ssh-keygen -lf "$tmp" | sed 's/^/    /'
     say ""
@@ -450,7 +465,7 @@ configured: $(shares | paste -sd' ' - || echo none)"
   [ -r "$key.pub" ] || die "no public key at $key.pub"
   pub="$(cat "$key.pub")"
   case "$pub" in *"'"*) die "the key comment contains a single quote, which would break the remote script.
-Regenerate it:  ssh-keygen -t ed25519 -N '' -f $key -C \"$n $(hostname -s)\"" ;; esac
+Regenerate it:  ssh-keygen ${KEYGEN[*]} -N '' -f $key -C \"$n $(hostname -s)\"" ;; esac
 
   what="$(remote_of "$n")"
   case "$what" in
@@ -533,12 +548,21 @@ What= reads: ${what:-<empty>}" ;;
   fi
 
   [ -f "$key" ] && ok "private key present: $key" || { bad "no private key at $key"; rc=1; }
+  # A share added before FIPS was switched on -- or by an older it-sshfs -- holds
+  # an ed25519 key this box can no longer use, and key auth below fails with
+  # nothing that says why.
+  if [ -f "$key.pub" ] && fips_on && grep -q '^ssh-ed25519 ' "$key.pub"; then
+    bad "the key is ed25519, which FIPS mode refuses"
+    note "replace it:  it-sshfs remove $n   (deletes the old key too)"
+    note "             it-sshfs add ... ; it-sshfs install-key $n"
+    rc=1
+  fi
 
   if ssh-keygen -F "[$host]:$port" -f "$KNOWN_HOSTS" >/dev/null 2>&1; then
     ok "host key is pinned"
   else
     bad "host key is NOT pinned -- the mount will refuse to connect"
-    note "re-add the share, or: ssh-keyscan -p $port -H $host >> $KNOWN_HOSTS"
+    note "re-add the share, or: ssh-keyscan $(keyscan_types) -p $port -H $host >> $KNOWN_HOSTS"
     rc=1
   fi
 

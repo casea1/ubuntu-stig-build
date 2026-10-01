@@ -824,7 +824,8 @@ test_sftp() {
     [ "$(stat -c %a "$SFTP_KEY")" = 600 ] || warn "the key should be 0600 -- ssh refuses a group-readable key"
   else
     bad "key          MISSING at $SFTP_KEY"
-    say "               ssh-keygen -t ed25519 -N '' -f $SFTP_KEY -C \"powerstrux $(hostname -s)\""
+    # ECDSA, not ed25519: a FIPS-mode OpenSSH refuses ed25519 keys outright.
+    say "               ssh-keygen -t ecdsa -b 384 -N '' -f $SFTP_KEY -C \"powerstrux $(hostname -s)\""
     return 1
   fi
 

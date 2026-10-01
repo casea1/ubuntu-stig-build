@@ -2780,11 +2780,17 @@ own:
 
 ```bash
 sudo install -d -m 0700 /etc/stig-build/ssh
-sudo ssh-keygen -t ed25519 -N '' -f /etc/stig-build/ssh/powerstrux-offload \
+sudo ssh-keygen -t ecdsa -b 384 -N '' -f /etc/stig-build/ssh/powerstrux-offload \
   -C "powerstrux $(hostname -s)"
 sudo ssh-keyscan -H 10.10.99.100 | sudo tee -a /etc/stig-build/ssh/known_hosts
 sudo cat /etc/stig-build/ssh/powerstrux-offload.pub
 ```
+
+> **ECDSA, not ed25519.** A box in FIPS mode refuses ed25519 outright —
+> `ssh-keygen` prints *ED25519 keys are not allowed in FIPS mode* — and FIPS is
+> on for every profile but the unclassified EMI laptop. An ed25519 key made
+> before a box's FIPS reboot stops working after it. `cat /proc/sys/crypto/fips_enabled`
+> says which a box is.
 
 Check the host-key fingerprint against the server before you accept it, then put
 that public key in `C:\Users\svc_powerstrux\.ssh\authorized_keys` (a normal

@@ -221,7 +221,8 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   NTLMSSP.** Tested at every dialect against the deployed server on 2026-09-16.
   **The transport that works today is SFTP**, on both offloads --
   `powerstrux_offload_transport: sftp` and `usg_audit_offload_sftp_enabled` --
-  with a per-box ed25519 key, a pinned host key, and a CREATE-ONLY service
+  with a per-box ECDSA P-384 key (NOT ed25519: FIPS-mode OpenSSH refuses it,
+  and FIPS is on for every profile but emi-unclass), a pinned host key, and a CREATE-ONLY service
   account on the far side. `docs/procedures.md` "Getting the PowerStrux reports
   to the auditors" has the Windows ACLs. `sec=krb5` after the AD join remains
   the SMB answer, if SMB is ever wanted again.
