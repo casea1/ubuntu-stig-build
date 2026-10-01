@@ -122,7 +122,7 @@ elif [ ! -r "$SFTP_KNOWN" ]; then
   # answers on port 22 is a man-in-the-middle waiting to happen, and the point
   # of this transport is that it is the compliant one.
   log "ERROR: no pinned host key at $SFTP_KNOWN -- push SKIPPED, local copy kept"
-  log "       pin it with: it-sshfs add, or ssh-keyscan -H <host> >> $SFTP_KNOWN"
+  log "       pin it with: it-sshfs add, or ssh -o UserKnownHostsFile=$SFTP_KNOWN -o HashKnownHosts=yes -o PreferredAuthentications=none <host>  (check the fingerprint, answer yes; ssh-keyscan aborts on a FIPS box)"
   push_failed=1
 else
   ssh_opts="-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes"

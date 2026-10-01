@@ -460,7 +460,7 @@ push_week_sftp() {   # $1 = local week dir
   [ -r "$SFTP_KEY" ]  || { log "ERROR: no SSH key at $SFTP_KEY"; return 1; }
   [ -r "$SFTP_KNOWN" ] || {
     log "ERROR: no pinned host key at $SFTP_KNOWN -- push SKIPPED, local copy kept"
-    log "       pin it with 'it-sshfs add', or: ssh-keyscan -H <host> >> $SFTP_KNOWN"
+    log "       pin it with 'it-sshfs add', or: ssh -o UserKnownHostsFile=$SFTP_KNOWN -o HashKnownHosts=yes -o PreferredAuthentications=none <host>  (check the fingerprint, answer yes; ssh-keyscan aborts on a FIPS box)"
     return 1; }
 
   # Split on the FIRST colon only: a Windows destination has two, as in
@@ -838,7 +838,9 @@ test_sftp() {
     say "               StrictHostKeyChecking stays on for an unattended job, so"
     say "               the push will refuse to connect. Pin it, after checking the"
     say "               fingerprint against the server:"
-    say "               ssh-keyscan -p $port -H $host | sudo tee -a $SFTP_KNOWN"
+    # NOT ssh-keyscan: it ignores ssh_config and aborts on sntrup761 in FIPS mode.
+    say "               sudo ssh -o UserKnownHostsFile=$SFTP_KNOWN -o HashKnownHosts=yes -o PreferredAuthentications=none -p $port $host"
+    say "               (check the fingerprint it shows, answer yes; it then stops at login)"
     rc=1
   fi
   [ "$rc" = 0 ] || return 1

@@ -2782,10 +2782,17 @@ own:
 sudo install -d -m 0700 /etc/stig-build/ssh
 sudo ssh-keygen -t ecdsa -b 384 -N '' -f /etc/stig-build/ssh/powerstrux-offload \
   -C "powerstrux $(hostname -s)"
-sudo ssh-keyscan -H 10.10.99.100 | sudo tee -a /etc/stig-build/ssh/known_hosts
+sudo ssh -o UserKnownHostsFile=/etc/stig-build/ssh/known_hosts -o HashKnownHosts=yes \
+  -o PreferredAuthentications=none svc_powerstrux@10.10.99.100   # check the fingerprint, type yes
 sudo cat /etc/stig-build/ssh/powerstrux-offload.pub
 ```
 
+> **Not `ssh-keyscan`.** It reads no `ssh_config`, so it always offers OpenSSH's
+> built-in key exchange, which starts with `sntrup761` — and a FIPS box aborts on
+> it (*Key exchange type sntrup761 is not allowed in FIPS mode*) against a server
+> plain `ssh` reaches fine. The `ssh` line above uses the hardened settings,
+> shows the fingerprint, saves it on `yes`, then stops at the login.
+>
 > **ECDSA, not ed25519.** A box in FIPS mode refuses ed25519 outright —
 > `ssh-keygen` prints *ED25519 keys are not allowed in FIPS mode* — and FIPS is
 > on for every profile but the unclassified EMI laptop. An ed25519 key made

@@ -107,8 +107,25 @@ case "${1:-}" in -h|--help|help) usage; exit 0 ;; esac
 KEYGEN=(-t ecdsa -b 384)
 FIPS_FILE="${IT_SSHFS_FIPS_FILE:-/proc/sys/crypto/fips_enabled}"
 fips_on() { [ "$(cat "$FIPS_FILE" 2>/dev/null)" = 1 ]; }
-# Host-key types the client will actually negotiate: no ed25519 under FIPS.
-keyscan_types() { fips_on && printf '%s' "-t ecdsa,rsa" || printf '%s' ""; }
+# known_hosts names a port-22 server by its bare address and anything else as
+# [host]:port. Looking a port-22 entry up as [host]:22 never matches, which made
+# every port-22 share read "not pinned".
+kh_name() { [ "$2" = 22 ] && printf '%s' "$1" || printf '[%s]:%s' "$1" "$2"; }
+
+# The server's host key, fetched by ssh ITSELF and not ssh-keyscan. ssh-keyscan
+# reads no ssh_config, so it always offers OpenSSH's compiled-in key exchange,
+# which starts with sntrup761 -- and the FIPS build aborts on it ("Key exchange
+# type sntrup761 is not allowed in FIPS mode") rather than skipping it, against
+# a Windows server ssh itself connects to fine (asp-lab3, Win32-OpenSSH 10.0).
+# ssh uses the hardened ssh_config, records the key via accept-new into a
+# scratch file, then stops at authentication: `none` is all it may try.
+fetch_hostkey() {   # $1 host, $2 port, $3 output file -> prints ssh's error
+  ssh -n -o BatchMode=yes -o ConnectTimeout=8 \
+      -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$3" \
+      -o GlobalKnownHostsFile=/dev/null -o HashKnownHosts=yes \
+      -o PreferredAuthentications=none -o LogLevel=ERROR \
+      -p "$2" "it-sshfs-hostkey@$1" exit 2>&1 | grep -v 'Permission denied'
+}
 
 unit_of()  { systemd-escape -p --suffix=mount "$1"; }
 amount_of(){ systemd-escape -p --suffix=automount "$1"; }
@@ -260,26 +277,24 @@ safely to sftp. Rename the folder on the server." ;;
   # Pinned deliberately rather than accepted blindly. An unattended mount that
   # trusts whatever answers on port 22 is a man-in-the-middle waiting to happen,
   # and StrictHostKeyChecking=no would do exactly that.
-  if ! ssh-keygen -F "[$R_HOST]:$port" -f "$KNOWN_HOSTS" >/dev/null 2>&1; then
+  if ! ssh-keygen -F "$(kh_name "$R_HOST" "$port")" -f "$KNOWN_HOSTS" >/dev/null 2>&1; then
     say ""
     say "  Fetching the server's host key. CHECK THIS FINGERPRINT against the"
-    say "  server before accepting it. On Windows, for each type listed below:"
+    say "  server before accepting it. On Windows, for the type shown in brackets:"
     say "    ssh-keygen -lf C:\\ProgramData\\ssh\\ssh_host_<type>_key.pub"
-    fips_on && say "  (FIPS box: ed25519 host keys are not fetched -- this client cannot use them)"
     say ""
     local tmp; tmp="$(mktemp)"
-    # shellcheck disable=SC2046
     local kerr
-    kerr="$(ssh-keyscan $(keyscan_types) -T 8 -p "$port" -H "$R_HOST" 2>&1 >"$tmp")"
+    kerr="$(fetch_hostkey "$R_HOST" "$port" "$tmp")"
     if [ ! -s "$tmp" ]; then
       rm -f "$tmp"
       # Two different failures used to share one message: nothing listening,
       # and a server that answered but offered no host key this client accepts.
       if timeout 5 bash -c ">/dev/tcp/$R_HOST/$port" 2>/dev/null; then
-        printf '%s\n' "$kerr" | grep -v '^#' | sed '/^$/d; s/^/    /'
+        printf '%s\n' "$kerr" | sed '/^$/d; s/^/    /'
         die "port $port on $R_HOST is OPEN, but no usable host key came back.
-  The output above is ssh-keyscan's own. On a FIPS box only ecdsa and rsa host
-  keys are usable -- check C:\\ProgramData\\ssh\\ for ssh_host_ecdsa_key.pub.
+  The output above is ssh's own. On a FIPS box only ecdsa and rsa host keys
+  are usable -- check C:\\ProgramData\\ssh\\ for ssh_host_ecdsa_key.pub.
   Compare:  ssh -v -o BatchMode=yes $R_USER@$R_HOST -p $port exit"
       fi
       die "nothing answered on $R_HOST:$port from THIS box.
@@ -573,11 +588,11 @@ What= reads: ${what:-<empty>}" ;;
     rc=1
   fi
 
-  if ssh-keygen -F "[$host]:$port" -f "$KNOWN_HOSTS" >/dev/null 2>&1; then
+  if ssh-keygen -F "$(kh_name "$host" "$port")" -f "$KNOWN_HOSTS" >/dev/null 2>&1; then
     ok "host key is pinned"
   else
     bad "host key is NOT pinned -- the mount will refuse to connect"
-    note "re-add the share, or: ssh-keyscan $(keyscan_types) -p $port -H $host >> $KNOWN_HOSTS"
+    note "re-add the share (it fetches and shows the key to accept)"
     rc=1
   fi
 
