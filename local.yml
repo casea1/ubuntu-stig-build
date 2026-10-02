@@ -87,6 +87,19 @@
         label: "{{ item.item }}"
       when: item.stat.exists | default(false)
 
+    # 24.04 only. A 22.04 box is the `legacy` profile, which it-pull routes to
+    # legacy.yml -- this playbook on 22.04 would fail half-way through package
+    # names and the Ubuntu Pro FIPS stack, leaving a box half-changed.
+    - name: "Only Ubuntu 24.04"
+      tags: [always]
+      ansible.builtin.assert:
+        that: ansible_facts.distribution_release == 'noble'
+        fail_msg: >-
+          local.yml is for Ubuntu 24.04; this is {{ ansible_facts.distribution }}
+          {{ ansible_facts.distribution_version }}. A 22.04 box uses the `legacy`
+          profile:  sudo it-pull --profile legacy   (it runs legacy.yml).
+        quiet: true
+
     - name: "Validate deployment_profile is development, ai, baseline, or emi"
       tags: [always]
       ansible.builtin.assert:

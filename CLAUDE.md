@@ -11,7 +11,8 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
 
 | Path | What |
 |---|---|
-| `local.yml` | the playbook `ansible-pull` runs |
+| `local.yml` | the playbook `ansible-pull` runs -- **24.04 only** (asserts `noble`) |
+| `legacy.yml` | the `legacy` profile: Ubuntu **22.04** VMs being decommissioned. Audit rules (add-only, `it-audit`), DCSA banner, the check scripts, weekly scan -- and nothing else. `it-pull` picks it from the profile; first run is `tools/legacy/bootstrap.sh` (procedures §4.4e). Written for 22.04's Ansible **2.10**. Never touches PowerStrux |
 | `bootstrap.sh` | what an operator runs on a fresh box |
 | `it-pull` (`roles/it_scripts/files/pull.sh`) | what an operator runs on an EXISTING box. `it-pull` = light (no apt, no scan, no container touched), `full`, `scripts`, `ai`, `status` (incoming commits + files), `log`, `load` (adopt a baseline carried in on media; air-gapped boxes). `check` exists but Ansible check mode skips command probes and can report the OPPOSITE of the truth (it decided ASP-2 was not Pro-attached); `status` is the reliable preview |
 | `group_vars/all.yml` | nearly all configuration and profile gating |

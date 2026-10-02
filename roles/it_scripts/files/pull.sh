@@ -429,7 +429,7 @@ wrong profile -- on an EMI laptop that turns off USB storage, the dta carve-out
 and the camera/mic lockdown.
 
 Pass it explicitly this once:   sudo PROFILE=emi it-pull
-(development | ai | baseline | emi | emi-unclass)"
+(development | ai | baseline | emi | emi-unclass | legacy)"
 
   pull_running && {
     echo "A pull is already running. Follow it with: it-pull log" >&2; exit 1; }
@@ -464,7 +464,7 @@ Pass it explicitly this once:   sudo PROFILE=emi it-pull
   # The exit code still goes to a file: `it-pull status` reads it back on a
   # later invocation, when the unit is long gone.
   systemd-run --unit="$UNIT" --collect --wait \
-    /bin/sh -c "ansible-pull -U '$REPO' -C '$BR' -i localhost, local.yml \
+    /bin/sh -c "ansible-pull -U '$REPO' -C '$BR' -i localhost, $PLAYBOOK \
                   -e deployment_profile='$PROFILE_NAME' $args; \
                 rc=\$?; echo \$rc > '$STATE_DIR/last.rc'; exit \$rc" >/dev/null 2>&1 &
   runner=$!
@@ -514,10 +514,25 @@ PROFILE_NAME="$PROFILE_ARG"
 [ -n "$PROFILE_NAME" ] || PROFILE_NAME="$RECORDED_PROFILE"
 
 case "${PROFILE_NAME:-none}" in
-  none|development|ai|baseline|emi|emi-unclass|desktop|server) : ;;
+  none|development|ai|baseline|emi|emi-unclass|desktop|server|legacy) : ;;
   *) die "not a deployment profile: '$PROFILE_NAME'
-Valid: development | ai | baseline | emi | emi-unclass" ;;
+Valid: development | ai | baseline | emi | emi-unclass | legacy" ;;
 esac
+
+# `legacy` (the Ubuntu 22.04 VMs) runs its OWN playbook; local.yml is 24.04-only
+# and refuses anything else. Each playbook also refuses the other's boxes.
+PLAYBOOK=local.yml
+[ "$PROFILE_NAME" = legacy ] && PLAYBOOK=legacy.yml
+# Say it here, plainly: on 22.04 local.yml does not even parse (its modules are
+# newer than 22.04's Ansible 2.10), and legacy.yml refuses 24.04.
+_rel="$(. /etc/os-release 2>/dev/null; echo "${VERSION_ID:-}")"
+if [ "$_rel" = 22.04 ] && [ -n "$PROFILE_NAME" ] && [ "$PROFILE_NAME" != none ] && [ "$PROFILE_NAME" != legacy ]; then
+  die "This box is Ubuntu 22.04: its profile is \`legacy\`, not '$PROFILE_NAME'.
+  sudo it-pull --profile legacy"
+fi
+if [ "$_rel" != 22.04 ] && [ "$PROFILE_NAME" = legacy ]; then
+  die "The legacy profile is for Ubuntu 22.04 only; this box is ${_rel:-unknown}."
+fi
 
 # ---------------------------------------------------------------------------
 # it-pull load -- the offline half.

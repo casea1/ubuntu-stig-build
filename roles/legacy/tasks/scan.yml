@@ -1,0 +1,69 @@
+---
+# The 22.04 STIG datastream, compressed in the repo. Unpacked where it-oscap
+# looks for the box's own release (ssg-ubuntu<VERSION_ID>-ds.xml).
+- name: "LEGACY | Stage the 22.04 STIG content"
+  ansible.builtin.copy:
+    src: "{{ legacy_ssg_datastream }}.xz"
+    dest: "/opt/it/legacy/{{ legacy_ssg_datastream }}.xz"
+    owner: root
+    group: "{{ ia_it_group }}"
+    mode: "0640"
+  register: _ds_xz
+
+- name: "LEGACY | Content directory"
+  ansible.builtin.file:
+    path: "{{ scap_content_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: "LEGACY | Is it unpacked?"
+  ansible.builtin.stat:
+    path: "{{ scap_content_dir }}/{{ legacy_ssg_datastream }}"
+  register: _ds
+
+- name: "LEGACY | Unpack it"
+  ansible.builtin.shell: >-
+    xz -dc /opt/it/legacy/{{ legacy_ssg_datastream }}.xz
+    > {{ scap_content_dir }}/{{ legacy_ssg_datastream }}.tmp
+    && mv {{ scap_content_dir }}/{{ legacy_ssg_datastream }}.tmp {{ scap_content_dir }}/{{ legacy_ssg_datastream }}
+    && chmod 0644 {{ scap_content_dir }}/{{ legacy_ssg_datastream }}
+  when: (_ds_xz is changed) or not _ds.stat.exists
+
+- name: "LEGACY | Scan service"
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/oscap-scan.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=OpenSCAP DISA-STIG evaluation
+      Documentation=file://{{ scap_scheduled_dir }}
+      [Service]
+      Type=oneshot
+      Nice=10
+      IOSchedulingClass=idle
+      ExecStart=/usr/local/sbin/it-oscap --dir {{ scap_scheduled_dir }} --profile {{ scap_profile }} --keep {{ scap_schedule_keep | default(12) }}
+
+- name: "LEGACY | Scan timer"
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/oscap-scan.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Run the OpenSCAP STIG evaluation on a schedule
+      [Timer]
+      OnCalendar={{ scap_schedule_oncalendar | default('weekly') }}
+      Persistent=true
+      RandomizedDelaySec=30m
+      [Install]
+      WantedBy=timers.target
+
+- name: "LEGACY | Enable the scan timer"
+  ansible.builtin.systemd:
+    name: oscap-scan.timer
+    enabled: true
+    state: started
+    daemon_reload: true

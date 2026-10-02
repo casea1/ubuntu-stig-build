@@ -1,0 +1,39 @@
+---
+# Written for the `ansible` 2.10 that Ubuntu 22.04 ships: modules by their
+# 2.10 names (community.general.ini_file, not ansible.builtin.ini_file).
+
+- name: "LEGACY | Packages, from the box's own apt mirror"
+  ansible.builtin.apt:
+    name: [auditd, libopenscap8, git, xz-utils]
+    state: present
+  tags: [packages]
+
+- name: "LEGACY | Folders"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: "{{ ia_it_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /opt/it,                   mode: "2770" }
+    - { path: /opt/it/scripts,           mode: "2750" }
+    - { path: /opt/it/legacy,            mode: "2750" }
+    - { path: "{{ scap_report_dir }}",   mode: "2750" }
+    - { path: "{{ scap_scheduled_dir }}", mode: "2750" }
+    - { path: "{{ scap_manual_dir }}",   mode: "2750" }
+  tags: [scripts]
+
+- name: "LEGACY | Scripts"
+  ansible.builtin.import_tasks: scripts.yml
+
+- name: "LEGACY | Banners"
+  ansible.builtin.import_tasks: banners.yml
+
+- name: "LEGACY | Weekly STIG scan"
+  ansible.builtin.import_tasks: scan.yml
+
+# LAST: if the audit load fails it rolls itself back and this task fails, which
+# is the loudest place for it -- after everything else has been applied.
+- name: "LEGACY | Audit rules"
+  ansible.builtin.import_tasks: audit.yml

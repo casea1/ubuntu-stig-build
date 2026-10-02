@@ -3198,6 +3198,55 @@ it-pull: baseline adopted WITHOUT interactive confirmation (--yes) by austin_cas
 `sudo it-pull status` afterwards shows `repo : /srv/baseline.git`, which is how you tell a
 box is on carried media rather than the network.
 
+## 4.4e Old Ubuntu 22.04 VMs (the `legacy` profile)
+
+The 22.04 VMs being decommissioned get the basics without the 24.04 build:
+the 24.04 fleet's **audit rules** (added, never replacing), the **DCSA banner**,
+the **scan and check commands**, and the weekly scan. Fully offline: packages
+from the box's own apt mirror (22.04 main + universe), everything else from the
+same `baseline.git.tar.gz` the 24.04 boxes use (§4.4d).
+
+**Not touched:** accounts, PAM, sudo, firewall, FIPS, `auditd.conf`, the audit
+lock (`-e 2`), and anything of **PowerStrux's** -- its module, config, schedule
+and `/opt/_AuditFiles`. Verified byte-for-byte against a 22.04 box with
+PowerStrux-style files and audit rules in place.
+
+**First time on each VM**, with `baseline.git.tar.gz` in your home directory:
+
+```bash
+sudo apt-get install -y git
+sudo install -d -m 0700 /opt/it/baseline-stage
+sudo tar xzf ~/baseline.git.tar.gz -C /opt/it/baseline-stage
+sudo git --git-dir=/opt/it/baseline-stage/baseline.git show main:tools/legacy/bootstrap.sh | sudo bash
+```
+
+It installs `ansible`, `auditd`, `libopenscap8` from the mirror, keeps the
+baseline at `/srv/baseline.git` (as `it-pull load` does), records the profile
+as `legacy`, and runs the first pull.
+
+**Then check:**
+
+```bash
+sudo it-audit          # rules loaded, lock state, days of audit log kept
+sudo it-oscap          # a STIG scan now -> /opt/ia/oscap/manual/
+sudo it-checklist      # the org checklist
+```
+
+**Updating later** is the 24.04 routine: carry a new archive, `sudo it-pull load`,
+`sudo it-pull`.
+
+> **If the audit rules are locked (`-e 2`)** -- the STIG's own setting, so likely
+> on a hardened VM -- `it-audit` stages the new rules and they load at the next
+> **reboot**. `sudo it-audit` afterwards says whether they did.
+>
+> **Watch `it-audit`'s retention line.** More rules means more log per day. If
+> auditd's size limits would now keep fewer days than PowerStrux reports on (8),
+> it warns; raise `max_log_file` or `num_logs` in `/etc/audit/auditd.conf` --
+> `it-audit` deliberately does not change it.
+>
+> **Expect red on `it-checklist`** for what these VMs never had (FIPS, disk
+> encryption, GRUB password). That is accurate, not a fault of the pull.
+
 ## 4.5 Suggested cadence
 
 | Activity | Cadence |

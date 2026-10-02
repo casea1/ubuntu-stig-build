@@ -1,0 +1,25 @@
+---
+- name: "LEGACY | The rule set it-audit adds"
+  ansible.builtin.copy:
+    src: stig-audit.rules
+    dest: /opt/it/legacy/stig-audit.rules
+    owner: root
+    group: "{{ ia_it_group }}"
+    mode: "0640"
+
+- name: "LEGACY | auditd running"
+  ansible.builtin.systemd:
+    name: auditd
+    enabled: true
+    state: started
+
+# it-audit does the work, so the pull and a hand-typed `it-audit apply` are the
+# same code. Add-only; it rolls the box back itself if the load fails.
+- name: "LEGACY | Add the audit rules (it-audit apply)"
+  ansible.builtin.command: /usr/local/sbin/it-audit apply
+  register: _audit
+  changed_when: "'already current' not in _audit.stdout"
+
+- name: "LEGACY | Audit result"
+  ansible.builtin.debug:
+    msg: "{{ _audit.stdout_lines }}"

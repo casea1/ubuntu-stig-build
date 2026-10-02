@@ -337,7 +337,8 @@ else
 fi
 
 # 27 STIG content version
-d=$(ls -1 /usr/share/xml/scap/ssg/content/ssg-ubuntu24*-ds*.xml 2>/dev/null | head -1)
+# The box's own release: 2404 on the fleet, 2204 on the legacy VMs.
+d=$(ls -1 /usr/share/xml/scap/ssg/content/ssg-ubuntu"$(. /etc/os-release; echo "${VERSION_ID:-24.04}" | tr -d .)"*-ds*.xml 2>/dev/null | head -1)
 uv=$(dpkg-query -W -f='${Version}' usg 2>/dev/null || echo n/a)
 if [ -n "$d" ]; then row PASS 27 "STIG content present" "usg=$uv ssg=$(basename "$d")"
 else row FAIL 27 "STIG content present" "usg=$uv, no SSG datastream -- run the scap_scan role"; fi

@@ -1,0 +1,20 @@
+---
+# The it-* commands installed on a legacy box. `shared: false` = the file lives
+# in this role, not in it_scripts.
+legacy_scripts:
+  - { file: help.sh,        link: it-help }
+  - { file: pull.sh,        link: it-pull }
+  - { file: status.sh,      link: it-status }
+  # it-status runs these from its own folder; without them it prints nothing.
+  - { file: status-host.sh, link: it-host }
+  - { file: status-luks.sh, link: it-luks }
+  - { file: oscap-scan.sh,  link: it-oscap }
+  - { file: checklist.sh,   link: it-checklist }
+  - { file: audit-sync.sh,  link: it-audit, shared: false }
+
+# The 22.04 STIG content, carried in the repo because Ubuntu does not package
+# it for 22.04 and these boxes cannot download it.
+legacy_ssg_datastream: ssg-ubuntu2204-ds.xml
+
+# GDM shows the banner only if the box has a GDM greeter; skipped otherwise.
+legacy_gdm_banner: true

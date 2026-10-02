@@ -1,0 +1,85 @@
+---
+# The same DCSA text the 24.04 fleet shows, in the same places. A previous
+# /etc/issue or /etc/issue.net is kept as a timestamped backup beside it.
+- name: "LEGACY | Banner text"
+  ansible.builtin.copy:
+    dest: "{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+    backup: "{{ item != '/etc/dcsa-warning-banner' }}"
+    content: "{{ dcsa_gui_banner | replace('\\n', '\n') }}\n"
+  loop:
+    - /etc/dcsa-warning-banner
+    - /etc/issue
+    - /etc/issue.net
+
+# 22.04's sshd_config Includes sshd_config.d/*.conf at its TOP, and sshd takes
+# the first value it reads, so this drop-in wins over a Banner set further down.
+- name: "LEGACY | sshd shows the banner before login"
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/00-0-dcsa-banner.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible (legacy) -- do not edit by hand.
+      Banner /etc/dcsa-warning-banner
+  register: _ssh_banner
+
+# Check the WHOLE configuration before anything reloads it. A bad sshd config
+# reloaded is a box nobody can SSH into; this one is removed instead.
+- name: "LEGACY | sshd config still valid?"
+  ansible.builtin.command: sshd -t
+  register: _sshd_t
+  changed_when: false
+  failed_when: false
+  when: _ssh_banner is changed
+
+- name: "LEGACY | Invalid -- take the banner drop-in back out"
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d/00-0-dcsa-banner.conf
+    state: absent
+  when:
+    - _ssh_banner is changed
+    - _sshd_t.rc != 0
+
+- name: "LEGACY | Reload sshd (reload, not restart: sessions stay up)"
+  ansible.builtin.systemd:
+    name: ssh
+    state: reloaded
+  when:
+    - _ssh_banner is changed
+    - _sshd_t.rc == 0
+  failed_when: false
+
+- name: "LEGACY | sshd config was invalid"
+  ansible.builtin.fail:
+    msg: "sshd -t failed with the banner drop-in, so it was removed: {{ _sshd_t.stderr | default('') }}"
+  when:
+    - _ssh_banner is changed
+    - _sshd_t.rc != 0
+
+# GDM's greeter reads this file at start; it is NOT restarted here (that would
+# end every desktop session), so the banner appears at the next boot or logout.
+- name: "LEGACY | Is there a GDM greeter?"
+  ansible.builtin.stat:
+    path: /etc/gdm3/greeter.dconf-defaults
+  register: _gdm
+
+- name: "LEGACY | GDM login banner"
+  community.general.ini_file:
+    path: /etc/gdm3/greeter.dconf-defaults
+    section: org/gnome/login-screen
+    option: "{{ item.k }}"
+    value: "{{ item.v }}"
+    no_extra_spaces: true
+    backup: true
+  loop:
+    - { k: banner-message-enable, v: "true" }
+    - { k: banner-message-text,   v: "'{{ dcsa_gui_banner }}'" }
+  loop_control:
+    label: "{{ item.k }}"
+  when:
+    - legacy_gdm_banner | bool
+    - _gdm.stat.exists

@@ -70,12 +70,16 @@ if [ -n "$DS_ARG" ]; then
   [ -f "$DS_ARG" ] || { echo "no such content file: $DS_ARG" >&2; exit 1; }
   DS="$DS_ARG"
 else
-  for c in /usr/share/xml/scap/ssg/content/ssg-ubuntu24*-ds*.xml \
-           /usr/local/share/scap/ssg-ubuntu24*-ds*.xml; do
+  # The box's OWN release: ssg-ubuntu2404 on 24.04, ssg-ubuntu2204 on the
+  # 22.04 legacy VMs. Scanning one release against the other's content reports
+  # nonsense rather than failing.
+  REL="$(. /etc/os-release 2>/dev/null; echo "${VERSION_ID:-24.04}" | tr -d .)"
+  for c in /usr/share/xml/scap/ssg/content/ssg-ubuntu${REL}*-ds*.xml \
+           /usr/local/share/scap/ssg-ubuntu${REL}*-ds*.xml; do
     [ -f "$c" ] && DS="$c" && break
   done
 fi
-[ -n "$DS" ] || { echo "no Ubuntu 24.04 SCAP datastream found -- run the scap_scan role" >&2; exit 1; }
+[ -n "$DS" ] || { echo "no Ubuntu ${REL:-} SCAP datastream found -- run a pull (scap_scan / legacy role)" >&2; exit 1; }
 
 # The default profile id is SSG's. Any other datastream (DISA's benchmark, for
 # one) uses different ids, so a stale default would fail with an unhelpful

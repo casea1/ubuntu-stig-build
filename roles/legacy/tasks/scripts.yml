@@ -1,0 +1,70 @@
+---
+# The subset of it-* commands that work on 22.04, installed exactly as the
+# 24.04 fleet installs them (root:sudo 0750 in /opt/it/scripts, linked from
+# /usr/local/sbin) so `sudo it-pull` etc. behave the same.
+- name: "LEGACY | Shared it-* scripts"
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/roles/it_scripts/files/{{ item.file }}"
+    dest: "/opt/it/scripts/{{ item.file }}"
+    owner: root
+    group: "{{ ia_it_group }}"
+    mode: "0750"
+  loop: "{{ legacy_scripts }}"
+  loop_control:
+    label: "{{ item.link }}"
+  when: item.shared | default(true)
+  tags: [scripts]
+
+- name: "LEGACY | Legacy-only scripts"
+  ansible.builtin.copy:
+    src: "{{ item.file }}"
+    dest: "/opt/it/scripts/{{ item.file }}"
+    owner: root
+    group: "{{ ia_it_group }}"
+    mode: "0750"
+  loop: "{{ legacy_scripts }}"
+  loop_control:
+    label: "{{ item.link }}"
+  when: not (item.shared | default(true))
+  tags: [scripts]
+
+- name: "LEGACY | Commands"
+  ansible.builtin.file:
+    src: "/opt/it/scripts/{{ item.file }}"
+    dest: "/usr/local/sbin/{{ item.link }}"
+    state: link
+    force: true
+  loop: "{{ legacy_scripts }}"
+  loop_control:
+    label: "{{ item.link }}"
+  tags: [scripts]
+
+- name: "LEGACY | /etc/stig-build (root-only)"
+  ansible.builtin.file:
+    path: /etc/stig-build
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  tags: [scripts]
+
+- name: "LEGACY | Which baseline commit is this"
+  ansible.builtin.command: git -C {{ playbook_dir }} rev-parse --short HEAD
+  register: _legacy_rev
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: [scripts]
+
+# it-pull reads this back (profile when site.yml is missing; `running` in status).
+- name: "LEGACY | Record the profile"
+  ansible.builtin.copy:
+    dest: /etc/stig-build/profile
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Written by ansible (legacy). Which profile this box was built as.
+      deployment_profile=legacy
+      baseline_revision={{ (_legacy_rev.stdout | default('') | trim) or 'unknown' }}
+  tags: [scripts]

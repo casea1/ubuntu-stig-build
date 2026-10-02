@@ -1,0 +1,53 @@
+---
+# =============================================================================
+# The `legacy` profile: Ubuntu 22.04 VMs on their way to decommissioning.
+#
+# NOT local.yml. That playbook is written for 24.04 throughout and refuses to
+# run anywhere else; this one applies only what works the same on 22.04 and
+# changes as little as it can:
+#   - the 24.04 fleet's STIG audit rules, ADDED to what the box has (it-audit)
+#   - the DCSA banner: console, SSH, and the GDM greeter if there is one
+#   - it-pull / it-help / it-status / it-oscap / it-checklist / it-audit
+#   - the weekly OpenSCAP scan, against the 22.04 STIG content carried in the repo
+#
+# Deliberately NOT touched: packages beyond the four it needs, accounts, PAM,
+# sudo, the firewall, FIPS, auditd.conf, the audit lock (-e 2) -- and anything
+# of PowerStrux's: its module, its config, its schedule, /opt/_AuditFiles.
+#
+# Fully offline: everything comes from the box's own apt mirror or from this
+# repo. `it-pull` runs this file whenever the box's profile is `legacy`.
+# =============================================================================
+- name: Legacy Ubuntu 22.04 -- audit rules, banners, scripts, scan
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: "Find the per-box site.yml"
+      tags: [always]
+      ansible.builtin.stat:
+        path: /opt/it/site.yml
+      register: _site_yml
+
+    - name: "Load the per-box site.yml"
+      tags: [always]
+      ansible.builtin.include_vars: /opt/it/site.yml
+      when: _site_yml.stat.exists
+
+    # Both guards, so neither playbook can land on the other's boxes.
+    - name: "Only Ubuntu 22.04, only the legacy profile"
+      tags: [always]
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.distribution == 'Ubuntu'
+          - ansible_facts.distribution_release == 'jammy'
+          - (deployment_profile | default('')) == 'legacy'
+        fail_msg: >-
+          legacy.yml is for Ubuntu 22.04 boxes whose profile is `legacy`. This is
+          {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}
+          with profile '{{ deployment_profile | default('unset') }}'.
+        quiet: true
+
+  roles:
+    - role: legacy
