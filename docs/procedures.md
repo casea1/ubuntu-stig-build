@@ -1932,6 +1932,12 @@ running the old one, and names who.
 **Checking:** `sudo it-vscode-server` shows what is staged, who is linked, and
 whether sshd allows the forwarding Remote-SSH needs.
 
+**`ServerDownloadFailed` with the right commit on both sides** means the
+engineer tried to connect before the version was staged, and the empty folder
+that attempt left is in the way (`status` shows `BROKEN-copy`). Run
+`sudo it-vscode-server link --user <name>` — it moves the folder aside — then
+**Remote-SSH: Kill VS Code Server on Host** and connect again (trap 12af).
+
 > **Every PC runs exactly the pinned version.** One auto-update and that engineer
 > cannot connect — the box has no server for the new version. That is what
 > `update.mode: none` in `settings` is for.
@@ -3626,6 +3632,106 @@ files in that folder; only the existing keys' contents are held back.
 To take it away: `sudo it-aiops off`. It removes the grant, every `aiops` ACL
 entry and the default ACLs, and records `false` in `site.yml`. The group and
 its members are kept, so `on` restores them.
+
+## 5.12 Back up the AI databases (`it-ai-backup`)
+
+`it-ai-backup` backs up what cannot be re-downloaded, and only when you run it.
+It finds the work on the box itself, so the same command is right on both nodes:
+
+| Node | Backed up |
+|---|---|
+| System 1 (dev-ai1) | **`pgvector` / `openwebui`** — Open WebUI's users, chats, knowledge bases, settings **and every embedding** (`VECTOR_DB: pgvector`), so a restore needs no re-embedding. The `open-webui` volume (uploads, audit log; its `cache` is skipped) |
+| System 2 (dev-ai2) | `mlflow-db` / `mlflow` (experiments, runs, registry), the `mlflow-artifacts` volume, `magpie_state` |
+
+Each Postgres container's roles go too (`globals-*.sql`), so a restore keeps the
+password `.env` already has. **Not** backed up: model weights (re-fetchable,
+huge), redis (a cache), any `.env` or `/etc/stig-build/*.pw` — those never
+leave the box.
+
+**It does not touch a live service.** Nothing is stopped, restarted or
+reconfigured; `pg_dump` reads one consistent snapshot over the container's own
+socket (not through pgbouncer, so the app keeps its pool) while reads and writes
+carry on; everything runs at idle priority; and it **refuses to start** if the
+backup could leave the disk under 20 GB free, because `/var/lib/docker` is
+usually on that disk. Tested against `pgvector:pg16-trixie` with writes running
+during the dump and a server `statement_timeout` of one second: no query failed,
+and the dump held every row committed before it began. The one thing a dump
+delays is **DDL** — don't upgrade Open WebUI while one is running (its startup
+migration waits for the dump to finish).
+
+### Take one
+
+```bash
+sudo it-ai-backup                 # what this node backs up, sizes, free space
+sudo it-ai-backup run             # -> /var/backups/ai-stack/<host>-<date>/
+sudo it-ai-backup verify          # restore it into a THROWAWAY container
+```
+
+`verify` is the proof the backup is usable: each dump is restored into a
+separate Postgres (same image, never pulled, **no network**, capped at 2 GB /
+2 CPUs, deleted afterwards) and it prints the tables and row counts that came
+back — `chat`, `user`, `document_chunk` on System 1. Do it once after the first
+backup and after any Open WebUI upgrade.
+
+Three are kept (`KEEP` in `/etc/stig-build/ai-backup.conf`); an older one is
+removed only after a new one succeeds. A failed run deletes its own partial
+folder and keeps the previous good one. If `mlflow-artifacts` is too big for the
+disk, `run --db-only` takes the databases alone, or set `BACKUP_DIR` to another
+disk.
+
+### Send them to a Windows host (once per node)
+
+SFTP, the same way the offloads travel — SMB cannot authenticate from a FIPS
+box (CLAUDE.md, "On a FIPS box..."). The Windows host needs OpenSSH Server.
+
+1. On the node:
+   ```bash
+   sudo it-ai-backup dest svc-backup@winhost:/D:/Backups/AI
+   ```
+   The **leading slash** in `/D:/...` matters. It makes this box's key (ECDSA
+   P-384; FIPS refuses ed25519), pins the Windows host key and prints the
+   fingerprint — compare it on Windows with
+   `ssh-keygen -lf C:\ProgramData\ssh\ssh_host_ecdsa_key.pub` — then prints one
+   `ecdsa-sha2-nistp384 ...` line.
+2. On Windows, put that line in the account's `authorized_keys`:
+   `C:\Users\svc-backup\.ssh\authorized_keys` for a normal account, or
+   `C:\ProgramData\ssh\administrators_authorized_keys` if it is an administrator.
+   Use a **normal** account, and lock `D:\Backups\AI` to it plus Administrators:
+   the dumps hold every user's chats and password hashes.
+3. Back on the node: `sudo it-ai-backup test`, then `sudo it-ai-backup send`.
+
+From then on: `sudo it-ai-backup run --send`. Each node lands in its own
+folder (`D:\Backups\AI\dev-ai1\dev-ai1-<date>\`). `MANIFEST.txt` in each has a
+SHA-256 per file — `Get-FileHash <file>` on Windows should match. Nothing ages
+out copies on the Windows side.
+
+### Restore
+
+Restore into the **live** container only to recover, never to test (`verify`
+tests). Stop the app that writes to it first, so nothing writes mid-restore:
+
+```bash
+cd /opt/stacks/open-webui && sudo docker compose stop open-webui     # System 1
+sudo docker exec -i -e PGOPTIONS='-c statement_timeout=0' pgvector \
+  pg_restore -U postgres -d openwebui --clean --if-exists --no-owner \
+  < /var/backups/ai-stack/<folder>/db-pgvector-openwebui.dump
+sudo docker compose start open-webui
+```
+
+`PGOPTIONS` matters: pgvector runs with a 5-minute `statement_timeout`, and a
+large table's data load can exceed it. On System 2 the same shape with
+`mlflow-db`, user `mlflow`, database `mlflow`, stopping the `mlflow` service.
+
+A volume, with the app stopped:
+```bash
+sudo tar -xzf /var/backups/ai-stack/<folder>/vol-open-webui.tar.gz \
+  -C "$(sudo docker volume inspect -f '{{.Mountpoint}}' open-webui)"
+```
+
+On a **rebuilt** node the volumes are empty: `it-pull ai` creates them and the
+containers, then restore as above. Postgres takes its password from the volume,
+not the env (gotcha 6), so a fresh volume uses the new `.env` and the restore
+brings the data in under it.
 
 ---
 

@@ -187,6 +187,15 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   live, with no container restarted. The rule lives in `aiops.sh`, which
   `ai_ops_access.yml` runs from the checkout so the two cannot drift.
 
+- **`it-ai-backup` is read-only against the stack, and must stay so.** It finds
+  every running Postgres container by image name and `pg_dump`s each database
+  over the container's own socket (not pgbouncer), tars the data volumes in its
+  `VOLUMES` list, and REFUSES to start if that could leave under 20 GB free --
+  a full disk is the one way a backup can take Docker down. `verify` restores
+  into a throwaway `--network none` container of the same image (`--pull
+  never`). Nothing stops a container; restoring INTO a live one is a documented
+  manual step (procedures.md §5.12), never a command.
+
 - **Never restart `xrdp-sesman` on a live box.** Every session it is managing is
   orphaned by the restart: the per-session processes are reparented to init and
   keep running, and the new sesman comes back with an empty table. The next RDP

@@ -129,7 +129,12 @@ home_of() { getent passwd "$1" | cut -d: -f6; }
 # already touch. Values are passed as ARGUMENTS, never pasted into the script.
 #
 # A real file or directory already at a link's path is the engineer's own copy
-# (they unpacked it by hand before this existed) and is never replaced.
+# (they unpacked it by hand before this existed) and is never replaced -- UNLESS
+# it is incomplete. A connection attempt made before the version was staged
+# leaves exactly that: Remote-SSH creates bin/<commit>, the download fails, and
+# the empty folder then shadows the staged copy, so every later connection
+# finds "a server", finds no server script in it, and tries to download again.
+# Incomplete copies are moved aside to <name>.failed-<time>, never deleted.
 # From / -- an admin's shell is usually in /root, which the engineer cannot
 # read, and node fails at startup when it cannot resolve its working directory.
 as_user() { ( cd / && runuser -u "$1" -- "${@:2}" ); }
@@ -138,9 +143,17 @@ LINK_SH='
 set -u; umask 077
 root=$1 c=$2 q=$3 home=$4 base="$home/.vscode-server"
 res=""
+complete() {   # $1 = path: a usable server folder, or a usable CLI file
+  case "$1" in
+    */code-*) [ -f "$1" ] && [ -x "$1" ] && [ "$(stat -c %s "$1")" -gt 1000000 ] ;;
+    *)        [ -d "$1" ] && [ -x "$1/node" ] && [ -x "$1/bin/code-server" ] && [ -f "$1/product.json" ] ;;
+  esac
+}
 one() {   # $1 = path, $2 = target
   if [ -L "$1" ]; then ln -sfn "$2" "$1" && res="$res linked"
-  elif [ -e "$1" ]; then res="$res own"
+  elif [ -e "$1" ] && complete "$1"; then res="$res own"
+  elif [ -e "$1" ]; then
+    mv "$1" "$1.failed-$(date +%Y%m%d%H%M%S)" && ln -s "$2" "$1" && res="$res replaced"
   else ln -s "$2" "$1" && res="$res linked"; fi
 }
 mkdir -p "$base/bin" "$base/cli/servers/$q-$c" || { echo FAIL; exit 1; }
@@ -168,6 +181,7 @@ link_user() {   # $1 = user, $2 = commit
     bad "$u: could not link ($out)"; return 1; }
   case "$out" in
     *own*) warn "$u: $(version_of "$c") -- has their OWN copy in ~/.vscode-server, left alone" ;;
+    *replaced*) ok "$u: $(version_of "$c") linked -- an incomplete copy from a failed download was moved aside (*.failed-*)" ;;
     *)     [ "$QUIET" = 1 ] || ok "$u: $(version_of "$c") linked" ;;
   esac
 }
@@ -432,20 +446,25 @@ cmd_status() {
   if ! getent group "$DEFAULT_GROUP" >/dev/null 2>&1; then
     note "no $DEFAULT_GROUP group on this box"
   else
-    local u h st
+    local u h st broken=0
     while read -r u; do
       [ -n "$u" ] || continue
       h=$(home_of "$u"); st=""
       for c in $(staged_commits); do
         if [ -L "$h/.vscode-server/bin/$c" ]; then st="$st $(version_of "$c"):linked"
-        elif [ -e "$h/.vscode-server/bin/$c" ]; then st="$st $(version_of "$c"):own-copy"
+        elif [ -x "$h/.vscode-server/bin/$c/bin/code-server" ]; then st="$st $(version_of "$c"):own-copy"
+        elif [ -e "$h/.vscode-server/bin/$c" ]; then st="$st $(version_of "$c"):BROKEN-copy"
         else st="$st $(version_of "$c"):MISSING"; fi
       done
       case "$st" in
+        *BROKEN*) broken=1; printf '  %-20s %s%s%s\n' "$u" "$YEL" "${st# }" "$R" ;;
         *MISSING*) printf '  %-20s %s%s%s\n' "$u" "$YEL" "${st# }" "$R" ;;
         *)         printf '  %-20s %s%s%s\n' "$u" "$GRN" "${st:- (nothing staged)}" "$R" ;;
       esac
     done < <(members "$DEFAULT_GROUP")
+    [ "$broken" = 0 ] || {
+      note "BROKEN-copy = left by a connection tried before staging; it shadows the"
+      note "staged one. Fix: sudo it-vscode-server link --user <name> (moves it aside)"; }
   fi
 
   # Remote-SSH reaches the server through an SSH port forward. The STIG content

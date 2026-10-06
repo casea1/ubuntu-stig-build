@@ -112,3 +112,6 @@ it_scripts_ai:
   # Read + write for the AI stack managers (group aiops), applied by hand -- no
   # pull, no container touched. The pull's ai_ops_access.yml runs the same file.
   - { file: aiops.sh,          link: it-aiops }
+  # Databases + data volumes to a Windows host over SFTP, by hand. Read-only
+  # against the stack: nothing stopped, no compose file touched.
+  - { file: ai-backup.sh,      link: it-ai-backup }
