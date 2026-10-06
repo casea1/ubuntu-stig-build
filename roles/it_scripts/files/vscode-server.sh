@@ -128,20 +128,28 @@ home_of() { getent passwd "$1" | cut -d: -f6; }
 # box. Run as them, the worst a planted link can reach is what they could
 # already touch. Values are passed as ARGUMENTS, never pasted into the script.
 #
-# A real file or directory already at a link's path is the engineer's own copy
-# (they unpacked it by hand before this existed) and is never replaced -- UNLESS
-# it is incomplete. A connection attempt made before the version was staged
-# leaves exactly that: Remote-SSH creates bin/<commit>, the download fails, and
-# the empty folder then shadows the staged copy, so every later connection
-# finds "a server", finds no server script in it, and tries to download again.
-# Incomplete copies are moved aside to <name>.failed-<time>, never deleted.
+# ~/.vscode-server/bin/<commit> is a REAL folder the engineer owns, holding one
+# link per entry of the read-only copy -- never a link to the copy itself.
+# Microsoft's installer puts its lock file INSIDE that folder
+# (bin/<commit>/vscode-remote-lock.<user>.<commit>); in the read-only copy the
+# lock cannot be created, flock gets a bad descriptor, and every connection
+# fails with "Installation already in progress" (AlreadyInProgress). Found
+# 2026-10-06 by running the installer from Remote-SSH 0.129 against this layout.
+# A link left by the earlier layout is converted on the next `link` (and pull).
+#
+# A real file or directory already there is the engineer's own copy (they
+# unpacked it by hand) and is never replaced -- UNLESS it is incomplete. A
+# connection tried before the version was staged leaves exactly that: the
+# installer creates bin/<commit>, the download fails, and the empty folder then
+# shadows the staged copy. Incomplete copies are moved aside to
+# <name>.failed-<time>, never deleted.
 # From / -- an admin's shell is usually in /root, which the engineer cannot
 # read, and node fails at startup when it cannot resolve its working directory.
 as_user() { ( cd / && runuser -u "$1" -- "${@:2}" ); }
 
 LINK_SH='
 set -u; umask 077
-root=$1 c=$2 q=$3 home=$4 base="$home/.vscode-server"
+root=$1 c=$2 q=$3 home=$4 base="$home/.vscode-server" srv="$1/$2/server"
 res=""
 complete() {   # $1 = path: a usable server folder, or a usable CLI file
   case "$1" in
@@ -149,16 +157,30 @@ complete() {   # $1 = path: a usable server folder, or a usable CLI file
     *)        [ -d "$1" ] && [ -x "$1/node" ] && [ -x "$1/bin/code-server" ] && [ -f "$1/product.json" ] ;;
   esac
 }
+ours() { [ -d "$1" ] && [ ! -L "$1" ] && [ "$(readlink "$1/bin" 2>/dev/null)" = "$srv/bin" ]; }
+farm() {   # $1 = folder -> one link per entry of the read-only server
+  mkdir -p "$1" || return 1
+  for e in "$srv"/* "$srv"/.[!.]*; do
+    [ -e "$e" ] && { ln -sfn "$e" "$1/${e##*/}" || return 1; }
+  done
+}
+aside() { mv "$1" "$1.failed-$(date +%Y%m%d%H%M%S)"; }
+server_dir() {   # $1 = bin/<commit>
+  if [ -L "$1" ]; then rm -f "$1" && farm "$1" && res="$res linked"
+  elif ours "$1"; then farm "$1" && res="$res linked"
+  elif [ -e "$1" ] && complete "$1"; then res="$res own"
+  elif [ -e "$1" ]; then aside "$1" && farm "$1" && res="$res replaced"
+  else farm "$1" && res="$res linked"; fi
+}
 one() {   # $1 = path, $2 = target
   if [ -L "$1" ]; then ln -sfn "$2" "$1" && res="$res linked"
   elif [ -e "$1" ] && complete "$1"; then res="$res own"
-  elif [ -e "$1" ]; then
-    mv "$1" "$1.failed-$(date +%Y%m%d%H%M%S)" && ln -s "$2" "$1" && res="$res replaced"
+  elif [ -e "$1" ]; then aside "$1" && ln -s "$2" "$1" && res="$res replaced"
   else ln -s "$2" "$1" && res="$res linked"; fi
 }
 mkdir -p "$base/bin" "$base/cli/servers/$q-$c" || { echo FAIL; exit 1; }
-one "$base/bin/$c" "$root/$c/server"
-one "$base/cli/servers/$q-$c/server" "$root/$c/server"
+server_dir "$base/bin/$c"
+one "$base/cli/servers/$q-$c/server" "$srv"
 if [ -f "$root/$c/code" ]; then one "$base/code-$c" "$root/$c/code"; else res="$res none"; fi
 echo $res
 '
@@ -166,7 +188,15 @@ echo $res
 UNLINK_SH='
 set -u
 root=$1 c=$2 home=$3 base="$home/.vscode-server" n=0
-for p in "$base/bin/$c" "$base/code-$c" "$base"/cli/servers/*-"$c"/server; do
+d="$base/bin/$c"
+if [ -d "$d" ] && [ ! -L "$d" ] && [ "$(readlink "$d/bin" 2>/dev/null)" = "$root/$c/server/bin" ]; then
+  for e in "$d"/* "$d"/.[!.]*; do
+    [ -L "$e" ] && case "$(readlink "$e")" in "$root/$c"/*) rm -f "$e" ;; esac
+  done
+  rm -f "$d"/vscode-remote-lock.*
+  rmdir "$d" 2>/dev/null && n=$((n+1))
+fi
+for p in "$d" "$base/code-$c" "$base"/cli/servers/*-"$c"/server; do
   [ -L "$p" ] || continue
   case "$(readlink "$p")" in "$root/$c"/*|"$root/$c") rm -f "$p" && n=$((n+1)) ;; esac
 done
@@ -451,20 +481,23 @@ cmd_status() {
       [ -n "$u" ] || continue
       h=$(home_of "$u"); st=""
       for c in $(staged_commits); do
-        if [ -L "$h/.vscode-server/bin/$c" ]; then st="$st $(version_of "$c"):linked"
+        if [ "$(readlink "$h/.vscode-server/bin/$c/bin" 2>/dev/null)" = "$ROOT/$c/server/bin" ] \
+           && [ ! -L "$h/.vscode-server/bin/$c" ]; then st="$st $(version_of "$c"):linked"
+        elif [ -L "$h/.vscode-server/bin/$c" ]; then st="$st $(version_of "$c"):OLD-link"; broken=1
         elif [ -x "$h/.vscode-server/bin/$c/bin/code-server" ]; then st="$st $(version_of "$c"):own-copy"
         elif [ -e "$h/.vscode-server/bin/$c" ]; then st="$st $(version_of "$c"):BROKEN-copy"
         else st="$st $(version_of "$c"):MISSING"; fi
       done
       case "$st" in
-        *BROKEN*) broken=1; printf '  %-20s %s%s%s\n' "$u" "$YEL" "${st# }" "$R" ;;
+        *BROKEN*|*OLD-link*) broken=1; printf '  %-20s %s%s%s\n' "$u" "$YEL" "${st# }" "$R" ;;
         *MISSING*) printf '  %-20s %s%s%s\n' "$u" "$YEL" "${st# }" "$R" ;;
         *)         printf '  %-20s %s%s%s\n' "$u" "$GRN" "${st:- (nothing staged)}" "$R" ;;
       esac
     done < <(members "$DEFAULT_GROUP")
     [ "$broken" = 0 ] || {
-      note "BROKEN-copy = left by a connection tried before staging; it shadows the"
-      note "staged one. Fix: sudo it-vscode-server link --user <name> (moves it aside)"; }
+      note "BROKEN-copy = left by a connection tried before staging; OLD-link = the"
+      note "first layout, which Remote-SSH cannot lock (AlreadyInProgress). Both:"
+      note "sudo it-vscode-server link --user <name>   (or a pull, which re-links)"; }
   fi
 
   # Remote-SSH reaches the server through an SSH port forward. The STIG content

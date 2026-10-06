@@ -1932,6 +1932,11 @@ running the old one, and names who.
 **Checking:** `sudo it-vscode-server` shows what is staged, who is linked, and
 whether sshd allows the forwarding Remote-SSH needs.
 
+**`Installation already in progress` / `AlreadyInProgress`** on every connection
+means the box still has the first layout (`status` shows `OLD-link`):
+`sudo it-vscode-server link --user <name>` fixes it, and so does a pull. Until
+then, `"remote.SSH.lockfilesInTmp": true` in the PC's settings gets round it.
+
 **`ServerDownloadFailed` with the right commit on both sides** means the
 engineer tried to connect before the version was staged, and the empty folder
 that attempt left is in the way (`status` shows `BROKEN-copy`). Run

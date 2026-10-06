@@ -163,7 +163,7 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   Coder's build, not Microsoft's -- Open VSX only, so no Pylance/C++/C# Dev Kit.
   `it-vscode-server stage <folder>` installs one read-only server per version in
   `/opt/vscode-server/<commit>` and links each `sentry` member's `~/.vscode-server`
-  (the pull re-links, so new members are covered). Four things not to undo:
+  (the pull re-links, so new members are covered). Five things not to undo:
   1. **Links are made AS THE USER** (`runuser`). Root creating or deleting paths
      in a home the user controls follows any symlink they planted there.
   2. **`code-<commit>` must be a FILE** (the CLI). The guide that circulates
@@ -173,6 +173,10 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
      `*.vscode-cdn.net`, compiled in, and the webview page enforces a hashed
      hostname. Tested to the end in a real browser; trap 12af has the proof.
   4. **Every PC must run exactly the staged version** (`update.mode: none`).
+  5. **`~/.vscode-server/bin/<commit>` is a real folder of per-entry links,
+     never a link to `/opt`.** Microsoft's installer creates its lock file
+     inside it; in the read-only copy that fails as `AlreadyInProgress` on
+     every connection. Found by running the installer itself -- trap 12af.
   The removal had to be written as its own always-on task: the old install file
   was imported only WHEN ENABLED, so its "remove when disabled" tasks -- and the
   ufw range -- could never run. Watch for that shape elsewhere.
