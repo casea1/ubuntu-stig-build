@@ -177,6 +177,8 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
      never a link to `/opt`.** Microsoft's installer creates its lock file
      inside it; in the read-only copy that fails as `AlreadyInProgress` on
      every connection. Found by running the installer itself -- trap 12af.
+     And never tell anyone to "Kill VS Code Server on Host" after linking: on
+     Linux it is `rm -rf ~/.vscode-server/bin`. Kill first, then link.
   The removal had to be written as its own always-on task: the old install file
   was imported only WHEN ENABLED, so its "remove when disabled" tasks -- and the
   ufw range -- could never run. Watch for that shape elsewhere.

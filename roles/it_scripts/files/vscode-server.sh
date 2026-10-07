@@ -457,6 +457,8 @@ EOF
   note "the CLI was supplied, so leaving it at the default may work as well."
   note "update.mode:none -- ONE auto-update on a PC and that engineer can no longer"
   note "connect: the box has no server for the new version."
+  note "Never 'Kill VS Code Server on Host' / 'Uninstall VS Code Server': on Linux"
+  note "they rm -rf ~/.vscode-server/bin -- the links. If used, run link AFTERWARDS."
   say ""
 }
 
@@ -498,6 +500,8 @@ cmd_status() {
       note "BROKEN-copy = left by a connection tried before staging; OLD-link = the"
       note "first layout, which Remote-SSH cannot lock (AlreadyInProgress). Both:"
       note "sudo it-vscode-server link --user <name>   (or a pull, which re-links)"; }
+    note "MISSING after it was linked = 'Kill/Uninstall VS Code Server' was used in"
+    note "VS Code; it deletes ~/.vscode-server/bin. Run link again."
   fi
 
   # Remote-SSH reaches the server through an SSH port forward. The STIG content

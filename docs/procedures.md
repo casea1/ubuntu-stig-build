@@ -1938,10 +1938,17 @@ means the box still has the first layout (`status` shows `OLD-link`):
 then, `"remote.SSH.lockfilesInTmp": true` in the PC's settings gets round it.
 
 **`ServerDownloadFailed` with the right commit on both sides** means the
-engineer tried to connect before the version was staged, and the empty folder
-that attempt left is in the way (`status` shows `BROKEN-copy`). Run
-`sudo it-vscode-server link --user <name>` — it moves the folder aside — then
-**Remote-SSH: Kill VS Code Server on Host** and connect again (trap 12af).
+links are not there: `status` shows `MISSING` or `BROKEN-copy` (an empty folder
+left by a connection tried before staging). Run
+`sudo it-vscode-server link --user <name>`, then connect.
+
+> **Do not use "Kill VS Code Server on Host" or "Uninstall VS Code Server from
+> Host" on these boxes.** On Linux, Kill is `kill -9` of the server **and
+> `rm -rf ~/.vscode-server/bin`** (read from Remote-SSH 0.129's source);
+> Uninstall removes all of `~/.vscode-server`. Either deletes the links, so the
+> next connection tries to download. If one was used, run
+> `sudo it-vscode-server link --user <name>` afterwards -- never before. To
+> stop a stuck server instead: `pkill -u <name> -f out/server-main.js`.
 
 > **Every PC runs exactly the pinned version.** One auto-update and that engineer
 > cannot connect — the box has no server for the new version. That is what
