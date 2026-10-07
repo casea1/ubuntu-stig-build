@@ -444,10 +444,12 @@ cmd_urls() {
 }
 
 cmd_settings() {
-  head2 "Each PC: File > Preferences > Settings > Open Settings (JSON)"
+  head2 "Each PC: tools/ssd/set-vscode-pc.bat does this for every user (run once, as admin)"
+  note "By hand instead: File > Preferences > Settings > Open Settings (JSON), add:"
   cat <<'EOF'
     "remote.SSH.useExecServer": false,
     "remote.SSH.localServerDownload": "off",
+    "remote.SSH.lockfilesInTmp": true,
     "update.mode": "none",
     "extensions.autoUpdate": false,
 EOF

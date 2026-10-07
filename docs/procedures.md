@@ -1902,10 +1902,25 @@ stages it once per version, shared, and links every engineer to it.
    and links every member of `sentry`. One copy is 658 MB unpacked — per box, not
    per engineer.
 3. On each PC: install that VS Code, then the three `.vsix` in the README's order
-   (Extensions → `…` → Install from VSIX), then paste in what this prints:
-   ```bash
-   sudo it-vscode-server settings
-   ```
+   (Extensions → `…` → Install from VSIX), then double-click
+   **`tools/ssd/set-vscode-pc.bat`** (keep `set-vscode-pc.ps1` beside it; it
+   asks for administrator). **Once per PC, for every user on it:**
+   - machine policy in `HKLM\SOFTWARE\Policies\Microsoft\VSCode` —
+     `UpdateMode=none`, `ExtensionsAutoUpdate=off`, `TelemetryLevel=off`. VS Code
+     reads these itself, for every account, and a user cannot override them. A
+     domain can push the same three by GPO with VS Code's ADMX instead.
+   - the Remote-SSH settings (`useExecServer: false`, `localServerDownload:
+     off`, `lockfilesInTmp: true`) written into **every profile's**
+     `settings.json` and the **Default** profile, so accounts created later get
+     them. Extension settings cannot be policies, which is why this half edits
+     files. The file is edited, not replaced — comments and other settings are
+     kept, a `.bak-<time>` copy is made first, and a file that would not read
+     back as valid is left alone and reported.
+
+   `set-vscode-pc.bat check` shows what is set without changing anything. Run
+   it again after adding a PC user who already existed before the Default
+   profile was set. `sudo it-vscode-server settings` prints the same lines for
+   doing one PC by hand.
 4. Connect: **Remote-SSH: Connect to Host** → `user@box`.
 
 No Windows PC? `sudo it-vscode-server urls <commit>` on any box prints the

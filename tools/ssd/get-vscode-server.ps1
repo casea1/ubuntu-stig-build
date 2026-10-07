@@ -227,11 +227,9 @@ ON EACH ENGINEER'S PC:
   1. Install $($files[2].name)  (every PC must run exactly $ver)
   2. Extensions > ... > Install from VSIX, in this order:
        $($extNames -join "`r`n       ")
-  3. Settings (JSON) -- add:
-       "remote.SSH.useExecServer": false,
-       "remote.SSH.localServerDownload": "off",
-       "update.mode": "none",
-       "extensions.autoUpdate": false,
+  3. Run set-vscode-pc.bat (from the SSD's tools\ssd folder) once per PC, as
+     administrator: it locks updates off for every user of the PC and writes
+     the Remote-SSH settings into every profile, new accounts included.
   4. Remote-SSH: Connect to Host -> user@box
 "@
 Set-Content -LiteralPath (Join-Path $out 'README.txt') -Value $readme -Encoding ASCII
