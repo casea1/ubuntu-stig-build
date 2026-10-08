@@ -23,6 +23,15 @@
 #   --no-test                    skip the EICAR detection test
 set -uo pipefail
 
+# Machine-readable list of what this it-clamav can do, read by the ADM
+# toolkit before it pushes a signature archive. Add a word when a feature
+# lands; never remove one. cvd-sign = installs <db>-<ver>.cvd.sign files with
+# their .cvd (ClamAV 1.5 rejects a .cvd without one when MD5 is off).
+# Answered before the root re-exec below, so asking needs no sudo.
+IT_CLAMAV_FEATURES="cvd-sign"
+[ "${1:-}" = --features ] && { printf '%s
+' "$IT_CLAMAV_FEATURES"; exit 0; }
+
 SIG_SRC="${CLAMAV_SIG_SRC:-/opt/it/clamavsigs}"
 # Where the ACTIVE engine reads its signatures. The containerised engine keeps
 # its own copy (the image's entrypoint chowns the directory to its own clamav
