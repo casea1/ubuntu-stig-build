@@ -36,9 +36,21 @@ else
   [ -d /var/lib/clamav-container ] && [ -r /etc/clamav/clamd-container.conf ] \
     && DB_DIR=/var/lib/clamav-container
 fi
+CLAMD_CONF=/etc/clamav/clamd.conf
+FRESHCLAM_CONF=/etc/clamav/freshclam.conf
+conf_value() {  # key -> its value in freshclam.conf, else clamd.conf; fails if unset
+  local c v
+  for c in "$FRESHCLAM_CONF" "$CLAMD_CONF"; do
+    v=$(awk -v k="$1" '$1==k {gsub(/"/, "", $2); print $2; exit}' "$c" 2>/dev/null)
+    [ -n "$v" ] && { printf '%s' "$v"; return 0; }
+  done
+  return 1
+}
 # ClamAV 1.5 verifies each .cvd against a detached <db>-<version>.cvd.sign with
-# this certificate. Without it a 1.5 engine cannot verify anything.
-CVD_CERT=/etc/clamav/certs/clamav.crt
+# this certificate. Without it a 1.5 engine cannot verify anything. The
+# directory is CVDCertsDirectory when the config sets one; a package built with
+# another default would otherwise get a false "missing" here.
+CVD_CERT="$(conf_value CVDCertsDirectory || echo /etc/clamav/certs)/clamav.crt"
 BACKUP_ROOT=/var/backups/clamav
 LOG=/var/log/clamav-sig-install.log
 FORCE=0
@@ -80,7 +92,10 @@ ctr_alive() {
 
 sigtool_info() {  # file -> `sigtool --info` output
   if [ "$SIGTOOL_MODE" = container ]; then
-    docker run --rm --network none --security-opt no-new-privileges \
+    # --user 0:0: the extracted files are root-only (0700/0600). Without it an
+    # image that gained a USER, or a remapped docker, would report every archive
+    # as "did not verify" -- failing closed, but with the wrong diagnosis.
+    docker run --rm --network none --security-opt no-new-privileges --user 0:0 \
       -v "$(cd "$(dirname "$1")" && pwd):/w:ro" "$CTR_IMAGE" \
       sigtool --info "/w/$(basename "$1")" 2>/dev/null
   else
@@ -154,27 +169,63 @@ host_engine_ver() {  # -> "major minor" of the host clamscan, or empty
     | sed -n 's/^ClamAV \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p' | head -1
 }
 
-# Does the engine that READS $DB_DIR require .sign files? Answers yes when in
-# doubt: an archive from the grabber always carries them, so demanding them
-# costs nothing, while installing a set the engine then refuses leaves the box
-# with no daemon at all. The containerised engine's version is its image tag
-# (clamav/clamav:1.4.3 -> 1.4); a non-numeric tag (latest, stable) is today's
-# release, which is 1.5+.
-sign_required() {  # -> 0 required. Sets ENGINE_VER_DESC
-  local hv tag tv
+# Can the engine reading a database directory fall back to the legacy MD5
+# check of a .cvd? Not when OpenSSL refuses MD5 (FIPS, checked under the
+# OPENSSL_CONF this script exported) or FIPSCryptoHashLimits is on. The
+# containerised engine's OpenSSL is a stock build -- the reason it exists -- so
+# for it only the configuration can switch MD5 off.
+FIPS_LIMITS_RE='^[[:space:]]*FIPSCryptoHashLimits[[:space:]]+(yes|true|1)([[:space:]]|$)'
+md5_verification_off() {  # dir -> 0 if off
+  local c
+  for c in "$CLAMD_CONF" "$FRESHCLAM_CONF"; do
+    grep -qiE "$FIPS_LIMITS_RE" "$c" 2>/dev/null && return 0
+  done
+  if [ "$1" = /var/lib/clamav-container ]; then
+    grep -qiE "$FIPS_LIMITS_RE" "$CTR_CONF" 2>/dev/null
+    return
+  fi
+  ! openssl md5 /dev/null >/dev/null 2>&1
+}
+
+# What the engine that READS a database directory needs from .cvd.sign files:
+#   required     1.5+ with MD5 verification off: a .cvd without its .sign is
+#                rejected and clamd does not start
+#   recommended  1.5+ with MD5 available: such a .cvd still loads, by MD5
+#   none         1.4 and older ignore .sign files
+# "1.5+" answers yes when in doubt -- an unreadable host version, or an image
+# tag that is not a number (latest, stable: today's release, which is 1.5+).
+# The containerised engine's version is its image tag (clamav/clamav:1.4.3).
+sign_policy() {  # [dir] -> sets SIGN_POLICY and ENGINE_VER_DESC
+  local dir="${1:-$DB_DIR}" hv tag tv is15=1
   hv=$(host_engine_ver)
-  ENGINE_VER_DESC="host clamscan ${hv/ /.}"
-  [ -n "$hv" ] || ENGINE_VER_DESC="host clamscan version unknown"
-  ver_ge_15 "$hv" && return 0
-  if [ "$DB_DIR" = /var/lib/clamav-container ]; then
+  if [ -n "$hv" ]; then
+    ENGINE_VER_DESC="host clamscan ${hv/ /.}"
+    ver_ge_15 "$hv" || is15=0
+  else
+    ENGINE_VER_DESC="host clamscan version unreadable (assuming 1.5+)"
+  fi
+  if [ "$dir" = /var/lib/clamav-container ]; then
     tag="${CTR_IMAGE##*:}"
     [ "$tag" = "$CTR_IMAGE" ] && tag=""   # no tag at all = latest
     ENGINE_VER_DESC="$ENGINE_VER_DESC; scanner image ${CTR_IMAGE:-unknown}"
     tv=$(printf '%s' "$tag" | sed -n 's/^\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p')
-    [ -z "$tv" ] && return 0
-    ver_ge_15 "$tv" && return 0
+    if [ -z "$tv" ] || ver_ge_15 "$tv"; then is15=1; fi
   fi
-  return 1
+  if [ "$is15" = 0 ]; then
+    SIGN_POLICY=none
+  elif md5_verification_off "$dir"; then
+    SIGN_POLICY=required; ENGINE_VER_DESC="$ENGINE_VER_DESC; MD5 verification off"
+  else
+    SIGN_POLICY=recommended; ENGINE_VER_DESC="$ENGINE_VER_DESC; MD5 verification available"
+  fi
+}
+
+sign_policy_line() {  # one line for the report
+  case "$SIGN_POLICY" in
+    required)    printf '.cvd.sign REQUIRED' ;;
+    recommended) printf '.cvd.sign recommended (a .cvd without one still loads by MD5)' ;;
+    *)           printf '.cvd.sign not used by this engine' ;;
+  esac
 }
 
 installed_version() {  # base (daily|main|bytecode) -> version number, or empty
@@ -415,6 +466,28 @@ cmd_revert() {
 
   # The container has had the signature updates, so its database is the current
   # one. Hand it back before the host daemon starts on whatever it was left with.
+  # A 1.5 host with MD5 verification off will not load a .cvd without its
+  # .sign, and a database the old it-clamav installed into the scanner has
+  # none. Handing that back and then removing the container would leave the
+  # box with no engine that starts. Check before anything is copied or removed.
+  sign_policy /var/lib/clamav
+  if [ "$SIGN_POLICY" = required ]; then
+    local cf nos=()
+    for cf in "$DB_DIR"/*.cvd; do
+      [ -f "$cf" ] || continue
+      sign_for "$cf" >/dev/null || nos+=("$(basename "$cf")")
+    done
+    if [ "${#nos[@]}" -gt 0 ]; then
+      bad "The host engine needs a .cvd.sign beside every .cvd ($ENGINE_VER_DESC),"
+      bad "and the scanner's database has none for: ${nos[*]}"
+      bad "Handing it back would leave clamd unable to start. Nothing was changed."
+      say ""
+      say "  Install a current signature archive first, then re-run this:"
+      say "    sudo it-clamav install && sudo it-clamav revert"
+      exit 1
+    fi
+  fi
+
   head2 "Handing the current database back to the host"
   local f b base s n=0
   for f in "$DB_DIR"/*.cvd "$DB_DIR"/*.cld; do
@@ -604,8 +677,8 @@ age_days() { echo $(( ( $(date +%s) - $(stat -c %Y "$1") ) / 86400 )); }
 # ---- check ------------------------------------------------------------------
 cmd_check() {
   head2 "Installed signature databases  ($DB_DIR)"
-  local any=0 f v b base age s need_sign=0
-  sign_required && need_sign=1
+  local any=0 f v b base age s
+  sign_policy
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     any=1
@@ -639,26 +712,31 @@ cmd_check() {
     local have_match=0
     for s in "$DB_DIR/$base"-*.cvd.sign; do
       [ -f "$s" ] || continue
-      if [ -n "$v" ] && [ "$(basename "$s")" = "$(sign_name "$f" "$v")" ]; then
+      if [ -z "$v" ]; then
+        warn "    $(basename "$s") -- cannot judge (database version unreadable)"
+      elif [ "$(basename "$s")" = "$(sign_name "$f" "$v")" ]; then
         ok "    $(basename "$s") present"; have_match=1
       else
         warn "    $(basename "$s") is STALE (does not match version ${v:-?}) -- remove it"
       fi
     done
     if [ "$have_match" = 0 ] && [ "${f##*.}" = cvd ]; then
-      if [ "$need_sign" = 1 ]; then
-        bad "    NO $(sign_name "$f" "${v:-<version>}") -- a 1.5 engine with MD5 verification"
-        bad "    disabled refuses this .cvd and clamd will not start. Install a"
-        bad "    current archive (it carries the .sign files): it-clamav install"
-      else
-        say "  ${DIM}    no .cvd.sign (not needed by this engine; 1.5+ needs it)${R}"
-      fi
+      case "$SIGN_POLICY" in
+        required)
+          bad "    NO $(sign_name "$f" "${v:-<version>}") -- a 1.5 engine with MD5 verification"
+          bad "    disabled refuses this .cvd and clamd will not start. Install a"
+          bad "    current archive (it carries the .sign files): it-clamav install" ;;
+        recommended)
+          warn "    no $(sign_name "$f" "${v:-<version>}") -- loads by MD5 today; would not"
+          warn "    if MD5 were switched off. A current archive carries it." ;;
+        *)
+          say "  ${DIM}    no .cvd.sign (not used by this engine; 1.5+ uses it)${R}" ;;
+      esac
     fi
   done < <(db_files)
   [ "$any" = 1 ] || bad "  No signature database installed at all."
-  printf '  %sengine: %s -- .cvd.sign %s%s\n' "$DIM" "$ENGINE_VER_DESC" \
-    "$([ "$need_sign" = 1 ] && echo required || echo 'not required')" "$R"
-  if [ "$need_sign" = 1 ] && [ "$DB_DIR" != /var/lib/clamav-container ] && [ ! -f "$CVD_CERT" ]; then
+  printf '  %sengine: %s -- %s%s\n' "$DIM" "$ENGINE_VER_DESC" "$(sign_policy_line)" "$R"
+  if [ "$SIGN_POLICY" != none ] && [ "$DB_DIR" != /var/lib/clamav-container ] && [ ! -f "$CVD_CERT" ]; then
     warn "  $CVD_CERT is missing -- a 1.5 engine verifies .sign files with it."
     warn "  Reinstall the clamav package to restore it."
   fi
@@ -842,10 +920,9 @@ cmd_install() {
   [ "${#NEW[@]}" -gt 0 ] || die "The archive holds no .cvd/.cld files. Is this a ClamAV signature archive?"
 
   head2 "Validating ${#NEW[@]} signature file(s)"
-  local need_sign=0
-  sign_required && need_sign=1
-  say "  ${DIM}engine: $ENGINE_VER_DESC -- .cvd.sign $([ "$need_sign" = 1 ] && echo required || echo 'not required')${R}"
-  if [ "$need_sign" = 1 ] && [ "$DB_DIR" != /var/lib/clamav-container ] && [ ! -f "$CVD_CERT" ]; then
+  sign_policy
+  say "  ${DIM}engine: $ENGINE_VER_DESC -- $(sign_policy_line)${R}"
+  if [ "$SIGN_POLICY" != none ] && [ "$DB_DIR" != /var/lib/clamav-container ] && [ ! -f "$CVD_CERT" ]; then
     warn "$CVD_CERT is missing -- a 1.5 engine verifies .sign files with it."
     warn "Installing anyway; reinstall the clamav package if clamd will not load them."
   fi
@@ -863,15 +940,23 @@ cmd_install() {
     printf '  %-16s version %-8s %s\n' "$(basename "$f")" "${v:-?}" "$(sig_field "$f" 'Build time')"
     ok "    signature verified"
     # The .sign must name the SAME version sigtool read from the .cvd: a 1.5
-    # engine looks for exactly <db>-<version>.cvd.sign and nothing else.
-    s=""
-    [ -n "$v" ] && s="$(dirname "$f")/$(sign_name "$f" "$v")"
-    if [ -n "$s" ] && [ -f "$s" ]; then
-      SIGN[$base]=$s; ok "    $(basename "$s")"
-    elif [ "${f##*.}" = cvd ]; then
-      missing+=("$(basename "$f") (wants $(sign_name "$f" "${v:-<version>}"))")
-      if [ "$need_sign" = 1 ]; then bad "    NO $(sign_name "$f" "${v:-<version>}")"
-      else warn "    no .cvd.sign (fine for this engine)"; fi
+    # engine looks for exactly <db>-<version>.cvd.sign and nothing else. Only a
+    # .cvd is paired -- 1.5 never consults a .sign for a .cld, and pairing one
+    # could put another version's .sign beside a .cvd of the same database.
+    if [ "${f##*.}" = cvd ]; then
+      s=""
+      [ -n "$v" ] && s="$(dirname "$f")/$(sign_name "$f" "$v")"
+      if [ -n "$s" ] && [ -f "$s" ]; then
+        SIGN[$base]=$s; ok "    $(basename "$s")"
+      else
+        unset 'SIGN[$base]'
+        missing+=("$(basename "$f") (wants $(sign_name "$f" "${v:-<version>}"))")
+        case "$SIGN_POLICY" in
+          required)    bad  "    NO $(sign_name "$f" "${v:-<version>}")" ;;
+          recommended) warn "    no $(sign_name "$f" "${v:-<version>}") (loads by MD5 here)" ;;
+          *)           warn "    no .cvd.sign (fine for this engine)" ;;
+        esac
+      fi
     fi
     if [ -n "$cur" ] && [ -n "$v" ]; then
       if [ "$v" -gt "$cur" ] 2>/dev/null; then
@@ -897,18 +982,36 @@ cmd_install() {
   while IFS= read -r s; do
     [ -n "$s" ] || continue
     local sb; sb=$(basename "$s")
-    [ "${SIGN[${sb%%-*}]:-}" = "$s" ] || warn "  ignoring $sb (matches no .cvd version in this archive)"
+    # A name starting with "-" has no database part; an empty subscript is a
+    # bash error, so test for that first.
+    if [ -z "${sb%%-*}" ] || [ "${SIGN[${sb%%-*}]:-}" != "$s" ]; then
+      warn "  ignoring $sb (matches no .cvd version in this archive)"
+    fi
   done < <(find "$tmp" -type f -name '*.cvd.sign' | sort)
 
   # Refuse BEFORE the live database is touched. Installing a .cvd a 1.5 engine
   # cannot verify does not degrade the box, it stops clamd starting at all.
-  if [ "$need_sign" = 1 ] && [ "${#missing[@]}" -gt 0 ]; then
+  # --force overrides (the restart and EICAR test below still catch a clamd
+  # that will not start); with MD5 available such a .cvd loads, so only warn.
+  if [ "${#missing[@]}" -gt 0 ] && [ "$SIGN_POLICY" = required ]; then
     bad ""
     bad "This engine is ClamAV 1.5+ ($ENGINE_VER_DESC). It verifies every .cvd"
     bad "against <db>-<version>.cvd.sign, and with MD5 verification disabled (FIPS)"
     bad "a .cvd without one is rejected and clamd will not start. Missing:"
     for s in "${missing[@]}"; do bad "  $s"; done
-    die "Archive rejected; nothing was changed. Use a signature archive built for ClamAV 1.5 (it carries the .cvd.sign files)."
+    if [ "$FORCE" = 0 ]; then
+      die "Archive rejected; nothing was changed. Use a signature archive built for ClamAV 1.5 (it carries the .cvd.sign files)."
+    fi
+    bad ""
+    bad "!!! --force: INSTALLING ANYWAY. Expect clamd to refuse these databases and"
+    bad "!!! not start. If it does not come back: it-clamav rollback"
+    bad ""
+    logline "install: --force past missing .cvd.sign on a 1.5 MD5-off engine: ${missing[*]}"
+  elif [ "${#missing[@]}" -gt 0 ] && [ "$SIGN_POLICY" = recommended ]; then
+    warn ""
+    warn "Installing without .cvd.sign for: ${missing[*]}"
+    warn "This 1.5 engine still verifies them by MD5. A box with MD5 switched off"
+    warn "(FIPS) would refuse them -- prefer an archive built for ClamAV 1.5."
   fi
 
   if [ "$newer" = 0 ] && [ "$FORCE" = 0 ]; then
@@ -1023,7 +1126,23 @@ cmd_rollback() {
   local backup
   backup=$(find "$BACKUP_ROOT" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)
   [ -n "$backup" ] || die "No backup found under $BACKUP_ROOT."
+  # install makes the backup directory even when there was nothing to back up.
+  # Restoring that would delete the live set and put back nothing.
+  find "$backup" -maxdepth 1 -type f \( -name '*.cvd' -o -name '*.cld' \) | grep -q . \
+    || die "$backup holds no signature database (nothing was installed when it was taken). Nothing was changed."
   head2 "Rolling back to $backup"
+  # Backups taken before .cvd.sign files were carried have none. On an engine
+  # that cannot fall back to MD5 such a .cvd will not load -- say so now, not
+  # after clamd fails to start.
+  sign_policy
+  if [ "$SIGN_POLICY" = required ]; then
+    local bf
+    for bf in "$backup"/*.cvd; do
+      [ -f "$bf" ] || continue
+      sign_for "$bf" >/dev/null \
+        || warn "$(basename "$bf") in this backup has no .cvd.sign -- this 1.5 engine (MD5 verification off) will refuse it"
+    done
+  fi
   systemctl stop clamav-daemon 2>/dev/null
   # The .sign files go with their databases: the backup carries its own, and a
   # newer .sign left beside a restored older .cvd is a mismatch on 1.5.
