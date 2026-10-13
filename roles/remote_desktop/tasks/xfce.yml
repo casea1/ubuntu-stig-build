@@ -1,0 +1,93 @@
+---
+# =============================================================================
+# remote_desktop :: xfce.yml -- XFCE as the RDP desktop (rdp_desktop: xfce), or
+# as an option users pick with `it-desktop` (rdp_xfce_install: true).
+#
+# Only RDP sessions are affected: 52it-rdp-desktop acts on XRDP_SESSION, which a
+# GDM login never has, so the console keeps GNOME on its real GPU.
+#
+# Three things a plain "apt install xfce4" gets wrong on this fleet, all handled
+# here and all measured in a noble container before being written:
+#   1. The classification banner. XFCE's stock layout puts panels on the top and
+#      bottom edges, over the banner -- the collision that withdrew GNOME
+#      Flashback. One panel on the LEFT edge instead (xfce4-panel.xml).
+#   2. The screen lock. GNOME's STIG lock (dconf) does not run in XFCE, while
+#      the scan, which reads GNOME's keys, still passes. xfce4-screensaver gets
+#      the same idle time and lock, locked against the user (AC-11).
+#   3. The session identity. 56it-session-env would have named an XFCE session
+#      GNOME; it now leaves one alone.
+# =============================================================================
+
+- name: "XFCE | Install the XFCE session (offline repo: noble/universe)"
+  ansible.builtin.apt:
+    name:
+      - xfce4-session
+      - xfwm4
+      - xfce4-panel
+      - xfdesktop4
+      - xfce4-settings
+      - xfce4-terminal
+      - thunar
+      - xfce4-screensaver
+      - xfce4-notifyd
+    state: present
+    install_recommends: false
+
+# startxfce4 registers as x-session-manager at the same priority as
+# gnome-session. Pin it, so installing XFCE cannot change what anything else
+# that asks for "the session manager" gets.
+- name: "XFCE | Keep x-session-manager pointing at GNOME"
+  community.general.alternatives:
+    name: x-session-manager
+    path: /usr/bin/gnome-session
+  failed_when: false
+
+- name: "XFCE | System defaults (compositor off, panel clear of the banner)"
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - xfwm4.xml
+    - xfce4-panel.xml
+
+- name: "XFCE | Screen lock, matching GNOME's STIG idle time, locked for users"
+  ansible.builtin.template:
+    src: xfce4-screensaver.xml.j2
+    dest: /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    xfce_lock_minutes: "{{ [((gnome_idle_delay_seconds | default(600) | int) // 60), 1] | max }}"
+
+- name: "XFCE | Choose the desktop for RDP sessions (Xsession.d)"
+  ansible.builtin.copy:
+    src: 52it-rdp-desktop
+    dest: /etc/X11/Xsession.d/52it-rdp-desktop
+    owner: root
+    group: root
+    mode: "0644"
+
+# NOT /etc/stig-build: that is root-only, and the session reads this as the user.
+- name: "XFCE | This box's default ({{ rdp_desktop }})"
+  ansible.builtin.copy:
+    dest: /etc/default/it-rdp-desktop
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Written by ansible (remote_desktop). The RDP desktop for users who have
+      # not chosen one with it-desktop. Change it with rdp_desktop in site.yml.
+      desktop={{ rdp_desktop }}
+
+- name: "XFCE | it-desktop (any user picks their own)"
+  ansible.builtin.copy:
+    src: it-desktop
+    dest: /usr/local/bin/it-desktop
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [scripts]

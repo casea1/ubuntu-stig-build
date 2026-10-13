@@ -26,3 +26,25 @@
 - name: "Session reaping, so a stale session cannot break the next login"
   ansible.builtin.import_tasks: sessions.yml
   when: dev_rdp_enabled | default(true) | bool
+
+- name: "XFCE as the RDP desktop, or an option (rdp_desktop / rdp_xfce_install)"
+  ansible.builtin.import_tasks: xfce.yml
+  when:
+    - dev_rdp_enabled | default(true) | bool
+    - (rdp_xfce_install | default(false) | bool) or (rdp_desktop | default('gnome')) == 'xfce'
+
+# Switched off: stop choosing for RDP sessions. The packages stay (removing a
+# desktop under logged-in users is worse than leaving it), so does it-desktop's
+# per-user choice file -- without the selector it is simply not read.
+- name: "XFCE | Remove the RDP desktop selector when XFCE is off"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/X11/Xsession.d/52it-rdp-desktop
+    - /etc/default/it-rdp-desktop
+    - /usr/local/bin/it-desktop
+  when:
+    - not (rdp_xfce_install | default(false) | bool)
+    - (rdp_desktop | default('gnome')) != 'xfce'
+

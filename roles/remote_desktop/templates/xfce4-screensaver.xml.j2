@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Managed by ansible (remote_desktop). The XFCE equivalent of GNOME's STIG
+     screen lock (AC-11): GNOME's dconf lock does not run in an XFCE session.
+     unlocked="root" = locked for every other user. NOT locked="*": xfconfd
+     matches that against a user literally named "*". -->
+<channel name="xfce4-screensaver" version="1.0">
+  <property name="saver" type="empty">
+    <property name="enabled" type="bool" value="true" unlocked="root"/>
+    <property name="idle-activation" type="empty">
+      <property name="enabled" type="bool" value="true" unlocked="root"/>
+      <property name="delay" type="int" value="{{ xfce_lock_minutes }}" unlocked="root"/>
+    </property>
+  </property>
+  <property name="lock" type="empty">
+    <property name="enabled" type="bool" value="true" unlocked="root"/>
+    <property name="saver-activation" type="empty">
+      <property name="enabled" type="bool" value="true" unlocked="root"/>
+      <property name="delay" type="int" value="0" unlocked="root"/>
+    </property>
+  </property>
+</channel>

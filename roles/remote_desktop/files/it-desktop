@@ -1,0 +1,48 @@
+#!/bin/sh
+# it-desktop -- choose the desktop your RDP sessions start with. No sudo needed.
+#
+#   it-desktop            which desktop you get, and the box's default
+#   it-desktop xfce       lighter and faster over RDP
+#   it-desktop gnome      the full Ubuntu desktop
+#   it-desktop default    follow the box's default again
+#
+# Takes effect at your NEXT RDP login. Sign out (not just close the window):
+# closing the window leaves the session running, and reconnecting resumes it as
+# it was. The local console always starts GNOME.
+set -u
+
+CONF="$HOME/.config/it-desktop"
+SYS=/etc/default/it-rdp-desktop
+
+sys_default() { d=$(sed -n 's/^desktop=//p' "$SYS" 2>/dev/null); echo "${d:-gnome}"; }
+mine()        { sed -n 's/^desktop=//p' "$CONF" 2>/dev/null; }
+have_xfce()   { [ -x /usr/bin/startxfce4 ]; }
+
+status() {
+  m=$(mine)
+  if [ -n "$m" ]; then echo "Your RDP desktop: $m (your choice)"
+  else echo "Your RDP desktop: $(sys_default) (this computer's default)"; fi
+  have_xfce || echo "XFCE is not installed on this computer, so you get GNOME."
+  if [ -f "$HOME/.xsession" ]; then
+    echo "Note: you have your own ~/.xsession, and it takes precedence over this."
+  fi
+  echo "Change it:  it-desktop xfce | it-desktop gnome | it-desktop default"
+}
+
+case "${1:-}" in
+  ""|status) status ;;
+  xfce|gnome)
+    if [ "$1" = xfce ] && ! have_xfce; then
+      echo "XFCE is not installed on this computer -- ask an administrator." >&2; exit 1
+    fi
+    mkdir -p "$HOME/.config" && printf 'desktop=%s\n' "$1" > "$CONF" || exit 1
+    echo "Done: your next RDP login starts $1."
+    echo "Sign out of any open RDP session first -- reconnecting resumes it unchanged."
+    ;;
+  default)
+    rm -f "$CONF"
+    echo "Done: your next RDP login starts $(sys_default), this computer's default."
+    ;;
+  -h|--help|help) sed -n '2,12s/^# \{0,1\}//p' "$0" ;;
+  *) echo "usage: it-desktop [xfce|gnome|default]" >&2; exit 2 ;;
+esac

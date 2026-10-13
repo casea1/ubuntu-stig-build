@@ -140,6 +140,27 @@ which reports the multiarch state alongside what it is there for.
 | USB storage driver (`kernel_module_usb-storage_disabled`, UBTU-24-300039) | **EMI-classified only as of 2026-08-31.** development, ai and baseline now leave the module blacklisted and PASS this rule with no deviation — those boxes are being domain-joined, have no data-transfer role, and get no `dta` group or accounts. The remaining deviation applies to **the classified EMI laptop, where `usb_storage_enabled` is true** — the EMI laptop's `dta` workflow and the engineering workstations both move deliverables on approved removable media. Blacklisting the module removes the capability from everyone rather than restricting it to the authorized, and defeats the group-based mount restriction (no block device ever appears, so there is nothing to authorize). Compensating controls: USBGuard blocks unknown devices at enumeration and audits the decision; mounting is restricted to the `dta` group via polkit + udev. The AI nodes leave the module blacklisted and simply pass the rule. **`uas` is blacklisted alongside `usb-storage` on every profile where storage is off** — SSG's rule covers only `usb-storage`, but a USB3 drive speaking USB Attached SCSI binds `uas` instead, so the rule can pass while a modern USB SSD still attaches. Only the mass-storage class drivers are listed; dongles, serial/COM adapters and HID are unaffected and are governed by USBGuard | `usbguard` role, `usg_remediate` §5g2, `desktop_hardening` §4 |
 | Library files group-owned by root (`root_permissions_syslibrary_files`, UBTU-24-300009) | Scanner scope exceeds the STIG's. DISA checks `*.so*` files only and its title permits "root **or a system account**"; the SSG OVAL checks *every* file and demands group root. The two files it objects to on a stock Ubuntu 24.04 are `utempter` (group `utmp`) and `dbus-daemon-launch-helper` (group `messagebus`) — setgid helpers whose group is exactly what keeps them from needing root. `chgrp root` breaks utmp accounting and D-Bus activation. The DISA check itself is clean and enforced every run | `usg_fix_library_group` |
 
+### XFCE sessions and AC-11 (session lock)
+
+On a box with `rdp_desktop: xfce` (or `rdp_xfce_install: true`), RDP users may
+run XFCE instead of GNOME. The STIG's lock rules (UBTU-24 `dconf_gnome_screensaver_*`,
+AC-11) are written for GNOME and the SCAP scan reads only GNOME's dconf keys --
+**they pass on these boxes whether or not an XFCE session ever locks.** The
+lock in an XFCE session is provided separately and must be evidenced separately:
+
+- `xfce4-screensaver` starts in every XFCE session (`/etc/xdg/autostart`, `OnlyShowIn=XFCE`).
+- System-wide settings in `/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml`:
+  idle activation at the same time as GNOME (`gnome_idle_delay_seconds`, 10 min),
+  lock enabled, locking immediately on activation.
+- Each property is locked against users (`unlocked="root"`): neither the settings
+  dialog, `xfconf-query`, nor a hand-edited user file changes it (tested).
+- Unlock is the user's password through `/etc/pam.d/xfce4-screensaver`, which
+  includes `common-auth`, so faillock applies.
+
+Evidence, from a user's XFCE session: `xfconf-query -c xfce4-screensaver -p
+/saver/idle-activation/delay` (10) and `-p /lock/enabled` (true); and the file
+above. The console is unaffected -- local logins are always GNOME.
+
 ### ❌ Open POA&M: need a secret or infra (NOT auto-applied)
 
 | Finding | To close it |

@@ -2016,6 +2016,58 @@ faster. See reference.md trap 12i.
 > Anything that shows the desktop differently has to be checked against the
 > banner before it is checked for speed.
 
+### XFCE for RDP sessions (`rdp_desktop: xfce`)
+
+The lighter desktop that **does** clear the banner: XFCE with its compositor
+off, and its one panel on the **left** edge (90% of the height), because the
+banner owns the top and bottom. It removes the gnome-shell half of the cost
+above; the xrdp encoding half stays until xrdp 0.10.x (trap 12i).
+
+Only **RDP** sessions change. A login at the console still gets GNOME, and every
+user can choose for themselves.
+
+**1. Packages into the offline repo** -- all in `noble/universe`:
+```
+xfce4-session xfwm4 xfce4-panel xfdesktop4 xfce4-settings xfce4-terminal
+thunar xfce4-screensaver xfce4-notifyd
+```
+Bring their dependencies along (mirror them, don't copy the nine `.deb`s
+alone). Check on a box: `apt-cache policy xfce4-session` shows a candidate.
+
+**2. One box first.** Set it in that box's `site.yml` and pull:
+```bash
+sudo sh -c "grep -q '^rdp_desktop:' /opt/it/site.yml && sed -i 's/^rdp_desktop:.*/rdp_desktop: xfce/' /opt/it/site.yml || echo 'rdp_desktop: xfce' >> /opt/it/site.yml"
+sudo it-pull
+```
+A light pull is enough (the install is not tagged `packages`). Nobody's open
+session changes.
+
+**3. Check it on that box, over RDP, as a normal user** (sign out first --
+reconnecting resumes the old GNOME session):
+- the classification banner at the **top and bottom**, nothing over either;
+- the panel on the left; a maximised window stops short of all three;
+- leave it idle: the screen **locks at 10 minutes**
+  (`gnome_idle_delay_seconds`), and unlocks with the user's password;
+- `it-desktop gnome`, sign out, sign in: GNOME is back. `it-desktop default`.
+
+**4. The rest** -- the same two lines on each box (ADM-Toolkit's Run Command can
+send the first to all of them), then `it-pull` (Linux > Baseline > Apply).
+
+Users switch with **`it-desktop xfce`** / **`it-desktop gnome`** /
+**`it-desktop default`** -- no sudo, effective at their next sign-in. A user's
+own `~/.xsession`, if they have one, still wins.
+
+**To offer XFCE without making it the default:** `rdp_xfce_install: true` and
+leave `rdp_desktop: gnome`. **To withdraw it:** both back off; the pull removes
+the selector and `it-desktop` (the packages stay, so nobody's open desktop is
+pulled from under them).
+
+> **The screen lock is the part to defend to an assessor.** GNOME's STIG lock is
+> a dconf setting, and it does not run in an XFCE session; the SCAP scan reads
+> GNOME's keys, so it would pass either way. XFCE sessions are locked by
+> `xfce4-screensaver`, configured system-wide with the same idle time and
+> locked against the user (compliance.md, "XFCE sessions and AC-11").
+
 ### What this puts on the network
 
 **Nothing new.** Remote-SSH rides the existing SSH connection: the server listens

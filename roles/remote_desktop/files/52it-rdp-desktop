@@ -1,0 +1,32 @@
+# Managed by ansible (remote_desktop) -- do not edit by hand.
+#
+# Which desktop an RDP session gets. xrdp marks its sessions with XRDP_SESSION;
+# a GDM login never sets it, so the console keeps GNOME whatever this says.
+#
+# Order matters: after 50x11-common_determine-startup (which sets STARTUP), and
+# before 55xfce4-session (which keys XFCE's XDG_DATA_DIRS off STARTUP) and
+# 56it-session-env (which fills in GNOME's identity only where still unset).
+#
+# Both choices name their program outright. Installing XFCE registers
+# startxfce4 as x-session-manager at the SAME priority (50) as gnome-session,
+# so leaving STARTUP at x-session-manager would let a package install decide.
+# A user's own ~/.xsession is left alone: STARTUP is only replaced when it is
+# still the system default.
+if [ -n "${XRDP_SESSION:-}" ]; then
+  case "${STARTUP:-}" in
+    x-session-manager|/usr/bin/x-session-manager)
+      _itd=$(sed -n 's/^desktop=//p' /etc/default/it-rdp-desktop 2>/dev/null)
+      if [ -r "$HOME/.config/it-desktop" ]; then
+        _itu=$(sed -n 's/^desktop=//p' "$HOME/.config/it-desktop" 2>/dev/null)
+        [ -n "$_itu" ] && _itd="$_itu"
+      fi
+      if [ "$_itd" = xfce ] && [ -x /usr/bin/startxfce4 ]; then
+        STARTUP=/usr/bin/startxfce4
+        export XDG_CURRENT_DESKTOP=XFCE XDG_SESSION_DESKTOP=xfce DESKTOP_SESSION=xfce
+      elif [ -x /usr/bin/gnome-session ]; then
+        STARTUP=/usr/bin/gnome-session
+      fi
+      unset _itd _itu
+      ;;
+  esac
+fi

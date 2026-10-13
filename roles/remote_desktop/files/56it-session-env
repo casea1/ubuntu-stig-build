@@ -23,10 +23,17 @@
 
 # Only fill in what the session has not already set. A GDM login sets these
 # itself, and this file must not override a local session that is already right.
-[ -n "${XDG_CURRENT_DESKTOP:-}" ]     || export XDG_CURRENT_DESKTOP="ubuntu:GNOME"
+# An XFCE session (52it-rdp-desktop) has already named itself; give it none of
+# GNOME's identity.
 [ -n "${XDG_SESSION_TYPE:-}" ]        || export XDG_SESSION_TYPE="x11"
-[ -n "${DESKTOP_SESSION:-}" ]         || export DESKTOP_SESSION="ubuntu"
-[ -n "${GNOME_SHELL_SESSION_MODE:-}" ] || export GNOME_SHELL_SESSION_MODE="ubuntu"
+case "${XDG_CURRENT_DESKTOP:-}" in
+  XFCE) ;;
+  *)
+    [ -n "${XDG_CURRENT_DESKTOP:-}" ]     || export XDG_CURRENT_DESKTOP="ubuntu:GNOME"
+    [ -n "${DESKTOP_SESSION:-}" ]         || export DESKTOP_SESSION="ubuntu"
+    [ -n "${GNOME_SHELL_SESSION_MODE:-}" ] || export GNOME_SHELL_SESSION_MODE="ubuntu"
+    ;;
+esac
 
 # The part that actually fixes the user services: without this they inherit
 # nothing and start blind. Failure here must never break the login, so it is

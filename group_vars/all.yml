@@ -593,6 +593,18 @@ dev_gnome_package: ubuntu-desktop-minimal   # or: ubuntu-desktop
 # desktop_hardening skips the xrdp/Wayland-off/RDP-firewall steps and leaves the
 # local GNOME (Wayland) session as-is. Force with true/false per box.
 dev_rdp_enabled: "{{ is_development | default(true) | bool }}"
+
+# Which desktop an RDP session gets: gnome | xfce. Local (GDM) logins keep GNOME
+# either way -- the selection only acts on sessions xrdp starts. XFCE with its
+# compositor OFF is the lighter session: GNOME Shell composites the whole desktop
+# in software under xorgxrdp, and that was half the CPU on a measured box. Each
+# user can still choose for themselves with `it-desktop gnome|xfce`.
+#   xfce needs the XFCE packages in the offline repo (all in noble/universe):
+#   xfce4-session xfwm4 xfce4-panel xfdesktop4 xfce4-settings xfce4-terminal
+#   thunar xfce4-screensaver xfce4-notifyd
+rdp_desktop: gnome
+# Install XFCE and offer it (it-desktop) without making it the default.
+rdp_xfce_install: "{{ rdp_desktop == 'xfce' }}"
 dev_rdp_port: 3389
 # TLS security layer for RDP: xrdp presents the system snakeoil cert and is added
 # to the ssl-cert group so it can read the key. Set false only if a client truly

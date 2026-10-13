@@ -202,6 +202,16 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   never`). Nothing stops a container; restoring INTO a live one is a documented
   manual step (procedures.md §5.12), never a command.
 
+- **XFCE is an RDP-only option (`rdp_desktop: xfce`, `it-desktop`).** Four
+  things not to undo (trap 12aj): the ONE panel sits on the LEFT edge because the
+  classification banner owns top and bottom; the screen lock is
+  `xfce4-screensaver` locked with `unlocked="root"` -- `locked="*"` is NOT a
+  wildcard in xfconf and silently locks nothing; `52it-rdp-desktop` names the
+  session program outright because `startxfce4` and `gnome-session` tie at
+  x-session-manager priority 50; and `56it-session-env` must not give an XFCE
+  session GNOME's identity. The scan reads only GNOME's lock keys, so it passes
+  either way -- compliance.md "XFCE sessions and AC-11" is the evidence.
+
 - **Never restart `xrdp-sesman` on a live box.** Every session it is managing is
   orphaned by the restart: the per-session processes are reparented to init and
   keep running, and the new sesman comes back with an empty table. The next RDP
