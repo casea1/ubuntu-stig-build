@@ -11,8 +11,41 @@
 # copied per account, and removing a toolchain removes its entry.
 # =============================================================================
 
+# Every Libero version that is actually installed, each in its own
+# <root>/Libero_SoC_<version>. The binary is looked for, not assumed: Microchip
+# moved it in 2025.1 (Libero/bin64 -> Libero_SoC/Designer/bin64) and a fixed
+# path is how a working install came to look missing.
+- name: "FPGA | Which Libero versions are installed?"
+  ansible.builtin.shell: |
+    for v in {{ fpga_libero_versions | map('quote') | join(' ') }}; do
+      d={{ fpga_microchip_root | quote }}/"Libero_SoC_$v"
+      [ -d "$d" ] || continue
+      b=""
+      for c in "$d/Libero_SoC/Designer/bin64/libero" "$d/Libero/bin64/libero"; do
+        [ -f "$c" ] && { b="$c"; break; }
+      done
+      [ -n "$b" ] || b=$(find "$d" -maxdepth 6 -type f -path '*/bin64/libero' 2>/dev/null | head -1)
+      [ -n "$b" ] && printf '%s\t%s\n' "$v" "$b"
+    done
+    exit 0
+  register: _fpga_libero_found
+  changed_when: false
+  check_mode: false
+  when: fpga_microchip_enabled | bool
+
+- name: "FPGA | Installed Libero versions"
+  ansible.builtin.set_fact:
+    _fpga_liberos: []
+
+- name: "FPGA | Installed Libero versions (one per line found)"
+  ansible.builtin.set_fact:
+    _fpga_liberos: >-
+      {{ _fpga_liberos + [{'v': item.split()[0], 'bin': item.split()[1],
+                           'dir': fpga_microchip_root ~ '/Libero_SoC_' ~ item.split()[0]}] }}
+  loop: "{{ _fpga_libero_found.stdout_lines | default([]) }}"
+
 # The installed trees, named once so both the launchers and the access pass
-# work from the same list.
+# work from the same list. One entry per Libero version.
 - name: "FPGA | The toolchain trees"
   ansible.builtin.set_fact:
     _fpga_trees: >-
@@ -20,11 +53,14 @@
         ([{'name': 'Xilinx', 'path': fpga_xilinx_root,
            'probe': fpga_xilinx_root ~ '/Vivado/' ~ fpga_xilinx_version ~ '/settings64.sh'}]
          if fpga_xilinx_enabled | bool else [])
-        +
-        ([{'name': 'Libero', 'path': fpga_libero_dir,
-           'probe': fpga_libero_bin}]
-         if fpga_microchip_enabled | bool else [])
       }}
+
+- name: "FPGA | The toolchain trees (each Libero version)"
+  ansible.builtin.set_fact:
+    _fpga_trees: "{{ _fpga_trees + [{'name': 'Libero ' ~ item.v, 'path': item.dir, 'probe': item.bin}] }}"
+  loop: "{{ _fpga_liberos }}"
+  loop_control:
+    label: "{{ item.v }}"
 
 - name: "FPGA | Who may use the toolchains"
   ansible.builtin.import_tasks: access.yml
@@ -35,7 +71,6 @@
   loop:
     - "{{ fpga_xilinx_root }}/Vivado/{{ fpga_xilinx_version }}/bin/vivado"
     - "{{ fpga_xilinx_root }}/Vitis/{{ fpga_xilinx_version }}/bin/vitis"
-    - "{{ fpga_libero_bin }}"
   register: _fpga_bins
   loop_control:
     label: "{{ item }}"
@@ -67,19 +102,37 @@
             'keywords': 'fpga;vitis;xilinx;amd;embedded;soc;',
             'present': _fpga_bins.results[1].stat.exists | default(false),
           },
-          {
-            'cmd': 'libero', 'name': 'Libero SoC',
-            'generic': 'FPGA Design Suite',
-            'comment': 'Microchip Libero SoC ' ~ fpga_libero_version ~ ' -- PolarFire / IGLOO design',
-            'root': fpga_microchip_root,
-            'bin': fpga_libero_bin,
-            'icon': fpga_icon_libero,
-            'ld_i386': true,
-            'keywords': 'fpga;libero;microchip;microsemi;polarfire;igloo;',
-            'present': _fpga_bins.results[2].stat.exists | default(false),
-          },
         ]
       }}
+
+# Libero: one launcher AND one tile per installed version (`libero-2025.1`,
+# "Libero SoC 2025.1"), so two side by side are told apart. Plain `libero`
+# is the default version (fpga_libero_version) and has no tile of its own --
+# it would duplicate that version's.
+- name: "FPGA | Libero: plain `libero` runs the default version"
+  ansible.builtin.set_fact:
+    _fpga_apps: >-
+      {{ _fpga_apps + [{'cmd': 'libero', 'name': 'Libero SoC ' ~ fpga_libero_version,
+           'root': fpga_microchip_root,
+           'bin': ((_fpga_liberos | selectattr('v', 'equalto', fpga_libero_version) | map(attribute='bin') | list)
+                   + [fpga_libero_bin]) | first,
+           'ld_i386': true, 'tile': false,
+           'present': (_fpga_liberos | selectattr('v', 'equalto', fpga_libero_version) | list | length) > 0}] }}
+  when: fpga_microchip_enabled | bool
+
+- name: "FPGA | Libero: a launcher and a tile per installed version"
+  ansible.builtin.set_fact:
+    _fpga_apps: >-
+      {{ _fpga_apps + [{'cmd': 'libero-' ~ item.v, 'name': 'Libero SoC ' ~ item.v,
+           'generic': 'FPGA Design Suite',
+           'comment': 'Microchip Libero SoC ' ~ item.v ~ ' -- PolarFire / IGLOO design',
+           'root': fpga_microchip_root, 'bin': item.bin, 'icon': fpga_icon_libero,
+           'ld_i386': true,
+           'keywords': 'fpga;libero;microchip;microsemi;polarfire;igloo;' ~ item.v ~ ';',
+           'present': true}] }}
+  loop: "{{ _fpga_liberos }}"
+  loop_control:
+    label: "{{ item.v }}"
 
 - name: "FPGA | Launcher for each installed toolchain"
   ansible.builtin.template:
@@ -108,7 +161,7 @@
     owner: root
     group: root
     mode: "0644"
-  loop: "{{ _fpga_apps | selectattr('present') | list }}"
+  loop: "{{ _fpga_apps | selectattr('present') | rejectattr('tile', 'defined') | list }}"
   loop_control:
     label: "{{ item.cmd }}"
   when: fpga_desktop_entries | default(true) | bool
@@ -135,11 +188,33 @@
        | list }}
   register: _fpga_desktop_gone
 
+# A Libero version that was uninstalled, or dropped from fpga_libero_versions,
+# leaves a libero-<version> launcher and tile nothing above knows to remove;
+# and the single "Libero SoC" tile of the one-version layout is now per version.
+- name: "FPGA | Libero launchers and tiles on disk"
+  ansible.builtin.find:
+    paths: [/usr/local/bin, /usr/share/applications]
+    patterns: ["libero-*", "fpga-libero-*.desktop", "fpga-libero.desktop"]
+  register: _fpga_libero_ondisk
+
+- name: "FPGA | Remove Libero launchers and tiles for versions not installed"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {{ _fpga_libero_ondisk.files | map(attribute='path')
+       | reject('in', (_fpga_liberos | map(attribute='v')
+                       | map('regex_replace', '^(.*)$', '/usr/local/bin/libero-\1') | list)
+                    + (_fpga_liberos | map(attribute='v')
+                       | map('regex_replace', '^(.*)$', '/usr/share/applications/fpga-libero-\1.desktop') | list))
+       | list }}
+  register: _fpga_libero_gone
+
 - name: "FPGA | Remove every app-grid entry when they are switched off"
   ansible.builtin.file:
     path: "/usr/share/applications/fpga-{{ item.cmd }}.desktop"
     state: absent
-  loop: "{{ _fpga_apps }}"
+  loop: "{{ _fpga_apps | rejectattr('tile', 'defined') | list }}"
   loop_control:
     label: "{{ item.cmd }}"
   when: not (fpga_desktop_entries | default(true) | bool)
@@ -156,6 +231,7 @@
     (_fpga_desktop is defined and _fpga_desktop is changed)
     or (_fpga_desktop_gone is defined and _fpga_desktop_gone is changed)
     or (_fpga_desktop_off is defined and _fpga_desktop_off is changed)
+    or (_fpga_libero_gone is defined and _fpga_libero_gone is changed)
 
 - name: "FPGA | Nothing installed yet"
   ansible.builtin.debug:

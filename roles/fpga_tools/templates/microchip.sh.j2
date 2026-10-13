@@ -1,5 +1,6 @@
 # Managed by the fpga_tools role -- do not edit by hand.
-# Microchip Libero SoC {{ fpga_libero_version }}.
+# Microchip Libero SoC. Default version {{ fpga_libero_version }}; installed side by
+# side: {{ fpga_libero_versions | join(', ') }}.
 #
 # It does NOT start lmgrd. {% if fpga_license_mode == 'server' %}The licence comes from a server on another
 # machine.{% else %}A local daemon is a systemd unit (fpga-lmgrd.service), not
@@ -18,28 +19,38 @@ export LM_LICENSE_FILE={{ fpga_license_microchip }}
 export SNPSLMD_LICENSE_FILE={{ fpga_license_microchip }}
 {% endif %}
 
+# libero_env            the default version ({{ fpga_libero_version }})
+# libero_env 2026.1     a specific installed version
 libero_env() {
-    if [ ! -d "$LIBERO_INSTALL_DIR" ]; then
-        echo "Libero {{ fpga_libero_version }} is not installed at $LIBERO_INSTALL_DIR." >&2
+    _v="${1:-{{ fpga_libero_version }}}"
+    _dir="{{ fpga_microchip_root }}/Libero_SoC_$_v"
+    if [ ! -d "$_dir" ]; then
+        echo "Libero $_v is not installed at $_dir." >&2
+        echo "Installed: $(ls -d {{ fpga_microchip_root }}/Libero_SoC_* 2>/dev/null | sed 's|.*/Libero_SoC_||' | tr '\n' ' ')" >&2
         echo "Check with: sudo it-fpga status" >&2
+        unset _v _dir
         return 1
     fi
+    LIBERO_INSTALL_DIR="$_dir"
+    LIBERO_DESIGNER_DIR="$_dir/Libero_SoC/Designer"
+    [ -d "$LIBERO_DESIGNER_DIR" ] || LIBERO_DESIGNER_DIR="$_dir/Libero"
+    FPGENPROG="$LIBERO_DESIGNER_DIR/bin64/fpgenprog"
+    export LIBERO_INSTALL_DIR LIBERO_DESIGNER_DIR FPGENPROG
     # Every candidate that actually exists, rather than one hardcoded layout.
     # Microchip moved Designer under Libero_SoC/ in 2025.1, and a PATH built
     # from the old layout has nothing on it -- `libero` then reports "command
     # not found" on a working install, which reads as a failed install.
     for _d in "$LIBERO_DESIGNER_DIR/bin64" "$LIBERO_DESIGNER_DIR/bin" \
-              "$LIBERO_INSTALL_DIR/Libero/bin64" "$LIBERO_INSTALL_DIR/Libero/bin" \
-              "$LIBERO_INSTALL_DIR"/*/Synplify*/bin "$LIBERO_INSTALL_DIR/Synplify/bin"; do
+              "$_dir/Libero/bin64" "$_dir/Libero/bin" \
+              "$_dir"/*/Synplify*/bin "$_dir/Synplify/bin"; do
         [ -d "$_d" ] && PATH="$PATH:$_d"
     done
-    unset _d
     export PATH
     # Libero and Synplify carry 32-bit components; without this they load the
-    # 64-bit library and abort. {{ fpga_libero_compat_dir }} holds the old
-    # RHEL-era libraries Ubuntu does not package (libpng15 and friends) -- kept
-    # private to Libero rather than dropped in /usr/lib, where an unmaintained
-    # libpng would sit in front of every program on the box.
+    # 64-bit library and abort. {{ fpga_libero_compat_dir }} holds only the old
+    # RHEL-era libraries Ubuntu does not package (libpng15) -- sonames nothing
+    # else provides, so it cannot shadow a newer release's own libraries.
     export LD_LIBRARY_PATH="{{ fpga_libero_compat_dir }}:/usr/lib/i386-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    echo "Libero {{ fpga_libero_version }} tools on PATH."
+    echo "Libero $_v tools on PATH."
+    unset _v _dir _d
 }

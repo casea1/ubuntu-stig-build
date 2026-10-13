@@ -34,6 +34,10 @@
 #   it-fpga compat build       build the old RHEL-era libraries Libero needs
 #                              (libpng15) into a private directory only it sees
 #   it-fpga compat status      what is in there
+#   it-fpga install libero [--bin PATH]
+#                              prepare a Libero install: the installer's own
+#                              version picks <root>/Libero_SoC_<version>, so a
+#                              new release goes BESIDE the old one
 #   it-fpga install --save-config
 #                              capture this box's install config so every other
 #                              box installs identically
@@ -181,23 +185,26 @@ cmd_status() {
 
   # ---- Microchip
   if [ -r "$MICROCHIP_ENV" ]; then
-    if have_tree "$LIBDIR"; then
-      ok "Libero            $LIBDIR  ($(du -sh "$LIBDIR" 2>/dev/null | cut -f1))"
-      [ -x "$LIBERO_BIN" ] && ok "  libero           $LIBERO_BIN" \
-        || warn "  libero           NOT found under $LIBDIR"
-      # The bundled RHEL libstdc++ is older than what Noble's libicuuc needs.
-      local bundled
-      bundled=$(find "$LIBDIR" -name 'libstdc++.so.6' -type f 2>/dev/null | head -3)
-      if [ -n "$bundled" ]; then
-        bad "  bundled libstdc++ still present -- libero_bin will die with GLIBCXX_3.4.30"
-        printf '      %s\n' $bundled
-        say  "      ${DIM}fix: sudo it-fpga fixup${R}"
-      else
-        ok "  libstdc++        using the system library (bundled copy removed)"
-      fi
-    else
-      warn "Libero            NOT installed at $LIBDIR"
-    fi
+    local d lb found=0 f v
+    while IFS= read -r d; do
+      [ -n "$d" ] || continue
+      found=1; v="$(libero_ver "$d")"; lb="$(libero_bin_in "$d")"
+      ok "Libero $v$( [ "$d" = "$LIBDIR" ] && printf ' (default)')  $d  ($(du -sh "$d" 2>/dev/null | cut -f1))"
+      [ -n "$lb" ] && ok "  libero           $lb  (command: libero-$v)" \
+        || warn "  libero           NOT found under $d"
+      # A RHEL libstdc++ older than what Noble's libicuuc needs. Only those.
+      while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        if stdcxx_too_old "$f"; then
+          bad "  bundled libstdc++ too old -- libero_bin will die with GLIBCXX_3.4.30"
+          printf '      %s\n' "$f"; say "      ${DIM}fix: sudo it-fpga fixup${R}"
+        fi
+      done < <(find "$d" -name 'libstdc++.so.6' -type f 2>/dev/null | head -5)
+    done < <(libero_dirs)
+    [ "$found" = 1 ] || warn "Libero            NOT installed under $MCHP_ROOT"
+    for v in $(conf_get LIBERO_VERSIONS ""); do
+      have_tree "$MCHP_ROOT/Libero_SoC_$v" || warn "Libero $v         configured (fpga_libero_versions), not installed"
+    done
     # Shared IP vault. Wrong modes here do not stop Libero starting -- they
     # stop the SECOND engineer downloading a core, days later.
     if [ -d "$VAULT_DIR" ]; then
@@ -220,8 +227,13 @@ cmd_status() {
 
   # ---- permissions. The single most likely reason a correctly installed tool
   # is unusable: the installer ran under sudo with the STIG's umask 077.
-  local st _perm_grp_shown=""
-  for st in "$XROOT/Vivado/$XVER/settings64.sh" "$LIBERO_BIN"; do
+  local st _perm_grp_shown="" _probes
+  _probes="$XROOT/Vivado/$XVER/settings64.sh"
+  while IFS= read -r d; do
+    [ -n "$d" ] && _probes="$_probes
+$(libero_bin_in "$d")"
+  done < <(libero_dirs)
+  while IFS= read -r st; do
     [ -e "$st" ] || continue
     if perms_ok "$st"; then
       local grp members
@@ -242,7 +254,7 @@ cmd_status() {
       say "                    ${DIM}group is $(stat -c '%G' "$st" 2>/dev/null), should be $ACCESS_GROUP${R}"
       say "                    ${DIM}fix: sudo it-fpga fixup${R}"
     fi
-  done
+  done <<< "$_probes"
 
   # ---- compatibility
   head2 "24.04 compatibility"
@@ -289,7 +301,7 @@ cmd_status() {
   head2 "Programmer cables"
   cables_show
   say ""
-  say "  ${DIM}Load the tools in a shell:  vivado_env    libero_env${R}"
+  say "  ${DIM}Load the tools in a shell:  vivado_env    libero_env [version]${R}"
   say "  ${DIM}Set the licence server:     sudo it-fpga license --server 1702@licsrv${R}"
   say ""
 }
@@ -804,10 +816,16 @@ cmd_fixup() {
 
   # First, because it is the one that makes the tools unusable for everyone
   # except the person who installed them.
+  local d
   fix_perms "$XROOT"  "Xilinx" "$XROOT/Vivado/$XVER/settings64.sh"
-  fix_perms "$LIBDIR" "Libero" "${LIBERO_BIN:-}"
   have_tree "$XROOT"  && check_parents "$XROOT"
-  have_tree "$LIBDIR" && check_parents "$LIBDIR"
+  # Every Libero tree, not just the default -- a second version installed
+  # under the STIG umask is just as root-only as the first was.
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    fix_perms "$d" "Libero $(libero_ver "$d")" "$(libero_bin_in "$d")"
+    check_parents "$d"
+  done < <(libero_dirs)
 
   # `it-fpga install libero` handed the whole of $MCHP_ROOT to a person so a
   # GUI installer could write it without root. Take it back -- otherwise the
@@ -834,20 +852,29 @@ cmd_fixup() {
     say "  ${DIM}there at install time so cores are fetched once, not per user.${R}"
   fi
 
-  if have_tree "$LIBDIR"; then
-    # Libero ships a RHEL libstdc++ OLDER than what Noble's libicuuc.so.74
-    # needs, so libero_bin dies with GLIBCXX_3.4.30 not found. Removing the
-    # bundled copy forces it onto the system library, which is newer.
-    local f
+  # Libero 2025.1 ships a RHEL libstdc++ OLDER than what Noble's libicuuc.so.74
+  # needs, so libero_bin dies with GLIBCXX_3.4.30 not found. Renaming the
+  # bundled copy forces it onto the system library, which is newer. ONLY a copy
+  # that is actually too old: a release built for 24.04 may bundle a good one.
+  local f found=0
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    found=1
     while IFS= read -r f; do
       [ -n "$f" ] || continue
-      mv -f "$f" "$f.disabled" && { ok "disabled $f"; n=$((n + 1)); }
-    done < <(find "$LIBDIR" -name 'libstdc++.so.6' -type f 2>/dev/null)
-    [ "$n" -eq 0 ] && say "  ${DIM}no bundled libstdc++ left to remove${R}"
+      if stdcxx_too_old "$f"; then
+        mv -f "$f" "$f.disabled" && { ok "disabled $f (no GLIBCXX_3.4.30)"; n=$((n + 1)); }
+      else
+        say "  ${DIM}kept $f -- it already provides GLIBCXX_3.4.30${R}"
+      fi
+    done < <(find "$d" -name 'libstdc++.so.6' -type f 2>/dev/null)
+  done < <(libero_dirs)
+  if [ "$found" = 0 ]; then
+    warn "no Libero installed under $MCHP_ROOT -- nothing to fix"
+  else
+    [ "$n" -eq 0 ] && say "  ${DIM}no too-old bundled libstdc++ left to remove${R}"
     say "  ${DIM}Renamed, not deleted -- put it back with .disabled -> .so.6 if this${R}"
     say "  ${DIM}turns out to be the wrong call for your version.${R}"
-  else
-    warn "Libero is not installed at $LIBDIR -- nothing to fix"
   fi
 
   # FlashPro Express: the vendor script the tool tells you to run leaves its
@@ -913,7 +940,7 @@ cmd_install() {
   case "$what" in
     --save-config) save=1 ;;
     xilinx|"") ;;
-    libero) cmd_install_libero; return $? ;;
+    libero) cmd_install_libero "$bin"; return $? ;;
     *) die "usage: it-fpga install xilinx|libero [--bin PATH] [--config PATH]" ;;
   esac
 
@@ -1068,6 +1095,34 @@ if [ ! -x "$LIBERO_BIN" ] && [ -d "$LIBDIR" ]; then
 fi
 LIBPNG15_URL="https://downloads.sourceforge.net/project/libpng/libpng15/1.5.30/libpng-1.5.30.tar.gz"
 
+# Every Libero installed side by side, each in <root>/Libero_SoC_<version>.
+# Found on disk rather than read from the config: a version someone installed
+# and never told the pull about still needs its permissions fixed.
+libero_dirs() {
+  local d
+  for d in "$MCHP_ROOT"/Libero_SoC_*; do
+    have_tree "$d" && printf '%s\n' "$d"
+  done
+  case "$LIBDIR" in
+    "$MCHP_ROOT"/Libero_SoC_*) ;;
+    *) have_tree "$LIBDIR" && printf '%s\n' "$LIBDIR" ;;
+  esac
+  return 0
+}
+libero_ver() { printf '%s' "${1##*/Libero_SoC_}"; }
+libero_bin_in() {   # $1 = tree -> its libero binary, wherever this release put it
+  local c
+  for c in "$1/Libero_SoC/Designer/bin64/libero" "$1/Libero/bin64/libero"; do
+    [ -f "$c" ] && { printf '%s' "$c"; return 0; }
+  done
+  find "$1" -maxdepth 6 -type f -path '*/bin64/libero' 2>/dev/null | head -1
+}
+# A bundled libstdc++ breaks Libero only when it is OLDER than what Noble's
+# libicuuc.so.74 needs (GLIBCXX_3.4.30) -- 2025.1's is. A release built for
+# 24.04 (2026.1 is the first) may bundle one that is fine, or newer than the
+# system's, and taking THAT away would break it instead of fixing it.
+stdcxx_too_old() { ! grep -aq 'GLIBCXX_3\.4\.30' "$1" 2>/dev/null; }
+
 compat_status() {
   head2 "Libero compatibility libraries"
   printf '  %-14s %s\n' "directory" "$COMPAT_DIR"
@@ -1204,9 +1259,14 @@ cmd_install_libero() {
     || die "could not hand $MCHP_ROOT to $who"
   ok "$MCHP_ROOT is writable by $who (temporarily)"
 
-  local bin
-  bin=$(find "$INSTALLER_DIR" /media/*/* /mnt/* -maxdepth 2 -type f \
-          -name 'Libero_SoC_*_lin.bin' 2>/dev/null | sort | tail -1)
+  local bin="${1:-}" ver target
+  # The newest installer it can see, unless one is named with --bin. Its
+  # version picks the install directory, so a 2026.1 installer goes next to
+  # 2025.1 instead of over it.
+  [ -n "$bin" ] || bin=$(find "$INSTALLER_DIR" /media/*/* /mnt/* -maxdepth 2 -type f \
+          -name 'Libero_SoC_*_lin.bin' 2>/dev/null | sort -V | tail -1)
+  ver="$(basename "${bin:-}" | sed -nE 's/^Libero_SoC_v?([0-9]+\.[0-9]+(\.[0-9]+)?)_.*/\1/p')"
+  target="$MCHP_ROOT/Libero_SoC_${ver:-<version>}"
 
   # Same execute-bit trap as the Xilinx installer, one step later: this one is
   # run BY THE ENGINEER, so it fails in their session with a bare "Permission
@@ -1220,7 +1280,7 @@ cmd_install_libero() {
   say ""
   say "    ${B}env LD_LIBRARY_PATH=$COMPAT_DIR ${bin:-/path/to/Libero_SoC_*_lin.bin}${R}"
   say ""
-  say "  Install directory : ${B}$LIBDIR${R}"
+  say "  Install directory : ${B}$target${R}$( have_tree "$target" && printf '   %s(already there -- this REPLACES it)%s' "$YEL" "$R")"
   say "  Common IP vault   : ${B}$VAULT_DIR${R}   -- shared; not your home directory"
   say "  Installation type : ${B}Full${R}   -- and DECLINE its post-install script"
   say ""
@@ -1291,13 +1351,15 @@ vendor_desktops() {
 # the SAME program is the duplicate people see in the app grid -- one "Libero
 # SoC" from the pull, another imported from the installer's own file.
 covered_bins() {
-  local c b
-  for c in vivado vitis libero; do
+  local c b t
+  for t in /usr/share/applications/fpga-*.desktop; do
+    c="${t##*/fpga-}"; c="${c%.desktop}"
+    case "$c" in vendor-*) continue ;; esac
     # Keyed on the TILE, not the launcher. /usr/local/bin/<cmd> is written
     # whether or not fpga_desktop_entries is on, so reading it alone would
     # claim coverage that is not in the app grid -- and the vendor tile we
     # skipped on that basis would have been the only one left.
-    [ -e "/usr/share/applications/fpga-$c.desktop" ] || continue
+    [ -e "$t" ] || continue
     b="$(sed -nE 's/^BIN="?([^"]+)"?$/\1/p' "/usr/local/bin/$c" 2>/dev/null | head -1)"
     [ -n "$b" ] && { readlink -f "$b" 2>/dev/null || printf '%s\n' "$b"; }
   done
@@ -1312,8 +1374,25 @@ SEEN_NAMES=""
 # First value of a key, ignoring the localised variants (Name[de] and friends).
 dget() { sed -nE "s/^$2=(.*)$/\1/p" "$1" 2>/dev/null | head -1; }
 
+# The Libero version a binary belongs to, from its tree (<root>/Libero_SoC_<v>/).
+# Empty for anything else.
+tree_ver() { printf '%s' "$1" | sed -nE "s|^$MCHP_ROOT/Libero_SoC_([^/]+)/.*|\1|p"; }
+
+# Two Libero versions install tiles with the SAME filenames and names, so
+# without the version in both, the second import was dropped as a duplicate of
+# the first and its stashed original overwrote the first's.
+desktop_ver() {   # $1 = a .desktop file -> the Libero version its Exec runs
+  local e; e="$(dget "$1" Exec)"
+  tree_ver "$(printf '%s' "$e" | sed -E 's/^"([^"]*)".*/\1/; t; s/^([^[:space:]]+).*/\1/')"
+}
+stash_name() {    # $1 = a .desktop file -> its name in the stash
+  local b v; b="$(basename "$1" .desktop)"; v="$(desktop_ver "$1")"
+  case "$b" in *"$v"*) ;; *) b="$b-$v" ;; esac
+  printf '%s.desktop' "$b"
+}
+
 import_one() {   # $1 = a vendor .desktop -> 0 if imported
-  local f="$1" name exec_line bin icon comment slug wrap
+  local f="$1" name exec_line bin icon comment slug wrap tv
 
   name="$(dget "$f" Name)"
   exec_line="$(dget "$f" Exec)"
@@ -1331,6 +1410,8 @@ import_one() {   # $1 = a vendor .desktop -> 0 if imported
     *) return 1 ;;
   esac
   [ -e "$bin" ] || return 1
+  tv="$(tree_ver "$bin")"
+  if [ -n "$tv" ]; then case "$name" in *"$tv"*) ;; *) name="$name $tv" ;; esac; fi
 
   # Already covered -- by a pull tile, or by an earlier file in this same run.
   # Return 2 rather than 1: this is a duplicate, not a file we failed to read,
@@ -1349,6 +1430,7 @@ $lname"
   comment="$(dget "$f" Comment)"
   slug="$(basename "$f" .desktop | tr -cs '[:alnum:]._-' '-' | tr '[:upper:]' '[:lower:]')"
   slug="${slug%-}"
+  if [ -n "$tv" ]; then case "$slug" in *"$tv"*) ;; *) slug="$slug-$tv" ;; esac; fi
   wrap="$WRAP_PREFIX$slug"
 
   # An absolute Icon that no longer exists gives a blank tile, which looks like
@@ -1438,13 +1520,13 @@ cmd_desktop() {
       case "$f" in
         /home/*/Desktop/*|/root/Desktop/*)
           local downer; downer="$(basename "$(dirname "$(dirname "$f")")")"
-          if install -D -m 0644 "$f" "$STASH_DIR/$downer/$(basename "$f")" 2>/dev/null; then
+          if install -D -m 0644 "$f" "$STASH_DIR/$downer/$(stash_name "$f")" 2>/dev/null; then
             rm -f "$f"
             say "      ${DIM}took it off $downer's desktop (kept in $STASH_DIR)${R}"
           fi ;;
         /home/*/.local/share/applications/*|/root/.local/share/applications/*)
           local owner; owner="$(basename "${f%/.local/*}")"
-          if install -D -m 0644 "$f" "$STASH_DIR/$owner/$(basename "$f")" 2>/dev/null; then
+          if install -D -m 0644 "$f" "$STASH_DIR/$owner/$(stash_name "$f")" 2>/dev/null; then
             rm -f "$f"
             say "      ${DIM}took the private copy out of $owner's home (kept in $STASH_DIR)${R}"
           fi ;;
@@ -1490,9 +1572,15 @@ cmd_check() {
   # wall of FAILs acts on it. The useful question underneath is whether the
   # binaries resolve their libraries, which ldd answers correctly on any distro.
   head2 "Shared libraries (the question the vendor checker is really asking)"
-  b="$(find "$LIBDIR" -maxdepth 6 -type f -name 'fpexpress' -perm -u+x 2>/dev/null | sort | head -1)"
-  check_ldd "${LIBERO_BIN:-}" "Libero"
-  check_ldd "$b" "FlashPro Express"
+  local d any=""
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    b="$(libero_bin_in "$d")"; any="$any$b"
+    check_ldd "$b" "Libero $(libero_ver "$d")"
+    b="$(find "$d" -maxdepth 6 -type f -name 'fpexpress' -perm -u+x 2>/dev/null | sort | head -1)"
+    check_ldd "$b" "FlashPro Express $(libero_ver "$d")"
+  done < <(libero_dirs)
+  b="$any"
   v="$XROOT/Vivado/$XVER/bin/unwrapped/lnx64.o/vivado"
   check_ldd "$v" "Vivado"
   case "${LIBERO_BIN:-}$b$v" in
@@ -1508,8 +1596,10 @@ cmd_check() {
     # Libero_SoC/Designer/bin/check_linux_req/check_linux_req.sh -- so find it
     # rather than hardcode a path that silently reports "not found" on the next
     # version and looks like a missing install.
-    [ -d "$LIBDIR" ] && c="$(find "$LIBDIR" -maxdepth 6 -type f -name 'check_linux_req*' \
-                               -perm -u+x 2>/dev/null | sort | head -1)"
+    # The newest installed release's: 2026.1's knows Ubuntu, 2025.1's does not.
+    c="$(libero_dirs | sort -V | tail -1)"
+    [ -n "$c" ] && c="$(find "$c" -maxdepth 6 -type f -name 'check_linux_req*' \
+                          -perm -u+x 2>/dev/null | sort | head -1)"
     if [ -n "$c" ] && [ -x "$c" ]; then
       say "  ${DIM}$c${R}"
       say ""
@@ -1599,7 +1689,8 @@ cmd_env() {
   say ""
   say "  The heavy PATH is opt-in, per shell:"
   say "    ${B}vivado_env${R}   then  ${B}vivado${R}"
-  say "    ${B}libero_env${R}   then  ${B}libero${R}"
+  say "    ${B}libero_env${R}   then  ${B}libero${R}      ${DIM}(the default version)${R}"
+  say "    ${B}libero_env 2026.1${R}            ${DIM}(a specific installed one; or run libero-2026.1)${R}"
   say "  ${DIM}settings64.sh is not sourced for every login shell on the box: it${R}"
   say "  ${DIM}prepends a large PATH and LD_LIBRARY_PATH for users who never touch${R}"
   say "  ${DIM}Vivado, and has been known to break unrelated system tools.${R}"

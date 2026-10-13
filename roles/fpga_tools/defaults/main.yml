@@ -36,8 +36,15 @@ fpga_xilinx_version: "2024.2"
 
 fpga_microchip_enabled: true
 fpga_microchip_root: /opt/microchip
+# The DEFAULT version: what `libero`, `libero_env` with no argument and the
+# old single-version paths below mean.
 fpga_libero_version: "2025.1"
 fpga_libero_dir: "{{ fpga_microchip_root }}/Libero_SoC_{{ fpga_libero_version }}"
+# Every version that may be installed side by side, each in its own
+# <root>/Libero_SoC_<version>. Each one found gets a `libero-<version>`
+# launcher, an app tile and the same access fix; `libero` runs the default.
+# Per box in site.yml, e.g.  fpga_libero_versions: ["2025.1", "2026.1"]
+fpga_libero_versions: "{{ [fpga_libero_version] }}"
 
 # Where the Designer binaries actually are inside that tree. Microchip MOVED
 # this in 2025.1: it used to be <root>/Libero/bin64, it is now

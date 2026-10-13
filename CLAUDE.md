@@ -140,7 +140,11 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
      trees, the group reads and executes, nobody else reads them, nobody
      modifies them. The pull enforces it with ONE stat per tree and only
      recurses when wrong. Nothing needs to be writable inside a tree.
-  6. The i386 list is a WISH. Ubuntu publishes only a curated i386 subset on
+  6. **Libero versions sit SIDE BY SIDE** (`fpga_libero_versions`), each in
+     `Libero_SoC_<v>`; `libero` is the default, `libero-<v>` each one. Every
+     "the Libero tree" assumption in the role and `it-fpga` is a loop now --
+     a new one must be too. Trap 46.
+  7. The i386 list is a WISH. Ubuntu publishes only a curated i386 subset on
      24.04, several vendor-listed libraries cannot be installed, and ONE
      unresolvable name fails the whole apt transaction -- that stopped a pull
      on dev-14 and took the 64-bit half with it. The role probes with

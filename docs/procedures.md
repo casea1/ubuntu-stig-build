@@ -870,6 +870,51 @@ ships.
 The Xilinx JTAG cable drivers must be installed with **no cables plugged in**,
 so `fixup` prints the command rather than running it.
 
+### A second Libero version (e.g. 2026.1 beside 2025.1)
+
+Each release gets its own tree and both stay usable: a project opened in a
+newer Libero is migrated and will not open in the old one again, so engineers
+need to keep the old version until their projects move (trap 46).
+
+1. **Check the licence first.** The FlexLM server's licence must cover the new
+   release, and 2024.2 onwards needs FlexLM **11.19** daemons on the server.
+   A licence that is too old lets Libero start and then refuses to build.
+2. List both in `/opt/it/site.yml`, then pull:
+   ```yaml
+   fpga_libero_version: "2025.1"              # what plain `libero` runs
+   fpga_libero_versions: ["2025.1", "2026.1"]
+   ```
+   ```bash
+   sudo it-pull
+   ```
+3. Copy the offline installer to `/opt/it/installers/` and hand the directory
+   over. The version comes from the file name, so it installs **beside** 2025.1:
+   ```bash
+   sudo it-fpga install libero --bin /opt/it/installers/Libero_SoC_2026.1_offline_lin.bin
+   ```
+   It prints the install directory (`/opt/microchip/Libero_SoC_2026.1`) and
+   says so in yellow if it would replace an existing tree. The IP vault stays
+   `/opt/microchip/common` -- shared by both versions.
+4. Run the command it prints **as yourself, no sudo**, exactly as in "Libero"
+   above, then take the tree back and refresh everything:
+   ```bash
+   sudo it-fpga fixup      # permissions on every tree; libstdc++ only where too old
+   sudo it-pull            # launchers + tiles for the new version
+   sudo it-fpga desktop    # vendor tiles, one set per version
+   sudo it-fpga status     # both trees, which one is the default
+   sudo it-fpga check      # ldd on each version
+   ```
+
+What users get: `libero` (the default), `libero-2025.1`, `libero-2026.1`, an
+app-grid tile per version, and `libero_env 2026.1` in a shell. To make 2026.1
+the default, change `fpga_libero_version` and pull. To retire 2025.1, delete
+its tree, drop it from the list and pull -- its launcher and tile go with it.
+
+> **Air-gapped:** Microchip's `check_linux_req.sh` in the new tree names any
+> extra packages the release wants. Run `sudo it-fpga check --vendor` on a box
+> after the install; anything it lists goes into the offline repo before the
+> rest of the fleet.
+
 ### The license server
 
 Point every workstation at the FlexLM server; nothing is per-box, there is no
