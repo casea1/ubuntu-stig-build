@@ -157,6 +157,12 @@ lock in an XFCE session is provided separately and must be evidenced separately:
 - Unlock is the user's password through `/etc/pam.d/xfce4-screensaver`, which
   includes `common-auth`, so faillock applies.
 
+The unlock dialog shows no DoD notice. Neither does GNOME's lock screen: the
+notice (AC-8) is shown before access is first granted -- the xrdp login and the
+GDM greeter -- and unlocking resumes a session already granted. XFCE's dialog
+could not carry one anyway: its layout is compiled into `xfce4-screensaver`
+(the package ships no `.ui` file) and it has no message setting.
+
 Evidence, from a user's XFCE session: `xfconf-query -c xfce4-screensaver -p
 /saver/idle-activation/delay` (10) and `-p /lock/enabled` (true); and the file
 above. The console is unaffected -- local logins are always GNOME.

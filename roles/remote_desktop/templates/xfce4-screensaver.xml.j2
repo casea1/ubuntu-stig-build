@@ -17,5 +17,10 @@
       <property name="enabled" type="bool" value="true" unlocked="root"/>
       <property name="delay" type="int" value="0" unlocked="root"/>
     </property>
+    <!-- "Switch User" asks a display manager for a new login; an RDP session
+         has none, so the button can only fail. -->
+    <property name="user-switching" type="empty">
+      <property name="enabled" type="bool" value="false" unlocked="root"/>
+    </property>
   </property>
 </channel>
