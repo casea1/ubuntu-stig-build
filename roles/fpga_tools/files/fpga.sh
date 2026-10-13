@@ -652,12 +652,15 @@ fix_perms() {   # $1 = tree, $2 = label, $3 = probe file (optional)
   # fixup. The pull has enforced this with one stat for exactly this reason; the
   # command people actually run did not. Probe first, and if the probe is right,
   # confirm with one cheap find that stops at the first counter-example.
-  if [ "${FPGA_FIXUP_FORCE:-0}" != 1 ] && [ -n "$probe" ] && perms_ok "$probe"; then
+  # The OWNER too: an install handed to a person leaves the group right and the
+  # owner wrong, and a group-only probe called that tree correct.
+  if [ "${FPGA_FIXUP_FORCE:-0}" != 1 ] && [ -n "$probe" ] && perms_ok "$probe" \
+     && [ "$(stat -c '%U' "$probe" 2>/dev/null)" = root ]; then
     # Bounded to 3 levels on purpose. An unbounded walk of Vivado is itself
     # minutes of stat() on a tree that turns out to be fine, which is the
     # complaint this is answering. A partially-broken install is broken at the
     # top -- whole subtrees the installer created -- not in one leaf 8 deep.
-    wrong="$(find "$d" -maxdepth 3 \( ! -group "$ACCESS_GROUP" -o ! -perm -g+r \) \
+    wrong="$(find "$d" -maxdepth 3 \( ! -user root -o ! -group "$ACCESS_GROUP" -o ! -perm -g+r \) \
                -print -quit 2>/dev/null)"
     if [ -z "$wrong" ]; then
       ok "$lbl already correct -- skipped (it-fpga fixup --force to redo it anyway)"
@@ -1176,7 +1179,7 @@ compat_build() {
   else
     local tmp; tmp="$(mktemp -d /tmp/fpga-compat.XXXXXX)" || die "mktemp failed"
     say "  fetching libpng 1.5.30..."
-    if ! curl -fsSL -o "$tmp/libpng.tar.gz" "$LIBPNG15_URL"; then
+    if ! curl -fsSL --connect-timeout 15 --max-time 300 -o "$tmp/libpng.tar.gz" "$LIBPNG15_URL"; then
       rm -rf "$tmp"
       bad "could not download libpng 1.5.30"
       say "  ${DIM}Air-gapped? Carry the tarball in and:${R}"
@@ -1265,11 +1268,6 @@ cmd_install_libero() {
     head2 "Back to the Libero install for $who"
   fi
 
-  install -d -m 0755 "$MCHP_ROOT" 2>/dev/null || true
-  chown -R "$who" "$MCHP_ROOT" 2>/dev/null \
-    || die "could not hand $MCHP_ROOT to $who"
-  ok "$MCHP_ROOT is writable by $who (temporarily)"
-
   local bin="${1:-}" ver target
   # The newest installer it can see, unless one is named with --bin. Its
   # version picks the install directory, so a 2026.1 installer goes next to
@@ -1278,6 +1276,21 @@ cmd_install_libero() {
           -name 'Libero_SoC_*_lin.bin' 2>/dev/null | sort -V | tail -1)
   ver="$(basename "${bin:-}" | sed -nE 's/^Libero_SoC_v?([0-9]+\.[0-9]+(\.[0-9]+)?)_.*/\1/p')"
   target="$MCHP_ROOT/Libero_SoC_${ver:-<version>}"
+
+  # Hand over the ROOT and the new tree only -- NEVER `chown -R` the root. With
+  # a version already installed that walked every file of it (minutes, silent)
+  # and left it owned by this person, which fixup's group-only probe then
+  # passed as correct. The IP vault is group-writable already.
+  install -d -m 0755 "$MCHP_ROOT" 2>/dev/null || true
+  chown "$who" "$MCHP_ROOT" 2>/dev/null || die "could not hand $MCHP_ROOT to $who"
+  if [ -n "$ver" ]; then
+    install -d -m 0755 "$target" && chown -R "$who" "$target" \
+      || die "could not hand $target to $who"
+  fi
+  [ -d "$VAULT_DIR" ] || { install -d -m 2775 "$VAULT_DIR" && chown "$who:$ACCESS_GROUP" "$VAULT_DIR"; }
+  id -nG "$who" 2>/dev/null | tr ' ' '\n' | grep -qx "$ACCESS_GROUP" \
+    || warn "$who is not in $ACCESS_GROUP, so the installer cannot write the IP vault $VAULT_DIR"
+  ok "$MCHP_ROOT${ver:+ and $target} writable by $who (temporarily)"
 
   # Same execute-bit trap as the Xilinx installer, one step later: this one is
   # run BY THE ENGINEER, so it fails in their session with a bare "Permission
