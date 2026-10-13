@@ -3731,7 +3731,14 @@ It finds the work on the box itself, so the same command is right on both nodes:
 | Node | Backed up |
 |---|---|
 | System 1 (dev-ai1) | **`pgvector` / `openwebui`** — Open WebUI's users, chats, knowledge bases, settings **and every embedding** (`VECTOR_DB: pgvector`), so a restore needs no re-embedding. The `open-webui` volume (uploads, audit log; its `cache` is skipped) |
-| System 2 (dev-ai2) | `mlflow-db` / `mlflow` (experiments, runs, registry), the `mlflow-artifacts` volume, `magpie_state` |
+| System 2 (dev-ai2) | `mlflow-db` / `mlflow` (experiments, runs, registry), and the volumes `mlflow-artifacts`, `lgtm-data` (Grafana/Loki/Tempo/Prometheus history), `magpie_state`, `magpie_artifacts`, `magpie_logs`, `magpie_repos` |
+
+**The Postgres volumes (`pgvector-data`, `postgres_mlflow_data`) are never
+tarred**, deliberately: a file copy of a RUNNING database is torn mid-write and
+may refuse to start. `pg_dump` above is the consistent copy of the same data.
+`lgtm-data` is copied live too; its time-series stores tolerate that (at worst
+the last few minutes are lost), and a box with little free space can leave it
+out by setting `VOLUMES` in `/etc/stig-build/ai-backup.conf`.
 
 Each Postgres container's roles go too (`globals-*.sql`), so a restore keeps the
 password `.env` already has. **Not** backed up: model weights (re-fetchable,

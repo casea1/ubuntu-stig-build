@@ -24,9 +24,13 @@
 #     the embeddings) on System 1, mlflow-db on System 2. Plus each container's
 #     roles (pg_dumpall --globals-only), so a restore keeps the same password.
 #   * the data volumes in VOLUMES that exist here: open-webui (uploads, audit
-#     log; its cache is skipped), mlflow-artifacts, magpie_state.
-#   NOT: model weights (re-downloadable, huge), redis (a cache), .env files or
-#   /etc/stig-build/*.pw (they stay on the box).
+#     log; its cache is skipped) on System 1; mlflow-artifacts, lgtm-data and
+#     the four magpie volumes on System 2.
+#   NOT: model weights (re-downloadable, huge), redis (a cache), the
+#   open-webui nginx cache, .env files or /etc/stig-build/*.pw (they stay on
+#   the box) -- and NOT a tar of pgvector-data or postgres_mlflow_data: a copy
+#   of a RUNNING Postgres data directory is torn mid-write and may not start.
+#   Those databases are covered by the dumps above, which are consistent.
 #
 # WHY IT CANNOT BREAK A LIVE SERVICE:
 #   * Nothing is stopped, restarted, recreated or reconfigured. No compose file
@@ -46,7 +50,7 @@
 #
 # Settings: /etc/stig-build/ai-backup.conf (KEY=value; nothing else writes it).
 #   BACKUP_DIR=/var/backups/ai-stack  KEEP=3  MIN_FREE_GB=20
-#   VOLUMES="open-webui:cache mlflow-artifacts magpie_state"   name[:skip,skip]
+#   VOLUMES="open-webui:cache mlflow-artifacts lgtm-data magpie_state ..."  name[:skip,skip]
 #   DEST=svc@winhost:/D:/Backups/AI  PORT=22  LIMIT_KBIT=0 (sftp -l; 0 = none)
 set -uo pipefail
 
@@ -90,7 +94,7 @@ conf_set() {   # $1 = key, $2 = value
 BACKUP_DIR=$(conf_get BACKUP_DIR /var/backups/ai-stack)
 KEEP=$(conf_get KEEP 3)
 MIN_FREE_GB=$(conf_get MIN_FREE_GB 20)
-VOLUMES=$(conf_get VOLUMES "open-webui:cache mlflow-artifacts magpie_state")
+VOLUMES=$(conf_get VOLUMES "open-webui:cache mlflow-artifacts lgtm-data magpie_state magpie_artifacts magpie_logs magpie_repos")
 DEST=$(conf_get DEST "")
 PORT=$(conf_get PORT 22)
 LIMIT_KBIT=$(conf_get LIMIT_KBIT 0)
