@@ -190,8 +190,19 @@ cmd_status() {
       [ -n "$d" ] || continue
       found=1; v="$(libero_ver "$d")"; lb="$(libero_bin_in "$d")"
       ok "Libero $v$( [ "$d" = "$LIBDIR" ] && printf ' (default)')  $d  ($(du -sh "$d" 2>/dev/null | cut -f1))"
-      [ -n "$lb" ] && ok "  libero           $lb  (command: libero-$v)" \
-        || warn "  libero           NOT found under $d"
+      if [ -n "$lb" ]; then
+        ok "  libero           $lb  (command: libero-$v)"
+      else
+        # The full installer can install Program and Debug alone. That tree has
+        # no libero by design, and "NOT found" read as a failed install.
+        f="$(find "$d" -maxdepth 6 -type f -name fpexpress 2>/dev/null | head -1)"
+        if [ -n "$f" ]; then
+          ok "  programming only (no Libero) -- FlashPro Express  $f"
+          say "                   ${DIM}its tiles come from: sudo it-fpga desktop${R}"
+        else
+          warn "  libero           NOT found under $d"
+        fi
+      fi
       # A RHEL libstdc++ older than what Noble's libicuuc needs. Only those.
       while IFS= read -r f; do
         [ -n "$f" ] || continue

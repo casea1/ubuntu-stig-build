@@ -910,6 +910,15 @@ app-grid tile per version, and `libero_env 2026.1` in a shell. To make 2026.1
 the default, change `fpga_libero_version` and pull. To retire 2025.1, delete
 its tree, drop it from the list and pull -- its launcher and tile go with it.
 
+> **Program and Debug only.** The same full installer can install just the
+> programming tools (FlashPro Express, SmartDebug). Do every step above except
+> two: leave the version **out** of `fpga_libero_versions` (there is no Libero
+> to launch, so the pull makes no `libero-<v>` and `status` would call it
+> missing), and choose only Program and Debug in the installer. `fixup` still
+> repairs the tree's permissions, `it-fpga desktop` gives everyone its tiles,
+> and `it-fpga status` shows it as "programming only (no Libero)". No licence
+> is involved in programming a device.
+
 > **Air-gapped:** Microchip's `check_linux_req.sh` in the new tree names any
 > extra packages the release wants. Run `sudo it-fpga check --vendor` on a box
 > after the install; anything it lists goes into the offline repo before the
