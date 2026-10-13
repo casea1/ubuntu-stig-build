@@ -2053,6 +2053,17 @@ reconnecting resumes the old GNOME session):
 **4. The rest** -- the same two lines on each box (ADM-Toolkit's Run Command can
 send the first to all of them), then `it-pull` (Linux > Baseline > Apply).
 
+**Window dragging.** Moving or resizing shows an **outline**, and the window
+redraws once when released (`box_move`/`box_resize`): live contents made xrdp
+repaint and re-encode every frame of a drag. Users can turn it back in
+Window Manager > Advanced.
+
+**Defaults reach a user's FIRST XFCE login only**, except the locked ones
+(panel position, screen lock, wallpaper), which apply always. Someone who
+logged in to an earlier version keeps their own panel and window settings; to
+take the current defaults, from a terminal in GNOME or over SSH (signed out of
+XFCE): `rm -rf ~/.config/xfce4`.
+
 Users switch with **`it-desktop xfce`** / **`it-desktop gnome`** /
 **`it-desktop default`** -- no sudo, effective at their next sign-in. A user's
 own `~/.xsession`, if they have one, still wins.

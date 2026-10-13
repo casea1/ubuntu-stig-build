@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Managed by ansible (remote_desktop). Compositor OFF by default: under xrdp
      every composited frame is drawn in software and then encoded. A user may
-     turn it back on in Window Manager Tweaks. -->
+     change any of these in Window Manager / Window Manager Tweaks. -->
 <channel name="xfwm4" version="1.0">
   <property name="general" type="empty">
     <property name="use_compositing" type="bool" value="false"/>
+    <!-- Drag and resize show an OUTLINE, and the window redraws once when it
+         is let go. Live contents mean every frame of a drag is repainted and
+         re-encoded by xrdp, single-threaded; that is the choppiness. -->
+    <property name="box_move" type="bool" value="true"/>
+    <property name="box_resize" type="bool" value="true"/>
   </property>
 </channel>

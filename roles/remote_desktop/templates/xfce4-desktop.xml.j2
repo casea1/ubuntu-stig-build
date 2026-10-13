@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Managed by ansible (remote_desktop). The org wallpaper for XFCE: GNOME's
+     dconf picture-uri does not reach xfdesktop. Keyed by RandR output, and
+     xorgxrdp names its outputs rdp0, rdp1, ... (one per client monitor); four
+     workspaces each. Locked, like the GNOME setting (unlocked="root"). -->
+<channel name="xfce4-desktop" version="1.0">
+  <property name="backdrop" type="empty">
+    <property name="screen0" type="empty">
+{% for out in ['rdp0', 'rdp1', 'rdp2', 'rdp3'] %}
+      <property name="monitor{{ out }}" type="empty">
+{% for ws in range(4) %}
+        <property name="workspace{{ ws }}" type="empty">
+          <property name="last-image" type="string" value="{{ branding_wallpaper_dest }}" unlocked="root"/>
+          <property name="image-style" type="int" value="5" unlocked="root"/>
+        </property>
+{% endfor %}
+      </property>
+{% endfor %}
+    </property>
+  </property>
+</channel>

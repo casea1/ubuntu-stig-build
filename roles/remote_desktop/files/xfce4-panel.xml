@@ -3,7 +3,7 @@
      the height, because the classification banner owns the top and bottom
      edges. XFCE's stock layout puts a panel on each of those edges and covers
      the banner (measured: top panel 0,0 1600x27 over the 22px top bar; bottom
-     dock over the bottom bar) -- the same collision that withdrew GNOME
+     dock over the bottom bar); the same collision that withdrew GNOME
      Flashback. Position, mode and length are locked (unlocked="root"); the
      rest is the user's. -->
 <channel name="xfce4-panel" version="1.0">
@@ -31,7 +31,9 @@
     </property>
   </property>
   <property name="plugins" type="empty">
-    <property name="plugin-1" type="string" value="applicationsmenu"/>
+    <property name="plugin-1" type="string" value="applicationsmenu">
+      <property name="show-button-title" type="bool" value="false"/>
+    </property>
     <property name="plugin-2" type="string" value="launcher">
       <property name="items" type="array">
         <value type="string" value="xfce4-terminal.desktop"/>
@@ -58,6 +60,14 @@
       <property name="digital-layout" type="uint" value="3"/>
       <property name="digital-time-format" type="string" value="%H:%M"/>
     </property>
-    <property name="plugin-9" type="string" value="actions"/>
+    <!-- Buttons, not the default menu: the menu's button is the user's FULL
+         NAME, which a 48px side panel cuts to "Austi...". -->
+    <property name="plugin-9" type="string" value="actions">
+      <property name="appearance" type="uint" value="0"/>
+      <property name="items" type="array">
+        <value type="string" value="+lock-screen"/>
+        <value type="string" value="+logout"/>
+      </property>
+    </property>
   </property>
 </channel>

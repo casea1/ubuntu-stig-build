@@ -53,6 +53,15 @@
     - xfwm4.xml
     - xfce4-panel.xml
 
+- name: "XFCE | The org wallpaper ({{ branding_wallpaper_dest }})"
+  ansible.builtin.template:
+    src: xfce4-desktop.xml.j2
+    dest: /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml
+    owner: root
+    group: root
+    mode: "0644"
+  when: desktop_branding_enabled | default(true) | bool
+
 - name: "XFCE | Screen lock, matching GNOME's STIG idle time, locked for users"
   ansible.builtin.template:
     src: xfce4-screensaver.xml.j2
