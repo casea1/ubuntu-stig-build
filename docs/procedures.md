@@ -2179,11 +2179,15 @@ it in the SSP, restrict `dev_code_server_allow_from`, and expect findings.
    ```
 3. **Pull:** `sudo it-pull` (a light pull installs it). It installs the package,
    gives every `sentry` member with a usable password their own port
-   (`8080 + uid - 1000`) and password, places `my-ide`, `it-codeserver` and an
-   **IDE (in a browser)** tile, and opens 8080–8099 to that source only. If the
-   package is not in the repo it says so and changes nothing else -- no port is
-   opened for a server that is not there.
-4. **Check:** `sudo it-codeserver` lists who has which port.
+   (one of 8080–8099, assigned once and kept) and password, places `my-ide`,
+   `it-codeserver` and an **IDE (in a browser)** tile, and opens 8080–8099 to
+   that source only. If the package is not in the repo it says so and changes
+   nothing else -- no port is opened for a server that is not there.
+4. **Check:** `sudo it-codeserver` lists who has which port. A member who gets
+   "You do not have a browser IDE set up" is named in the pull's **Group
+   members WITHOUT an instance** line with the reason -- usually a password not
+   set yet at pull time, or all 20 ports taken (raise
+   `dev_code_server_port_span`).
 5. **Each engineer** runs `my-ide` (or the tile): it starts their own instance
    and opens it. `my-ide password` shows their password, `my-ide remote` the
    address to use from a Windows PC (`https://<box>:<port>`, self-signed

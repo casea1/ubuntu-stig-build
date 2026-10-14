@@ -3,11 +3,10 @@
 # code-server -- VS Code in the browser, one instance per user.
 #
 # code-server is SINGLE-USER PER INSTANCE; there is no multi-tenant mode. So
-# every user who gets one needs their own port, and the port is derived from
-# the UID rather than from a position in a list -- removing one engineer must
-# not silently move everyone else's port.
-#
-#   port = dev_code_server_port + (uid - dev_code_server_uid_base)
+# every user who gets one needs their own port in
+# dev_code_server_port .. + dev_code_server_port_span - 1, and once given it is
+# KEPT: the port in a user's config.yaml is the record, so removing one
+# engineer never moves anyone else's.
 #
 # Each instance has its OWN generated password, root-only in /etc/code-server.
 # desktop_hardening opens the port range (allow, source-restricted) after USG.
@@ -25,54 +24,106 @@
 # Group membership two ways, because `getent group` lists only SUPPLEMENTARY
 # members -- an account whose PRIMARY group is this one would be missed, and on
 # these boxes that is a plausible way to create an engineer.
-- name: "CODE-SERVER | Who gets an instance?"
+#
+# Prints `USER <name> <port>` per instance and `SKIP <name> <reason>` for every
+# group member left out. The skips used to be silent, and the engineer was told
+# to "ask IT to add you to the group" while already in it.
+#
+# PORTS ARE ASSIGNED, NOT DERIVED. They used to be `port + (uid - 1000)` and
+# anyone outside the 20-port span was dropped without a word -- UIDs only grow,
+# so every engineer hired after the first twenty accounts silently got nothing.
+# Now: keep the port already in your config.yaml; else take the old uid-derived
+# one if it is free (so no existing box renumbers anybody); else the lowest
+# free one. A port still named in an ex-member's config is not handed out, so a
+# leftover instance cannot squat on a newcomer's port.
+- name: "CODE-SERVER | Who gets an instance, on which port?"
   ansible.builtin.shell:
+    executable: /bin/bash
     cmd: |
+      base={{ dev_code_server_port | int }}
+      span={{ dev_code_server_port_span | int }}
+      ubase={{ dev_code_server_uid_base | int }}
+      in_range() { [ -n "$1" ] && [ "$1" -ge "$base" ] && [ "$1" -lt $((base + span)) ]; }
+      conf_port() {
+        local h; h=$(getent passwd "$1" | cut -d: -f6)
+        sed -nE 's/^bind-addr:.*:([0-9]+)[[:space:]]*$/\1/p' \
+          "$h/.config/code-server/config.yaml" 2>/dev/null | tail -1
+      }
+
       g='{{ dev_code_server_group | default('') }}'
+      eligible=()
       if [ -z "$g" ] || ! getent group "$g" >/dev/null 2>&1; then
         # No group configured, or it does not exist: fall back to the one account
         # this used to serve.
-        id -u '{{ dev_tools_user }}' >/dev/null 2>&1 && echo '{{ dev_tools_user }}'
-        exit 0
+        id -u '{{ dev_tools_user }}' >/dev/null 2>&1 && eligible=('{{ dev_tools_user }}')
+      else
+        gid=$(getent group "$g" | cut -d: -f3)
+        while read -r u; do
+          uid=$(id -u "$u" 2>/dev/null) || continue
+          if [ "$uid" -lt 1000 ] || [ "$uid" -ge 65534 ]; then
+            echo "SKIP $u system account (uid $uid)"; continue
+          fi
+          # An account that cannot log in does not need a browser IDE.
+          #
+          # TWO checks, because the shell alone is not one: auto_audit has a
+          # LOCKED PASSWORD and a perfectly normal shell, and dev-16 came up with
+          # an instance for it -- units failing on the boot splash for accounts
+          # nobody can log in as.
+          #
+          # `passwd -S` field 2 is P (usable), L (locked) or NP (no password).
+          # A human account that has not had its password set yet is L too, and
+          # skipping it is right -- the next pull picks it up once an admin sets
+          # one, so this heals itself.
+          case "$(getent passwd "$u" | cut -d: -f7)" in
+            */nologin|*/false|"") echo "SKIP $u no login shell"; continue ;;
+          esac
+          st=$(passwd -S "$u" 2>/dev/null | awk '{print $2}')
+          if [ "$st" != P ]; then
+            echo "SKIP $u password ${st:-unknown} (locked or not set yet; pull again once it is)"; continue
+          fi
+          # Optional per-site exclusions, e.g. the dta and audit accounts, which
+          # are in the group too.
+          for x in {{ dev_code_server_exclude | default([]) | join(' ') }}; do
+            [ "$u" = "$x" ] && { echo "SKIP $u in dev_code_server_exclude"; continue 2; }
+          done
+          eligible+=("$u")
+        done < <({ getent group "$g" | cut -d: -f4 | tr ',' '\n'
+                   awk -F: -v g="$gid" '$4==g {print $1}' /etc/passwd
+                 } | sed '/^$/d' | sort -u)
       fi
-      gid=$(getent group "$g" | cut -d: -f3)
-      { getent group "$g" | cut -d: -f4 | tr ',' '\n'
-        awk -F: -v g="$gid" '$4==g {print $1}' /etc/passwd
-      } | sed '/^$/d' | sort -u | while read -r u; do
-        # Only real human accounts, and only those whose UID maps into the port
-        # range -- one outside it would land on a port the firewall does not
-        # cover, or on something else's.
-        uid=$(id -u "$u" 2>/dev/null) || continue
+
+      declare -A port_of taken held
+      is_eligible() { local e; for e in "${eligible[@]}"; do [ "$e" = "$1" ] && return 0; done; return 1; }
+
+      # 1. Everyone keeps the port they already have (first claim wins a clash).
+      for u in "${eligible[@]}"; do
+        p=$(conf_port "$u")
+        if in_range "$p" && [ -z "${taken[$p]:-}" ]; then taken[$p]=$u; port_of[$u]=$p; fi
+      done
+      # 2. Ports still written in a non-member's config are not reassigned.
+      while IFS=: read -r n _ uid _; do
         [ "$uid" -ge 1000 ] && [ "$uid" -lt 65534 ] || continue
-        # An account that cannot log in does not need a browser IDE.
-        #
-        # TWO checks, because the shell alone is not one. This used to test the
-        # shell only, with a comment claiming that skipped auto_audit -- and it
-        # never did: auto_audit is created with a LOCKED PASSWORD and a perfectly
-        # normal shell, so it sailed through and dev-16 came up with an instance
-        # for it (11 users, including the auditor accounts). Those are the units
-        # failing on the boot splash: a service for an account nobody can log in
-        # as, on a box that is counting listening ports.
-        #
-        # `passwd -S` field 2 is P (usable), L (locked) or NP (no password).
-        # A human account that has not had its password set yet is L too, and
-        # skipping it is right -- the next pull picks it up once an admin sets
-        # one, so this heals itself.
-        case "$(getent passwd "$u" | cut -d: -f7)" in
-          */nologin|*/false|"") continue ;;
-        esac
-        case "$(passwd -S "$u" 2>/dev/null | awk '{print $2}')" in
-          P) ;;
-          *) continue ;;
-        esac
-        # Optional per-site exclusions, e.g. the dta and audit accounts, which
-        # are in the group too.
-        for x in {{ dev_code_server_exclude | default([]) | join(' ') }}; do
-          [ "$u" = "$x" ] && continue 2
-        done
-        off=$((uid - {{ dev_code_server_uid_base }}))
-        [ "$off" -ge 0 ] && [ "$off" -lt {{ dev_code_server_port_span }} ] || continue
-        echo "$u"
+        is_eligible "$n" && continue
+        p=$(conf_port "$n"); in_range "$p" && held[$p]=$n
+      done < <(getent passwd)
+      # 3. Newcomers, oldest UID first: the old uid-derived port if free, else
+      #    the lowest free one.
+      for u in $(for e in "${eligible[@]}"; do [ -n "${port_of[$e]:-}" ] || echo "$(id -u "$e") $e"; done | sort -n | awk '{print $2}'); do
+        want=$(( base + $(id -u "$u") - ubase ))
+        if ! in_range "$want" || [ -n "${taken[$want]:-}${held[$want]:-}" ]; then
+          want=""
+          for ((p = base; p < base + span; p++)); do
+            [ -z "${taken[$p]:-}${held[$p]:-}" ] && { want=$p; break; }
+          done
+        fi
+        if [ -z "$want" ]; then
+          echo "SKIP $u no free port in $base-$((base + span - 1)); raise dev_code_server_port_span"
+          continue
+        fi
+        taken[$want]=$u; port_of[$u]=$want
+      done
+      for u in "${eligible[@]}"; do
+        [ -n "${port_of[$u]:-}" ] && echo "USER $u ${port_of[$u]}"
       done
       exit 0
   register: _cs_probe
@@ -81,7 +132,19 @@
 
 - name: "CODE-SERVER | The list"
   ansible.builtin.set_fact:
-    _cs_users: "{{ _cs_probe.stdout_lines | default([]) }}"
+    _cs_users: "{{ _cs_probe.stdout_lines | select('match', '^USER ')
+                   | map('regex_replace', '^USER (\\S+) .*$', '\\1') | list }}"
+    _cs_ports: "{{ dict(_cs_probe.stdout_lines | select('match', '^USER ')
+                   | map('regex_replace', '^USER (\\S+) .*$', '\\1')
+                   | zip(_cs_probe.stdout_lines | select('match', '^USER ')
+                         | map('regex_replace', '^USER \\S+ (\\d+)$', '\\1'))) }}"
+    _cs_skipped: "{{ _cs_probe.stdout_lines | select('match', '^SKIP ')
+                     | map('regex_replace', '^SKIP ', '') | list }}"
+
+- name: "CODE-SERVER | Group members WITHOUT an instance, and why"
+  ansible.builtin.debug:
+    msg: "{{ _cs_skipped }}"
+  when: _cs_skipped | length > 0
 
 # The unit every engineer runs. A USER unit: it lives under their own
 # `systemd --user`, so starting it needs no root, no sudoers grant and no
@@ -261,6 +324,6 @@
       code-server for {{ _cs_users | length }} user(s):
       {{ _cs_users | join(', ') }}.
       Ports {{ dev_code_server_port }}-{{ dev_code_server_port + dev_code_server_port_span - 1 }}
-      on {{ dev_code_server_bind_addr }} (uid {{ dev_code_server_uid_base }} -> {{ dev_code_server_port }}).
+      on {{ dev_code_server_bind_addr }}, assigned once and kept.
       Each has its own password under /etc/code-server/. `sudo it-codeserver`
       lists who is on which port.

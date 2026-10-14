@@ -572,8 +572,10 @@ dev_code_server_bind_addr: "0.0.0.0"  # 127.0.0.1 = reachable only through an SS
 dev_code_server_tls: true             # self-signed HTTPS
 
 # SINGLE-USER PER INSTANCE -- there is no multi-tenant mode -- so each person
-# has their own port, derived from the UID so removing one engineer never moves
-# anyone else's:  port = dev_code_server_port + (uid - dev_code_server_uid_base)
+# gets their own port in this range, assigned once and kept (removing one
+# engineer never moves anyone else's). The span caps how many instances a box
+# can have, NOT which UIDs qualify -- it used to, and silently dropped everyone
+# past uid 1019. uid_base only picks the first-choice port for a newcomer.
 dev_code_server_port: 8080
 dev_code_server_uid_base: 1000
 dev_code_server_port_span: 20         # the range opened in ufw; keep it tight

@@ -43,8 +43,8 @@ oops() {
   exit 1
 }
 
-[ -r "$CONF" ] || oops "You do not have a browser IDE set up on this machine.
-Ask IT to add you to the group that gets one."
+[ -r "$CONF" ] || oops "You do not have a browser IDE set up on this machine yet.
+Ask IT: a pull lists everyone who should have one and does not, and why."
 
 port="$(sed -nE 's/^bind-addr:.*:([0-9]+)[[:space:]]*$/\1/p' "$CONF" | tail -1)"
 pass="$(sed -nE 's/^password:[[:space:]]*//p' "$CONF" | tail -1)"
