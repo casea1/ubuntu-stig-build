@@ -5,8 +5,8 @@
 # code-server is SINGLE-USER PER INSTANCE; there is no multi-tenant mode. So
 # every user who gets one needs their own port in
 # dev_code_server_port .. + dev_code_server_port_span - 1, and once given it is
-# KEPT: the port in a user's config.yaml is the record, so removing one
-# engineer never moves anyone else's.
+# KEPT: /etc/code-server/ports is the record, root-only, never released by the
+# pull and kept when code-server is retired -- one person, one port, for good.
 #
 # Each instance has its OWN generated password, root-only in /etc/code-server.
 # desktop_hardening opens the port range (allow, source-restricted) after USG.
@@ -32,10 +32,12 @@
 # PORTS ARE ASSIGNED, NOT DERIVED. They used to be `port + (uid - 1000)` and
 # anyone outside the 20-port span was dropped without a word -- UIDs only grow,
 # so every engineer hired after the first twenty accounts silently got nothing.
-# Now: keep the port already in your config.yaml; else take the old uid-derived
-# one if it is free (so no existing box renumbers anybody); else the lowest
-# free one. A port still named in an ex-member's config is not handed out, so a
-# leftover instance cannot squat on a newcomer's port.
+# Now, in order: the port in the ledger (/etc/code-server/ports); else the one
+# already in your config.yaml (boxes that predate the ledger); else the old
+# uid-derived one if free (so no existing box renumbers anybody); else the
+# lowest free one. A port in the ledger or in an ex-member's config is never
+# handed to someone else, so a person who leaves and comes back gets theirs
+# back. Freeing one is a deliberate act: delete that line from the ledger.
 - name: "CODE-SERVER | Who gets an instance, on which port?"
   ansible.builtin.shell:
     executable: /bin/bash
@@ -92,19 +94,35 @@
                  } | sed '/^$/d' | sort -u)
       fi
 
-      declare -A port_of taken held
+      declare -A port_of taken held ledger
       is_eligible() { local e; for e in "${eligible[@]}"; do [ "$e" = "$1" ] && return 0; done; return 1; }
+      LEDGER=/etc/code-server/ports
+      if [ -r "$LEDGER" ]; then
+        while read -r n p _; do
+          [[ "$n" =~ ^[a-z_][a-z0-9_.-]*$ && "$p" =~ ^[0-9]+$ ]] && ledger[$n]=$p
+        done < "$LEDGER"
+      fi
 
-      # 1. Everyone keeps the port they already have (first claim wins a clash).
-      for u in "${eligible[@]}"; do
-        p=$(conf_port "$u")
-        if in_range "$p" && [ -z "${taken[$p]:-}" ]; then taken[$p]=$u; port_of[$u]=$p; fi
+      # 1. Ledger entries of non-members are reserved for them.
+      for n in "${!ledger[@]}"; do
+        is_eligible "$n" || { in_range "${ledger[$n]}" && held[${ledger[$n]}]=$n; }
       done
-      # 2. Ports still written in a non-member's config are not reassigned.
+      # 2. Members keep their ledger port, then (pre-ledger boxes) the one in
+      #    their config.yaml. First claim wins a clash.
+      for src in ledger conf; do
+        for u in "${eligible[@]}"; do
+          [ -n "${port_of[$u]:-}" ] && continue
+          if [ "$src" = ledger ]; then p=${ledger[$u]:-}; else p=$(conf_port "$u"); fi
+          if in_range "$p" && [ -z "${taken[$p]:-}${held[$p]:-}" ]; then
+            taken[$p]=$u; port_of[$u]=$p
+          fi
+        done
+      done
+      # 3. Ports still written in a non-member's config are not reassigned.
       while IFS=: read -r n _ uid _; do
         [ "$uid" -ge 1000 ] && [ "$uid" -lt 65534 ] || continue
         is_eligible "$n" && continue
-        p=$(conf_port "$n"); in_range "$p" && held[$p]=$n
+        p=$(conf_port "$n"); in_range "$p" && [ -z "${held[$p]:-}" ] && held[$p]=$n
       done < <(getent passwd)
       # 3. Newcomers, oldest UID first: the old uid-derived port if free, else
       #    the lowest free one.
@@ -125,6 +143,9 @@
       for u in "${eligible[@]}"; do
         [ -n "${port_of[$u]:-}" ] && echo "USER $u ${port_of[$u]}"
       done
+      # The ledger to write back: everyone ever given a port, members updated.
+      for u in "${!port_of[@]}"; do ledger[$u]=${port_of[$u]}; done
+      for n in "${!ledger[@]}"; do echo "LEDGER $n ${ledger[$n]}"; done
       exit 0
   register: _cs_probe
   changed_when: false
@@ -140,6 +161,19 @@
                          | map('regex_replace', '^USER \\S+ (\\d+)$', '\\1'))) }}"
     _cs_skipped: "{{ _cs_probe.stdout_lines | select('match', '^SKIP ')
                      | map('regex_replace', '^SKIP ', '') | list }}"
+
+- name: "CODE-SERVER | Port ledger (one person, one port, kept for good)"
+  ansible.builtin.copy:
+    dest: /etc/code-server/ports
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      # user port -- written by the pull (dev_tools/code_server_setup.yml).
+      # Entries are never released automatically. Delete a line to free a port.
+      {% for l in _cs_probe.stdout_lines | select('match', '^LEDGER ') | map('regex_replace', '^LEDGER ', '') | sort %}
+      {{ l }}
+      {% endfor %}
 
 - name: "CODE-SERVER | Group members WITHOUT an instance, and why"
   ansible.builtin.debug:

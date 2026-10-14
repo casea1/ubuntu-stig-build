@@ -116,7 +116,6 @@
     state: absent
   loop:
     - /etc/systemd/user/code-server.service
-    - /etc/code-server                                   # root-only password store
     - /usr/local/sbin/it-codeserver
     - "{{ it_scripts_dir | default('/opt/it/scripts') }}/code-server-status.sh"
     - /usr/local/bin/my-ide
@@ -124,6 +123,22 @@
     - "/etc/sudoers.d/60-{{ dev_code_server_group | default('sentry') }}-codeserver"
   register: _csr_files
   tags: [scripts]
+
+# The passwords go; /etc/code-server/ports STAYS, so turning code-server back
+# on gives every person the port they had before.
+- name: "CODE-SERVER-RETIRE | Find the stored passwords"
+  ansible.builtin.find:
+    paths: /etc/code-server
+    patterns: "*.password"
+  register: _csr_pw
+
+- name: "CODE-SERVER-RETIRE | Remove the stored passwords"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _csr_pw.files }}"
+  loop_control:
+    label: "{{ item.path }}"
 
 - name: "CODE-SERVER-RETIRE | Reload systemd and the desktop database"
   ansible.builtin.shell: >-
