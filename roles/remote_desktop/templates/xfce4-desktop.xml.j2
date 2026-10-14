@@ -11,7 +11,7 @@
 {% for ws in range(4) %}
         <property name="workspace{{ ws }}" type="empty">
           <property name="last-image" type="string" value="{{ branding_wallpaper_dest }}" unlocked="root"/>
-          <property name="image-style" type="int" value="5" unlocked="root"/>
+          <property name="image-style" type="int" value="{{ 5 if (rdp_xfce_wallpaper | default(true) | bool) else 0 }}" unlocked="root"/>
         </property>
 {% endfor %}
       </property>

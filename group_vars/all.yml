@@ -605,6 +605,9 @@ dev_rdp_enabled: "{{ is_development | default(true) | bool }}"
 rdp_desktop: gnome
 # Install XFCE and offer it (it-desktop) without making it the default.
 rdp_xfce_install: "{{ rdp_desktop == 'xfce' }}"
+# false = a plain solid background in XFCE sessions instead of the org
+# wallpaper (still locked). A solid colour is far cheaper for xrdp to encode.
+rdp_xfce_wallpaper: true
 dev_rdp_port: 3389
 # TLS security layer for RDP: xrdp presents the system snakeoil cert and is added
 # to the ssl-cert group so it can read the key. Set false only if a client truly

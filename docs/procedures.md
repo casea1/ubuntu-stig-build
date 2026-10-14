@@ -2112,6 +2112,11 @@ redraws once when released (`box_move`/`box_resize`): live contents made xrdp
 repaint and re-encode every frame of a drag. Users can turn it back in
 Window Manager > Advanced.
 
+**No wallpaper:** `rdp_xfce_wallpaper: false` in `site.yml`, then `it-pull`
+and sign out/in -- XFCE sessions get a plain solid background, still locked.
+A solid colour costs xrdp almost nothing to encode where a photo is re-sent in
+pieces whenever a window moves off it. GNOME and the console are unaffected.
+
 **Defaults reach a user's FIRST XFCE login only**, except the locked ones
 (panel position, screen lock, wallpaper), which apply always. Someone who
 logged in to an earlier version keeps their own panel and window settings; to
