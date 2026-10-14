@@ -559,18 +559,38 @@ powershell_version: "7.4.16"
 dev_nodejs_enabled: true
 nodejs_major_version: "22"
 
-# ---- code-server: RETIRED ---------------------------------------------------
-# code-server was Coder's build of the open-source editor, not Microsoft's VS
-# Code (Open VSX only: no Pylance, C/C++, C# Dev Kit or Dev Containers).
-# Engineers now use Remote-SSH from Microsoft's desktop VS Code, staged offline
-# with `it-vscode-server stage`. dev_tools/code_server_retire.yml removes
-# code-server from any box that has it, on every pull.
-#
-# The old dev_code_server_* variables are gone from here on purpose. The retire
-# tasks still read them WITH DEFAULTS (port 8080, span 20, group sentry, source
-# any), so a site.yml that set a different port or a restricted allow_from still
-# has its firewall rule found and deleted -- ufw removes a rule only when the
-# source matches. Delete them from site.yml once every box has pulled.
+# ---- code-server (VS Code in a browser) -- OPT-IN PER BOX -------------------
+# Coder's build of the open-source editor, NOT Microsoft's VS Code: extensions
+# come from Open VSX, so Pylance, C/C++, C# Dev Kit and Dev Containers are not
+# available in it. Remote-SSH from Microsoft's desktop VS Code (it-vscode-server)
+# remains the fleet default; the two run side by side without conflict.
+# Turn on per box in /opt/it/site.yml. The .deb comes from the offline repo
+# (it is not in Ubuntu's archive). Off = dev_tools/code_server_retire.yml
+# removes it, on every pull.
+dev_code_server_enabled: false
+dev_code_server_bind_addr: "0.0.0.0"  # 127.0.0.1 = reachable only through an SSH tunnel
+dev_code_server_tls: true             # self-signed HTTPS
+
+# SINGLE-USER PER INSTANCE -- there is no multi-tenant mode -- so each person
+# has their own port, derived from the UID so removing one engineer never moves
+# anyone else's:  port = dev_code_server_port + (uid - dev_code_server_uid_base)
+dev_code_server_port: 8080
+dev_code_server_uid_base: 1000
+dev_code_server_port_span: 20         # the range opened in ufw; keep it tight
+
+# Who may reach the ports. A subnet or address here is the real protection;
+# 'any' is the whole LAN. Never ufw `limit` (trap 12b).
+dev_code_server_allow_from: any
+
+# Who gets an instance: members of this group with a usable password and a
+# login shell (locked accounts like auto_audit are skipped automatically).
+dev_code_server_group: sentry
+dev_code_server_exclude: []
+
+# Instances are USER services, started by their owner (`my-ide`, no sudo) and
+# gone at logout. Naming someone here enables lingering, so theirs starts at
+# boot and survives logout -- one node process and one port for the whole uptime.
+dev_code_server_linger_users: []
 
 # =============================================================================
 # REMOTE DESKTOP  (development profile -> remote_desktop role)

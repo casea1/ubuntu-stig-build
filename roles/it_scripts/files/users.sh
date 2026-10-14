@@ -324,10 +324,13 @@ live_sessions() { loginctl list-sessions --no-legend 2>/dev/null | awk -v u="$1"
 # it for a 3-hour reconnection grace -- so locking the account does not stop it,
 # and its integrated terminal is a shell as that person. -u confines the match
 # to their own processes, so nothing of anyone else's can be caught by it.
+# code-server (opt-in per box) is the same risk in a browser, and a lingering
+# user's instance outlives every session.
 stop_vscode_server() {   # $1 = user
-  pgrep -u "$1" -f '\.vscode-server/|/opt/vscode-server/' >/dev/null 2>&1 || return 0
-  pkill -u "$1" -f '\.vscode-server/|/opt/vscode-server/' 2>/dev/null &&
-    ok "VS Code server processes for $1 stopped"
+  systemctl --user --machine="$1@.host" disable --now code-server.service >/dev/null 2>&1 || true
+  pgrep -u "$1" -f '\.vscode-server/|/opt/vscode-server/|/usr/lib/code-server/' >/dev/null 2>&1 || return 0
+  pkill -u "$1" -f '\.vscode-server/|/opt/vscode-server/|/usr/lib/code-server/' 2>/dev/null &&
+    ok "VS Code server / code-server processes for $1 stopped"
 }
 
 # ---------------------------------------------------------------------------

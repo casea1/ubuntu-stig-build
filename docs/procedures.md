@@ -1924,9 +1924,9 @@ Engineers use **Microsoft's desktop VS Code on their own PC** and connect to the
 box with the Remote - SSH extension. That is the whole VS Code — Pylance, C/C++,
 C# Dev Kit, notebooks, previews — running at local speed, not over RDP.
 
-code-server (`my-ide`, `it-codeserver`) is **retired**, and the pull removes it.
-It was Coder's build of the open-source editor, not Microsoft's: extensions came
-from Open VSX, so Microsoft's own extensions never existed in it.
+code-server (VS Code in a browser) is **opt-in per box** -- see "code-server
+alongside Remote-SSH" below. It is Coder's build of the open-source editor, not
+Microsoft's: extensions come from Open VSX, so Microsoft's own are not in it.
 
 Remote-SSH looks on the box for a server built for **exactly** the PC's VS Code
 version, and on an air-gapped box it cannot download one. `it-vscode-server`
@@ -2144,13 +2144,59 @@ pulled from under them).
 on `127.0.0.1` on the box, and VS Code reaches it through that connection's port
 forward. Authentication is the engineer's own SSH login.
 
-code-server was one full IDE, with a shell, per engineer on the LAN (ports
-8080–8099). The pull closes that range on every run, whatever source a site had
-restricted it to.
+code-server, where a box has it switched on, is the opposite: one full IDE,
+with a shell, per engineer on the LAN (ports 8080–8099). Everywhere else the
+pull closes that range on every run.
 
 The one requirement is that sshd **allows forwarding**. If the hardening turned
 it off, every connection fails with *administratively prohibited*, which looks
 like a VS Code fault. `sudo it-vscode-server` reports it.
+
+### code-server alongside Remote-SSH (opt-in per box)
+
+For people who need VS Code in a **browser** rather than the desktop app. It
+runs **beside** Remote-SSH without touching it: different directories
+(`~/.local/share/code-server` vs `~/.vscode-server`), different ports, and
+Remote-SSH stays the default everywhere.
+
+**What it costs, before switching it on:** extensions come from **Open VSX**
+(no Pylance, C/C++ tools, C# Dev Kit or Dev Containers -- their licences
+restrict them to Microsoft's builds; the shared extensions are linked in and
+those ones simply do not load). Each engineer gets a web IDE with a shell on a
+LAN port behind a password, with no AC-8 banner and no STIG idle logout -- put
+it in the SSP, restrict `dev_code_server_allow_from`, and expect findings.
+
+1. **Package into the offline repo.** Coder's `code-server_<version>_amd64.deb`
+   (GitHub releases, not Ubuntu's archive). On the box:
+   ```bash
+   sudo apt update
+   apt-get -s install code-server | tail -1     # "Inst code-server ..." = good
+   ```
+2. **Switch it on for that box** in `/opt/it/site.yml` (`sudoedit`):
+   ```yaml
+   dev_code_server_enabled: true
+   dev_code_server_allow_from: 192.168.1.0/24    # your engineers' subnet, not 'any'
+   ```
+3. **Pull:** `sudo it-pull` (a light pull installs it). It installs the package,
+   gives every `sentry` member with a usable password their own port
+   (`8080 + uid - 1000`) and password, places `my-ide`, `it-codeserver` and an
+   **IDE (in a browser)** tile, and opens 8080–8099 to that source only. If the
+   package is not in the repo it says so and changes nothing else -- no port is
+   opened for a server that is not there.
+4. **Check:** `sudo it-codeserver` lists who has which port.
+5. **Each engineer** runs `my-ide` (or the tile): it starts their own instance
+   and opens it. `my-ide password` shows their password, `my-ide remote` the
+   address to use from a Windows PC (`https://<box>:<port>`, self-signed
+   certificate). Nothing runs at boot; it stops at logout unless an admin names
+   them in `dev_code_server_linger_users`.
+
+**Switching it off:** `dev_code_server_enabled: false` (or delete the line) and
+pull. The pull stops every instance, removes the package, `my-ide`,
+`it-codeserver`, each person's password file and the firewall range. Each
+person's own settings in `~/.local/share/code-server` are left.
+
+`it-users lock`/`delete` stops a person's code-server along with their VS Code
+server.
 
 ## 3.7 Create a user account
 

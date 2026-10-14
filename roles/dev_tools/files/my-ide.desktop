@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=IDE (in a browser)
+GenericName=Browser IDE
+Comment=Start your own VS Code in a browser and open it
+Exec=/usr/local/bin/my-ide
+Icon=applications-development
+Terminal=false
+Categories=Development;IDE;
+Keywords=code;vscode;ide;editor;code-server;browser;
+StartupNotify=true

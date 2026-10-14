@@ -163,8 +163,13 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   links -- `it-vscode verify` asks the editor rather than the filesystem, and
   `it-vscode copy <user>` is the fallback if a version rejects it.
 - **Engineers use Remote-SSH from Microsoft's desktop VS Code; code-server is
-  RETIRED and the pull removes it** (`dev_tools/code_server_retire.yml`). It was
-  Coder's build, not Microsoft's -- Open VSX only, so no Pylance/C++/C# Dev Kit.
+  OPT-IN PER BOX** (`dev_code_server_enabled`, off by default). Coder's build,
+  not Microsoft's -- Open VSX only, so no Pylance/C++/C# Dev Kit. `.deb` from
+  the offline repo. main.yml imports `code_server.yml` when on and
+  `code_server_retire.yml` when off, EVERY pull -- never "remove only on the
+  pull that turned it off". The firewall vars are `_csfw_*` because dev_tools
+  set_facts a per-user `_cs_port` that outranks task vars (it opened the range
+  at one user's port).
   `it-vscode-server stage <folder>` installs one read-only server per version in
   `/opt/vscode-server/<commit>` and links each `sentry` member's `~/.vscode-server`
   (the pull re-links, so new members are covered). Five things not to undo:

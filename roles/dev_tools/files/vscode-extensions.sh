@@ -57,6 +57,10 @@ ext_dirs_for() {   # $1 = user -> the dirs to populate, one per line
   [ -n "$h" ] && [ -d "$h" ] || return 1
   printf '%s/.vscode/extensions\n' "$h"
   printf '%s/.vscode-server/extensions\n' "$h"
+  # code-server, only where it is installed (opt-in per box). It loads what it
+  # can: Microsoft-licensed extensions such as Pylance refuse to run in it.
+  [ -x /usr/bin/code-server ] && printf '%s/.local/share/code-server/extensions\n' "$h"
+  return 0
 }
 
 # `install -d -o USER path/a/b/c` gives the owner and mode to the LEAF ONLY.
@@ -92,7 +96,7 @@ mkdir_owned() {   # $1 dir  $2 user  $3 group
 # are conventional and are not this script's to decide.
 fix_home_ancestors() {   # $1 user  $2 home  $3 group
   local u="$1" h="$2" g="$3" d
-  for d in "$h/.vscode" "$h/.local" "$h/.local/share" "$h/.vscode-server"; do
+  for d in "$h/.vscode" "$h/.local" "$h/.local/share" "$h/.vscode-server" "$h/.local/share/code-server"; do
     [ -d "$d" ] || continue
     [ "$(stat -c %U "$d" 2>/dev/null)" = "$u" ] && continue
     chown "$u:$g" "$d" && warn "$u: repaired root-owned ${d#"$h"/}"
@@ -199,7 +203,7 @@ cmd_status() {
       linked=$((linked + $(find "$d" -maxdepth 1 -type l 2>/dev/null | wc -l)))
     done < <(ext_dirs_for "$u")
     if [ "$linked" -gt 0 ]; then
-      printf '  %-24s %s%-10s%s %s\n' "$u" "$GRN" "$linked" "$R" "~/.vscode + ~/.vscode-server"
+      printf '  %-24s %s%-10s%s %s\n' "$u" "$GRN" "$linked" "$R" "~/.vscode + ~/.vscode-server$( [ -x /usr/bin/code-server ] && printf ' + code-server')"
     else
       printf '  %-24s %s%-10s%s %s\n' "$u" "$YEL" "no" "$R" "sudo it-vscode link $u"
     fi

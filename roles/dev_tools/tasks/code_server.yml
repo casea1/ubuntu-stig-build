@@ -1,0 +1,43 @@
+---
+# =============================================================================
+# code-server -- VS Code in a browser, one instance per user. OPT-IN per box
+# (dev_code_server_enabled); Remote-SSH (it-vscode-server) is the fleet default
+# and is unaffected -- different directories, different ports.
+#
+# The .deb comes from the offline repo, never from the internet. No `packages`
+# tag: turning it on is a site.yml line and a light pull, like XFCE.
+# =============================================================================
+
+# `apt-get -s`, not `apt-cache policy`: a candidate is not the same as
+# installable (trap 27). Not installable = say so and change nothing else,
+# rather than fail the whole pull over an opt-in.
+- name: "CODE-SERVER | Can the package be installed from the configured repos?"
+  ansible.builtin.command: apt-get -s install code-server
+  register: _cs_sim
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "CODE-SERVER | Install code-server (offline repo)"
+  ansible.builtin.apt:
+    name: code-server
+    state: present
+  when: _cs_sim.rc == 0
+
+- name: "CODE-SERVER | Is it installed?"
+  ansible.builtin.stat:
+    path: /usr/bin/code-server
+  register: _cs_bin
+
+- name: "CODE-SERVER | NOT INSTALLED -- nothing else configured"
+  ansible.builtin.debug:
+    msg: >-
+      dev_code_server_enabled is true but code-server is not installed and apt
+      cannot install it: put Coder's code-server .deb into the offline repo
+      (it is not in Ubuntu's archive), then `sudo apt update` and pull again.
+      apt said: {{ (_cs_sim.stderr | default('') or _cs_sim.stdout | default('')) | trim | truncate(300) }}
+  when: not _cs_bin.stat.exists
+
+- name: "CODE-SERVER | Users, ports, passwords, launchers"
+  ansible.builtin.include_tasks: code_server_setup.yml
+  when: _cs_bin.stat.exists

@@ -1,0 +1,42 @@
+# Managed by ansible (dev_tools/code_server.yml) -- do not edit by hand.
+#
+# A USER unit, in /etc/systemd/user/. It runs under the engineer's own
+# `systemd --user`, so they start and stop it with no sudo and no grant:
+#
+#     systemctl --user start code-server      (or: it-codeserver mine start)
+#
+# This replaced a SYSTEM unit, code-server@<user>.service, which could only be
+# started by root. That left one bad choice on either side: enable it for
+# everyone and get N node processes at every boot for accounts that may never
+# log in, or leave it disabled and give engineers no way to run the IDE they
+# are entitled to without an admin.
+#
+# /etc/systemd/user takes precedence over /usr/lib/systemd/user, so this wins
+# over whatever coder's .deb ships, without the package having to be patched.
+#
+# LINGERING IS DELIBERATELY NOT ENABLED. Without it a user manager exists only
+# while that person has a session, so nothing starts at boot and an instance
+# stops when its owner logs out -- which is the whole point. For someone who
+# needs their IDE reachable while they are not logged in, an admin turns it on
+# for THEM: `it-codeserver linger <user> on`.
+[Unit]
+Description=code-server (browser IDE for this user)
+Documentation=man:it-codeserver(1)
+After=network-online.target
+
+[Service]
+Type=exec
+# Reads ~/.config/code-server/config.yaml -- bind address, port and password
+# are written there per user by the pull.
+ExecStart=/usr/bin/code-server
+Restart=on-failure
+RestartSec=3
+# Cheap and namespace-free. Deliberately NOT PrivateTmp: in a USER unit that
+# needs an unprivileged user namespace, which 24.04 restricts by AppArmor
+# default -- the service would fail to start with a mount-namespace error on
+# exactly the hardened boxes this is for. It buys nothing here anyway; the
+# account already has a shell and its own /tmp access.
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

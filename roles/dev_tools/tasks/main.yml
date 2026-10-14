@@ -41,7 +41,13 @@
   ansible.builtin.import_tasks: vscode.yml
   when: editor_choice == "vscode"
 
-# Unconditional: it removes code-server from any box that ever had it. See the
-# file for why switching the old flag off never did.
-- name: Retire code-server (replaced by Remote-SSH -- it-vscode-server)
+# One or the other on EVERY pull. The removal must not depend on the pull that
+# turned it off: an install file imported only when enabled can never run its
+# own "remove when disabled" tasks, which is how boxes kept it before.
+- name: code-server (opt-in per box -- dev_code_server_enabled)
+  ansible.builtin.import_tasks: code_server.yml
+  when: dev_code_server_enabled | default(false) | bool
+
+- name: Remove code-server where it is not enabled
   ansible.builtin.import_tasks: code_server_retire.yml
+  when: not (dev_code_server_enabled | default(false) | bool)

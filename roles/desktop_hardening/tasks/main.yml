@@ -139,17 +139,38 @@
   loop_control:
     label: "{{ item.port }}/{{ item.proto | default('tcp') }}"
 
-# code-server is RETIRED (dev_tools/code_server_retire.yml), so its port range
-# must be CLOSED -- on every pull, not only while it was enabled. The old tasks
-# opened and closed it only when dev_code_server_enabled was true, so switching
-# the feature off left the range open for good.
+# code-server's port range: open ONLY while it is enabled on this box, closed on
+# every other pull. The close runs whenever it is off -- not only on the pull
+# that turned it off -- because a range opened once and never managed again is
+# how a box ended up with it open for good.
 #
-# Every shape a past build could have left: LIMIT (the original rule, which also
-# broke the editor -- trap 12b) and ALLOW, one port and the range, from 'any' and
-# from the configured source. The dev_code_server_* variables are read with
-# defaults so a site.yml that still sets them is matched exactly: ufw deletes a
-# rule only when the source matches too.
-- name: "FW | Close the retired code-server ports"
+# Never `limit`: the editor opens dozens of connections at once, ufw dropped the
+# engineer's own PC mid-load (trap 12b). The protection a LAN-exposed IDE needs
+# is a source restriction -- dev_code_server_allow_from.
+#
+# _csfw_*, NOT _cs_*: dev_tools set_facts a per-user _cs_port earlier in the
+# play, and a fact outranks task vars -- the range opened at that user's port.
+- name: "FW | Open code-server, one port per user, when enabled"
+  community.general.ufw:
+    rule: allow
+    port: "{{ _csfw_port }}:{{ (_csfw_port | int) + (_csfw_span | int) - 1 }}"
+    proto: tcp
+    from_ip: "{{ dev_code_server_allow_from | default('any', true) }}"
+    comment: "code-server, one port per user"
+  when:
+    - dev_code_server_enabled | default(false) | bool
+    - dev_code_server_bind_addr | default('0.0.0.0') != '127.0.0.1'
+    # Enabled but not installable (not in the offline repo yet): nothing listens.
+    - _cs_bin.stat.exists | default(true)
+  vars:
+    _csfw_port: "{{ dev_code_server_port | default(8080) | int }}"
+    _csfw_span: "{{ dev_code_server_port_span | default(20) | int }}"
+
+# Every shape a past build could have left -- LIMIT (always wrong) and ALLOW,
+# one port and the range, from 'any' and from the configured source, because ufw
+# deletes a rule only when the source matches -- except the one rule above while
+# it is enabled. So narrowing allow_from also removes the wider rule.
+- name: "FW | Close code-server rules that should not be there"
   community.general.ufw:
     rule: "{{ item.0 }}"
     port: "{{ item.1 }}"
@@ -157,15 +178,21 @@
     from_ip: "{{ item.2 }}"
     delete: true
   failed_when: false
+  when: not (_csfw_open and item.0 == 'allow' and item.1 == _csfw_range and item.2 == _csfw_src)
   loop: "{{ ['limit', 'allow']
-            | product([_cs_port | string, _cs_port ~ ':' ~ ((_cs_port | int) + (_cs_span | int) - 1)])
+            | product([_csfw_port | string, _csfw_port ~ ':' ~ ((_csfw_port | int) + (_csfw_span | int) - 1)])
             | product(['any', dev_code_server_allow_from | default('any', true)] | unique)
             | map('flatten') | list }}"
   loop_control:
     label: "{{ item.0 }} {{ item.1 }} from {{ item.2 }}"
   vars:
-    _cs_port: "{{ dev_code_server_port | default(8080) | int }}"
-    _cs_span: "{{ dev_code_server_port_span | default(20) | int }}"
+    _csfw_port: "{{ dev_code_server_port | default(8080) | int }}"
+    _csfw_span: "{{ dev_code_server_port_span | default(20) | int }}"
+    _csfw_range: "{{ _csfw_port ~ ':' ~ ((_csfw_port | int) + (_csfw_span | int) - 1) }}"
+    _csfw_src: "{{ dev_code_server_allow_from | default('any', true) }}"
+    _csfw_open: "{{ (dev_code_server_enabled | default(false) | bool)
+                  and dev_code_server_bind_addr | default('0.0.0.0') != '127.0.0.1'
+                  and (_cs_bin.stat.exists | default(true)) }}"
 
 # Cockpit is a web console and had the identical fault: `limit` would drop the
 # browser partway through loading it. Same remedy -- allow the port, restrict
