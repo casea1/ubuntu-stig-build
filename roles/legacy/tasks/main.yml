@@ -33,6 +33,9 @@
 - name: "LEGACY | Weekly STIG scan"
   ansible.builtin.import_tasks: scan.yml
 
+- name: "LEGACY | code-server (opt-in per VM)"
+  ansible.builtin.import_tasks: code_server.yml
+
 # LAST: if the audit load fails it rolls itself back and this task fails, which
 # is the loudest place for it -- after everything else has been applied.
 - name: "LEGACY | Audit rules"

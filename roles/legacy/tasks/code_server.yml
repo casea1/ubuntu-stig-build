@@ -1,0 +1,44 @@
+---
+# code-server on a legacy VM: OPT-IN per VM (dev_code_server_enabled in
+# /opt/it/site.yml), and nothing at all on a VM that never had it.
+#
+# These are the 24.04 fleet's own task files, not a copy, so a port claimed on
+# a 22.04 VM works exactly as it does on 24.04 (first my-ide, kept for good in
+# /etc/code-server/ports). They are written to run under 22.04's Ansible 2.10.
+# The .deb has to be in the VM's jammy mirror -- Coder's package is the same
+# for both releases, but the ADM media mirrors them separately.
+
+# Has this baseline ever installed it here? Decides whether "off" has anything
+# to remove: the removal deletes ~/.config/code-server, and an engineer's OWN
+# code-server on one of these VMs is not ours to delete.
+- name: "LEGACY | code-server -- ever installed by this baseline?"
+  ansible.builtin.stat:
+    path: /etc/code-server/settings
+  register: _legacy_cs_ours
+
+- name: "LEGACY | code-server (on)"
+  ansible.builtin.import_tasks: "{{ playbook_dir }}/roles/dev_tools/tasks/code_server.yml"
+  when: dev_code_server_enabled | default(false) | bool
+
+- name: "LEGACY | code-server (off: remove what this baseline placed)"
+  ansible.builtin.import_tasks: "{{ playbook_dir }}/roles/dev_tools/tasks/code_server_retire.yml"
+  when:
+    - not (dev_code_server_enabled | default(false) | bool)
+    - _legacy_cs_ours.stat.exists
+
+# The ONE firewall change the legacy profile makes, and only for code-server:
+# with ufw active and no rule, nobody could reach the IDE. A VM without ufw
+# active is left exactly as it is.
+- name: "LEGACY | code-server -- is ufw active?"
+  ansible.builtin.command: ufw status
+  register: _legacy_ufw
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: (dev_code_server_enabled | default(false) | bool) or _legacy_cs_ours.stat.exists
+
+- name: "LEGACY | code-server port range in ufw"
+  ansible.builtin.import_tasks: "{{ playbook_dir }}/roles/dev_tools/tasks/code_server_firewall.yml"
+  when:
+    - (dev_code_server_enabled | default(false) | bool) or _legacy_cs_ours.stat.exists
+    - "(_legacy_ufw.stdout | default('')) is search('Status: active')"

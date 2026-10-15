@@ -13,6 +13,8 @@
 # Each instance has its OWN generated password, root-only in /etc/code-server.
 # desktop_hardening opens the port range (allow, source-restricted) after USG.
 # Included from code_server.yml once the package is known to be installed.
+# Paths are spelled from playbook_dir because legacy.yml (22.04, Ansible 2.10)
+# runs these same files from outside this role.
 # =============================================================================
 
 - name: "CODE-SERVER | Password store (root-only)"
@@ -44,7 +46,7 @@
 # admin -- and because lingering is off, nothing exists at boot.
 - name: "CODE-SERVER | The per-user systemd unit"
   ansible.builtin.copy:
-    src: code-server-user.service
+    src: "{{ playbook_dir }}/roles/dev_tools/files/code-server-user.service"
     dest: /etc/systemd/user/code-server.service
     owner: root
     group: root
@@ -60,7 +62,7 @@
 
 - name: "CODE-SERVER | The port-claim socket and service (first my-ide)"
   ansible.builtin.copy:
-    src: "{{ item }}"
+    src: "{{ playbook_dir }}/roles/dev_tools/files/{{ item }}"
     dest: "/etc/systemd/system/{{ item }}"
     owner: root
     group: root
@@ -132,7 +134,7 @@
 
 - name: "CODE-SERVER | Install it-codeserver"
   ansible.builtin.copy:
-    src: code-server-status.sh
+    src: "{{ playbook_dir }}/roles/dev_tools/files/code-server-status.sh"
     dest: "{{ it_scripts_dir | default('/opt/it/scripts') }}/code-server-status.sh"
     # root:<admin group>, not root:root. A 0750 root:root script cannot be read
     # or executed by anyone but root, so the self-elevating first line never
@@ -157,7 +159,7 @@
 
 - name: "CODE-SERVER | Short command (it-codeserver)"
   ansible.builtin.copy:
-    src: code-server-status.sh
+    src: "{{ playbook_dir }}/roles/dev_tools/files/code-server-status.sh"
     dest: /usr/local/sbin/it-codeserver
     owner: root
     group: root
@@ -187,7 +189,7 @@
 # ---------------------------------------------------------------------------
 - name: "CODE-SERVER | my-ide (what an engineer runs)"
   ansible.builtin.copy:
-    src: my-ide.sh
+    src: "{{ playbook_dir }}/roles/dev_tools/files/my-ide.sh"
     # /usr/local/BIN, not sbin: this is not an administrative command, and bin
     # is on every user's PATH without argument.
     dest: /usr/local/bin/my-ide
@@ -198,7 +200,7 @@
 
 - name: "CODE-SERVER | The IDE tile in the applications grid"
   ansible.builtin.copy:
-    src: my-ide.desktop
+    src: "{{ playbook_dir }}/roles/dev_tools/files/my-ide.desktop"
     dest: /usr/share/applications/my-ide.desktop
     owner: root
     group: root
@@ -234,7 +236,7 @@
   when: (_cs_sync.stdout_lines | default([])) | reject('match', '^USER ') | list | length > 0
 
 - name: "CODE-SERVER | Retire old system units, apply lingering, per user on file"
-  ansible.builtin.include_tasks: code_server_user.yml
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/roles/dev_tools/tasks/code_server_user.yml"
   loop: "{{ _cs_users }}"
   loop_control:
     loop_var: cs_user

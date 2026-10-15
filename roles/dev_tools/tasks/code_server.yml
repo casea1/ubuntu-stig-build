@@ -39,5 +39,5 @@
   when: not _cs_bin.stat.exists
 
 - name: "CODE-SERVER | Users, ports, passwords, launchers"
-  ansible.builtin.include_tasks: code_server_setup.yml
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/roles/dev_tools/tasks/code_server_setup.yml"
   when: _cs_bin.stat.exists

@@ -3457,6 +3457,37 @@ sudo it-checklist      # the org checklist
 > **Expect red on `it-checklist`** for what these VMs never had (FIPS, disk
 > encryption, GRUB password). That is accurate, not a fault of the pull.
 
+**From the ADM-Toolkit.** A legacy VM runs the same `it-pull` as the 24.04
+fleet, so the toolkit's routine works unchanged once the VM has been
+bootstrapped: push the baseline with `sudo it-pull load <path> --yes`, then
+Linux > Baseline > Apply (`it-pull`). `it-pull load --help` lists `--yes`; a
+VM on an older baseline does not have it yet, so load that one by hand once.
+The FIRST install is still the bootstrap above -- `it-pull` does not exist on
+the VM until it has run.
+
+**code-server on a legacy VM (opt-in, per VM).** The 24.04 fleet's own tasks,
+run under 22.04's Ansible 2.10, so it behaves the same: a port is claimed at
+each person's first `my-ide` and kept (§ "code-server alongside Remote-SSH").
+
+1. Put Coder's `code-server` `.deb` in the **jammy** tree of the mirror. It is
+   the same package as noble's, but the ADM media mirrors the two releases
+   separately and the VM only looks in its own. `apt-cache policy code-server`
+   on the VM shows a candidate when it is there.
+2. On the VM:
+   ```bash
+   echo 'dev_code_server_enabled: true' | sudo tee -a /opt/it/site.yml
+   echo 'dev_code_server_allow_from: 192.168.1.0/24' | sudo tee -a /opt/it/site.yml   # your engineers' subnet
+   sudo it-pull
+   ```
+3. Engineers in `sentry` run `my-ide`. `sudo it-codeserver` shows who has which port.
+
+This is the profile's one firewall change: **if the VM's ufw is active**, the
+pull opens 8080–8099 to `dev_code_server_allow_from`, and closes it again when
+code-server is turned off. A VM without ufw active is left alone. Turning it
+off (`dev_code_server_enabled: false`, pull) removes everything it placed;
+a VM that never had it is not touched at all, so an engineer's own
+code-server there is safe.
+
 ## 4.5 Suggested cadence
 
 | Activity | Cadence |

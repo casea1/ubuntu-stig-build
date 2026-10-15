@@ -9,10 +9,13 @@
 #   - the DCSA banner: console, SSH, and the GDM greeter if there is one
 #   - it-pull / it-help / it-status / it-oscap / it-checklist / it-audit
 #   - the weekly OpenSCAP scan, against the 22.04 STIG content carried in the repo
+#   - code-server, ONLY where dev_code_server_enabled is set for that VM
 #
 # Deliberately NOT touched: packages beyond the four it needs, accounts, PAM,
 # sudo, the firewall, FIPS, auditd.conf, the audit lock (-e 2) -- and anything
 # of PowerStrux's: its module, its config, its schedule, /opt/_AuditFiles.
+# The exception is opt-in: a VM given code-server gets the package and, if its
+# ufw is active, the code-server port range.
 #
 # Fully offline: everything comes from the box's own apt mirror or from this
 # repo. `it-pull` runs this file whenever the box's profile is `legacy`.
