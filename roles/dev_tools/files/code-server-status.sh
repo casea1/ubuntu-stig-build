@@ -360,7 +360,8 @@ load_settings() {
   . "$SETTINGS"
 }
 in_range() { [[ "${1:-}" =~ ^[0-9]+$ ]] && [ "$1" -ge "$CS_PORT" ] && [ "$1" -lt $((CS_PORT + CS_SPAN)) ]; }
-lock_ledger() { exec 9>/etc/code-server/.lock && flock -w 30 9 || die "the port ledger is locked"; }
+# Shorter than my-ide's 45 s wait, so a held lock is reported, not a silence.
+lock_ledger() { exec 9>/etc/code-server/.lock && flock -w 15 9 || die "the port ledger is busy -- try again in a minute"; }
 ledger_lines() { [ -r "$LEDGER" ] && grep -vE '^[[:space:]]*(#|$)' "$LEDGER"; }
 ledger_get() { ledger_lines | awk -v u="$1" '$1 == u { print $2; exit }'; }
 ledger_write() {   # stdin: "user port" lines
@@ -435,6 +436,9 @@ claim_for() {
 # not close fd 0 on exit.
 cmd_claim_peer() {
   local uid u
+  # Anything that stops this early must reach the person as a reason; stderr
+  # goes only to the journal and they would see "did not answer".
+  die() { printf 'ERR %s\n' "$*"; printf '%s\n' "$*" >&2; exit 1; }
   uid="$(python3 -Ic 'import socket, struct
 s = socket.socket(fileno=0)
 print(struct.unpack("3i", s.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[1])

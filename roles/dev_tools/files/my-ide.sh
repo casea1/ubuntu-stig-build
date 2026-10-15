@@ -50,18 +50,28 @@ MARK='# Managed by it-codeserver -- do not edit by hand.'
 # are, so there is nothing to type and nothing to fake. A config without MARK
 # is code-server's own default (port 8080, someone else's) and is replaced.
 claim() {
-  python3 -Ic 'import socket, sys
-s = socket.socket(socket.AF_UNIX); s.settimeout(30)
-s.connect("/run/code-server-claim.sock"); s.sendall(b"claim\n")
+  python3 -Ic 'import os, socket, sys
+p = "/run/code-server-claim.sock"
+if not os.path.exists(p):
+    print("ERR the setup service is not installed or not running ({} is missing). IT: sudo it-pull, then systemctl status code-server-claim.socket".format(p)); sys.exit()
+s = socket.socket(socket.AF_UNIX); s.settimeout(45)
+try:
+    s.connect(p); s.sendall(b"claim\n")
+except OSError as e:
+    print("ERR could not reach the setup service ({}). IT: systemctl status code-server-claim.socket".format(e.strerror or e)); sys.exit()
 out = b""
 while True:
     try:
         d = s.recv(4096)
     except ConnectionResetError:
         break
+    except socket.timeout:
+        print("ERR the setup service did not answer within 45 seconds. IT: journalctl -u code-server-claim@\\* -n 30"); sys.exit()
     if not d: break
     out += d
-sys.stdout.write(out.decode())' 2>/dev/null
+if not out:
+    print("ERR the setup service started but gave no answer. IT: journalctl -u code-server-claim@\\* -n 30"); sys.exit()
+sys.stdout.write(out.decode())' 2>&1
 }
 case "${1:-open}" in -h|--help|help) awk 'NR>1&&/^#/{sub(/^# ?/,"");print;next}NR>1{exit}' "$0"; exit 0 ;; esac
 if ! grep -qsF "$MARK" "$CONF"; then
@@ -73,7 +83,8 @@ if ! grep -qsF "$MARK" "$CONF"; then
     OK*) printf '  %sThis machine has given you port %s for your IDE. It stays yours.%s\n' "$G" "${r#OK }" "$R" ;;
     NO*) oops "You cannot have a browser IDE on this machine: ${r#NO }.
 Ask IT if you should." ;;
-    *)   oops "Could not set up your browser IDE (the setup service did not answer). Ask IT." ;;
+    ERR*) oops "Could not set up your browser IDE: ${r#ERR }" ;;
+    *)   oops "Could not set up your browser IDE (unexpected answer: ${r:-none}). Ask IT, or IT can run: sudo it-codeserver claim $(id -un)" ;;
   esac
   grep -qsF "$MARK" "$CONF" || oops "Your IDE settings were not written. Ask IT."
   # One started on code-server's own default config is on someone else's port.
