@@ -1,0 +1,15 @@
+# Managed by ansible (dev_tools/code_server_setup.yml) -- do not edit by hand.
+#
+# One per connection to code-server-claim.socket. The caller is identified by
+# the kernel (SO_PEERCRED), never by anything it sends, so it can only ever
+# claim a port for itself. See `it-codeserver claim-peer`.
+[Unit]
+Description=code-server port assignment for one caller
+
+[Service]
+ExecStart=/usr/local/sbin/it-codeserver claim-peer
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+RuntimeMaxSec=60
+NoNewPrivileges=true

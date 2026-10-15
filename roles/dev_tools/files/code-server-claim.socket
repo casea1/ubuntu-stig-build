@@ -1,0 +1,17 @@
+# Managed by ansible (dev_tools/code_server_setup.yml) -- do not edit by hand.
+#
+# my-ide connects here the first time someone runs it; systemd starts one
+# code-server-claim@.service per connection. World-connectable on purpose:
+# the service checks entitlement itself, and a refusal has to reach the person
+# as a reason, not as "permission denied".
+[Unit]
+Description=code-server port assignment (first my-ide)
+
+[Socket]
+ListenStream=/run/code-server-claim.sock
+SocketMode=0666
+Accept=yes
+MaxConnections=16
+
+[Install]
+WantedBy=sockets.target

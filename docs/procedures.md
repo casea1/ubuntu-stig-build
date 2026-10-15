@@ -2178,24 +2178,26 @@ it in the SSP, restrict `dev_code_server_allow_from`, and expect findings.
    dev_code_server_allow_from: 192.168.1.0/24    # your engineers' subnet, not 'any'
    ```
 3. **Pull:** `sudo it-pull` (a light pull installs it). It installs the package,
-   gives every `sentry` member with a usable password their own port
-   (one of 8080–8099, assigned once and kept for good in `/etc/code-server/ports`)
-   and password, places `my-ide`,
-   `it-codeserver` and an **IDE (in a browser)** tile, and opens 8080–8099 to
-   that source only. If the package is not in the repo it says so and changes
-   nothing else -- no port is opened for a server that is not there.
-4. **Check:** `sudo it-codeserver` lists who has which port. A member who gets
-   "You do not have a browser IDE set up" is named in the pull's **Group
-   members WITHOUT an instance** line with the reason -- usually a password not
-   set yet at pull time, or all 20 ports taken. Ports are never released on
-   their own, so 20 is everyone who EVER had one on that box: free a leaver's
-   by deleting their line from `/etc/code-server/ports`, or raise
-   `dev_code_server_port_span`.
-5. **Each engineer** runs `my-ide` (or the tile): it starts their own instance
-   and opens it. `my-ide password` shows their password, `my-ide remote` the
+   places `my-ide`, `it-codeserver` and an **IDE (in a browser)** tile, and
+   opens 8080–8099 to that source only. It assigns **no** ports. If the package
+   is not in the repo it says so and changes nothing else -- no port is opened
+   for a server that is not there.
+4. **Each engineer** runs `my-ide` (or the tile). The FIRST time, it claims the
+   lowest free port for them -- no password, no sudo: `code-server-claim.socket`
+   identifies the caller through the kernel and refuses, with the reason, anyone
+   not in `sentry`, without a usable password or login shell, or in
+   `dev_code_server_exclude`. The port is recorded in `/etc/code-server/ports`
+   and never changes. Then it starts their own instance and opens it. `my-ide password` shows their password, `my-ide remote` the
    address to use from a Windows PC (`https://<box>:<port>`, self-signed
    certificate). Nothing runs at boot; it stops at logout unless an admin names
    them in `dev_code_server_linger_users`.
+5. **Check:** `sudo it-codeserver` lists who has which port. Ports are never
+   released on their own, so 20 is everyone who EVER claimed one on that box:
+   `sudo it-codeserver release <user>` frees a leaver's, or raise
+   `dev_code_server_port_span`. `sudo it-codeserver claim <user>` assigns one
+   ahead of time if you need to hand out an address before they log in.
+   The first pull with claiming keeps only people who had actually run
+   code-server and clears every other pre-assigned config.
 
 **Switching it off:** `dev_code_server_enabled: false` (or delete the line) and
 pull. The pull stops every instance, removes the package, `my-ide`,

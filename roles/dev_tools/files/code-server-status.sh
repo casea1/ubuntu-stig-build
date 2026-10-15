@@ -2,9 +2,9 @@
 # it-codeserver -- who has a browser IDE, on which port, and its password.
 #
 # code-server is SINGLE-USER PER INSTANCE -- there is no multi-tenant mode -- so
-# each user runs their own on their own port. The port is derived from the UID,
-# not from a position in a list, so it is stable for a person: removing someone
-# from the group does not move everyone else.
+# each user runs their own on their own port. A port is ASSIGNED the first time
+# that person runs `my-ide` (never ahead of time), recorded in the root-only
+# /etc/code-server/ports, and kept for good.
 #
 # FOR AN ENGINEER -- your own instance. NO SUDO, no admin, no ticket:
 #
@@ -30,6 +30,9 @@
 #   it-codeserver restart <user>    after a config change
 #   it-codeserver linger <user> on  let their IDE run while they are logged out
 #   it-codeserver log <user> [N]    last N journal lines (default 40)
+#   it-codeserver claim <user>      assign a port now instead of at their first my-ide
+#   it-codeserver release <user>    free that user's port (they get a new one next time)
+#   it-codeserver sync              what the pull runs: refresh configs, clear stale ones
 #
 # NOTHING STARTS AT BOOT, AND NOTHING NEEDS ROOT. Those used to pull against
 # each other: the instance was a SYSTEM unit, so it either ran for everybody
@@ -44,9 +47,14 @@
 # (dev_code_server_linger_users, or `it-codeserver linger <user> on`).
 #
 # Entitlement is group membership (dev_code_server_group, `sentry` by default),
-# applied by the pull -- add someone to the group and pull, do not enable the
-# unit by hand or the next pull will not know about them. An account with a
-# LOCKED PASSWORD is skipped: it cannot log in, so it cannot use an IDE.
+# checked when the port is claimed and again on every pull. An account with a
+# LOCKED PASSWORD is refused: it cannot log in, so it cannot use an IDE.
+#
+# HOW A FIRST RUN GETS A PORT WITHOUT SUDO. my-ide connects to
+# /run/code-server-claim.sock; systemd starts code-server-claim@.service (root)
+# for that one connection, which asks the KERNEL who connected (SO_PEERCRED) --
+# so nobody can claim as someone else -- and runs `claim-peer`. No password and
+# no sudoers rule, so it also works from the menu tile, which has no terminal.
 set -uo pipefail
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -67,6 +75,7 @@ case "${1:-}" in -h|--help|help) usage; exit 0 ;; esac
 # it is why there is no sudoers grant to go with it.
 _needs_root=1
 [ "${1:-}" = mine ] && _needs_root=0
+[ "${1:-}" = claim-peer ] && [ "$(id -u)" -ne 0 ] && die "claim-peer is run by code-server-claim@.service, not by hand"
 [ "$_needs_root" = 0 ] || [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"
 
 # Who "mine" means. Run directly it is whoever is logged in; SUDO_USER is still
@@ -88,10 +97,13 @@ user_bus_ok() {
 }
 
 conf_of() { local h; h=$(getent passwd "$1" | cut -d: -f6); printf '%s/.config/code-server/config.yaml' "$h"; }
-# Only the pull's config counts. Started any other way, code-server writes its
-# own default (127.0.0.1:8080 -- the first assigned port) and that is not this
-# person's instance.
-managed() { grep -qsF '# Managed by ansible (dev_tools/code_server_user.yml)' "$(conf_of "$1")"; }
+# Only a config written here counts. Started any other way, code-server writes
+# its own default (127.0.0.1:8080 -- the first assigned port) and that is not
+# this person's instance. OLD_MARK is what the pull wrote before ports were
+# claimed; `sync` rewrites or clears those.
+MARK='# Managed by it-codeserver -- do not edit by hand.'
+OLD_MARK='# Managed by ansible (dev_tools/code_server_user.yml)'
+managed() { grep -qsF "$MARK" "$(conf_of "$1")"; }
 bind_of() { sed -nE 's/^bind-addr:[[:space:]]*//p' "$(conf_of "$1")" 2>/dev/null | tail -1; }
 
 instances() {   # every account this box has configured an instance for
@@ -335,6 +347,166 @@ cmd_mine_action() {   # $1 = start|stop|restart|enable|disable
   esac
 }
 
+# ---------------------------------------------------------------------------
+# Port assignment. Root only. The ledger is the record; nothing else assigns.
+# ---------------------------------------------------------------------------
+SETTINGS=/etc/code-server/settings   # written by the pull from dev_code_server_*
+LEDGER=/etc/code-server/ports
+LEDGER_HEAD='# v2 user port -- assigned at first my-ide, never released automatically.'
+
+load_settings() {
+  [ -r "$SETTINGS" ] || die "$SETTINGS is missing -- code-server is not set up on this box (pull)"
+  # shellcheck disable=SC1090
+  . "$SETTINGS"
+}
+in_range() { [[ "${1:-}" =~ ^[0-9]+$ ]] && [ "$1" -ge "$CS_PORT" ] && [ "$1" -lt $((CS_PORT + CS_SPAN)) ]; }
+lock_ledger() { exec 9>/etc/code-server/.lock && flock -w 30 9 || die "the port ledger is locked"; }
+ledger_lines() { [ -r "$LEDGER" ] && grep -vE '^[[:space:]]*(#|$)' "$LEDGER"; }
+ledger_get() { ledger_lines | awk -v u="$1" '$1 == u { print $2; exit }'; }
+ledger_write() {   # stdin: "user port" lines
+  local tmp; tmp="$(mktemp /etc/code-server/.ports.XXXXXX)" || return 1
+  { printf '%s\n' "$LEDGER_HEAD"; sort -u; } > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$LEDGER"
+}
+
+# Why this account may NOT have an IDE; prints nothing when it may.
+# Group membership via `id -nG`, which includes the PRIMARY group -- `getent
+# group` lists only supplementary members.
+why_not() {
+  local u="$1" uid st x
+  uid="$(id -u "$u" 2>/dev/null)" || { echo "no such account"; return; }
+  { [ "$uid" -ge 1000 ] && [ "$uid" -lt 65534 ]; } || { echo "system account (uid $uid)"; return; }
+  if [ -n "${CS_GROUP:-}" ] && getent group "$CS_GROUP" >/dev/null 2>&1; then
+    id -nG "$u" 2>/dev/null | tr ' ' '\n' | grep -qxF "$CS_GROUP" \
+      || { echo "not in the $CS_GROUP group"; return; }
+  else
+    [ "$u" = "${CS_FALLBACK_USER:-}" ] || { echo "not ${CS_FALLBACK_USER:-the configured user} (group ${CS_GROUP:-unset} does not exist)"; return; }
+  fi
+  case "$(getent passwd "$u" | cut -d: -f7)" in
+    */nologin|*/false|"") echo "no login shell"; return ;;
+  esac
+  # passwd -S field 2: P usable, L locked, NP none. auto_audit is L with a
+  # normal shell, which is why the shell check alone was never enough.
+  st="$(passwd -S "$u" 2>/dev/null | awk '{print $2}')"
+  [ "$st" = P ] || { echo "password ${st:-unknown} (locked or not set yet)"; return; }
+  for x in ${CS_EXCLUDE:-}; do [ "$u" = "$x" ] && { echo "in dev_code_server_exclude"; return; }; done
+}
+
+# Written AS THE USER: root creating paths in a home the user controls would
+# follow any symlink they planted there.
+write_conf() {   # $1 user  $2 port
+  local u="$1" p="$2" h pwf
+  h="$(getent passwd "$u" | cut -d: -f6)"; [ -n "$h" ] && [ -d "$h" ] || return 1
+  pwf="/etc/code-server/$u.password"
+  [ -s "$pwf" ] || (umask 077; tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 24 > "$pwf")
+  printf '%s\nbind-addr: %s:%s\nauth: password\npassword: %s\ncert: %s\n' \
+    "$MARK" "$CS_BIND" "$p" "$(head -1 "$pwf" | cut -d' ' -f1)" "$CS_TLS" |
+    runuser -u "$u" -- /bin/sh -c 'umask 077; d="$1/.config/code-server"
+      mkdir -p "$d" && cat > "$d/config.yaml.new" && mv -f "$d/config.yaml.new" "$d/config.yaml"' sh "$h"
+}
+remove_conf() {   # only a config written by us (either marker), as the user
+  local u="$1" h f
+  h="$(getent passwd "$u" | cut -d: -f6)"; f="$h/.config/code-server/config.yaml"
+  grep -qsF -e "$MARK" -e "$OLD_MARK" "$f" || return 0
+  runuser -u "$u" -- rm -f "$f"
+}
+
+# Prints "OK <port>" or "NO <reason>" -- the reason is shown to the engineer.
+claim_for() {
+  local u="$1" r p q
+  load_settings
+  r="$(why_not "$u")"; [ -z "$r" ] || { echo "NO $r"; return 1; }
+  lock_ledger
+  p="$(ledger_get "$u")"
+  if ! in_range "$p"; then
+    p=""
+    for ((q = CS_PORT; q < CS_PORT + CS_SPAN; q++)); do
+      ledger_lines | awk -v q="$q" '$2 == q { f = 1 } END { exit !f }' || { p=$q; break; }
+    done
+    [ -n "$p" ] || { echo "NO all $CS_SPAN IDE ports on this machine are taken -- ask IT"; return 1; }
+    { ledger_lines | awk -v u="$u" '$1 != u'; echo "$u $p"; } | ledger_write \
+      || { echo "NO could not record your port -- ask IT"; return 1; }
+    logger -t it-codeserver "assigned port $p to $u"
+  fi
+  write_conf "$u" "$p" || { echo "NO could not write your IDE settings -- ask IT"; return 1; }
+  echo "OK $p"
+}
+
+# The connection is stdin; ask the kernel whose it is. detach() so Python does
+# not close fd 0 on exit.
+cmd_claim_peer() {
+  local uid u
+  uid="$(python3 -Ic 'import socket, struct
+s = socket.socket(fileno=0)
+print(struct.unpack("3i", s.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[1])
+s.detach()')" || { echo "NO could not identify the caller"; exit 1; }
+  u="$(getent passwd "$uid" | cut -d: -f1)"
+  [ -n "$u" ] || { echo "NO unknown account (uid $uid)"; exit 1; }
+  # Read (and ignore) the request line. Closing a Unix socket with unread data
+  # RESETS it, and the caller loses the answer.
+  read -r -t 5 _ || true
+  claim_for "$u"
+}
+
+# Run by every pull. Prints USER/SKIP/KEPT/CLEARED lines for the play to show.
+cmd_sync() {
+  local u p r uid
+  load_settings; lock_ledger
+  # First run on a box that predates claiming: start FRESH, keeping only
+  # people who have actually run code-server (it creates its data dir on first
+  # start) and whose pull-written port is in range. Everyone else claims anew.
+  if ! head -1 "$LEDGER" 2>/dev/null | grep -qxF "$LEDGER_HEAD"; then
+    while IFS=: read -r u _ uid _; do
+      [ "$uid" -ge 1000 ] && [ "$uid" -lt 65534 ] || continue
+      h="$(getent passwd "$u" | cut -d: -f6)"
+      [ -d "$h/.local/share/code-server" ] || continue
+      grep -qsF -e "$MARK" -e "$OLD_MARK" "$h/.config/code-server/config.yaml" || continue
+      p="$(sed -nE 's/^bind-addr:.*:([0-9]+)[[:space:]]*$/\1/p' "$h/.config/code-server/config.yaml" | tail -1)"
+      in_range "$p" && echo "$u $p"
+    done < <(getent passwd) | sort -k2,2n -u | ledger_write || die "could not write $LEDGER"
+    ledger_lines | sed 's/^/KEPT /'
+  fi
+  # Everyone on file: refresh the config, or take it away while keeping the
+  # port reserved for them.
+  while read -r u p; do
+    r="$(why_not "$u")"
+    if [ -n "$r" ]; then
+      remove_conf "$u"; echo "SKIP $u $r (port $p kept for them)"
+    elif ! in_range "$p"; then
+      remove_conf "$u"; echo "SKIP $u port $p is outside the range now; their next my-ide assigns a new one"
+    else
+      write_conf "$u" "$p" && echo "USER $u $p"
+    fi
+  done < <(ledger_lines)
+  # Configs we wrote for people who never claimed (the old pull pre-assigned).
+  while IFS=: read -r u _ uid _; do
+    [ "$uid" -ge 1000 ] && [ "$uid" -lt 65534 ] || continue
+    [ -n "$(ledger_get "$u")" ] && continue
+    h="$(getent passwd "$u" | cut -d: -f6)"
+    grep -qsF -e "$MARK" -e "$OLD_MARK" "$h/.config/code-server/config.yaml" || continue
+    remove_conf "$u" && echo "CLEARED $u"
+  done < <(getent passwd)
+  # Group members who could not claim one, and why.
+  if [ -n "${CS_GROUP:-}" ] && getent group "$CS_GROUP" >/dev/null 2>&1; then
+    { getent group "$CS_GROUP" | cut -d: -f4 | tr ',' '\n'
+      awk -F: -v g="$(getent group "$CS_GROUP" | cut -d: -f3)" '$4 == g { print $1 }' /etc/passwd
+    } | sed '/^$/d' | sort -u | while read -r u; do
+      [ -n "$(ledger_get "$u")" ] && continue
+      r="$(why_not "$u")"; [ -n "$r" ] && echo "SKIP $u $r"
+    done
+  fi
+  return 0
+}
+
+cmd_release() {
+  local u="$1" p
+  load_settings; lock_ledger
+  p="$(ledger_get "$u")"; [ -n "$p" ] || die "$u has no port on file"
+  ledger_lines | awk -v u="$u" '$1 != u' | ledger_write || die "could not write $LEDGER"
+  remove_conf "$u"
+  logger -t it-codeserver "released port $p from $u"
+  say "released $p from $u -- their next my-ide assigns a new one"
+}
+
 case "${1:-status}" in
   ""|status) cmd_status ;;
   mine)
@@ -383,5 +555,12 @@ case "${1:-status}" in
     [ -n "${2:-}" ] || die "usage: it-codeserver log <user> [N]"
     journalctl _SYSTEMD_USER_UNIT=code-server.service _UID="$(id -u "$2")" \
       -n "${3:-40}" --no-pager ;;
+  claim-peer) cmd_claim_peer ;;
+  claim)
+    [ -n "${2:-}" ] || die "usage: it-codeserver claim <user>   (engineers just run my-ide)"
+    r="$(claim_for "$2")"; case "$r" in OK*) say "$2 has port ${r#OK }" ;; *) die "${r#NO }" ;; esac ;;
+  release)
+    [ -n "${2:-}" ] || die "usage: it-codeserver release <user>"; cmd_release "$2" ;;
+  sync) cmd_sync ;;
   *) die "unknown command: $1  (try: it-codeserver --help)" ;;
 esac

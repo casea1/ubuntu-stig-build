@@ -43,13 +43,42 @@ oops() {
   exit 1
 }
 
-NOT_SET_UP="You do not have a browser IDE set up on this machine yet.
-Ask IT: a pull lists everyone who should have one and does not, and why."
-[ -r "$CONF" ] || oops "$NOT_SET_UP"
-# A config the pull did not write is code-server's own default (port 8080,
-# which belongs to someone else), made by starting it some other way.
-grep -qsF '# Managed by ansible (dev_tools/code_server_user.yml)' "$CONF" || oops "$NOT_SET_UP
-($CONF was made by code-server itself, not by IT; its port is not yours.)"
+MARK='# Managed by it-codeserver -- do not edit by hand.'
+
+# FIRST RUN: no config of ours yet, so ask for a port. The claim service is
+# root, started by systemd for this one connection; it asks the kernel who we
+# are, so there is nothing to type and nothing to fake. A config without MARK
+# is code-server's own default (port 8080, someone else's) and is replaced.
+claim() {
+  python3 -Ic 'import socket, sys
+s = socket.socket(socket.AF_UNIX); s.settimeout(30)
+s.connect("/run/code-server-claim.sock"); s.sendall(b"claim\n")
+out = b""
+while True:
+    try:
+        d = s.recv(4096)
+    except ConnectionResetError:
+        break
+    if not d: break
+    out += d
+sys.stdout.write(out.decode())' 2>/dev/null
+}
+case "${1:-open}" in -h|--help|help) awk 'NR>1&&/^#/{sub(/^# ?/,"");print;next}NR>1{exit}' "$0"; exit 0 ;; esac
+if ! grep -qsF "$MARK" "$CONF"; then
+  case "${1:-open}" in open|start) ;;
+    *) oops "You have no browser IDE on this machine yet. Run my-ide on its own to set one up." ;;
+  esac
+  r="$(claim)"
+  case "$r" in
+    OK*) printf '  %sThis machine has given you port %s for your IDE. It stays yours.%s\n' "$G" "${r#OK }" "$R" ;;
+    NO*) oops "You cannot have a browser IDE on this machine: ${r#NO }.
+Ask IT if you should." ;;
+    *)   oops "Could not set up your browser IDE (the setup service did not answer). Ask IT." ;;
+  esac
+  grep -qsF "$MARK" "$CONF" || oops "Your IDE settings were not written. Ask IT."
+  # One started on code-server's own default config is on someone else's port.
+  systemctl --user is-active --quiet "$UNIT" 2>/dev/null && systemctl --user restart "$UNIT" 2>/dev/null
+fi
 
 port="$(sed -nE 's/^bind-addr:.*:([0-9]+)[[:space:]]*$/\1/p' "$CONF" | tail -1)"
 pass="$(sed -nE 's/^password:[[:space:]]*//p' "$CONF" | tail -1)"

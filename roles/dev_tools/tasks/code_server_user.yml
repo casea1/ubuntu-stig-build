@@ -1,44 +1,6 @@
 ---
-# One code-server instance. Included per user from code_server.yml.
-#
-# The port was assigned by code_server_setup.yml (_cs_ports) and is kept once
-# given, so it is stable for a person.
-
-- name: "CODE-SERVER | {{ cs_user }} | Account details"
-  ansible.builtin.getent:
-    database: passwd
-    key: "{{ cs_user }}"
-
-- name: "CODE-SERVER | {{ cs_user }} | Resolve home, uid and port"
-  ansible.builtin.set_fact:
-    _cs_home: "{{ ansible_facts.getent_passwd[cs_user][4] }}"
-    _cs_group: "{{ ansible_facts.getent_passwd[cs_user][2] }}"
-    _cs_port: "{{ _cs_ports[cs_user] }}"
-
-- name: "CODE-SERVER | {{ cs_user }} | Config dir"
-  ansible.builtin.file:
-    path: "{{ _cs_home }}/.config/code-server"
-    state: directory
-    owner: "{{ cs_user }}"
-    group: "{{ cs_user }}"
-    mode: "0700"
-
-- name: "CODE-SERVER | {{ cs_user }} | config.yaml (own port, own password)"
-  ansible.builtin.copy:
-    dest: "{{ _cs_home }}/.config/code-server/config.yaml"
-    owner: "{{ cs_user }}"
-    group: "{{ cs_user }}"
-    mode: "0600"
-    content: |
-      # Managed by ansible (dev_tools/code_server_user.yml) -- do not edit by hand.
-      # Port is assigned once and kept; see dev_tools/code_server_setup.yml.
-      bind-addr: {{ dev_code_server_bind_addr }}:{{ _cs_port }}
-      auth: password
-      password: {{ lookup('ansible.builtin.password',
-                          '/etc/code-server/' ~ cs_user ~ '.password chars=ascii_letters,digits length=24') }}
-      cert: {{ (dev_code_server_tls | default(true) | bool) | lower }}
-  no_log: true
-  register: _cs_conf
+# Per user on file. Included from code_server_setup.yml. The config itself is
+# written by it-codeserver (claim / sync), not here.
 
 # Boot-start is OFF by default. code-server is one node process per user and
 # the unit is WantedBy=multi-user.target, so enabling every entitled account

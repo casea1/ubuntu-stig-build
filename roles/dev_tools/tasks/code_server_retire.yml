@@ -110,12 +110,22 @@
     state: absent
     purge: true
 
+- name: "CODE-SERVER-RETIRE | Stop listening for port claims"
+  ansible.builtin.systemd:
+    name: code-server-claim.socket
+    enabled: false
+    state: stopped
+  failed_when: false
+
 - name: "CODE-SERVER-RETIRE | Remove everything else it placed"
   ansible.builtin.file:
     path: "{{ item }}"
     state: absent
   loop:
     - /etc/systemd/user/code-server.service
+    - /etc/systemd/system/code-server-claim.socket
+    - /etc/systemd/system/code-server-claim@.service
+    - /etc/code-server/settings
     - /usr/local/sbin/it-codeserver
     - "{{ it_scripts_dir | default('/opt/it/scripts') }}/code-server-status.sh"
     - /usr/local/bin/my-ide

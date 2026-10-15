@@ -26,12 +26,12 @@ After=network-online.target
 
 [Service]
 Type=exec
-# Reads ~/.config/code-server/config.yaml -- bind address, port and password
-# are written there per user by the pull. The unit is in /etc/systemd/user, so
-# EVERY account has it; started without the pull's config, code-server writes
-# its own default (127.0.0.1:8080, the first assigned port) and my-ide then
-# reported that as the user's port. Refuse unless the pull wrote the file.
-ExecStartPre=/usr/bin/grep -qsF "# Managed by ansible (dev_tools/code_server_user.yml)" %h/.config/code-server/config.yaml
+# Reads ~/.config/code-server/config.yaml -- bind address, port and password,
+# written by it-codeserver when the port is claimed (first my-ide). The unit is
+# in /etc/systemd/user, so EVERY account has it; started without that config,
+# code-server writes its own default (127.0.0.1:8080, the first assigned port).
+# Refuse unless the file is ours.
+ExecStartPre=/usr/bin/grep -qsF "# Managed by it-codeserver -- do not edit by hand." %h/.config/code-server/config.yaml
 ExecStart=/usr/bin/code-server
 Restart=on-failure
 RestartSec=3

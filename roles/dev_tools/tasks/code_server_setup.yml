@@ -3,10 +3,12 @@
 # code-server -- VS Code in the browser, one instance per user.
 #
 # code-server is SINGLE-USER PER INSTANCE; there is no multi-tenant mode. So
-# every user who gets one needs their own port in
-# dev_code_server_port .. + dev_code_server_port_span - 1, and once given it is
-# KEPT: /etc/code-server/ports is the record, root-only, never released by the
-# pull and kept when code-server is retired -- one person, one port, for good.
+# every user needs their own port in dev_code_server_port ..
+# + dev_code_server_port_span - 1. The pull does NOT hand them out: a port is
+# claimed the first time that person runs `my-ide` (code-server-claim.socket ->
+# `it-codeserver claim-peer`), recorded in the root-only /etc/code-server/ports,
+# and kept for good. The pull writes the settings that claim reads, refreshes
+# the configs of people on file, and clears stale ones (`it-codeserver sync`).
 #
 # Each instance has its OWN generated password, root-only in /etc/code-server.
 # desktop_hardening opens the port range (allow, source-restricted) after USG.
@@ -21,167 +23,21 @@
     group: root
     mode: "0700"
 
-# Group membership two ways, because `getent group` lists only SUPPLEMENTARY
-# members -- an account whose PRIMARY group is this one would be missed, and on
-# these boxes that is a plausible way to create an engineer.
-#
-# Prints `USER <name> <port>` per instance and `SKIP <name> <reason>` for every
-# group member left out. The skips used to be silent, and the engineer was told
-# to "ask IT to add you to the group" while already in it.
-#
-# PORTS ARE ASSIGNED, NOT DERIVED. They used to be `port + (uid - 1000)` and
-# anyone outside the 20-port span was dropped without a word -- UIDs only grow,
-# so every engineer hired after the first twenty accounts silently got nothing.
-# Now, in order: the port in the ledger (/etc/code-server/ports); else the one
-# already in your config.yaml (boxes that predate the ledger); else the old
-# uid-derived one if free (so no existing box renumbers anybody); else the
-# lowest free one. A port in the ledger or in an ex-member's config is never
-# handed to someone else, so a person who leaves and comes back gets theirs
-# back. Freeing one is a deliberate act: delete that line from the ledger.
-- name: "CODE-SERVER | Who gets an instance, on which port?"
-  ansible.builtin.shell:
-    executable: /bin/bash
-    cmd: |
-      base={{ dev_code_server_port | int }}
-      span={{ dev_code_server_port_span | int }}
-      ubase={{ dev_code_server_uid_base | int }}
-      in_range() { [ -n "$1" ] && [ "$1" -ge "$base" ] && [ "$1" -lt $((base + span)) ]; }
-      # Only a config the pull wrote: started any other way, code-server writes
-      # its own default on 8080, and that must not claim or hold a port.
-      conf_port() {
-        local h; h=$(getent passwd "$1" | cut -d: -f6)
-        grep -qsF '# Managed by ansible (dev_tools/code_server_user.yml)' "$h/.config/code-server/config.yaml" || return 0
-        sed -nE 's/^bind-addr:.*:([0-9]+)[[:space:]]*$/\1/p' \
-          "$h/.config/code-server/config.yaml" 2>/dev/null | tail -1
-      }
-
-      g='{{ dev_code_server_group | default('') }}'
-      eligible=()
-      if [ -z "$g" ] || ! getent group "$g" >/dev/null 2>&1; then
-        # No group configured, or it does not exist: fall back to the one account
-        # this used to serve.
-        id -u '{{ dev_tools_user }}' >/dev/null 2>&1 && eligible=('{{ dev_tools_user }}')
-      else
-        gid=$(getent group "$g" | cut -d: -f3)
-        while read -r u; do
-          uid=$(id -u "$u" 2>/dev/null) || continue
-          if [ "$uid" -lt 1000 ] || [ "$uid" -ge 65534 ]; then
-            echo "SKIP $u system account (uid $uid)"; continue
-          fi
-          # An account that cannot log in does not need a browser IDE.
-          #
-          # TWO checks, because the shell alone is not one: auto_audit has a
-          # LOCKED PASSWORD and a perfectly normal shell, and dev-16 came up with
-          # an instance for it -- units failing on the boot splash for accounts
-          # nobody can log in as.
-          #
-          # `passwd -S` field 2 is P (usable), L (locked) or NP (no password).
-          # A human account that has not had its password set yet is L too, and
-          # skipping it is right -- the next pull picks it up once an admin sets
-          # one, so this heals itself.
-          case "$(getent passwd "$u" | cut -d: -f7)" in
-            */nologin|*/false|"") echo "SKIP $u no login shell"; continue ;;
-          esac
-          st=$(passwd -S "$u" 2>/dev/null | awk '{print $2}')
-          if [ "$st" != P ]; then
-            echo "SKIP $u password ${st:-unknown} (locked or not set yet; pull again once it is)"; continue
-          fi
-          # Optional per-site exclusions, e.g. the dta and audit accounts, which
-          # are in the group too.
-          for x in {{ dev_code_server_exclude | default([]) | join(' ') }}; do
-            [ "$u" = "$x" ] && { echo "SKIP $u in dev_code_server_exclude"; continue 2; }
-          done
-          eligible+=("$u")
-        done < <({ getent group "$g" | cut -d: -f4 | tr ',' '\n'
-                   awk -F: -v g="$gid" '$4==g {print $1}' /etc/passwd
-                 } | sed '/^$/d' | sort -u)
-      fi
-
-      declare -A port_of taken held ledger
-      is_eligible() { local e; for e in "${eligible[@]}"; do [ "$e" = "$1" ] && return 0; done; return 1; }
-      LEDGER=/etc/code-server/ports
-      if [ -r "$LEDGER" ]; then
-        while read -r n p _; do
-          [[ "$n" =~ ^[a-z_][a-z0-9_.-]*$ && "$p" =~ ^[0-9]+$ ]] && ledger[$n]=$p
-        done < "$LEDGER"
-      fi
-
-      # 1. Ledger entries of non-members are reserved for them.
-      for n in "${!ledger[@]}"; do
-        is_eligible "$n" || { in_range "${ledger[$n]}" && held[${ledger[$n]}]=$n; }
-      done
-      # 2. Members keep their ledger port, then (pre-ledger boxes) the one in
-      #    their config.yaml. First claim wins a clash.
-      for src in ledger conf; do
-        for u in "${eligible[@]}"; do
-          [ -n "${port_of[$u]:-}" ] && continue
-          if [ "$src" = ledger ]; then p=${ledger[$u]:-}; else p=$(conf_port "$u"); fi
-          if in_range "$p" && [ -z "${taken[$p]:-}${held[$p]:-}" ]; then
-            taken[$p]=$u; port_of[$u]=$p
-          fi
-        done
-      done
-      # 3. Ports still written in a non-member's config are not reassigned.
-      while IFS=: read -r n _ uid _; do
-        [ "$uid" -ge 1000 ] && [ "$uid" -lt 65534 ] || continue
-        is_eligible "$n" && continue
-        p=$(conf_port "$n"); in_range "$p" && [ -z "${held[$p]:-}" ] && held[$p]=$n
-      done < <(getent passwd)
-      # 3. Newcomers, oldest UID first: the old uid-derived port if free, else
-      #    the lowest free one.
-      for u in $(for e in "${eligible[@]}"; do [ -n "${port_of[$e]:-}" ] || echo "$(id -u "$e") $e"; done | sort -n | awk '{print $2}'); do
-        want=$(( base + $(id -u "$u") - ubase ))
-        if ! in_range "$want" || [ -n "${taken[$want]:-}${held[$want]:-}" ]; then
-          want=""
-          for ((p = base; p < base + span; p++)); do
-            [ -z "${taken[$p]:-}${held[$p]:-}" ] && { want=$p; break; }
-          done
-        fi
-        if [ -z "$want" ]; then
-          echo "SKIP $u no free port in $base-$((base + span - 1)); raise dev_code_server_port_span"
-          continue
-        fi
-        taken[$want]=$u; port_of[$u]=$want
-      done
-      for u in "${eligible[@]}"; do
-        [ -n "${port_of[$u]:-}" ] && echo "USER $u ${port_of[$u]}"
-      done
-      # The ledger to write back: everyone ever given a port, members updated.
-      for u in "${!port_of[@]}"; do ledger[$u]=${port_of[$u]}; done
-      for n in "${!ledger[@]}"; do echo "LEDGER $n ${ledger[$n]}"; done
-      exit 0
-  register: _cs_probe
-  changed_when: false
-  check_mode: false
-
-- name: "CODE-SERVER | The list"
-  ansible.builtin.set_fact:
-    _cs_users: "{{ _cs_probe.stdout_lines | select('match', '^USER ')
-                   | map('regex_replace', '^USER (\\S+) .*$', '\\1') | list }}"
-    _cs_ports: "{{ dict(_cs_probe.stdout_lines | select('match', '^USER ')
-                   | map('regex_replace', '^USER (\\S+) .*$', '\\1')
-                   | zip(_cs_probe.stdout_lines | select('match', '^USER ')
-                         | map('regex_replace', '^USER \\S+ (\\d+)$', '\\1'))) }}"
-    _cs_skipped: "{{ _cs_probe.stdout_lines | select('match', '^SKIP ')
-                     | map('regex_replace', '^SKIP ', '') | list }}"
-
-- name: "CODE-SERVER | Port ledger (one person, one port, kept for good)"
+- name: "CODE-SERVER | Settings the port claim reads"
   ansible.builtin.copy:
-    dest: /etc/code-server/ports
+    dest: /etc/code-server/settings
     owner: root
     group: root
     mode: "0600"
     content: |
-      # user port -- written by the pull (dev_tools/code_server_setup.yml).
-      # Entries are never released automatically. Delete a line to free a port.
-      {% for l in _cs_probe.stdout_lines | select('match', '^LEDGER ') | map('regex_replace', '^LEDGER ', '') | sort %}
-      {{ l }}
-      {% endfor %}
-
-- name: "CODE-SERVER | Group members WITHOUT an instance, and why"
-  ansible.builtin.debug:
-    msg: "{{ _cs_skipped }}"
-  when: _cs_skipped | length > 0
+      # Written by the pull from dev_code_server_* -- read by it-codeserver.
+      CS_PORT={{ dev_code_server_port | int }}
+      CS_SPAN={{ dev_code_server_port_span | int }}
+      CS_BIND={{ dev_code_server_bind_addr | quote }}
+      CS_TLS={{ (dev_code_server_tls | default(true) | bool) | lower }}
+      CS_GROUP={{ dev_code_server_group | default('') | quote }}
+      CS_EXCLUDE={{ dev_code_server_exclude | default([]) | join(' ') | quote }}
+      CS_FALLBACK_USER={{ dev_tools_user | quote }}
 
 # The unit every engineer runs. A USER unit: it lives under their own
 # `systemd --user`, so starting it needs no root, no sudoers grant and no
@@ -202,13 +58,24 @@
   when: _cs_unit is changed
   tags: [scripts]
 
-- name: "CODE-SERVER | Configure and enable an instance per user"
-  ansible.builtin.include_tasks: code_server_user.yml
-  loop: "{{ _cs_users }}"
-  loop_control:
-    loop_var: cs_user
-    label: "{{ cs_user }}"
-  when: _cs_users | length > 0
+- name: "CODE-SERVER | The port-claim socket and service (first my-ide)"
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - code-server-claim.socket
+    - code-server-claim@.service
+  register: _cs_claim_units
+
+- name: "CODE-SERVER | Listen for first-time claims"
+  ansible.builtin.systemd:
+    name: code-server-claim.socket
+    enabled: true
+    state: "{{ 'restarted' if _cs_claim_units is changed else 'started' }}"
+    daemon_reload: "{{ _cs_claim_units is changed }}"
 
 # Removing someone from the group has to STOP their instance: systemd units
 # enabled by an earlier run stay enabled forever otherwise (trap 3).
@@ -229,7 +96,6 @@
       exit 0
   register: _cs_enabled
   changed_when: false
-  check_mode: false
 
 # Every system instance now, not only the ex-members'. The instance moved to a
 # user unit, so ANY surviving code-server@<user> is a second copy racing the
@@ -349,18 +215,43 @@
   when: _cs_tile is defined and _cs_tile is changed
   tags: [scripts]
 
+# Configs and the ledger are written by it-codeserver ONLY, so the claim and
+# the pull cannot disagree about a port or a password.
+- name: "CODE-SERVER | Refresh claimed instances, clear stale configs"
+  ansible.builtin.command: /usr/local/sbin/it-codeserver sync
+  register: _cs_sync
+  changed_when: _cs_sync.stdout is search('(?m)^(KEPT|CLEARED) ')
+  when: not ansible_check_mode
+
+- name: "CODE-SERVER | Who is on file"
+  ansible.builtin.set_fact:
+    _cs_users: "{{ (_cs_sync.stdout_lines | default([])) | select('match', '^USER ')
+                   | map('regex_replace', '^USER (\\S+) .*$', '\\1') | list }}"
+
+- name: "CODE-SERVER | Ledger started fresh / configs cleared / left out"
+  ansible.builtin.debug:
+    msg: "{{ (_cs_sync.stdout_lines | default([])) | reject('match', '^USER ') | list }}"
+  when: (_cs_sync.stdout_lines | default([])) | reject('match', '^USER ') | list | length > 0
+
+- name: "CODE-SERVER | Retire old system units, apply lingering, per user on file"
+  ansible.builtin.include_tasks: code_server_user.yml
+  loop: "{{ _cs_users }}"
+  loop_control:
+    loop_var: cs_user
+    label: "{{ cs_user }}"
+  when: _cs_users | length > 0
+
 - name: "CODE-SERVER | Remove the old sudo grant (a user service needs none)"
   ansible.builtin.file:
     path: "/etc/sudoers.d/60-{{ dev_code_server_group }}-codeserver"
     state: absent
   tags: [scripts]
-
 - name: "CODE-SERVER | Where things are"
   ansible.builtin.debug:
     msg: >-
-      code-server for {{ _cs_users | length }} user(s):
-      {{ _cs_users | join(', ') }}.
+      code-server: {{ _cs_users | length }} user(s) on file
+      {{ ('(' ~ (_cs_users | join(', ')) ~ ')') if _cs_users else '' }}.
       Ports {{ dev_code_server_port }}-{{ dev_code_server_port + dev_code_server_port_span - 1 }}
-      on {{ dev_code_server_bind_addr }}, assigned once and kept.
-      Each has its own password under /etc/code-server/. `sudo it-codeserver`
-      lists who is on which port.
+      on {{ dev_code_server_bind_addr }}, claimed at each person's first my-ide
+      and kept in /etc/code-server/ports. `sudo it-codeserver` lists who is on
+      which port.
