@@ -88,6 +88,10 @@ user_bus_ok() {
 }
 
 conf_of() { local h; h=$(getent passwd "$1" | cut -d: -f6); printf '%s/.config/code-server/config.yaml' "$h"; }
+# Only the pull's config counts. Started any other way, code-server writes its
+# own default (127.0.0.1:8080 -- the first assigned port) and that is not this
+# person's instance.
+managed() { grep -qsF '# Managed by ansible (dev_tools/code_server_user.yml)' "$(conf_of "$1")"; }
 bind_of() { sed -nE 's/^bind-addr:[[:space:]]*//p' "$(conf_of "$1")" 2>/dev/null | tail -1; }
 
 instances() {   # every account this box has configured an instance for
@@ -97,7 +101,7 @@ instances() {   # every account this box has configured an instance for
   # still listed so a box mid-migration shows them and the pull can clear them.
   {
     getent passwd | awk -F: '$3 >= 1000 && $3 < 65000 {print $1}' | while read -r n; do
-      [ -r "$(conf_of "$n")" ] && printf '%s\n' "$n"
+      managed "$n" && printf '%s\n' "$n"
     done
     systemctl list-units --all --plain --no-legend 'code-server@*.service' 2>/dev/null \
       | awk '{print $1}' | sed 's/^code-server@//; s/\.service$//'
@@ -258,7 +262,7 @@ cmd_mine() {
   # on with an empty username.
   me="$(whoami_real)" || exit 1
   conf="$(conf_of "$me")"
-  [ -r "$conf" ] || die "no code-server configured for $me -- ask an admin: you may not be in the entitled group"
+  managed "$me" || die "no code-server configured for $me -- ask an admin: a pull lists who is left out and why"
 
   url="$(url_for "$me")"
   state="$(sctl1 systemctl --user is-active code-server.service)"
@@ -304,8 +308,8 @@ cmd_mine_action() {   # $1 = start|stop|restart|enable|disable
   # Split from the declaration on purpose: `local me=$(...)` takes the exit
   # status of `local`, which is always 0, so a refusal could not stop it.
   me="$(whoami_real)" || exit 1
-  [ -r "$(conf_of "$me")" ] \
-    || die "no code-server configured for $me -- you may not be in the entitled group"
+  managed "$me" \
+    || die "no code-server configured for $me -- ask an admin: a pull lists who is left out and why"
   user_bus_ok \
     || die "no user session: systemctl --user has no bus here. Log in over RDP or SSH as yourself, not via su or sudo -u."
 
@@ -355,8 +359,10 @@ case "${1:-status}" in
   # engineer runs `it-codeserver mine start` and needs nobody.
   start|stop|restart)
     [ -n "${2:-}" ] || die "usage: it-codeserver $1 <user>   (or, as yourself: it-codeserver mine $1)"
-    [ -r "$(conf_of "$2")" ] \
-      || die "no instance configured for $2 -- is the account in the entitled group, unlocked, and has the pull run?"
+    # `stop` is allowed regardless: it is how an admin takes down an instance
+    # started on code-server's own default config.
+    [ "$1" = stop ] || managed "$2" \
+      || die "no instance configured for $2 -- the pull lists who is left out and why"
     systemctl --user --machine="$2@.host" "$1" code-server.service \
       || die "could not $1 it for $2. Without lingering their manager only exists while they are logged in -- see: it-codeserver linger $2 on"
     say "${1}ed code-server for $2   ${DIM}$(url_for "$2")${R}" ;;

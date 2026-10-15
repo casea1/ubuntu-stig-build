@@ -46,8 +46,11 @@
       span={{ dev_code_server_port_span | int }}
       ubase={{ dev_code_server_uid_base | int }}
       in_range() { [ -n "$1" ] && [ "$1" -ge "$base" ] && [ "$1" -lt $((base + span)) ]; }
+      # Only a config the pull wrote: started any other way, code-server writes
+      # its own default on 8080, and that must not claim or hold a port.
       conf_port() {
         local h; h=$(getent passwd "$1" | cut -d: -f6)
+        grep -qsF '# Managed by ansible (dev_tools/code_server_user.yml)' "$h/.config/code-server/config.yaml" || return 0
         sed -nE 's/^bind-addr:.*:([0-9]+)[[:space:]]*$/\1/p' \
           "$h/.config/code-server/config.yaml" 2>/dev/null | tail -1
       }

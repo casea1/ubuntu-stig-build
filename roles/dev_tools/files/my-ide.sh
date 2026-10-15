@@ -43,8 +43,13 @@ oops() {
   exit 1
 }
 
-[ -r "$CONF" ] || oops "You do not have a browser IDE set up on this machine yet.
+NOT_SET_UP="You do not have a browser IDE set up on this machine yet.
 Ask IT: a pull lists everyone who should have one and does not, and why."
+[ -r "$CONF" ] || oops "$NOT_SET_UP"
+# A config the pull did not write is code-server's own default (port 8080,
+# which belongs to someone else), made by starting it some other way.
+grep -qsF '# Managed by ansible (dev_tools/code_server_user.yml)' "$CONF" || oops "$NOT_SET_UP
+($CONF was made by code-server itself, not by IT; its port is not yours.)"
 
 port="$(sed -nE 's/^bind-addr:.*:([0-9]+)[[:space:]]*$/\1/p' "$CONF" | tail -1)"
 pass="$(sed -nE 's/^password:[[:space:]]*//p' "$CONF" | tail -1)"
