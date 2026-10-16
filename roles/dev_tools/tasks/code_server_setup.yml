@@ -40,6 +40,8 @@
       CS_GROUP={{ dev_code_server_group | default('') | quote }}
       CS_EXCLUDE={{ dev_code_server_exclude | default([]) | join(' ') | quote }}
       CS_FALLBACK_USER={{ dev_tools_user | quote }}
+      CS_LINGER_ALL={{ (dev_code_server_linger_all | default(true) | bool) | lower }}
+      CS_IDLE_SECONDS={{ (dev_code_server_idle_timeout_minutes | default(60) | int) * 60 }}
 
 # The unit every engineer runs. A USER unit: it lives under their own
 # `systemd --user`, so starting it needs no root, no sudoers grant and no

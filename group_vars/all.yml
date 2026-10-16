@@ -588,9 +588,17 @@ dev_code_server_allow_from: any
 dev_code_server_group: sentry
 dev_code_server_exclude: []
 
-# Instances are USER services, started by their owner (`my-ide`, no sudo) and
-# gone at logout. Naming someone here enables lingering, so theirs starts at
-# boot and survives logout -- one node process and one port for the whole uptime.
+# Instances are USER services, started by their owner (`my-ide`, no sudo). A
+# user service dies with the owner's last session, so an SSH idle timeout used
+# to take the IDE down mid-work. Lingering keeps it: everyone with a claimed
+# port lingers, and the IDE still starts only from `my-ide`, never at boot.
+dev_code_server_linger_all: true
+# ...so code-server stops ITSELF after this long with no browser activity: an
+# IDE outliving its session must not sit on the LAN for days. 0 = never.
+# Written only when the installed code-server has --idle-timeout-seconds
+# (must be > 60 s); an older one would refuse to start on an unknown key.
+dev_code_server_idle_timeout_minutes: 60
+# Named people ALSO get their IDE started at every boot.
 dev_code_server_linger_users: []
 
 # =============================================================================

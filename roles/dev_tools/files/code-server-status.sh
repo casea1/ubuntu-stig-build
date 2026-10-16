@@ -393,6 +393,28 @@ why_not() {
   for x in ${CS_EXCLUDE:-}; do [ "$u" = "$x" ] && { echo "in dev_code_server_exclude"; return; }; done
 }
 
+# Only a code-server that knows --idle-timeout-seconds may be given it: an
+# unknown key in config.yaml stops it starting at all. Asked once per run.
+idle_line() {
+  [ "${CS_IDLE_SECONDS:-0}" -gt 60 ] 2>/dev/null || return 0
+  [ -n "${_IDLE_OK:-}" ] || {
+    code-server --help 2>/dev/null | grep -q -- '--idle-timeout-seconds' && _IDLE_OK=yes || _IDLE_OK=no
+  }
+  [ "$_IDLE_OK" = yes ] && printf 'idle-timeout-seconds: %s\n' "$CS_IDLE_SECONDS"
+  return 0
+}
+
+# Lingering keeps the IDE alive after its owner's last session ends (an SSH
+# idle timeout otherwise takes it down). Nothing else here uses it.
+set_linger() {   # $1 user  $2 on|off
+  if [ "$2" = on ]; then
+    [ "${CS_LINGER_ALL:-false}" = true ] && loginctl enable-linger "$1" >/dev/null 2>&1
+  else
+    loginctl disable-linger "$1" >/dev/null 2>&1
+  fi
+  return 0
+}
+
 # Written AS THE USER: root creating paths in a home the user controls would
 # follow any symlink they planted there.
 write_conf() {   # $1 user  $2 port
@@ -400,8 +422,9 @@ write_conf() {   # $1 user  $2 port
   h="$(getent passwd "$u" | cut -d: -f6)"; [ -n "$h" ] && [ -d "$h" ] || return 1
   pwf="/etc/code-server/$u.password"
   [ -s "$pwf" ] || (umask 077; tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 24 > "$pwf")
-  printf '%s\nbind-addr: %s:%s\nauth: password\npassword: %s\ncert: %s\n' \
-    "$MARK" "$CS_BIND" "$p" "$(head -1 "$pwf" | cut -d' ' -f1)" "$CS_TLS" |
+  { printf '%s\nbind-addr: %s:%s\nauth: password\npassword: %s\ncert: %s\n' \
+      "$MARK" "$CS_BIND" "$p" "$(head -1 "$pwf" | cut -d' ' -f1)" "$CS_TLS"
+    idle_line; } |
     runuser -u "$u" -- /bin/sh -c 'umask 077; d="$1/.config/code-server"
       mkdir -p "$d" && cat > "$d/config.yaml.new" && mv -f "$d/config.yaml.new" "$d/config.yaml"' sh "$h"
 }
@@ -430,6 +453,7 @@ claim_for() {
     logger -t it-codeserver "assigned port $p to $u"
   fi
   write_conf "$u" "$p" || { echo "NO could not write your IDE settings -- ask IT"; return 1; }
+  set_linger "$u" on
   echo "OK $p"
 }
 
@@ -470,7 +494,8 @@ cmd_sync() {
   while read -r u p; do
     r="$(why_not "$u")"
     if [ -n "$r" ]; then
-      remove_conf "$u"; echo "SKIP $u $r (port $p kept for them)"
+      systemctl --user --machine="$u@.host" stop code-server.service >/dev/null 2>&1 || true
+      remove_conf "$u"; set_linger "$u" off; echo "SKIP $u $r (port $p kept for them)"
     elif ! in_range "$p"; then
       remove_conf "$u"; echo "SKIP $u port $p is outside the range now; their next my-ide assigns a new one"
     else
@@ -509,6 +534,7 @@ cmd_reset() {
     h="$(getent passwd "$u" | cut -d: -f6)"
     grep -qsF -e "$MARK" -e "$OLD_MARK" "$h/.config/code-server/config.yaml" || continue
     systemctl --user --machine="$u@.host" stop code-server.service >/dev/null 2>&1 || true
+    set_linger "$u" off
     remove_conf "$u" && n=$((n + 1)) && say "  cleared $u"
   done < <(getent passwd)
   logger -t it-codeserver "ledger reset; $n config(s) cleared"
@@ -520,7 +546,9 @@ cmd_release() {
   load_settings; lock_ledger
   p="$(ledger_get "$u")"; [ -n "$p" ] || die "$u has no port on file"
   ledger_lines | awk -v u="$u" '$1 != u' | ledger_write || die "could not write $LEDGER"
-  remove_conf "$u"
+  # Stopped too: a running one would keep a port the ledger now hands out.
+  systemctl --user --machine="$u@.host" stop code-server.service >/dev/null 2>&1 || true
+  remove_conf "$u"; set_linger "$u" off
   logger -t it-codeserver "released port $p from $u"
   say "released $p from $u -- their next my-ide assigns a new one"
 }

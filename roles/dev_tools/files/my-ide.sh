@@ -13,9 +13,9 @@
 # There is an "IDE" tile in the applications grid that runs this with no
 # arguments -- clicking it is the whole workflow.
 #
-# It is a systemd USER service, so it lives inside your login session: nothing
-# runs at boot, and it stops when you log out. If you need it reachable while
-# you are logged out, ask an admin to enable lingering for you.
+# It is a systemd USER service. Normally it keeps running after you log out
+# (or your SSH session times out) and stops by itself after a stretch with no
+# browser activity -- `my-ide status` says how long. Nothing starts at boot.
 #
 # Admins: this is a thin front on the same unit `it-codeserver` manages.
 set -uo pipefail
@@ -169,6 +169,23 @@ This shell has no login session (su / sudo -u will not work)."
   return 0
 }
 
+lingers() { [ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" = yes ]; }
+idle_min() {
+  local s; s="$(sed -nE 's/^idle-timeout-seconds:[[:space:]]*([0-9]+).*/\1/p' "$CONF" | tail -1)"
+  [ -n "$s" ] && echo $(( s / 60 ))
+}
+# What happens to it when you walk away -- the one thing people ask.
+lifetime() {
+  local m; m="$(idle_min)"
+  if lingers; then
+    printf 'It keeps running after you log out'
+    [ -n "$m" ] && printf ' and stops by itself after %s minutes unused' "$m"
+    printf '.'
+  else
+    printf 'It stops when you log out.'
+  fi
+}
+
 open_it() {
   if command -v xdg-open >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
     xdg-open "$LOCAL_URL" >/dev/null 2>&1 &
@@ -186,7 +203,7 @@ case "${1:-open}" in
       printf '  %sYour IDE is running.%s\n\n    %s%s%s\n' "$G" "$R" "$B" "$LOCAL_URL" "$R"
     fi
     printf '    password: %s%s%s\n\n' "$B" "${pass:-see $CONF}" "$R"
-    printf '  %sIt stops when you log out. `my-ide always` to start it every login.%s\n\n' "$DIM" "$R" ;;
+    printf '  %s%s%s\n\n' "$DIM" "$(lifetime)" "$R" ;;
   stop)
     have_session || oops "No login session here."
     systemctl --user stop "$UNIT" && printf '  Your IDE is stopped.\n' ;;
@@ -200,6 +217,7 @@ case "${1:-open}" in
     printf '    from a PC %s\n' "$(lan_url)"
     have_session && printf '    at login  %s\n' \
       "$(systemctl --user is-enabled "$UNIT" 2>/dev/null | head -1)"
+    printf '    when idle %s\n' "$(lifetime)"
     printf '\n' ;;
   password|pass)
     printf '%s\n' "${pass:-}" ;;
@@ -210,7 +228,8 @@ case "${1:-open}" in
   always)
     have_session || oops "No login session here."
     systemctl --user enable --now "$UNIT" >/dev/null 2>&1 \
-      && printf '  Your IDE will start whenever you log in.\n' ;;
+      && { lingers && printf '  Your IDE will start whenever this machine starts, and when you log in.\n' \
+                   || printf '  Your IDE will start whenever you log in.\n'; } ;;
   never)
     have_session || oops "No login session here."
     systemctl --user disable "$UNIT" >/dev/null 2>&1 \

@@ -36,7 +36,9 @@
 - name: "CODE-SERVER | {{ cs_user }} | Linger (IDE reachable while logged out)"
   ansible.builtin.command:
     cmd: >-
-      loginctl {{ 'enable-linger' if cs_user in (dev_code_server_linger_users | default([]))
+      loginctl {{ 'enable-linger'
+                  if (dev_code_server_linger_all | default(true) | bool)
+                     or cs_user in (dev_code_server_linger_users | default([]))
                   else 'disable-linger' }} {{ cs_user }}
   register: _cs_linger
   changed_when: false

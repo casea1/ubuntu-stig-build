@@ -167,6 +167,31 @@ Evidence, from a user's XFCE session: `xfconf-query -c xfce4-screensaver -p
 /saver/idle-activation/delay` (10) and `-p /lock/enabled` (true); and the file
 above. The console is unaffected -- local logins are always GNOME.
 
+### code-server after logout (AC-12, AC-11)
+
+On a box with `dev_code_server_enabled`, an engineer's browser IDE keeps
+running after their last login session ends (`dev_code_server_linger_all`,
+systemd lingering), so an SSH idle disconnect does not kill work in progress.
+While it runs it is a password-protected shell on the LAN **with no login
+session behind it**: it shows no AC-8 notice, does not appear in `who`/`last`,
+and is not reached by the session's idle lock or the SSH idle disconnect.
+What bounds it instead:
+
+- code-server stops itself after `dev_code_server_idle_timeout_minutes` (60)
+  with no browser activity (`idle-timeout-seconds` in the user's config,
+  written only when the installed code-server supports it -- check with
+  `grep idle-timeout ~<user>/.config/code-server/config.yaml`).
+- It can only be started from a real login (`my-ide`), which shows the notice;
+  nothing starts at boot unless the person is named in
+  `dev_code_server_linger_users`.
+- Its own password (per user, root copy in `/etc/code-server/`), its source
+  restriction in ufw (`dev_code_server_allow_from`), and auditd, which records
+  everything run in its terminal under the engineer's UID.
+
+Turn it back to "stops at logout" with `dev_code_server_linger_all: false`.
+Evidence: `loginctl show-user <user> -p Linger`, the config line above, and
+`sudo it-codeserver` for what is running.
+
 ### ❌ Open POA&M: need a secret or infra (NOT auto-applied)
 
 | Finding | To close it |

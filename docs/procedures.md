@@ -2189,8 +2189,11 @@ it in the SSP, restrict `dev_code_server_allow_from`, and expect findings.
    `dev_code_server_exclude`. The port is recorded in `/etc/code-server/ports`
    and never changes. Then it starts their own instance and opens it. `my-ide password` shows their password, `my-ide remote` the
    address to use from a Windows PC (`https://<box>:<port>`, self-signed
-   certificate). Nothing runs at boot; it stops at logout unless an admin names
-   them in `dev_code_server_linger_users`.
+   certificate). Nothing runs at boot. Once started it **keeps running after
+   they log out or their SSH session times out** (`dev_code_server_linger_all`)
+   and stops itself after `dev_code_server_idle_timeout_minutes` (60) with no
+   browser activity; `my-ide status` says which applies. People named in
+   `dev_code_server_linger_users` also get theirs started at every boot.
 5. **Check:** `sudo it-codeserver` lists who has which port. Ports are never
    released on their own, so 20 is everyone who EVER claimed one on that box:
    `sudo it-codeserver release <user>` frees a leaver's, or raise

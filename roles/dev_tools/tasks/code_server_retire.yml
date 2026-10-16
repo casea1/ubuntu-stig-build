@@ -81,6 +81,18 @@
   changed_when: false
   failed_when: false
 
+# dev_code_server_linger_all turned it on for everyone who claimed a port; the
+# ledger survives retirement, so it still says who. Nothing else on these
+# boxes uses lingering.
+- name: "CODE-SERVER-RETIRE | Turn off lingering for everyone who claimed a port"
+  ansible.builtin.shell: |
+    [ -r /etc/code-server/ports ] || exit 0
+    grep -vE '^[[:space:]]*(#|$)' /etc/code-server/ports | awk '{print $1}' |
+      while read -r u; do id -u "$u" >/dev/null 2>&1 && loginctl disable-linger "$u"; done
+    exit 0
+  changed_when: false
+  failed_when: false
+
 # The pre-user-unit model: one SYSTEM unit per person, started at boot.
 - name: "CODE-SERVER-RETIRE | Old system instances"
   ansible.builtin.shell:
