@@ -2196,8 +2196,10 @@ it in the SSP, restrict `dev_code_server_allow_from`, and expect findings.
    `sudo it-codeserver release <user>` frees a leaver's, or raise
    `dev_code_server_port_span`. `sudo it-codeserver claim <user>` assigns one
    ahead of time if you need to hand out an address before they log in.
-   The first pull with claiming keeps only people who had actually run
-   code-server and clears every other pre-assigned config.
+   The first pull with claiming starts the ledger **empty** and clears every
+   config an older baseline pre-assigned; everyone claims at their next
+   `my-ide`. A box whose ledger already holds people who never used it (an
+   earlier version of that first pull kept them): `sudo it-codeserver reset`.
 
 **Switching it off:** `dev_code_server_enabled: false` (or delete the line) and
 pull. The pull stops every instance, removes the package, `my-ide`,

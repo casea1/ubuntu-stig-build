@@ -222,7 +222,7 @@
 - name: "CODE-SERVER | Refresh claimed instances, clear stale configs"
   ansible.builtin.command: /usr/local/sbin/it-codeserver sync
   register: _cs_sync
-  changed_when: _cs_sync.stdout is search('(?m)^(KEPT|CLEARED) ')
+  changed_when: _cs_sync.stdout is search('(?m)^(FRESH|CLEARED) ')
   when: not ansible_check_mode
 
 - name: "CODE-SERVER | Who is on file"

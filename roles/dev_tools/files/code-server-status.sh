@@ -32,6 +32,7 @@
 #   it-codeserver log <user> [N]    last N journal lines (default 40)
 #   it-codeserver claim <user>      assign a port now instead of at their first my-ide
 #   it-codeserver release <user>    free that user's port (they get a new one next time)
+#   it-codeserver reset             empty the ledger; everyone claims again at next my-ide
 #   it-codeserver sync              what the pull runs: refresh configs, clear stale ones
 #
 # NOTHING STARTS AT BOOT, AND NOTHING NEEDS ROOT. Those used to pull against
@@ -455,19 +456,14 @@ s.detach()')" || { echo "NO could not identify the caller"; exit 1; }
 cmd_sync() {
   local u p r uid
   load_settings; lock_ledger
-  # First run on a box that predates claiming: start FRESH, keeping only
-  # people who have actually run code-server (it creates its data dir on first
-  # start) and whose pull-written port is in range. Everyone else claims anew.
+  # First run on a box that predates claiming: start EMPTY. It used to keep
+  # anyone with ~/.local/share/code-server as "has used it" -- but older
+  # baselines started an instance for every entitled account at boot, which
+  # created that directory for people who never connected, so it kept the
+  # first users on the box. The configs those builds wrote are cleared below.
   if ! head -1 "$LEDGER" 2>/dev/null | grep -qxF "$LEDGER_HEAD"; then
-    while IFS=: read -r u _ uid _; do
-      [ "$uid" -ge 1000 ] && [ "$uid" -lt 65534 ] || continue
-      h="$(getent passwd "$u" | cut -d: -f6)"
-      [ -d "$h/.local/share/code-server" ] || continue
-      grep -qsF -e "$MARK" -e "$OLD_MARK" "$h/.config/code-server/config.yaml" || continue
-      p="$(sed -nE 's/^bind-addr:.*:([0-9]+)[[:space:]]*$/\1/p' "$h/.config/code-server/config.yaml" | tail -1)"
-      in_range "$p" && echo "$u $p"
-    done < <(getent passwd) | sort -k2,2n -u | ledger_write || die "could not write $LEDGER"
-    ledger_lines | sed 's/^/KEPT /'
+    : | ledger_write || die "could not write $LEDGER"
+    echo "FRESH ledger started empty; ports are claimed at each person's next my-ide"
   fi
   # Everyone on file: refresh the config, or take it away while keeping the
   # port reserved for them.
@@ -499,6 +495,24 @@ cmd_sync() {
     done
   fi
   return 0
+}
+
+# Empty the ledger and take back every config written here, so everyone
+# claims afresh at their next my-ide. A running instance is stopped first, or
+# it would keep a port the ledger no longer reserves for it.
+cmd_reset() {
+  local u uid h n=0
+  load_settings; lock_ledger
+  : | ledger_write || die "could not write $LEDGER"
+  while IFS=: read -r u _ uid _; do
+    [ "$uid" -ge 1000 ] && [ "$uid" -lt 65534 ] || continue
+    h="$(getent passwd "$u" | cut -d: -f6)"
+    grep -qsF -e "$MARK" -e "$OLD_MARK" "$h/.config/code-server/config.yaml" || continue
+    systemctl --user --machine="$u@.host" stop code-server.service >/dev/null 2>&1 || true
+    remove_conf "$u" && n=$((n + 1)) && say "  cleared $u"
+  done < <(getent passwd)
+  logger -t it-codeserver "ledger reset; $n config(s) cleared"
+  say "ledger is empty; $n config(s) cleared. Ports are claimed at each person's next my-ide."
 }
 
 cmd_release() {
@@ -566,5 +580,6 @@ case "${1:-status}" in
   release)
     [ -n "${2:-}" ] || die "usage: it-codeserver release <user>"; cmd_release "$2" ;;
   sync) cmd_sync ;;
+  reset) cmd_reset ;;
   *) die "unknown command: $1  (try: it-codeserver --help)" ;;
 esac
