@@ -18,9 +18,13 @@ it_scripts_emi_enabled: "{{ is_emi | default(false) | bool }}"
 # that received one keeps it forever unless it is named here: a stale symlink is
 # a second, unmaintained way to run the same tool, and it is not covered by the
 # sudoers grants, which name the current path.
+#
+# NEVER list a name another role still installs: this runs after dev_tools, so
+# it deletes that role's file on every pull. it-codeserver sat here after
+# code-server came back as an opt-in, and vanished from every box at each pull.
+# Its removal when code-server is off belongs to code_server_retire.yml.
 it_scripts_retired_links:
   - it-offline-repo        # renamed to it-repo, 2026-09-01
-  - it-codeserver          # code-server retired for Remote-SSH, 2026-09-25
 
 # Scripts a NON-ADMIN group is granted sudo on. These are installed as REAL
 # FILES in /usr/local/sbin, not symlinked into /opt/it/scripts like everything
