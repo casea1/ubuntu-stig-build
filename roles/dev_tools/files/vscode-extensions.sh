@@ -15,6 +15,9 @@
 #                              who needs to modify the shared extensions
 #   it-vscode verify [user]    ask VS Code itself what it can see
 #
+#   --code-server-only         touch only ~/.local/share/code-server/extensions
+#                              (legacy 22.04 VMs: nothing else there is ours)
+#
 # Users can still install their own extensions: the directory is theirs and
 # writable, and only the shared entries are links. `code --uninstall-extension`
 # on a shared one removes the LINK, not the store.
@@ -22,6 +25,7 @@ set -uo pipefail
 
 SHARED="${VSCODE_SHARED_DIR:-/opt/vscode-extensions}"
 QUIET=0
+CS_ONLY=0
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   B=$'\033[1m'; DIM=$'\033[2m'; GRN=$'\033[32m'; YEL=$'\033[33m'; RED=$'\033[31m'; R=$'\033[0m'
@@ -55,6 +59,9 @@ shared_exts() {
 ext_dirs_for() {   # $1 = user -> the dirs to populate, one per line
   local h; h="$(home_of "$1")"
   [ -n "$h" ] && [ -d "$h" ] || return 1
+  if [ "$CS_ONLY" = 1 ]; then
+    printf '%s/.local/share/code-server/extensions\n' "$h"; return 0
+  fi
   printf '%s/.vscode/extensions\n' "$h"
   printf '%s/.vscode-server/extensions\n' "$h"
   # code-server, only where it is installed (opt-in per box). It loads what it
@@ -215,7 +222,9 @@ cmd_status() {
 }
 
 CMD="${1:-status}"; shift 2>/dev/null || true
-for a in "$@"; do [ "$a" = --quiet ] && QUIET=1; done
+for a in "$@"; do
+  case "$a" in --quiet) QUIET=1 ;; --code-server-only) CS_ONLY=1 ;; esac
+done
 
 case "$CMD" in
   ""|status) cmd_status ;;

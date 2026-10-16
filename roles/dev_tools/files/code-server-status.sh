@@ -454,6 +454,9 @@ claim_for() {
   fi
   write_conf "$u" "$p" || { echo "NO could not write your IDE settings -- ask IT"; return 1; }
   set_linger "$u" on
+  # The shared extension set now, not at the next pull.
+  [ -d /opt/vscode-extensions ] && [ -x /usr/local/sbin/it-vscode ] &&
+    /usr/local/sbin/it-vscode link "$u" --code-server-only --quiet >/dev/null 2>&1
   echo "OK $p"
 }
 

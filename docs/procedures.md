@@ -3493,6 +3493,25 @@ off (`dev_code_server_enabled: false`, pull) removes everything it placed;
 a VM that never had it is not touched at all, so an engineer's own
 code-server there is safe.
 
+**code-server extensions on a legacy VM.** The 24.04 boxes build the shared
+extension store; a VM does not, so its code-server starts with none and,
+offline, cannot fetch any. Carry a 24.04 box's store across:
+
+```bash
+# on a 24.04 box (about 3 GB uncompressed)
+sudo tar czf ~/vscode-extensions.tar.gz -C /opt vscode-extensions
+# copy it to the VM's home directory (WinSCP), then on the VM:
+sudo tar xzf ~/vscode-extensions.tar.gz -C /opt && rm ~/vscode-extensions.tar.gz
+sudo it-pull
+```
+
+The pull links it into `~/.local/share/code-server/extensions` for everyone
+with a claimed port, and a new claim links itself -- nothing else in their
+home is touched (`it-vscode ... --code-server-only`). Microsoft-licensed
+extensions in the set (Pylance, C/C++, C# Dev Kit) and the Remote ones show
+greyed out: code-server cannot run them. Carry a newer store the same way to
+update it.
+
 ## 4.5 Suggested cadence
 
 | Activity | Cadence |

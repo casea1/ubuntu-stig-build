@@ -20,8 +20,77 @@
   ansible.builtin.import_tasks: "{{ playbook_dir }}/roles/dev_tools/tasks/code_server.yml"
   when: dev_code_server_enabled | default(false) | bool
 
+# Extensions. The 24.04 boxes build /opt/vscode-extensions in dev_tools'
+# vscode.yml, which never runs here, so a VM's code-server starts empty and,
+# offline, cannot fetch any. A copy of a 24.04 box's store carried in on media
+# (procedures 4.4e) is linked into code-server's folder ONLY -- ~/.vscode and
+# ~/.vscode-server are not this profile's to manage (--code-server-only).
+- name: "LEGACY | it-vscode (links the shared extension store)"
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/roles/dev_tools/files/vscode-extensions.sh"
+    dest: /opt/it/scripts/vscode-extensions.sh
+    owner: root
+    group: "{{ ia_it_group }}"
+    mode: "0750"
+  when: dev_code_server_enabled | default(false) | bool
+  tags: [scripts]
+
+- name: "LEGACY | it-vscode command"
+  ansible.builtin.file:
+    src: /opt/it/scripts/vscode-extensions.sh
+    dest: /usr/local/sbin/it-vscode
+    state: link
+    force: true
+  when: dev_code_server_enabled | default(false) | bool
+  tags: [scripts]
+
+- name: "LEGACY | Is there a shared extension store?"
+  ansible.builtin.stat:
+    path: /opt/vscode-extensions
+  register: _legacy_vsx
+  when: dev_code_server_enabled | default(false) | bool
+
+# Everyone with a claimed port and a config; a new claim links itself.
+- name: "LEGACY | Link the store into each code-server user's extensions"
+  ansible.builtin.shell: |
+    [ -r /etc/code-server/ports ] || exit 0
+    grep -vE '^[[:space:]]*(#|$)' /etc/code-server/ports | awk '{print $1}' |
+      while read -r u; do
+        h=$(getent passwd "$u" | cut -d: -f6) || continue
+        [ -r "$h/.config/code-server/config.yaml" ] || continue
+        /usr/local/sbin/it-vscode link "$u" --code-server-only --quiet
+      done
+    exit 0
+  changed_when: false
+  when:
+    - dev_code_server_enabled | default(false) | bool
+    - _legacy_vsx.stat.exists | default(false)
+
+- name: "LEGACY | No shared extension store"
+  ansible.builtin.debug:
+    msg: >-
+      code-server is on but /opt/vscode-extensions does not exist, so its
+      extensions list is empty. Copy the store from a 24.04 box
+      (procedures 4.4e, "code-server extensions"), then pull again.
+  when:
+    - dev_code_server_enabled | default(false) | bool
+    - not (_legacy_vsx.stat.exists | default(false))
+
 - name: "LEGACY | code-server (off: remove what this baseline placed)"
   ansible.builtin.import_tasks: "{{ playbook_dir }}/roles/dev_tools/tasks/code_server_retire.yml"
+  when:
+    - not (dev_code_server_enabled | default(false) | bool)
+    - _legacy_cs_ours.stat.exists
+
+# Here, unlike 24.04, it-vscode exists only for code-server, so it goes with it.
+# The store and each user's links are left: ~/.local/share/code-server is theirs.
+- name: "LEGACY | code-server off: remove it-vscode"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /usr/local/sbin/it-vscode
+    - /opt/it/scripts/vscode-extensions.sh
   when:
     - not (dev_code_server_enabled | default(false) | bool)
     - _legacy_cs_ours.stat.exists
