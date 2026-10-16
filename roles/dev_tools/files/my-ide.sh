@@ -113,23 +113,59 @@ have_session() {
   [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -S "${XDG_RUNTIME_DIR}/bus" ]
 }
 
+# Whose process is listening on a port: its uid, or nothing. From the kernel's
+# own table, so it works without root and without ss.
+port_owner() {
+  local f fs=()
+  for f in /proc/net/tcp /proc/net/tcp6; do [ -r "$f" ] && fs+=("$f"); done
+  awk -v p="$(printf '%04X' "$1")" \
+    'FNR > 1 && $4 == "0A" { n = split($2, a, ":"); if (a[n] == p) { print $8; exit } }' "${fs[@]}"
+}
+
+# Someone else's instance on OUR port: ours cannot bind, and the browser
+# reaches theirs -- whose password is not ours. Left over from a renumber.
+not_on_someone_elses() {
+  local o who; o="$(port_owner "$port")"
+  [ -z "$o" ] || [ "$o" = "$(id -u)" ] && return 0
+  who="$(getent passwd "$o" | cut -d: -f1)"; who="${who:-uid $o}"
+  oops "Your port ($port) is being used by $who's IDE, so the password is not
+yours there. Ask IT to run:  sudo it-codeserver stop $who"
+}
+
+# code-server reads its config only when it starts. A config changed since
+# (a new port or password) is not what the running one is using.
+stale() {
+  local pid el
+  pid="$(systemctl --user show -p MainPID --value "$UNIT" 2>/dev/null)"
+  [ "${pid:-0}" -gt 0 ] 2>/dev/null || return 1
+  el="$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ')"; [ -n "$el" ] || return 1
+  [ "$(stat -c %Y "$CONF")" -gt $(( $(date +%s) - el )) ]
+}
+
 start_it() {
   have_session || oops "Your IDE can only start from a desktop or SSH login of your own.
 This shell has no login session (su / sudo -u will not work)."
-  running && return 0
-  systemctl --user start "$UNIT" \
-    || oops "Your IDE would not start. Show this to IT:  journalctl --user -u code-server -n 40"
-  # Wait for the port rather than guessing: opening the browser first shows a
-  # connection error and people conclude it is broken.
+  if running; then
+    stale || { not_on_someone_elses; return 0; }
+    systemctl --user restart "$UNIT" \
+      || oops "Your IDE would not restart. Show this to IT:  journalctl --user -u code-server -n 40"
+  else
+    not_on_someone_elses
+    systemctl --user start "$UNIT" \
+      || oops "Your IDE would not start. Show this to IT:  journalctl --user -u code-server -n 40"
+  fi
+  # Wait for OUR process on the port rather than guessing: opening the browser
+  # first shows a connection error and people conclude it is broken.
   local i
   for i in 1 2 3 4 5 6 7 8 9 10; do
     # is-failed, not "not is-active": a unit that is still `activating` is not
     # active yet, and treating that as a failure would abort on a slow start.
     systemctl --user is-failed --quiet "$UNIT" 2>/dev/null \
       && oops "Your IDE stopped right after starting. Show this to IT:  journalctl --user -u code-server -n 40"
-    (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && return 0
+    [ "$(port_owner "$port")" = "$(id -u)" ] && return 0
     sleep 1
   done
+  not_on_someone_elses
   return 0
 }
 

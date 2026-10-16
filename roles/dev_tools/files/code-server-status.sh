@@ -536,10 +536,13 @@ case "${1:-status}" in
     esac ;;
   password|passwd)
     [ -n "${2:-}" ] || die "usage: it-codeserver password <user>"
+    # The config is what code-server checks; the root copy only seeds it.
+    pw="$(sed -nE 's/^password:[[:space:]]*//p' "$(conf_of "$2")" 2>/dev/null | tail -1)"
     f="/etc/code-server/$2.password"
-    [ -r "$f" ] || die "no password on file for $2 -- has the pull configured them?"
+    [ -n "$pw" ] || { [ -r "$f" ] && pw="$(head -1 "$f" | cut -d' ' -f1)"; }
+    [ -n "$pw" ] || die "no password for $2 -- they have not claimed a port yet (first my-ide)"
     head2 "code-server password for $2"
-    printf '\n      %s%s%s\n\n' "$B" "$(cat "$f")" "$R"
+    printf '\n      %s%s%s\n\n' "$B" "$pw" "$R"
     say "  ${DIM}Hand it over the way your site hands over a password -- not by email.${R}"
     say "  ${DIM}URL: $(url_for "$2")${R}"; say "" ;;
   url)
