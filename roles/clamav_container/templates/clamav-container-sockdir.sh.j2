@@ -1,0 +1,20 @@
+#!/bin/sh
+# Managed by ansible (clamav_container) -- do not edit by hand.
+#
+# The socket directory becomes the container's /tmp, and clamd -- as the image's
+# own `clamav` user -- creates clamd.sock in it. It used to be 1777 for that,
+# which also let ANY local user bind clamd.sock first after a reboot (clamd takes
+# minutes to start) and answer "clean" to DTA transfer scans. Owned by the
+# image's clamav user at 0755 instead: only clamd can create the socket, and
+# host callers can still reach it. The UID comes from the image, not a constant.
+# If it cannot be read, fall back to 1777 rather than break scanning.
+d={{ clamav_container_sock_dir }}
+img={{ clamav_container_image }}
+u=$(/usr/bin/docker run --rm --network none --entrypoint id "$img" -u clamav 2>/dev/null)
+g=$(/usr/bin/docker run --rm --network none --entrypoint id "$img" -g clamav 2>/dev/null)
+install -d "$d"
+case "$u:$g" in
+  [0-9]*:[0-9]*) chown "$u:$g" "$d" && chmod 0755 "$d" && exit 0 ;;
+esac
+echo "clamav-container: could not read the image's clamav uid; socket dir left 1777" >&2
+chown root:root "$d"; chmod 1777 "$d"

@@ -53,17 +53,25 @@
           Standing up {{ clamav_container_image }} as a containerised clamd instead.
           Host kernel stays in FIPS mode; only the scanning engine moves.
 
-    # 1777, i.e. /tmp semantics -- because that is literally what this directory
-    # becomes inside the container. clamd there runs as the image's unprivileged
-    # `clamav` user and has to CREATE its socket in it; at 0755 root:root it
-    # cannot, and the socket simply never appears.
-    - name: "CLAMAV-CTR | Socket directory (becomes the container's /tmp)"
+    # The socket directory becomes the container's /tmp; clamd creates its
+    # socket there as the image's clamav user. The helper (also the unit's
+    # ExecStartPre, since the directory is on tmpfs) gives it to that user at
+    # 0755 -- it used to be 1777, which let any local user squat clamd.sock.
+    - name: "CLAMAV-CTR | /usr/local/libexec"
       ansible.builtin.file:
-        path: "{{ clamav_container_sock_dir }}"
+        path: /usr/local/libexec
         state: directory
         owner: root
         group: root
-        mode: "1777"
+        mode: "0755"
+
+    - name: "CLAMAV-CTR | Socket directory helper"
+      ansible.builtin.template:
+        src: clamav-container-sockdir.sh.j2
+        dest: /usr/local/libexec/clamav-container-sockdir
+        owner: root
+        group: root
+        mode: "0755"
 
     # The image's entrypoint chowns its database directory to the container's
     # clamav user, so it cannot be the host's /var/lib/clamav -- the two would
@@ -352,6 +360,7 @@
         - /etc/systemd/system/clamav-container-sync.path
         - "{{ clamav_container_client_conf }}"
         - /etc/clamav/container-image
+        - /usr/local/libexec/clamav-container-sockdir
       register: _cc_gone
 
     - name: "CLAMAV-CTR | Unmask the host daemon"
