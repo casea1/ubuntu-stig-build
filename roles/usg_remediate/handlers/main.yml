@@ -5,11 +5,20 @@
     state: restarted
   failed_when: false
 
-- name: Restart ssh
+# The WHOLE config, every drop-in included, before restarting: a bad value
+# fails the pull here, loudly, and the running sshd keeps its old config.
+# Restarting onto a broken one (with the failure ignored, as it used to be)
+# leaves a box nobody can SSH into and a pull that reported success.
+- name: Validate sshd
+  ansible.builtin.command: /usr/sbin/sshd -t
+  changed_when: false
+  listen: Restart ssh
+
+- name: Restart sshd
   ansible.builtin.systemd:
     name: ssh
     state: restarted
-  failed_when: false
+  listen: Restart ssh
 
 # Best-effort live load. `usg fix` has usually already set the audit config
 # immutable (-e 2), so a live reload is refused with "audit system is in
