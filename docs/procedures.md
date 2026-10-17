@@ -1686,7 +1686,7 @@ The record goes to `/opt/dta/logs`. Verdicts: `CLEAN`, `INFECTED`, `ENGINE-FAULT
 ## 3.4b USB serial adapters the kernel does not recognize (Sealevel and friends)
 
 ```bash
-sudo it-serial                 # plugged in? bound? usable by a normal user?
+sudo it-serial-id                # plugged in? bound? usable by a normal user?
 ```
 
 **The failure looks like dead hardware.** `ftdi_sio` drives any FTDI chip, but
@@ -1722,7 +1722,7 @@ Adding another adapter, without editing the repo:
 
 ```bash
 lsusb                                  # find its <vid>:<pid>
-sudo it-serial add 0c52:e402           # bind now AND persist to /opt/it/site.yml
+sudo it-serial-id add 0c52:e402           # bind now AND persist to /opt/it/site.yml
 sudo it-pull                           # render the udev rule
 ```
 
@@ -1733,7 +1733,7 @@ sudo it-pull                           # render the udev rule
 > configuring a rule that cannot work.
 
 If the adapter is invisible even to `lsusb`, it is USBGuard, not the driver —
-`it-serial` says so, and an FTDI-class device is authorized on connect under the
+`it-serial-id` says so, and an FTDI-class device is authorized on connect under the
 current policy (vendor-specific), so this should be rare.
 
 ## 3.5 Enrol a USB device

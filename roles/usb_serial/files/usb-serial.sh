@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# it-serial -- USB serial adapters the kernel does not recognise on its own.
+# it-serial-id -- USB serial adapters the kernel does not recognise on its own.
 #
 # THE PROBLEM THIS SOLVES. ftdi_sio drives any FTDI chip, but it only BINDS to
 # vendor/product IDs compiled into its table. A vendor shipping an FTDI part
@@ -12,11 +12,11 @@
 # works until the next boot and then stops, which is worse than not working at
 # all because it looks fixed.
 #
-#   it-serial                what is plugged in, bound, and usable  (the default)
-#   it-serial status         the same
-#   it-serial bind           apply every configured ID now
-#   it-serial add <vid:pid>  bind a NEW adapter and persist it, e.g. 0c52:e402
-#   it-serial ports          the tty devices that exist, and who may open them
+#   it-serial-id                what is plugged in, bound, and usable  (the default)
+#   it-serial-id status         the same
+#   it-serial-id bind           apply every configured ID now
+#   it-serial-id add <vid:pid>  bind a NEW adapter and persist it, e.g. 0c52:e402
+#   it-serial-id ports          the tty devices that exist, and who may open them
 #
 # `add` writes to /opt/it/site.yml as well as binding it now, so the next
 # ansible-pull renders the same udev rule and the adapter still works after a
@@ -97,7 +97,7 @@ cmd_status() {
       ok "    $drv loaded"
     else
       bad "    $drv NOT loaded -- no tty can appear"
-      say "      ${DIM}sudo it-serial bind${R}"
+      say "      ${DIM}sudo it-serial-id bind${R}"
       continue
     fi
 
@@ -114,7 +114,7 @@ cmd_status() {
       [ -e "/dev/serial/by-id" ] && ls -l /dev/serial/ 2>/dev/null | sed -n '2,6p' | sed 's/^/      /'
     else
       bad "    no tty -- the ID is not in ${drv}'s table"
-      say "      ${DIM}sudo it-serial bind${R}"
+      say "      ${DIM}sudo it-serial-id bind${R}"
     fi
   done <<EOF
 $(devices)
@@ -160,7 +160,7 @@ cmd_add() {
   local spec="${1:-}" drv="${2:-ftdi_sio}" v p
   case "$spec" in
     *:*) v="${spec%%:*}"; p="${spec##*:}" ;;
-    *) die "usage: it-serial add <vid:pid> [driver]   e.g. it-serial add 0c52:e402" ;;
+    *) die "usage: it-serial-id add <vid:pid> [driver]   e.g. it-serial-id add 0c52:e402" ;;
   esac
   case "$v$p" in *[!0-9a-fA-F]*) die "vid:pid must be hex, got '$spec'" ;; esac
 
