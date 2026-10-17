@@ -55,6 +55,11 @@ Start with `README.md`, then `docs/`. Do not duplicate those here.
   storage, the dta carve-out and the camera/mic lockdown. ASP-2 was found that
   way. `bootstrap.sh` writes it; `it-pull --profile <name>` sets and persists
   it, and refuses to run when it cannot determine one.
+- **CI runs the repo's own checks** (`.github/workflows/checks.yml`): the
+  `tools/check-*` scripts -- including two roles installing one command and an
+  unquoted `when:` that YAML turns into an always-true mapping -- YAML parsing,
+  `local.yml` under ansible-core 2.16 (noble's) and `legacy.yml` under Ansible
+  2.10, and shellcheck errors. Run them locally before pushing.
 - **Verify before asserting.** Several bugs here came from plausible-sounding
   assumptions. Check the actual file, the actual package, the actual box.
 - **Profile gating** is computed in `group_vars` (`is_ai`, `is_emi`,

@@ -1,0 +1,78 @@
+name: checks
+
+# The repo's own consistency checks, run on every push instead of when someone
+# remembers. Each one exists because its bug shipped once: two roles installing
+# one command (it-serial), a retired name deleting a live one (it-codeserver),
+# an unquoted `when:` that YAML made always-true, a role running a command a
+# later role installs.
+on:
+  push:
+  pull_request:
+
+jobs:
+  baseline:
+    name: 24.04 baseline (local.yml)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # noble ships ansible-core 2.16; check against the same series.
+      - name: Install tools
+        run: |
+          pip install "ansible-core>=2.16,<2.17" pyyaml shellcheck-py
+          ansible-galaxy collection install -r requirements.yml
+
+      - name: Repo consistency checks
+        run: |
+          python3 tools/check-role-ordering.py
+          python3 tools/check-command-collisions.py
+          python3 tools/check-when-strings.py
+          bash tools/check-script-functions.sh
+          bash tools/check-script-headers.sh
+
+      - name: Every YAML file parses
+        run: |
+          python3 - <<'EOF'
+          import subprocess, sys, yaml
+          bad = 0
+          for f in subprocess.check_output(["git", "ls-files", "*.yml", "*.yaml"]).decode().split():
+              try:
+                  list(yaml.safe_load_all(open(f)))
+              except yaml.YAMLError as e:
+                  print(f"{f}: {e}"); bad = 1
+          sys.exit(bad)
+          EOF
+
+      - name: Playbook syntax (local.yml)
+        run: ansible-playbook -i localhost, local.yml --syntax-check
+
+      # SC1087 is excluded: it reads `$key[[:space:]]` inside a regex as an
+      # array index, and every hit in this repo is that false positive.
+      - name: Shell scripts (bash -n, shellcheck errors)
+        run: |
+          scripts=$(git ls-files \
+            | grep -vE '\.(j2|xml|md|yml|yaml|html|json|desktop|service|socket|rules|conf|txt|xz|py)$' \
+            | xargs grep -lE '^#!.*(bash|/sh)' 2>/dev/null)
+          for s in $scripts; do bash -n "$s"; done
+          shellcheck -S error -e SC1087 $scripts
+
+  legacy:
+    name: 22.04 legacy (legacy.yml, Ansible 2.10)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      # What 22.04 ships: the `ansible` 2.10 package, collections bundled.
+      - name: Install Ansible 2.10
+        run: pip install "ansible==2.10.7"
+
+      - name: Playbook syntax (legacy.yml)
+        run: ansible-playbook -i localhost, legacy.yml --syntax-check

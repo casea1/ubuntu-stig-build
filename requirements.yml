@@ -4,7 +4,10 @@
 # Collections only -- hardening is Canonical's USG (an apt package via Ubuntu
 # Pro), so there is no Galaxy role to pull.
 #
-# FLOORS, not pins. To freeze a gold image, set each `version:` to an exact
+# RANGES, not pins: a floor, and a ceiling at the last major that still
+# supports noble's ansible-core 2.16 -- without one, galaxy installed the
+# newest community.general (13.x, needs 2.18) on every new box. Raise the
+# ceilings with the ansible-core version, never alone. To freeze a gold image, set each `version:` to an exact
 # release from a known-good box (`ansible-galaxy collection list`); a pin that
 # noble's ansible-core cannot load would stop every new bootstrap.
 #
@@ -13,6 +16,6 @@
 
 collections:
   - name: community.general # ufw, ini_file, modprobe, lvol (disk_expand), alternatives (xfce)
-    version: ">=8.0.0"
+    version: ">=8.0.0,<12.0.0"  # 12.x needs ansible-core 2.17, 13.x 2.18; noble ships 2.16
   - name: ansible.posix     # acl (local_accounts, managed_dirs), sysctl (remote_desktop)
-    version: ">=1.5.0"      # also bundled with the full `ansible` package
+    version: ">=1.5.0,<3.0.0"   # 2.x supports 2.16; cap the next major the same way
