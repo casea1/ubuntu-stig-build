@@ -54,9 +54,8 @@ KEEP="${POWERSTRUX_KEEP:-26}"
 # edited where it ALREADY EXISTS in the vendor's file. A name this script does
 # not know produces "not found" and a printout of the real keys -- never an
 # appended line the tool ignores, and never a mangled config that an assessor
-# reads the output of months later. Add the right name here (or to
-# powerstrux_days_keys / powerstrux_dir_keys in group_vars) if a release
-# renames one.
+# reads the output of months later. Add the right name here (or pass
+# --days-key / --dir-key) if a release renames one.
 POWERSTRUX_DAYS="${POWERSTRUX_DAYS:-8}"
 POWERSTRUX_DAYS_KEYS="${POWERSTRUX_DAYS_KEYS:-DaysToAudit EventLogDays DaysToReport ReportDays}"
 POWERSTRUX_DIR_KEYS="${POWERSTRUX_DIR_KEYS:-ReportLocation ReportPath ReportDirectory OutputPath}"
@@ -356,8 +355,8 @@ cmd_config() {
     isay  "  Nothing was guessed and nothing was appended -- the config is unchanged"
     isay  "  apart from the keys reported above. The settings it carries now:"
     grep -nE '^[[:space:]]*[A-Za-z].*=' "$CONFIG" | sed 's/^/      /'
-    isay  "  Set the right names in POWERSTRUX_DAYS_KEYS / POWERSTRUX_DIR_KEYS"
-    isay  "  (powerstrux_days_keys / powerstrux_dir_keys in group_vars) and re-run."
+    isay  "  Re-run naming the right keys:"
+    isay  "    sudo it-powerstrux config --days-key <name> --dir-key <name>"
   fi
   return "$rc"
 }

@@ -166,8 +166,8 @@ usg_faillock_unlock_time: 900
 
 # --- PAM (UBTU-24-300017 / 400220) ------------------------------------------
 # faildelay only slows a failed login; rounds only affects password CHANGES.
-# Neither can deny an otherwise valid login.
-usg_fix_pam_faildelay: true
+# Neither can deny an otherwise valid login. faildelay is written by the
+# usg_fix_pam_stack block (below), so it has no switch of its own.
 usg_pam_faildelay_us: 4000000
 
 # The benchmark's value (100000) is an SHA-512-crypt iteration count, but

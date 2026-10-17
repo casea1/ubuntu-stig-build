@@ -1123,7 +1123,7 @@
   when: _pam_preflight.rc | default(0) != 0
 
 - name: "REMED | PAM stack: faillock + faildelay (pam-auth-update profiles)"
-  when: usg_fix_pam_stack | default(true) | bool
+  when: usg_fix_pam_stack | default(false) | bool
   block:
     - name: "REMED | Back up the generated PAM files"
       ansible.builtin.copy:
