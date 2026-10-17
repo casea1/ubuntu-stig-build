@@ -267,13 +267,16 @@
     state: present
   when: (dev_rdp_allowed_group | default('') | length) > 0
 
-- name: "XRDP | Restrict RDP logins to the {{ dev_rdp_allowed_group }} group (PAM)"
+# ONE group line, matched by regexp: with `line:` alone, changing the group
+# added a second `required` check beside the old one and nobody could log in.
+# Clearing the variable removes it, so switching the restriction off works too.
+- name: "XRDP | Restrict RDP logins to the {{ dev_rdp_allowed_group | default('') or '(no)' }} group (PAM)"
   ansible.builtin.lineinfile:
     path: /etc/pam.d/xrdp-sesman
+    regexp: '^auth\s+required\s+pam_succeed_if\.so\s+user\s+ingroup\s'
     insertafter: '^@include common-auth'
-    line: "auth required pam_succeed_if.so user ingroup {{ dev_rdp_allowed_group }}"
-    state: present
-  when: (dev_rdp_allowed_group | default('') | length) > 0
+    line: "auth required pam_succeed_if.so user ingroup {{ dev_rdp_allowed_group | default('') }}"
+    state: "{{ 'present' if (dev_rdp_allowed_group | default('') | length) > 0 else 'absent' }}"
 
 - name: "XRDP | Enable + start xrdp and the session manager"
   ansible.builtin.systemd:
