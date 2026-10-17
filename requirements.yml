@@ -1,14 +1,18 @@
 ---
-# Installed by ansible-pull's galaxy step, or manually with:
-#   ansible-galaxy install -r requirements.yml
+# Installed by bootstrap.sh at build time, and by it-pull whenever this file
+# changes (a failed install there only warns: an offline box keeps what it has).
+# Collections only -- hardening is Canonical's USG (an apt package via Ubuntu
+# Pro), so there is no Galaxy role to pull.
 #
-# Both profiles now harden with Canonical's USG (`usg`), not the community
-# ansible-lockdown role -- so there is no external Galaxy ROLE to pull anymore.
-# (USG is an apt package installed via Ubuntu Pro by the usg_harden role.) Only
-# the module collections the roles use are pinned here, for reproducible builds.
+# FLOORS, not pins. To freeze a gold image, set each `version:` to an exact
+# release from a known-good box (`ansible-galaxy collection list`); a pin that
+# noble's ansible-core cannot load would stop every new bootstrap.
+#
+# legacy.yml (22.04, Ansible 2.10) does not use this file: it runs on the
+# collections bundled with 22.04's `ansible` package.
 
 collections:
-  - name: community.general # ini_file/ufw/modprobe/pamd (desktop_hardening, remote_desktop, ai_firewall, app_config)
-    version: ">=8.0.0"     # floor; pin an exact version for a frozen gold image
-  - name: ansible.posix    # acl (local_accounts, managed_dirs) + sysctl (remote_desktop)
-    version: ">=1.5.0"     # also bundled with the full `ansible` package
+  - name: community.general # ufw, ini_file, modprobe, lvol (disk_expand), alternatives (xfce)
+    version: ">=8.0.0"
+  - name: ansible.posix     # acl (local_accounts, managed_dirs), sysctl (remote_desktop)
+    version: ">=1.5.0"      # also bundled with the full `ansible` package
