@@ -2212,6 +2212,34 @@ person's own settings in `~/.local/share/code-server` are left.
 `it-users lock`/`delete` stops a person's code-server along with their VS Code
 server.
 
+### AI coding assistant (Continue, on the site's own model)
+
+The **Continue** extension is in the shared VS Code set, and works in desktop
+VS Code over Remote-SSH and in code-server. It talks only to the endpoint you
+give it, so code never leaves the network. Off until set:
+
+1. In `/opt/it/site.yml` (or `group_vars` for the whole fleet):
+   ```yaml
+   dev_ai_assistant_api_base: "http://<dev-ai1 address>:8000/v1"   # System 1 vLLM
+   dev_ai_assistant_model: gpt-oss-120b                             # its --served-model-name
+   ```
+2. `sudo it-pull`. Every account gets `~/.continue/config.yaml`, written as
+   the user, and new accounts get it from `/etc/skel`. A file the engineer made
+   themselves (no "Managed by ansible" first line) is never touched; ours is
+   rewritten when the endpoint changes, and removed if the setting is cleared.
+3. Check from the box: `curl -s http://<dev-ai1>:8000/v1/models` lists the model.
+
+Chat, edit and apply only: a 120B model is too slow for keystroke autocomplete.
+Telemetry is off in new accounts' VS Code settings (`continue.telemetryEnabled`)
+and, offline, has nowhere to go anyway.
+
+> **vLLM's port is published by Docker, so ufw does not filter it** (CLAUDE.md
+> gotcha 1): anything on the LAN can use the model, not only these editors.
+> Put it behind an allow-list like MLflow's before relying on it.
+
+> Offline boxes get the extension only in a shared store built online -- a
+> fresh build, or a store copied from one (see the legacy steps in 4.4e).
+
 ## 3.7 Create a user account
 
 ```bash

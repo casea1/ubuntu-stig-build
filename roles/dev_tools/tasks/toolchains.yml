@@ -6,6 +6,27 @@
     update_cache: true
     cache_valid_time: 3600
 
+# `apt-get -s`, not `apt-cache policy`: a candidate is not "installable" (trap 27).
+- name: Which everyday tools can be installed from the configured repos?
+  ansible.builtin.shell: |
+    for p in {{ dev_qol_packages | join(' ') }}; do
+      apt-get -s -qq install "$p" >/dev/null 2>&1 && echo "OK $p" || echo "NO $p"
+    done
+  register: _dev_qol_probe
+  changed_when: false
+  check_mode: false
+
+- name: Install the everyday tools that resolve
+  ansible.builtin.apt:
+    name: "{{ _dev_qol_probe.stdout_lines | select('match', '^OK ') | map('regex_replace', '^OK ', '') | list }}"
+    state: present
+  when: _dev_qol_probe.stdout_lines | select('match', '^OK ') | list | length > 0
+
+- name: Everyday tools not in the configured repos (skipped)
+  ansible.builtin.debug:
+    msg: "Not installable here -- add to the offline repo: {{ _dev_qol_probe.stdout_lines | select('match', '^NO ') | map('regex_replace', '^NO ', '') | join(', ') }}"
+  when: _dev_qol_probe.stdout_lines | select('match', '^NO ') | list | length > 0
+
 - name: Add the developer user to the docker group
   # The docker group is root-equivalent — documented dev-workstation exception.
   # Justify + access-control on the real image.

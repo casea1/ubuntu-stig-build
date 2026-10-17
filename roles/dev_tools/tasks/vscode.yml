@@ -104,7 +104,8 @@
     mode: "0644"
     content: |
       {
-        "python.defaultInterpreterPath": "{{ eng_venv_path }}/bin/python"
+        "python.defaultInterpreterPath": "{{ eng_venv_path }}/bin/python",
+        "continue.telemetryEnabled": false
       }
 
 # ---------------------------------------------------------------------------

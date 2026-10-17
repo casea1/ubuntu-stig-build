@@ -37,6 +37,9 @@
   ansible.builtin.import_tasks: python_env.yml
   tags: [packages]
 
+- name: AI coding assistant config (Continue -> the site's vLLM; opt-in)
+  ansible.builtin.import_tasks: ai_assistant.yml
+
 - name: Install and wire VS Code extensions
   ansible.builtin.import_tasks: vscode.yml
   when: editor_choice == "vscode"

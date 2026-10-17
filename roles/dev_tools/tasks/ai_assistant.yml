@@ -1,0 +1,67 @@
+---
+# Continue's per-user config (~/.continue/config.yaml), pointed at the site's
+# vLLM. Continue reads only the user's own file, so: /etc/skel for new
+# accounts, and existing accounts get it written AS THE USER (never root in a
+# home they control). A file without our header is the engineer's own and is
+# never touched; ours is rewritten, so changing the endpoint reaches everyone.
+# Off (dev_ai_assistant_api_base empty) removes only files with our header.
+
+- name: "AI-ASSIST | /etc/skel/.continue"
+  ansible.builtin.file:
+    path: /etc/skel/.continue
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: dev_ai_assistant_api_base | default('') | length > 0
+
+- name: "AI-ASSIST | Config template for new accounts"
+  ansible.builtin.copy:
+    dest: /etc/skel/.continue/config.yaml
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible (dev_tools/ai_assistant.yml). Delete this line to make
+      # the file yours; the pull then leaves it alone.
+      name: Site AI
+      version: 1.0.0
+      schema: v1
+      models:
+        - name: {{ dev_ai_assistant_model }} (site)
+          provider: vllm
+          model: {{ dev_ai_assistant_model }}
+          apiBase: {{ dev_ai_assistant_api_base }}
+          roles: [chat, edit, apply]
+  when: dev_ai_assistant_api_base | default('') | length > 0
+
+- name: "AI-ASSIST | Write it for existing accounts (as each user)"
+  ansible.builtin.shell: |
+    src=/etc/skel/.continue/config.yaml
+    mark='# Managed by ansible (dev_tools/ai_assistant.yml)'
+    getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 && $7 !~ /(nologin|false)$/ {print $1":"$6}' |
+    while IFS=: read -r u h; do
+      [ -d "$h" ] || continue
+      f="$h/.continue/config.yaml"
+      if [ -e "$f" ] && ! grep -qsF "$mark" "$f"; then continue; fi
+      cmp -s "$src" "$f" && continue
+      runuser -u "$u" -- sh -c 'umask 077; mkdir -p "$1/.continue" && cat > "$1/.continue/config.yaml"' sh "$h" < "$src" && echo "WROTE $u"
+    done
+    exit 0
+  register: _ai_assist_users
+  changed_when: _ai_assist_users.stdout is search('WROTE')
+  when: dev_ai_assistant_api_base | default('') | length > 0
+
+- name: "AI-ASSIST | Off: remove the configs this baseline wrote"
+  ansible.builtin.shell: |
+    mark='# Managed by ansible (dev_tools/ai_assistant.yml)'
+    getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1":"$6}' |
+    while IFS=: read -r u h; do
+      grep -qsF "$mark" "$h/.continue/config.yaml" || continue
+      runuser -u "$u" -- rm -f -- "$h/.continue/config.yaml" && echo "REMOVED $u"
+    done
+    rm -f /etc/skel/.continue/config.yaml
+    exit 0
+  register: _ai_assist_off
+  changed_when: _ai_assist_off.stdout is search('REMOVED')
+  when: dev_ai_assistant_api_base | default('') | length == 0

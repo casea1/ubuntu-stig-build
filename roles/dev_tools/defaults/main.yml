@@ -21,6 +21,25 @@ dev_toolchain_packages:
   - "{{ dotnet_sdk_package }}"
   - docker.io
 
+# Everyday command-line tools. Installed from what RESOLVES (probed with
+# apt-get -s, like the i386 list): one name missing from the offline repo must
+# not fail the whole transaction and take the toolchain above with it. The pull
+# names anything it skipped.
+dev_qol_packages:
+  - ripgrep                # rg: fast recursive grep
+  - fd-find                # fdfind: fast find
+  - jq                     # JSON on the command line
+  - htop
+  - tmux
+  - ncdu                   # what is using the disk
+  - strace
+  - valgrind
+  - meld                   # graphical diff/merge
+  - git-lfs
+  - shellcheck
+  - clangd                 # C/C++ language server (also code-server's C/C++ IntelliSense)
+  - ccache                 # compiler cache
+
 vscode_extensions:
   - ms-dotnettools.vscode-dotnet-runtime    # .NET Install Tool
   - AdaCore.ada                             # Ada & SPARK
@@ -31,6 +50,7 @@ vscode_extensions:
   - ms-vscode.cmake-tools                   # CMake Tools
   - ms-vscode-remote.remote-containers      # Dev Containers
   - ms-azuretools.vscode-docker             # Docker
+  - Continue.continue                       # AI assistant on the site's own vLLM (dev_ai_assistant_*)
   - cschlosser.doxdocgen                    # Doxygen
   - mhutchie.git-graph                      # Git Graph
   - donjayamanne.githistory                 # Git History

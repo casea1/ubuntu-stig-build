@@ -476,6 +476,14 @@ desktop_initial_setup: false
 
 eng_venv_path: /opt/eng-venv           # shared Python environment ("eng" command)
 
+# AI coding assistant: the Continue extension (in the shared VS Code set)
+# pointed at the site's own vLLM, so nothing leaves the network. Empty = off:
+# no config is written and the extension sits unconfigured. Set the System 1
+# chat endpoint per site, e.g. "http://<dev-ai1>:8000/v1". Chat, edit and apply
+# only -- a 120B model is too slow for keystroke autocomplete.
+dev_ai_assistant_api_base: ""
+dev_ai_assistant_model: gpt-oss-120b   # vLLM --served-model-name
+
 # ONE copy of the VS Code extension set for the whole box, instead of one per
 # account. The set measured 3.0 GB / 27,395 files on ASP-2; seeded into
 # /etc/skel it made every `useradd -m` copy all of it (65 s and 3 GB per
