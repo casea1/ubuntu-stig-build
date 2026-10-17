@@ -143,26 +143,8 @@
 - name: "FW | code-server port range"
   ansible.builtin.import_tasks: "{{ playbook_dir }}/roles/dev_tools/tasks/code_server_firewall.yml"
 
-# Cockpit is a web console and had the identical fault: `limit` would drop the
-# browser partway through loading it. Same remedy -- allow the port, restrict
-# the source. Here the source restriction matters more than anywhere else on the
-# box, because this surface is root-capable.
-- name: "FW | Remove the old rate-limited Cockpit rule (it blocked the console)"
-  community.general.ufw:
-    rule: limit
-    port: "{{ cockpit_port | default(9090) | string }}"
-    proto: tcp
-    delete: true
-  failed_when: false
-
-- name: "FW | Open Cockpit ({{ cockpit_port | default(9090) }}/tcp) when enabled"
-  community.general.ufw:
-    rule: allow
-    port: "{{ cockpit_port | default(9090) | string }}"
-    proto: tcp
-    from_ip: "{{ cockpit_allow_from | default('any', true) }}"
-    comment: "Cockpit web console"
-  when: cockpit_enabled | default(true) | bool
+- name: "FW | Cockpit (shared rule)"
+  ansible.builtin.import_tasks: "{{ playbook_dir }}/roles/cockpit/tasks/cockpit_firewall.yml"
 
 - name: "FW | Enable ufw and persist across reboot"
   community.general.ufw:

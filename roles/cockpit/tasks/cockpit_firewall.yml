@@ -1,0 +1,34 @@
+---
+# Cockpit's ufw rule. Shared by ai_firewall, desktop_hardening and emi_firewall,
+# which each used to write their own -- two of them as `limit`, which drops the
+# browser partway through loading the console (trap 12b), and all three from
+# `any` when cockpit_allow_from was empty, for a root-capable console.
+#
+# ufw deletes a rule only when its source matches, so every shape an earlier
+# build could have left is removed except the one wanted now; narrowing
+# cockpit_allow_from therefore also takes the wider rule away.
+- name: "FW | Close Cockpit rules that should not be there"
+  community.general.ufw:
+    rule: "{{ item.0 }}"
+    port: "{{ _ckfw_port }}"
+    proto: tcp
+    from_ip: "{{ item.1 }}"
+    delete: true
+  failed_when: false
+  when: not (_ckfw_open and item.0 == 'allow' and item.1 == _ckfw_src)
+  loop: "{{ ['limit', 'allow'] | product(['any', _ckfw_src] | unique) | list }}"
+  loop_control:
+    label: "{{ item.0 }} {{ _ckfw_port }} from {{ item.1 }}"
+  vars:
+    _ckfw_port: "{{ cockpit_port | default(9090) | string }}"
+    _ckfw_src: "{{ cockpit_allow_from | default('any', true) }}"
+    _ckfw_open: "{{ cockpit_enabled | default(true) | bool }}"
+
+- name: "FW | Open Cockpit ({{ cockpit_port | default(9090) }}/tcp) to {{ cockpit_allow_from | default('any', true) }}"
+  community.general.ufw:
+    rule: allow
+    port: "{{ cockpit_port | default(9090) | string }}"
+    proto: tcp
+    from_ip: "{{ cockpit_allow_from | default('any', true) }}"
+    comment: "Cockpit web console"
+  when: cockpit_enabled | default(true) | bool

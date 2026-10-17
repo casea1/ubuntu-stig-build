@@ -41,14 +41,8 @@
     proto: tcp
     comment: "OpenSSH (rate-limited)"
 
-- name: "EMI FW | Open Cockpit's web console ({{ cockpit_port | default(9090) }}/tcp, rate-limited)"
-  community.general.ufw:
-    rule: limit
-    port: "{{ cockpit_port | default(9090) | string }}"
-    proto: tcp
-    from_ip: "{{ cockpit_allow_from | default('any', true) }}"
-    comment: "Cockpit web console (rate-limited)"
-  when: cockpit_enabled | default(true) | bool
+- name: "FW | Cockpit (shared rule)"
+  ansible.builtin.import_tasks: "{{ playbook_dir }}/roles/cockpit/tasks/cockpit_firewall.yml"
 
 - name: "EMI FW | Open the configured imaging/VPN service ports"
   # Each entry: port, proto (default udp for these services), rule (default

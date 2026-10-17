@@ -1415,6 +1415,8 @@ nvidia_container_toolkit_min_version: "1.19.1"
 dockge_enabled: true
 dockge_image: "louislam/dockge:1"       # pin the major tag for frozen images
 dockge_port: 9001                       # host port -> container 5001 (HTTP)
+# Dockge holds the Docker socket -- root-equivalent. Admin subnet only; "" = any.
+dockge_allow_from: "10.10.99.0/24"
 # Stacks dir: bind-mounted at the SAME path inside the container (a Dockge
 # requirement -- it shells out to `docker compose` using this path) + exported as
 # DOCKGE_STACKS_DIR. ai_compose writes the per-service AI stacks straight into
@@ -1930,13 +1932,13 @@ usg_remediate_reaudit: true
 # Cockpit (https://<host>:9090) is a lightweight web console for systemd units,
 # journald logs, storage, networking, updates, and an in-browser terminal. Handy
 # for managing a headless AI server or a dev box without a full desktop session.
-# It is a PRIVILEGED management surface (root-capable actions), so -- like Dockge
-# -- its port is opened RATE-LIMITED and should be restricted to an admin subnet in
-# production (set cockpit_allow_from). Set cockpit_enabled: false to skip entirely.
+# It is a PRIVILEGED management surface (root-capable actions), so its port is
+# allowed from the admin subnet only. Set cockpit_enabled: false to skip entirely.
 cockpit_enabled: true
 cockpit_port: 9090
-# Restrict the cockpit port to this source CIDR (e.g. "10.0.0.0/24"); empty = any.
-cockpit_allow_from: ""
+# Source allowed to reach it. "" = any source -- only for a box whose whole LAN
+# is admins. Per box in site.yml if a site's admin subnet differs.
+cockpit_allow_from: "10.10.99.0/24"
 # Extra cockpit add-on packages to install alongside the base console. Leave as-is
 # for the standard set; cockpit-pcp adds historical metrics.
 cockpit_extra_packages: []
