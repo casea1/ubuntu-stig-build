@@ -1409,6 +1409,23 @@ desktop_ver() {   # $1 = a .desktop file -> the Libero version its Exec runs
   local e; e="$(dget "$1" Exec)"
   tree_ver "$(printf '%s' "$e" | sed -E 's/^"([^"]*)".*/\1/; t; s/^([^[:space:]]+).*/\1/')"
 }
+# Read and delete a file in someone's home AS ITS OWNER: root resolving a path
+# through a tree the user controls follows any symlink they swap in mid-way,
+# so a root `rm` here could be pointed at a system file.
+STASH_OWNER=""
+stash_and_remove() {   # $1 = a .desktop file in a home
+  local f="$1" owner dest
+  owner="$(stat -c %U "$f" 2>/dev/null)" || return 1
+  dest="$STASH_DIR/$owner/$(stash_name "$f")"
+  install -d -m 0755 "$STASH_DIR/$owner" || return 1
+  if [ "$owner" = root ]; then
+    cat -- "$f" > "$dest" && rm -f -- "$f"
+  else
+    runuser -u "$owner" -- cat -- "$f" > "$dest" && runuser -u "$owner" -- rm -f -- "$f"
+  fi || return 1
+  chmod 0644 "$dest"; STASH_OWNER="$owner"
+}
+
 stash_name() {    # $1 = a .desktop file -> its name in the stash
   local b v; b="$(basename "$1" .desktop)"; v="$(desktop_ver "$1")"
   case "$b" in *"$v"*) ;; *) b="$b-$v" ;; esac
@@ -1434,6 +1451,21 @@ import_one() {   # $1 = a vendor .desktop -> 0 if imported
     *) return 1 ;;
   esac
   [ -e "$bin" ] || return 1
+
+  # What follows the binary goes into a ROOT-OWNED wrapper that every user's
+  # tile runs, and these files are read from users' homes -- so it is data,
+  # never shell. Plain words only, each quoted; anything else (`$(`, a
+  # backtick, `;`, `|`, a quote) means the file is not imported at all.
+  local rest args="" a
+  case "$exec_line" in
+    \"*) rest="${exec_line#\"$bin\"}" ;;
+    *)   rest="${exec_line#"$bin"}" ;;
+  esac
+  if printf '%s' "$rest" | grep -q '[^A-Za-z0-9_./=:,@+ -]'; then
+    warn "not importing $f: its Exec has more than a program and plain arguments"
+    return 1
+  fi
+  for a in $rest; do args="$args $(printf '%q' "$a")"; done
   tv="$(tree_ver "$bin")"
   if [ -n "$tv" ]; then case "$name" in *"$tv"*) ;; *) name="$name $tv" ;; esac; fi
 
@@ -1475,7 +1507,7 @@ $lname"
 # components need the compat libraries and the i386 path, or they abort at
 # load with a missing library rather than saying what is wrong.
 export LD_LIBRARY_PATH="$COMPAT_DIR:/usr/lib/i386-linux-gnu\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
-exec $exec_line "\$@"
+exec $(printf '%q' "$bin")$args "\$@"
 WRAP
   chmod 0755 "$wrap"; chown root:root "$wrap"
 
@@ -1543,16 +1575,12 @@ cmd_desktop() {
     if [ "$rc" = 0 ] || [ "$rc" = 2 ]; then
       case "$f" in
         /home/*/Desktop/*|/root/Desktop/*)
-          local downer; downer="$(basename "$(dirname "$(dirname "$f")")")"
-          if install -D -m 0644 "$f" "$STASH_DIR/$downer/$(stash_name "$f")" 2>/dev/null; then
-            rm -f "$f"
-            say "      ${DIM}took it off $downer's desktop (kept in $STASH_DIR)${R}"
+          if stash_and_remove "$f"; then
+            say "      ${DIM}took it off $STASH_OWNER's desktop (kept in $STASH_DIR)${R}"
           fi ;;
         /home/*/.local/share/applications/*|/root/.local/share/applications/*)
-          local owner; owner="$(basename "${f%/.local/*}")"
-          if install -D -m 0644 "$f" "$STASH_DIR/$owner/$(stash_name "$f")" 2>/dev/null; then
-            rm -f "$f"
-            say "      ${DIM}took the private copy out of $owner's home (kept in $STASH_DIR)${R}"
+          if stash_and_remove "$f"; then
+            say "      ${DIM}took the private copy out of $STASH_OWNER's home (kept in $STASH_DIR)${R}"
           fi ;;
       esac
     fi
