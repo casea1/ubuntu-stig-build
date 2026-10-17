@@ -3,10 +3,12 @@ Notes:
 Must first build custom container using `oikb.dockerfile`:
 
 ```sh
-docker build -t oikb:latest -f ./oikb.dockerfile .
+docker build -t oikb:0.3.6-RG -f ./oikb.dockerfile .
 ```
 
-This step is required for `docker-compose.yaml` to work as written. It is necessary to 
+The tag must be `oikb:0.3.6-RG`: that is what the stack asks for
+(`roles/ai_compose/files/stacks/oikb/compose.yaml`), and recreating the
+container fails outright without it. `oikb:latest` is not used. It is necessary to 
 address a bug in the oikb code where it expects a now-deprecated response schema from 
 Open WebUI. See [this issue](https://github.com/open-webui/oikb/issues/10) for details.
 

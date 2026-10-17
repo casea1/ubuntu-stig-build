@@ -46,7 +46,7 @@ apache/tika:3.3.1.0
 grafana/otel-lgtm:0.29.0
 louislam/dockge:1
 nginx:1.30.4-alpine"
-CUSTOM_IMAGES="oikb:latest
+CUSTOM_IMAGES="oikb:0.3.6-RG
 hfcli:latest
 mlflow:v3.15.1-psycopg2
 openwiki:latest
@@ -130,15 +130,24 @@ fi
 # Container images (optional)
 if [ "$IMAGES" = 1 ]; then
   mkdir -p "$DEST/images"
+  # The lists above drift whenever a stack is added (pgbouncer, magpie,
+  # prometheus and the second vLLM were all missing), so also take every image
+  # the stacks actually ask for -- deployed ones, and the repo's if a checkout
+  # is here. A tag that is neither local nor pullable is reported, not built.
+  STACK_IMAGES=$(cat /opt/stacks/*/compose.yaml \
+      "/root/.ansible/pull/$(hostname -s)"/roles/ai_compose/files/stacks/*/compose.yaml \
+      "$(dirname "$(readlink -f "$0")")"/../../ai_compose/files/stacks/*/compose.yaml 2>/dev/null |
+    sed -nE 's/^[[:space:]]*image:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/p' | grep -v '\$' | sort -u)
+  ALL_IMAGES=$(printf '%s\n' $REGISTRY_IMAGES $CUSTOM_IMAGES $STACK_IMAGES | sort -u)
   echo ">> Saving container images to $DEST/images"
-  for tag in $REGISTRY_IMAGES; do
-    echo "   -- pull $tag"; docker pull "$tag" >/dev/null 2>&1 || { echo "      pull failed: $tag (skipped)"; continue; }
-  done
-  for tag in $CUSTOM_IMAGES; do
-    docker image inspect "$tag" >/dev/null 2>&1 || echo "   NOTE custom image not built locally, skipping: $tag  (build it first)"
+  for tag in $ALL_IMAGES; do
+    docker image inspect "$tag" >/dev/null 2>&1 && continue
+    echo "   -- pull $tag"
+    docker pull "$tag" >/dev/null 2>&1 ||
+      echo "   NOTE not local and not pullable, skipping: $tag  (a custom image: build it first)"
   done
   # Save every tag that exists locally.
-  for tag in $REGISTRY_IMAGES $CUSTOM_IMAGES; do
+  for tag in $ALL_IMAGES; do
     docker image inspect "$tag" >/dev/null 2>&1 || continue
     safe=$(printf '%s' "$tag" | tr '/:' '__')
     echo "   -- save $tag"

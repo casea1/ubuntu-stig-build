@@ -102,17 +102,16 @@ On finish, grab the USG report from **`/opt/ia/`** (admin-readable) **while stil
 
 ## How it works
 
-Ansible roles run in a deliberate order: install → configure → dev tools → harden → scan. Order matters: hardening tightens `umask`, sets `noexec` on `/tmp`, and locks down PAM (breaks package/pip installs if it runs first), and compliance content must download while online.
+Ansible roles run in a deliberate order: prepare → install → configure → dev tools → harden → re-assert → scan. Order matters: hardening tightens `umask`, sets `noexec` on `/tmp`, and locks down PAM (breaks package/pip installs if it runs first), and compliance content must download while online. **`local.yml` is the authority** on the exact order and each role's profile gate; this table is the shape of it.
 
-| Stage | Role | What it does |
-|-------|------|--------------|
-| 1. Install | `base_packages` | Core tooling (ClamAV, OpenSCAP, Wireshark, Python, PowerShell, provisioning services) |
-| 2. Configure | `app_config` | Service config + access controls (ClamAV, Wireshark capture group) |
-| 3. Accounts | `local_accounts` | Org users/groups, ACL'd shared folders, USB→`dta` policy |
-| 4. Dev tools | `dev_tools` *(development)* | Compilers, `/opt/eng-venv`, VS Code extensions, Docker |
-| 4. Host prep | `ai_stack` *(ai)* | Docker + NVIDIA GPU stack + Dockge |
-| 5. Harden | `usg_harden` → `desktop_hardening`/`ai_firewall` → `usg_remediate` | `usg fix disa_stig` + FIPS, then GUI/USB/firewall re-assert, then idempotent residual fixes |
-| 6. Report | `usg audit` (re-run by `usg_remediate`) | Compliance report → `/opt/ia` |
+| Stage | Roles, in order | What it does |
+|-------|-----------------|--------------|
+| 1. Prepare | `disk_expand`, `base_packages`, `local_accounts`, `network_online`, `managed_dirs`, `cockpit`, `classification_banner` | Grow the disk, core tooling, org users/groups + USB→`dta` policy, `/opt/ia` + `/opt/it`, Cockpit, the classification banner |
+| 2. Configure | `app_config`, `clamav_fips`, `clamav_container`, `pro_attach` | ClamAV (FIPS carve-out, or a containerised clamd), Wireshark group; Ubuntu Pro + FIPS before multiarch exists |
+| 3. Tools | `dev_tools` *(development, emi)*, `usb_serial`, `fpga_tools` *(opt-in)*, `remote_desktop` *(development)*, `peripheral_lockdown` *(emi)*, `ai_stack` + `docker_hardening` *(ai)* | Compilers, `/opt/eng-venv`, VS Code (+ code-server, opt-in), GNOME + xrdp, camera/mic off; Docker + NVIDIA + Dockge |
+| 4. Harden | `usg_harden`, `gpu_fips_module` *(ai)* | `usg fix disa_stig` + FIPS |
+| 5. Re-assert | `desktop_hardening` *(development, baseline, emi)*, `ai_firewall` / `emi_firewall`, `ai_compose` *(ai)*, `usg_remediate`, `grub_password`, `usbguard`, `desktop_branding`, `tpm_luks_unlock` *(opt-in)* | GUI/USB/firewall carve-outs after USG's default-deny, the AI stacks into `/opt/stacks`, residual STIG fixes, boot and device controls |
+| 6. Operate | `inventory_report`, `nmap_container` *(emi)*, `it_scripts`, `scap_scan`, `powerstrux`, `dta_log`, `ia_retention`, `offline_repo` | `it-*` commands, the SCAP scan + weekly re-scan → `/opt/ia`, PowerStrux, transfer records, retention, the offline apt switch |
 
 Every documented deviation and POA&M is in **[Security & Compliance](docs/compliance.md)**.
 
@@ -129,21 +128,21 @@ ubuntu-stig-build/
 ├── README.md              # this file (orientation)
 ├── bootstrap.sh           # one-command first-boot runner (detached)
 ├── local.yml              # ansible-pull entrypoint (role run order)
-├── requirements.yml       # pinned external roles
+├── requirements.yml       # Ansible collections (community.general, ansible.posix)
 ├── group_vars/all.yml     # all toggles
 ├── docs/                  # procedures, reference, compliance + site.yml.example
 └── roles/
     ├── base_packages/     # apt installs + PowerShell + provisioning services
     ├── app_config/        # clamav services, wireshark group
     ├── local_accounts/    # org users/groups, ACL'd shares, USB→dta
-    ├── dev_tools/         # toolchains, /opt/eng-venv, VS Code (and code-server's removal)
+    ├── dev_tools/         # toolchains, /opt/eng-venv, VS Code; code-server (opt-in per box)
     ├── remote_desktop/    # GNOME + xrdp (development profile)
     ├── ai_stack/          # Docker + NVIDIA host prep (ai profile)
     ├── ai_firewall/       # opens container ports after USG (ai profile)
-    ├── ai_compose/        # bakes the AI compose stack into /opt/it/docker (ai profile)
+    ├── ai_compose/        # one compose stack per service into /opt/stacks (ai profile)
     ├── usg_harden/        # Ubuntu Pro attach + `usg fix disa_stig` + FIPS
     ├── usg_remediate/     # idempotent residual STIG fixes + re-audit
-    ├── desktop_hardening/ # GNOME/GDM/USB carve-outs after USG (development)
+    ├── desktop_hardening/ # GNOME/GDM/USB/firewall carve-outs after USG (development, baseline, emi)
     └── …                  # branding, managed_dirs, tpm_luks_unlock, gpu_fips_module, …
 ```
 

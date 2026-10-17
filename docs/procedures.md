@@ -43,7 +43,7 @@ workstation. No background — the sections after this one explain the why.
 **Have ready:** the right Ubuntu 24.04 USB (**Server** for `development` and `ai`;
 **Desktop** for `emi` and `emi-unclass`) · Ubuntu Pro token · a LUKS passphrase
 (write it down, it is the only disk recovery key) · the hostname for this
-machine · the Xilinx and Libero installers, copied in over WinSCP at step 23.
+machine · the Xilinx and Libero installers, copied in over WinSCP at step 25.
 
 > **The technician-facing version of this checklist** — profile-split, with the
 > hardening verification written out and a common-issues section — is
@@ -1635,7 +1635,7 @@ sudo docker run --rm ubuntu:24.04 sh -c \
   'apt-get update -qq >/dev/null && apt-get install -y --no-install-recommends ca-certificates 2>&1 | tail -3'
 
 # 2. same, with the carve-out the runtime uses. succeeds -> FIPS confirmed
-sudo docker run --rm -v /etc/stig-build/nmap-fips-off:/proc/sys/crypto/fips_enabled:ro \
+sudo docker run --rm -v /etc/stig-build/fips_off:/proc/sys/crypto/fips_enabled:ro \
   ubuntu:24.04 sh -c \
   'apt-get update -qq >/dev/null && apt-get install -y --no-install-recommends ca-certificates 2>&1 | tail -3'
 ```
